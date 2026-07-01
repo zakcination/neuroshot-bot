@@ -23,6 +23,19 @@ npm run dev
 
 Long polling — no webhook or public URL needed; runs on any $5 VPS.
 
+## Test it
+
+```bash
+npm run lint        # eslint over src + test
+npm run typecheck   # tsc --noEmit
+npm run test:e2e    # full user journey against a throwaway SQLite db
+```
+
+`test/e2e.ts` drives the real handlers through grammY's update pipeline — signup,
+text→image, photo→edit, the animate paywall, Stars purchase, referral payout, and
+refund-on-provider-failure — stubbing only the Telegram API and fal.ai network edges.
+CI (`.github/workflows/ci.yml`) runs all three on every push and PR.
+
 ## Architecture
 
 | File | Responsibility |
@@ -31,7 +44,8 @@ Long polling — no webhook or public URL needed; runs on any $5 VPS.
 | `src/db.ts` | SQLite schema + atomic credit ledger (spend is check-and-decrement, every movement journaled) |
 | `src/generate.ts` | Charge → call fal → deliver → refund-on-error pipeline |
 | `src/payments.ts` | Stars invoices, pre-checkout, crediting, referral payout |
-| `src/index.ts` | Bot wiring: commands, photo/text flows, pending-action state |
+| `src/bot.ts` | Bot wiring: commands, photo/text flows, pending-action state (`createBot()`, also used by the e2e harness) |
+| `src/index.ts` | Entrypoint: builds the bot, registers commands, starts long polling |
 
 ## Before going live
 
