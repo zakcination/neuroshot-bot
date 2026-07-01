@@ -19,7 +19,7 @@ export interface ModelSpec {
   input: (prompt: string, imageUrl?: string) => Record<string, unknown>;
 }
 
-export const MODELS: Record<string, ModelSpec> = {
+export const MODELS = {
   photo_edit: {
     key: "photo_edit",
     kind: "image_edit",
@@ -65,7 +65,7 @@ export const MODELS: Record<string, ModelSpec> = {
     label: "💎 Premium edit",
     input: (prompt, imageUrl) => ({ prompt, image_urls: [imageUrl], quality: "high" }),
   },
-};
+} satisfies Record<string, ModelSpec>;
 
 /**
  * One-tap style presets (Higgsfield-style): a curated prompt applied to the
@@ -77,8 +77,8 @@ export interface Preset {
   prompt: string;
 }
 
-/** Model used to render presets. */
-export const PRESET_MODEL = "premium_edit";
+/** Model used to render presets — a checked reference, so a key drift fails typecheck. */
+export const PRESET_MODEL: ModelSpec = MODELS.premium_edit;
 
 export const PRESETS: Preset[] = [
   {

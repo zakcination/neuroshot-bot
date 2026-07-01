@@ -74,5 +74,5 @@ export async function runGeneration(
 }
 
 export function modelByKey(key: string): ModelSpec | undefined {
-  return MODELS[key];
+  return (MODELS as Record<string, ModelSpec | undefined>)[key];
 }

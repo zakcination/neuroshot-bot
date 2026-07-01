@@ -75,7 +75,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       .row()
       .text(`${MODELS.premium_edit.label} (${MODELS.premium_edit.credits} cr)`, "act:premium_edit")
       .row()
-      .text(`🎭 Style presets (${MODELS[PRESET_MODEL].credits} cr)`, "presets_menu")
+      .text(`🎭 Style presets (${PRESET_MODEL.credits} cr)`, "presets_menu")
       .row()
       .text(`${MODELS.animate.label} (${MODELS.animate.credits} cr)`, "act:animate");
     await ctx.reply("What should I do with this photo?", { reply_markup: kb });
@@ -92,7 +92,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     const kb = new InlineKeyboard();
     for (const p of PRESETS) kb.text(p.label, `preset:${p.id}`).row();
     await ctx.reply(
-      `🎭 Pick a style — one tap, no prompt needed (${MODELS[PRESET_MODEL].credits} cr):`,
+      `🎭 Pick a style — one tap, no prompt needed (${PRESET_MODEL.credits} cr):`,
       { reply_markup: kb },
     );
   });
@@ -109,7 +109,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       await ctx.reply("Send a photo first 🙂");
       return;
     }
-    await runGeneration(ctx, u, MODELS[PRESET_MODEL], preset.prompt, u.pending_file_id);
+    await runGeneration(ctx, u, PRESET_MODEL, preset.prompt, u.pending_file_id);
   });
 
   bot.callbackQuery(/^act:(.+)$/, async (ctx) => {
