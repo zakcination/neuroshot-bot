@@ -98,6 +98,7 @@ for (const a of ASSETS) {
   const url = (result.data as { images?: Array<{ url?: string }> })?.images?.[0]?.url;
   if (!url) throw new Error(`no image URL for ${a.file}`);
   const res = await fetch(url);
+  if (!res.ok) throw new Error(`download failed for ${a.file}: HTTP ${res.status}`);
   writeFileSync(join(OUT, a.file), Buffer.from(await res.arrayBuffer()));
   console.log(`ok in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 }

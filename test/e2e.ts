@@ -51,23 +51,31 @@ const botInfo = {
   supports_inline_queries: false,
   can_connect_to_business: false,
   has_main_web_app: false,
+  has_topics_enabled: false,
+  allows_users_to_create_topics: false,
+  can_manage_bots: false,
+  supports_join_request_queries: false,
 };
 
 const bot = createBot(botInfo);
 bot.api.config.use(async (_prev, method, payload) => {
   apiCalls.push({ method, payload: payload as Record<string, unknown> });
+  let result: unknown;
   switch (method) {
     case "getFile":
-      return { ok: true as const, result: { file_id: "f", file_unique_id: "fu", file_path: "photos/test.jpg" } };
+      result = { file_id: "f", file_unique_id: "fu", file_path: "photos/test.jpg" };
+      break;
     case "deleteMessage":
     case "answerCallbackQuery":
     case "answerPreCheckoutQuery":
     case "setMyCommands":
-      return { ok: true as const, result: true };
+      result = true;
+      break;
     default:
       // sendMessage / sendPhoto / sendVideo / sendInvoice all return a Message
-      return { ok: true as const, result: stubMessage(payload as Record<string, unknown>) };
+      result = stubMessage(payload as Record<string, unknown>);
   }
+  return { ok: true, result } as Awaited<ReturnType<typeof _prev>>;
 });
 
 /** All calls of a method made since the given index. */

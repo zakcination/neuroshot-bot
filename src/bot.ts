@@ -101,7 +101,11 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     await ctx.answerCallbackQuery();
     const u = user(ctx);
     const preset = PRESETS.find((p) => p.id === ctx.match[1]);
-    if (!preset || !u.pending_file_id) {
+    if (!preset) {
+      await ctx.reply("That style is no longer available — send a photo and pick again 🙂");
+      return;
+    }
+    if (!u.pending_file_id) {
       await ctx.reply("Send a photo first 🙂");
       return;
     }
