@@ -6,9 +6,11 @@ Telegram GenAI photo/video bot — the MVP from `research/saas-ideas/veosee-clon
 
 ## What it does
 
-- Send a **photo** → 🖼 edit it with a prompt (Nano Banana) or 🎬 animate it into a 5s video (Kling)
-- Send a **text prompt** → ✨ generate an image (Seedream)
-- **Credits ledger** in SQLite: 3 free credits on signup, image = 1 credit, video = 8
+- Send a **photo** → 🖼 edit it with a prompt (Nano Banana), 💎 premium-edit it (GPT Image 2),
+  restyle it with 🎭 one-tap presets (business headshot, fashion editorial, product hero…), or
+  🎬 animate it into a 5s video (Kling)
+- Send a **text prompt** → ✨ generate an image (Seedream), or `/premium <prompt>` for GPT Image 2 high quality
+- **Credits ledger** in SQLite: 3 free credits on signup, image = 1 credit, 💎 premium = 4, video = 8
 - **Payments via Telegram Stars** (XTR) — works worldwide, no legal entity or payment provider needed
 - **Referral program**: 10% of every purchased pack credited to the referrer
 - Automatic **refund on provider failure**; `/stats` for admins
@@ -40,7 +42,8 @@ CI (`.github/workflows/ci.yml`) runs all three on every push and PR.
 
 | File | Responsibility |
 |---|---|
-| `src/models.ts` | Model registry (fal endpoint, credit price, provider cost) + credit packs + referral rate. **This is the tuning surface** — add models/packs here only. |
+| `src/models.ts` | Model registry (fal endpoint, credit price, provider cost) + style presets + credit packs + referral rate. **This is the tuning surface** — add models/packs/presets here only. |
+| `scripts/brand-assets.mts` | Content population: generates avatar candidates, seed-post creatives and onboarding examples with GPT Image 2 into `brand-assets/` (gitignored) |
 | `src/db.ts` | SQLite schema + atomic credit ledger (spend is check-and-decrement, every movement journaled) |
 | `src/generate.ts` | Charge → call fal → deliver → refund-on-error pipeline |
 | `src/payments.ts` | Stars invoices, pre-checkout, crediting, referral payout |

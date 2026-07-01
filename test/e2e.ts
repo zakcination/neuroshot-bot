@@ -51,23 +51,31 @@ const botInfo = {
   supports_inline_queries: false,
   can_connect_to_business: false,
   has_main_web_app: false,
+  has_topics_enabled: false,
+  allows_users_to_create_topics: false,
+  can_manage_bots: false,
+  supports_join_request_queries: false,
 };
 
 const bot = createBot(botInfo);
 bot.api.config.use(async (_prev, method, payload) => {
   apiCalls.push({ method, payload: payload as Record<string, unknown> });
+  let result: unknown;
   switch (method) {
     case "getFile":
-      return { ok: true as const, result: { file_id: "f", file_unique_id: "fu", file_path: "photos/test.jpg" } };
+      result = { file_id: "f", file_unique_id: "fu", file_path: "photos/test.jpg" };
+      break;
     case "deleteMessage":
     case "answerCallbackQuery":
     case "answerPreCheckoutQuery":
     case "setMyCommands":
-      return { ok: true as const, result: true };
+      result = true;
+      break;
     default:
       // sendMessage / sendPhoto / sendVideo / sendInvoice all return a Message
-      return { ok: true as const, result: stubMessage(payload as Record<string, unknown>) };
+      result = stubMessage(payload as Record<string, unknown>);
   }
+  return { ok: true, result } as Awaited<ReturnType<typeof _prev>>;
 });
 
 /** All calls of a method made since the given index. */
@@ -335,6 +343,35 @@ await step("/stats: admin sees totals, non-admin gets silence", async () => {
 await step("balance: /balance reflects the ledger", async () => {
   await sendText(alice, "/balance");
   assert.match(lastText(), /Balance: 13 credits/);
+});
+
+await step("premium preset: one tap applies the curated prompt via GPT Image 2 edit (4 cr)", async () => {
+  await sendPhoto(alice, "photo-3");
+  await pressButton(alice, "presets_menu");
+  const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data: string }>>;
+  };
+  assert.ok(kb.inline_keyboard.flat().some((b) => b.callback_data === "preset:headshot"));
+  await pressButton(alice, "preset:headshot");
+  const call = falCalls.at(-1)!;
+  assert.equal(call.endpoint, "openai/gpt-image-2/edit");
+  assert.equal(call.input.quality, "high");
+  assert.match(call.input.prompt as string, /corporate headshot/);
+  assert.ok(Array.isArray(call.input.image_urls));
+  assert.equal(credits(alice.id), 9); // 13 - 4
+});
+
+await step("/premium: premium text-to-image charges 4 credits via GPT Image 2", async () => {
+  await sendText(alice, "/premium");
+  assert.match(lastText(), /send the prompt right after the command/);
+  assert.equal(credits(alice.id), 9); // bare command charges nothing
+
+  await sendText(alice, "/premium a perfume bottle on wet black marble");
+  const call = falCalls.at(-1)!;
+  assert.equal(call.endpoint, "fal-ai/gpt-image-2");
+  assert.equal(call.input.quality, "high");
+  assert.equal(call.input.prompt, "a perfume bottle on wet black marble");
+  assert.equal(credits(alice.id), 5); // 9 - 4
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_PATH})`);
