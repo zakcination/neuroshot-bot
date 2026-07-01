@@ -3,7 +3,7 @@ import { Bot, GrammyError, HttpError, InlineKeyboard } from "grammy";
 import { config } from "./config.js";
 import { getOrCreateUser, setPending, stats, type UserRow } from "./db.js";
 import { buyKeyboard, modelByKey, runGeneration } from "./generate.js";
-import { MODELS } from "./models.js";
+import { MODELS, PRESET_MODEL, PRESETS } from "./models.js";
 import { registerPayments, sendBalance } from "./payments.js";
 
 function user(ctx: { from?: { id: number; username?: string } }, referrerId: number | null = null): UserRow {
@@ -23,10 +23,10 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       [
         "📸 *NeuroShot* — AI photoshoots & product videos in one bot.",
         "",
-        "• Send a *photo* → edit it or turn it into a video",
-        "• Send a *text prompt* → generate an image",
+        "• Send a *photo* → edit it, restyle it with 💎 presets, or turn it into a video",
+        "• Send a *text prompt* → generate an image (or /premium for top quality)",
         "",
-        `You have *${u.credits} free credits*. Image = 1, video = 8.`,
+        `You have *${u.credits} free credits*. Image = 1, 💎 premium = 4, video = 8.`,
       ].join("\n"),
       { parse_mode: "Markdown" },
     );
@@ -39,6 +39,19 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     await ctx.reply(
       `🎁 Your referral link:\nhttps://t.me/${ctx.me.username}?start=${ctx.from!.id}\n\nYou earn 10% of every pack your referrals buy.`,
     );
+  });
+
+  // Premium text-to-image: /premium <prompt> (GPT Image 2, high quality).
+  bot.command("premium", async (ctx) => {
+    const u = user(ctx);
+    const prompt = ctx.match?.trim();
+    if (!prompt) {
+      await ctx.reply(
+        `💎 Premium image (GPT Image 2, ${MODELS.premium_image.credits} cr) — send the prompt right after the command:\n/premium a perfume bottle on wet black marble, dramatic light`,
+      );
+      return;
+    }
+    await runGeneration(ctx, u, MODELS.premium_image, prompt);
   });
 
   bot.command("stats", async (ctx) => {
@@ -60,8 +73,39 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     const kb = new InlineKeyboard()
       .text(`${MODELS.photo_edit.label} (${MODELS.photo_edit.credits} cr)`, "act:photo_edit")
       .row()
+      .text(`${MODELS.premium_edit.label} (${MODELS.premium_edit.credits} cr)`, "act:premium_edit")
+      .row()
+      .text(`🎭 Style presets (${MODELS[PRESET_MODEL].credits} cr)`, "presets_menu")
+      .row()
       .text(`${MODELS.animate.label} (${MODELS.animate.credits} cr)`, "act:animate");
     await ctx.reply("What should I do with this photo?", { reply_markup: kb });
+  });
+
+  // One-tap presets: pick a style, we apply a curated prompt via the premium model.
+  bot.callbackQuery("presets_menu", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = user(ctx);
+    if (!u.pending_file_id) {
+      await ctx.reply("Send a photo first 🙂");
+      return;
+    }
+    const kb = new InlineKeyboard();
+    for (const p of PRESETS) kb.text(p.label, `preset:${p.id}`).row();
+    await ctx.reply(
+      `🎭 Pick a style — one tap, no prompt needed (${MODELS[PRESET_MODEL].credits} cr):`,
+      { reply_markup: kb },
+    );
+  });
+
+  bot.callbackQuery(/^preset:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = user(ctx);
+    const preset = PRESETS.find((p) => p.id === ctx.match[1]);
+    if (!preset || !u.pending_file_id) {
+      await ctx.reply("Send a photo first 🙂");
+      return;
+    }
+    await runGeneration(ctx, u, MODELS[PRESET_MODEL], preset.prompt, u.pending_file_id);
   });
 
   bot.callbackQuery(/^act:(.+)$/, async (ctx) => {

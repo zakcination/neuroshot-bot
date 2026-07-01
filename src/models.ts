@@ -47,7 +47,78 @@ export const MODELS: Record<string, ModelSpec> = {
     label: "🎬 Animate photo",
     input: (prompt, imageUrl) => ({ prompt, image_url: imageUrl, duration: "5" }),
   },
+  premium_image: {
+    key: "premium_image",
+    kind: "text_to_image",
+    falEndpoint: "fal-ai/gpt-image-2",
+    credits: 4,
+    approxCostUsd: 0.21, // high quality, 1024x1024
+    label: "💎 Premium image",
+    input: (prompt) => ({ prompt, quality: "high", image_size: { width: 1024, height: 1024 } }),
+  },
+  premium_edit: {
+    key: "premium_edit",
+    kind: "image_edit",
+    falEndpoint: "openai/gpt-image-2/edit",
+    credits: 4,
+    approxCostUsd: 0.22, // high quality, 1024x1024
+    label: "💎 Premium edit",
+    input: (prompt, imageUrl) => ({ prompt, image_urls: [imageUrl], quality: "high" }),
+  },
 };
+
+/**
+ * One-tap style presets (Higgsfield-style): a curated prompt applied to the
+ * user's photo via the premium edit model — no prompt-writing needed.
+ */
+export interface Preset {
+  id: string;
+  label: string;
+  prompt: string;
+}
+
+/** Model used to render presets. */
+export const PRESET_MODEL = "premium_edit";
+
+export const PRESETS: Preset[] = [
+  {
+    id: "headshot",
+    label: "💼 Business headshot",
+    prompt:
+      "Transform into a professional corporate headshot: tailored suit, soft studio key light, " +
+      "clean neutral gray backdrop, shallow depth of field, confident expression, magazine-cover retouching. " +
+      "Preserve the person's identity and facial features exactly.",
+  },
+  {
+    id: "fashion",
+    label: "🕶 Fashion editorial",
+    prompt:
+      "Transform into a high-fashion editorial photo: designer outfit, dramatic cinematic lighting, " +
+      "Vogue-style composition, film grain, bold styling. Preserve the person's identity and facial features exactly.",
+  },
+  {
+    id: "travel",
+    label: "🌅 Golden-hour travel",
+    prompt:
+      "Place the subject in a breathtaking golden-hour travel scene: Santorini rooftop at sunset, warm rim light, " +
+      "editorial travel-magazine look. Preserve the subject's identity exactly.",
+  },
+  {
+    id: "product_hero",
+    label: "🛍 Product hero card",
+    prompt:
+      "Turn this into a premium e-commerce hero shot: the product on a clean seamless studio background with soft " +
+      "shadows, professional three-point lighting, subtle reflection, marketplace-listing composition, 4k quality. " +
+      "Keep the product's shape, colors and branding exactly as in the photo.",
+  },
+  {
+    id: "cinematic",
+    label: "🎥 Cinematic portrait",
+    prompt:
+      "Transform into a cinematic movie-still portrait: anamorphic look, teal-and-orange grade, atmospheric haze, " +
+      "dramatic side lighting, 35mm film aesthetic. Preserve the person's identity and facial features exactly.",
+  },
+];
 
 /** Credit packs sold via Telegram Stars (XTR). 1 star ≈ $0.013 gross. */
 export interface Pack {
