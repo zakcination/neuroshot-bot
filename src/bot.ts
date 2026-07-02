@@ -1,9 +1,10 @@
 import type { UserFromGetMe } from "grammy/types";
+import type { Context } from "grammy";
 import { Bot, GrammyError, HttpError, InlineKeyboard } from "grammy";
 import { config } from "./config.js";
-import { getOrCreateUser, setPending, stats, type UserRow } from "./db.js";
-import { buyKeyboard, modelByKey, runGeneration } from "./generate.js";
-import { MODELS, PRESET_MODEL, PRESETS } from "./models.js";
+import { funnel, getOrCreateUser, logEvent, setPending, stats, type UserRow } from "./db.js";
+import { modelByKey, runGeneration } from "./generate.js";
+import { MODELS, PRESET_MODEL, PRESETS, type Preset } from "./models.js";
 import { registerPayments, sendBalance } from "./payments.js";
 
 function user(ctx: { from?: { id: number; username?: string } }, referrerId: number | null = null): UserRow {
@@ -11,35 +12,93 @@ function user(ctx: { from?: { id: number; username?: string } }, referrerId: num
   return getOrCreateUser(ctx.from.id, ctx.from.username, referrerId, config.freeCredits);
 }
 
-/** Build the bot with all handlers wired. Pass botInfo to skip the getMe call (tests). */
+/**
+ * UX rules (vs the model-first aggregator bots):
+ * - buttons name the OUTCOME, never the model;
+ * - every path reaches a generation in ≤2 taps, no prompt required;
+ * - price in credits on every button that spends;
+ * - every delivered result carries a "next step" keyboard.
+ */
+export function mainMenu(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("📸 AI-фотосессия", "menu:photoshoot")
+    .row()
+    .text("🛍 Фото товара для маркетплейса", "menu:product")
+    .row()
+    .text(`🎬 Оживить фото в видео (${MODELS.animate.credits} кр)`, "menu:animate")
+    .row()
+    .text("✨ Картинка из текста", "menu:text")
+    .row()
+    .text("💰 Баланс и пакеты", "menu:balance")
+    .text("🎁 Заработать 10%", "menu:ref");
+}
+
+function presetsKeyboard(category: Preset["category"]): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  for (const p of PRESETS.filter((x) => x.category === category)) {
+    kb.text(`${p.label} (${PRESET_MODEL.credits} кр)`, `preset:${p.id}`).row();
+  }
+  kb.text(`✍️ Свой промпт (${MODELS.premium_edit.credits} кр)`, "act:premium_edit").row();
+  kb.text("📋 Меню", "menu:main");
+  return kb;
+}
+
+const WELCOME = [
+  "📸 <b>NeuroShot</b> — AI-фотосессии и продающие фото товаров в один тап.",
+  "",
+  "Никаких промптов: выбираете, что хотите получить — остальное сделаем мы.",
+  "",
+  "Что создаём?",
+].join("\n");
+
 export function createBot(botInfo?: UserFromGetMe): Bot {
   const bot = new Bot(config.botToken, botInfo ? { botInfo } : undefined);
+
+  // Behavioural analytics: one central logger for every interaction (sessions,
+  // menu selects, photo uploads). Generation/paywall/purchase events are logged
+  // at their source. Runs before handlers; never blocks them.
+  bot.use(async (ctx, next) => {
+    const from = ctx.from;
+    if (from) {
+      try {
+        const data = ctx.callbackQuery?.data;
+        if (data) {
+          if (data.startsWith("preset:")) logEvent(from.id, "preset", data.slice(7));
+          else logEvent(from.id, "select", data); // menu:* | act:* | buy:* | show_packs
+        } else if (ctx.message?.photo) {
+          logEvent(from.id, "photo");
+        } else if (ctx.message?.text?.startsWith("/start")) {
+          logEvent(from.id, "menu_open", "start");
+        } else if (ctx.message?.text === "/menu") {
+          logEvent(from.id, "menu_open", "menu");
+        }
+      } catch (e) {
+        console.error("analytics log failed:", e);
+      }
+    }
+    await next();
+  });
 
   bot.command("start", async (ctx) => {
     const payload = ctx.match?.trim();
     const referrerId = payload && /^\d+$/.test(payload) ? Number(payload) : null;
     const u = user(ctx, referrerId);
-    await ctx.reply(
-      [
-        "📸 *NeuroShot* — AI photoshoots & product videos in one bot.",
-        "",
-        "• Send a *photo* → edit it, restyle it with 💎 presets, or turn it into a video",
-        "• Send a *text prompt* → generate an image (or /premium for top quality)",
-        "",
-        `You have *${u.credits} free credits*. Image = 1, 💎 premium = 4, video = 8.`,
-      ].join("\n"),
-      { parse_mode: "Markdown" },
-    );
+    await ctx.reply(`${WELCOME}\n\n🎁 У вас <b>${u.credits} бесплатных кредита</b>.`, {
+      parse_mode: "HTML",
+      reply_markup: mainMenu(),
+    });
+  });
+
+  bot.command("menu", async (ctx) => {
+    const u = user(ctx);
+    setPending(u.id, null, u.pending_file_id); // escape any mode/prompt-await, keep the photo
+    await ctx.reply("Что создаём?", { reply_markup: mainMenu() });
   });
 
   bot.command("balance", async (ctx) => sendBalance(ctx, user(ctx).credits));
   bot.command("buy", async (ctx) => sendBalance(ctx, user(ctx).credits));
 
-  bot.command("ref", async (ctx) => {
-    await ctx.reply(
-      `🎁 Your referral link:\nhttps://t.me/${ctx.me.username}?start=${ctx.from!.id}\n\nYou earn 10% of every pack your referrals buy.`,
-    );
-  });
+  bot.command("ref", async (ctx) => sendRefLink(ctx));
 
   // Premium text-to-image: /premium <prompt> (GPT Image 2, high quality).
   bot.command("premium", async (ctx) => {
@@ -47,7 +106,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     const prompt = ctx.match?.trim();
     if (!prompt) {
       await ctx.reply(
-        `💎 Premium image (GPT Image 2, ${MODELS.premium_image.credits} cr) — send the prompt right after the command:\n/premium a perfume bottle on wet black marble, dramatic light`,
+        `💎 Премиум-картинка (${MODELS.premium_image.credits} кр) — напишите запрос сразу после команды:\n/premium флакон духов на мокром чёрном мраморе`,
       );
       return;
     }
@@ -62,54 +121,154 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     );
   });
 
-  registerPayments(bot);
-
-  // Photo in → choose an action, then wait for the prompt.
-  bot.on("message:photo", async (ctx) => {
-    user(ctx);
-    const photos = ctx.message.photo;
-    const fileId = photos[photos.length - 1].file_id; // largest size
-    setPending(ctx.from.id, "await_action", fileId);
-    const kb = new InlineKeyboard()
-      .text(`${MODELS.photo_edit.label} (${MODELS.photo_edit.credits} cr)`, "act:photo_edit")
-      .row()
-      .text(`${MODELS.premium_edit.label} (${MODELS.premium_edit.credits} cr)`, "act:premium_edit")
-      .row()
-      .text(`🎭 Style presets (${PRESET_MODEL.credits} cr)`, "presets_menu")
-      .row()
-      .text(`${MODELS.animate.label} (${MODELS.animate.credits} cr)`, "act:animate");
-    await ctx.reply("What should I do with this photo?", { reply_markup: kb });
-  });
-
-  // One-tap presets: pick a style, we apply a curated prompt via the premium model.
-  bot.callbackQuery("presets_menu", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    const u = user(ctx);
-    if (!u.pending_file_id) {
-      await ctx.reply("Send a photo first 🙂");
-      return;
-    }
-    const kb = new InlineKeyboard();
-    for (const p of PRESETS) kb.text(p.label, `preset:${p.id}`).row();
+  // Admin conversion funnel + "why didn't they order" drop-off buckets.
+  bot.command("funnel", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const f = funnel();
+    const pct = (n: number) => (f.visitors ? `${Math.round((n / f.visitors) * 100)}%` : "—");
     await ctx.reply(
-      `🎭 Pick a style — one tap, no prompt needed (${PRESET_MODEL.credits} cr):`,
-      { reply_markup: kb },
+      [
+        "📊 Воронка (по посетителям)",
+        `Визитов: ${f.visits} · Уникальных: ${f.visitors}`,
+        `📸 Загрузили фото: ${f.uploadedPhoto} (${pct(f.uploadedPhoto)})`,
+        `⚙️ Начали генерацию: ${f.startedGen} (${pct(f.startedGen)})`,
+        `✅ Получили результат: ${f.succeededGen} (${pct(f.succeededGen)})`,
+        `💳 Дошли до оплаты: ${f.hitPaywall} (${pct(f.hitPaywall)})`,
+        `💰 Купили: ${f.paid} (${pct(f.paid)})`,
+        "",
+        "❓ Почему не купили:",
+        `• не начали генерить: ${f.dropoff.neverGenerated} (активация)`,
+        `• была ошибка провайдера: ${f.dropoff.genFailedNoPaid} (надёжность)`,
+        `• видели пейволл, не купили: ${f.dropoff.paywallNoPaid} (цена/ценность)`,
+        `• израсходовали бесплатные, не купили: ${f.dropoff.triedFreeNoPaid} (ценность)`,
+      ].join("\n"),
     );
   });
 
-  bot.callbackQuery(/^preset:(.+)$/, async (ctx) => {
+  registerPayments(bot);
+
+  // ---- Main menu navigation ----
+
+  bot.callbackQuery("menu:main", async (ctx) => {
     await ctx.answerCallbackQuery();
     const u = user(ctx);
-    const preset = PRESETS.find((p) => p.id === ctx.match[1]);
-    if (!preset) {
-      await ctx.reply("That style is no longer available — send a photo and pick again 🙂");
+    setPending(u.id, null, u.pending_file_id); // escape any mode/prompt-await, keep the photo
+    await ctx.reply("Что создаём?", { reply_markup: mainMenu() });
+  });
+
+  bot.callbackQuery("menu:photoshoot", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = user(ctx);
+    if (u.pending_file_id) {
+      await ctx.reply("Выберите стиль — один тап, без промптов:", {
+        reply_markup: presetsKeyboard("photo"),
+      });
       return;
     }
+    setPending(u.id, "mode_photo", null);
+    await ctx.reply("Пришлите своё фото 📸 (портрет без ретуши работает лучше всего) — и выберите стиль.");
+  });
+
+  bot.callbackQuery("menu:product", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = user(ctx);
+    if (u.pending_file_id) {
+      await ctx.reply("Выберите подачу товара:", { reply_markup: presetsKeyboard("product") });
+      return;
+    }
+    setPending(u.id, "mode_product", null);
+    await ctx.reply("Пришлите фото товара 🛍 (можно прямо со стола — фон мы заменим).");
+  });
+
+  bot.callbackQuery("menu:animate", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = user(ctx);
+    setPending(u.id, "mode_animate", u.pending_file_id);
+    await ctx.reply(
+      u.pending_file_id
+        ? "Опишите движение (например: «медленный наезд камеры, волосы развеваются»):"
+        : "Пришлите фото 🎬 — превратим его в 5-секундное видео.",
+    );
+    if (u.pending_file_id) setPending(u.id, "animate", u.pending_file_id);
+  });
+
+  bot.callbackQuery("menu:text", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = user(ctx);
+    setPending(u.id, null, u.pending_file_id); // leave photo mode so the next text becomes a t2i prompt
+    await ctx.reply(
+      [
+        `✨ Просто напишите сообщением, что нарисовать (${MODELS.text_to_image.credits} кр).`,
+        `💎 Максимальное качество: /premium ваш запрос (${MODELS.premium_image.credits} кр).`,
+      ].join("\n"),
+    );
+  });
+
+  bot.callbackQuery("menu:balance", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await sendBalance(ctx, user(ctx).credits);
+  });
+
+  bot.callbackQuery("menu:ref", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await sendRefLink(ctx);
+  });
+
+  // "Ещё стиль" on a delivered result: reuse the last photo if we still have it.
+  bot.callbackQuery("menu:styles", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = user(ctx);
     if (!u.pending_file_id) {
-      await ctx.reply("Send a photo first 🙂");
+      await ctx.reply("Пришлите фото — и выбирайте стиль 🙂");
       return;
     }
-    await runGeneration(ctx, u, PRESET_MODEL, preset.prompt, u.pending_file_id);
+    await ctx.reply("Выберите стиль:", { reply_markup: presetsKeyboard("photo") });
+  });
+
+  async function sendRefLink(ctx: Context) {
+    await ctx.reply(
+      `🎁 Ваша ссылка:\nhttps://t.me/${ctx.me.username}?start=${ctx.from!.id}\n\nВы получаете 10% кредитов с каждого пакета, купленного по вашей ссылке.`,
+    );
+  }
+
+  // ---- Photo in → route by selected mode (or show the action menu) ----
+
+  bot.on("message:photo", async (ctx) => {
+    const u = user(ctx);
+    const photos = ctx.message.photo;
+    const fileId = photos[photos.length - 1].file_id; // largest size
+    const mode = u.pending_action;
+
+    if (mode === "mode_product") {
+      setPending(u.id, "await_action", fileId);
+      await ctx.reply("Отличный кадр! Выберите подачу товара:", {
+        reply_markup: presetsKeyboard("product"),
+      });
+      return;
+    }
+    if (mode === "mode_photo") {
+      setPending(u.id, "await_action", fileId);
+      await ctx.reply("Выберите стиль — один тап, без промптов:", {
+        reply_markup: presetsKeyboard("photo"),
+      });
+      return;
+    }
+    if (mode === "mode_animate") {
+      setPending(u.id, "animate", fileId);
+      await ctx.reply("Опишите движение (например: «медленный наезд камеры, волосы развеваются»):");
+      return;
+    }
+
+    setPending(u.id, "await_action", fileId);
+    const kb = new InlineKeyboard()
+      .text("📸 AI-фотосессия — стили", "menu:photoshoot")
+      .row()
+      .text("🛍 Продающее фото товара", "menu:product")
+      .row()
+      .text(`🖼 Редактировать по описанию (${MODELS.photo_edit.credits} кр)`, "act:photo_edit")
+      .row()
+      .text(`🎬 Оживить в видео (${MODELS.animate.credits} кр)`, "act:animate");
+    await ctx.reply("Что сделать с этим фото?", { reply_markup: kb });
   });
 
   bot.callbackQuery(/^act:(.+)$/, async (ctx) => {
@@ -117,24 +276,49 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     const u = user(ctx);
     const model = modelByKey(ctx.match[1]);
     if (!model || !u.pending_file_id) {
-      await ctx.reply("Send a photo first 🙂");
+      await ctx.reply("Сначала пришлите фото 🙂");
       return;
     }
     setPending(u.id, model.key, u.pending_file_id);
     await ctx.reply(
       model.kind === "image_to_video"
-        ? "Describe the motion (e.g. “slow zoom in, hair moving in the wind”):"
-        : "Describe the edit (e.g. “replace background with a Paris street at sunset”):",
+        ? "Опишите движение (например: «медленный наезд камеры, волосы развеваются»):"
+        : "Опишите, что изменить (например: «замени фон на парижскую улицу на закате»):",
     );
   });
 
-  // Text in → either the prompt for a pending action, or a text-to-image request.
+  // One-tap presets: curated prompt through the premium model, no typing.
+  bot.callbackQuery(/^preset:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = user(ctx);
+    const preset = PRESETS.find((p) => p.id === ctx.match[1]);
+    if (!preset) {
+      await ctx.reply("Этот стиль больше недоступен — пришлите фото и выберите заново 🙂");
+      return;
+    }
+    if (!u.pending_file_id) {
+      await ctx.reply("Сначала пришлите фото 🙂");
+      return;
+    }
+    await runGeneration(ctx, u, PRESET_MODEL, preset.prompt, u.pending_file_id);
+  });
+
+  // ---- Text in → prompt for a pending action, or plain text-to-image ----
+
   bot.on("message:text", async (ctx) => {
     const u = user(ctx);
     const text = ctx.message.text.trim();
     if (text.startsWith("/")) return;
 
-    if (u.pending_action && u.pending_action !== "await_action" && u.pending_file_id) {
+    if (u.pending_action?.startsWith("mode_")) {
+      // They picked a photo-based use case but typed text — gently re-route.
+      if (u.pending_action !== "mode_animate" || !u.pending_file_id) {
+        await ctx.reply("Пришлите фото 📸 — или просто напишите /menu, чтобы выбрать другое.");
+        return;
+      }
+    }
+
+    if (u.pending_action && u.pending_action !== "await_action" && !u.pending_action.startsWith("mode_") && u.pending_file_id) {
       const model = modelByKey(u.pending_action);
       if (model) {
         await runGeneration(ctx, u, model, text, u.pending_file_id);
@@ -153,5 +337,3 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   return bot;
 }
-
-export { buyKeyboard };

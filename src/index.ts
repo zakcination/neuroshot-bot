@@ -3,11 +3,12 @@ import { createBot } from "./bot.js";
 const bot = createBot();
 
 bot.api.setMyCommands([
-  { command: "start", description: "What this bot does" },
-  { command: "premium", description: "💎 Premium image (GPT Image 2)" },
-  { command: "buy", description: "Buy credits" },
-  { command: "balance", description: "My balance" },
-  { command: "ref", description: "Referral link (earn 10%)" },
+  { command: "menu", description: "📋 Меню — что создаём?" },
+  { command: "premium", description: "💎 Премиум-картинка из текста" },
+  { command: "buy", description: "💰 Купить кредиты" },
+  { command: "balance", description: "Мой баланс" },
+  { command: "ref", description: "🎁 Реферальная ссылка (10%)" },
+  { command: "start", description: "Перезапустить бота" },
 ]);
 
 console.log("NeuroShot bot starting (long polling)…");

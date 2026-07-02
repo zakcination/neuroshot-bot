@@ -21,7 +21,7 @@ process.env.ADMIN_IDS = "9999";
 
 const { fal } = await import("@fal-ai/client");
 const { createBot } = await import("../src/bot.js");
-const { db } = await import("../src/db.js");
+const { db, funnel } = await import("../src/db.js");
 
 // ---------- Telegram API stub (transformer: intercepts every outgoing call) ----------
 
@@ -123,6 +123,7 @@ interface From {
 const alice: From = { id: 1001, is_bot: false, first_name: "Alice", username: "alice" };
 const bob: From = { id: 1002, is_bot: false, first_name: "Bob", username: "bob" };
 const admin: From = { id: 9999, is_bot: false, first_name: "Admin", username: "admin" };
+const carol: From = { id: 1003, is_bot: false, first_name: "Carol", username: "carol" };
 
 function chatOf(from: From) {
   return { id: from.id, type: "private" as const, first_name: from.first_name };
@@ -223,27 +224,39 @@ async function step(name: string, fn: () => void | Promise<void>): Promise<void>
 
 console.log("NeuroShot e2e — full user journey\n");
 
-await step("signup: /start creates user with 3 free credits", async () => {
+await step("signup: /start creates user with 3 free credits and shows the use-case menu", async () => {
   await sendText(alice, "/start");
   assert.equal(credits(alice.id), 3);
   assert.equal(ledgerCount("signup"), 1);
-  assert.match(lastText(), /3 free credits/);
+  assert.match(lastText(), /3 бесплатных кредита/);
+  const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data: string }>>;
+  };
+  const buttons = kb.inline_keyboard.flat().map((b) => b.callback_data);
+  for (const expected of ["menu:photoshoot", "menu:product", "menu:animate", "menu:text", "menu:balance", "menu:ref"]) {
+    assert.ok(buttons.includes(expected), `menu misses ${expected}`);
+  }
 });
 
-await step("text→image: prompt charges 1 credit, calls Seedream, delivers photo", async () => {
+await step("text→image: prompt charges 1 credit, calls Seedream, delivers photo (menu-only keyboard)", async () => {
   await sendText(alice, "a red fox in the snow");
   assert.equal(falCalls.length, 1);
   assert.equal(falCalls[0].endpoint, "fal-ai/bytedance/seedream/v4/text-to-image");
   assert.equal(falCalls[0].input.prompt, "a red fox in the snow");
   assert.equal(calls("sendPhoto").length, 1);
   assert.equal(credits(alice.id), 2);
+  // No source photo → «Ещё стиль» must NOT appear (Copilot: it would dead-end).
+  const kb = calls("sendPhoto").at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data: string }>>;
+  };
+  assert.deepEqual(kb.inline_keyboard.flat().map((b) => b.callback_data), ["menu:main"]);
 });
 
 await step("photo→edit: action keyboard, prompt, Nano Banana edit charges 1 credit", async () => {
   await sendPhoto(alice, "photo-1");
-  assert.match(lastText(), /What should I do with this photo/);
+  assert.match(lastText(), /Что сделать с этим фото/);
   await pressButton(alice, "act:photo_edit");
-  assert.match(lastText(), /Describe the edit/);
+  assert.match(lastText(), /Опишите, что изменить/);
   await sendText(alice, "replace background with a Paris street");
   const edit = falCalls.at(-1)!;
   assert.equal(edit.endpoint, "fal-ai/nano-banana/edit");
@@ -258,11 +271,11 @@ await step("photo→edit: action keyboard, prompt, Nano Banana edit charges 1 cr
 await step("insufficient credits: animate (8 cr) with 1 cr is rejected, nothing charged", async () => {
   await sendPhoto(alice, "photo-2");
   await pressButton(alice, "act:animate");
-  assert.match(lastText(), /Describe the motion/);
+  assert.match(lastText(), /Опишите движение/);
   const falBefore = falCalls.length;
   await sendText(alice, "slow zoom in");
   assert.equal(falCalls.length, falBefore);
-  assert.match(lastText(), /Not enough credits: "🎬 Animate photo" costs 8, you have 1/);
+  assert.match(lastText(), /Не хватает кредитов: «🎬 Оживление фото» стоит 8 кредитов, у вас 1 кредит/);
   assert.equal(credits(alice.id), 1);
 });
 
@@ -277,11 +290,11 @@ await step("purchase: /buy → invoice → pre-checkout → payment credits the 
   await pressButton(alice, "buy:mini");
   const invoice = calls("sendInvoice").at(-1)!.payload;
   assert.equal(invoice.currency, "XTR");
-  assert.deepEqual(invoice.prices, [{ label: "Mini — 15 credits", amount: 150 }]);
+  assert.deepEqual(invoice.prices, [{ label: "Мини — 15 кредитов", amount: 150 }]);
 
   await payForPack(alice, "mini", 150);
   assert.equal(calls("answerPreCheckoutQuery").at(-1)!.payload.ok, true);
-  assert.match(lastText(), /15 credits added/);
+  assert.match(lastText(), /Начислено 15 кредитов/);
   assert.equal(credits(alice.id), 16);
   assert.equal(ledgerCount("purchase"), 1);
 });
@@ -300,7 +313,7 @@ await step("provider failure: credits auto-refunded, error logged", async () => 
   falShouldFail = true;
   await sendText(alice, "another fox");
   falShouldFail = false;
-  assert.match(lastText(), /credits were refunded/);
+  assert.match(lastText(), /кредиты автоматически возвращены/);
   assert.equal(credits(alice.id), 8);
   assert.equal(ledgerCount("refund"), 1);
   const gen = db
@@ -319,7 +332,7 @@ await step("referral: /start with payload links referrer; purchase pays 10% bonu
   const notify = calls("sendMessage")
     .filter((c) => c.payload.chat_id === alice.id)
     .at(-1)!;
-  assert.match(notify.payload.text as string, /\+5 credits — your referral bought a pack/);
+  assert.match(notify.payload.text as string, /\+5 кредитов — ваш реферал купил пакет/);
 });
 
 await step("/ref: link carries the user id as start payload", async () => {
@@ -342,16 +355,18 @@ await step("/stats: admin sees totals, non-admin gets silence", async () => {
 
 await step("balance: /balance reflects the ledger", async () => {
   await sendText(alice, "/balance");
-  assert.match(lastText(), /Balance: 13 credits/);
+  assert.match(lastText(), /Баланс: 13 кредитов/);
 });
 
-await step("premium preset: one tap applies the curated prompt via GPT Image 2 edit (4 cr)", async () => {
+await step("photoshoot preset: photo → menu:photoshoot → one tap renders via GPT Image 2 edit (4 cr)", async () => {
   await sendPhoto(alice, "photo-3");
-  await pressButton(alice, "presets_menu");
+  await pressButton(alice, "menu:photoshoot");
   const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
     inline_keyboard: Array<Array<{ callback_data: string }>>;
   };
-  assert.ok(kb.inline_keyboard.flat().some((b) => b.callback_data === "preset:headshot"));
+  const buttons = kb.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(buttons.includes("preset:headshot"));
+  assert.ok(!buttons.includes("preset:product_white"), "product presets leak into photo menu");
   await pressButton(alice, "preset:headshot");
   const call = falCalls.at(-1)!;
   assert.equal(call.endpoint, "openai/gpt-image-2/edit");
@@ -359,11 +374,26 @@ await step("premium preset: one tap applies the curated prompt via GPT Image 2 e
   assert.match(call.input.prompt as string, /corporate headshot/);
   assert.ok(Array.isArray(call.input.image_urls));
   assert.equal(credits(alice.id), 9); // 13 - 4
+
+  // Every delivered result carries the next-step keyboard.
+  const delivered = calls("sendPhoto").at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data: string }>>;
+  };
+  const after = delivered.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.deepEqual(after, ["menu:styles", "menu:main"]);
+});
+
+await step("«ещё стиль»: the photo is remembered after a generation", async () => {
+  await pressButton(alice, "menu:styles");
+  const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data: string }>>;
+  };
+  assert.ok(kb.inline_keyboard.flat().some((b) => b.callback_data === "preset:cinematic"));
 });
 
 await step("/premium: premium text-to-image charges 4 credits via GPT Image 2", async () => {
   await sendText(alice, "/premium");
-  assert.match(lastText(), /send the prompt right after the command/);
+  assert.match(lastText(), /напишите запрос сразу после команды/);
   assert.equal(credits(alice.id), 9); // bare command charges nothing
 
   await sendText(alice, "/premium a perfume bottle on wet black marble");
@@ -372,6 +402,62 @@ await step("/premium: premium text-to-image charges 4 credits via GPT Image 2", 
   assert.equal(call.input.quality, "high");
   assert.equal(call.input.prompt, "a perfume bottle on wet black marble");
   assert.equal(credits(alice.id), 5); // 9 - 4
+});
+
+await step("product flow: menu:product → photo → product preset renders (4 cr)", async () => {
+  await pressButton(alice, "menu:product");
+  assert.match(lastText(), /Пришлите фото товара/);
+  await sendPhoto(alice, "product-1");
+  const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data: string }>>;
+  };
+  const buttons = kb.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(buttons.includes("preset:product_white"));
+  assert.ok(!buttons.includes("preset:headshot"), "photo presets leak into product menu");
+  await pressButton(alice, "preset:product_white");
+  const call = falCalls.at(-1)!;
+  assert.equal(call.endpoint, "openai/gpt-image-2/edit");
+  assert.match(call.input.prompt as string, /white studio background/);
+  assert.equal(credits(alice.id), 1); // 5 - 4
+});
+
+await step("mode escape: menu:main clears a photo mode so text→image works again", async () => {
+  await sendText(carol, "/start");
+  await pressButton(carol, "menu:photoshoot"); // no photo yet → enters mode_photo, asks for a photo
+  const falBefore = falCalls.length;
+  await sendText(carol, "just text without a photo"); // blocked by the mode guard (correct)
+  assert.equal(falCalls.length, falBefore);
+  assert.match(lastText(), /Пришлите фото/);
+
+  await pressButton(carol, "menu:main"); // escape the mode (Copilot fix)
+  await sendText(carol, "a blue cat"); // now a normal text-to-image prompt
+  assert.equal(falCalls.length, falBefore + 1);
+  assert.equal(falCalls.at(-1)!.endpoint, "fal-ai/bytedance/seedream/v4/text-to-image");
+  assert.equal(falCalls.at(-1)!.input.prompt, "a blue cat");
+});
+
+await step("credit pluralization: '2 кредита' declension is correct (not 'кредитов')", async () => {
+  await sendText(carol, "/balance");
+  assert.match(lastText(), /Баланс: 2 кредита/); // carol: 3 free − 1 for "a blue cat"
+});
+
+await step("analytics: events logged; /funnel shows the conversion funnel to admin only", async () => {
+  const before = calls("sendMessage").length;
+  await sendText(carol, "/funnel"); // non-admin → silence
+  assert.equal(calls("sendMessage").length, before);
+
+  await sendText(admin, "/funnel");
+  const text = lastText();
+  assert.match(text, /Воронка/);
+  assert.match(text, /Купили:/);
+  assert.match(text, /Почему не купили/);
+
+  const f = funnel();
+  assert.ok(f.visitors >= 3, `visitors ${f.visitors}`); // alice, bob, carol (+admin)
+  assert.ok(f.paid >= 2, `paid ${f.paid}`); // alice + bob purchased
+  assert.ok(f.succeededGen >= 1, `succeededGen ${f.succeededGen}`);
+  assert.ok(f.hitPaywall >= 1, `hitPaywall ${f.hitPaywall}`); // alice hit the animate paywall
+  assert.ok(f.dropoff.neverGenerated >= 0);
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_PATH})`);
