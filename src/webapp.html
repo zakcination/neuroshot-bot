@@ -84,7 +84,7 @@
         const g = document.getElementById("g");
         if (!gens.length) g.appendChild($(`<div class="empty">Пока пусто — создайте первую работу в боте ✨</div>`));
         for (const item of gens) {
-          const a = $(`<a href="${esc(item.output_url)}" target="_blank"><img loading="lazy" src="${esc(item.output_url)}" alt=""></a>`);
+          const a = $(`<a href="${esc(item.output_url)}" target="_blank" rel="noopener noreferrer"><img loading="lazy" src="${esc(item.output_url)}" alt=""></a>`);
           g.appendChild(a);
         }
 

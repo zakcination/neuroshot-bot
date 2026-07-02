@@ -65,7 +65,87 @@ export const MODELS = {
     label: "💎 Премиум-правка",
     input: (prompt, imageUrl) => ({ prompt, image_urls: [imageUrl], quality: "high" }),
   },
+
+  // --- Top-tier models (verified against fal.ai model pages, Jul 2026) ---
+  // Endpoint IDs, params and USD costs confirmed from the fal model pages; credit
+  // prices target ~2–3× provider cost at pack pricing. Re-verify before launch.
+
+  // Nano Banana 2 (Google) — fast SOTA image, $0.08/img @1K.
+  nb2_image: {
+    key: "nb2_image",
+    kind: "text_to_image",
+    falEndpoint: "fal-ai/nano-banana-2",
+    credits: 2,
+    approxCostUsd: 0.08,
+    label: "🍌 Nano Banana 2",
+    input: (prompt) => ({ prompt, resolution: "1K" }),
+  },
+  nb2_edit: {
+    key: "nb2_edit",
+    kind: "image_edit",
+    falEndpoint: "fal-ai/nano-banana-2/edit",
+    credits: 2,
+    approxCostUsd: 0.08,
+    label: "🍌 Nano Banana 2 — правка",
+    input: (prompt, imageUrl) => ({ prompt, image_urls: [imageUrl] }),
+  },
+  // Nano Banana Pro (Gemini 3 Pro) — SOTA image, $0.15/img @1K–2K.
+  nbpro_image: {
+    key: "nbpro_image",
+    kind: "text_to_image",
+    falEndpoint: "fal-ai/nano-banana-pro",
+    credits: 3,
+    approxCostUsd: 0.15,
+    label: "🍌 Nano Banana Pro",
+    input: (prompt) => ({ prompt, resolution: "2K" }),
+  },
+  nbpro_edit: {
+    key: "nbpro_edit",
+    kind: "image_edit",
+    falEndpoint: "fal-ai/nano-banana-pro/edit",
+    credits: 3,
+    approxCostUsd: 0.15,
+    label: "🍌 Nano Banana Pro — правка",
+    input: (prompt, imageUrl) => ({ prompt, image_urls: [imageUrl], resolution: "2K" }),
+  },
+  // Kling 3.0 Pro — top image→video, $0.168/s audio-on → 5s ≈ $0.84.
+  kling3: {
+    key: "kling3",
+    kind: "image_to_video",
+    falEndpoint: "fal-ai/kling-video/v3/pro/image-to-video",
+    credits: 14,
+    approxCostUsd: 0.84,
+    label: "🎬 Kling 3.0",
+    input: (prompt, imageUrl) => ({ prompt, start_image_url: imageUrl, duration: "5" }),
+  },
+  // Seedance 2.0 Fast (ByteDance) — economy premium video, $0.2419/s → 5s ≈ $1.21.
+  seedance_fast: {
+    key: "seedance_fast",
+    kind: "image_to_video",
+    falEndpoint: "fal-ai/bytedance/seedance-2.0/fast/image-to-video",
+    credits: 20,
+    approxCostUsd: 1.21,
+    label: "🎬 Seedance 2.0 Fast",
+    input: (prompt, imageUrl) => ({ prompt, image_url: imageUrl, resolution: "720p", duration: "5" }),
+  },
+  // Seedance 2.0 (ByteDance) — flagship video with audio/physics, $0.3024/s → 5s ≈ $1.51.
+  seedance: {
+    key: "seedance",
+    kind: "image_to_video",
+    falEndpoint: "fal-ai/bytedance/seedance-2.0/image-to-video",
+    credits: 25,
+    approxCostUsd: 1.51,
+    label: "🎬 Seedance 2.0",
+    input: (prompt, imageUrl) => ({ prompt, image_url: imageUrl, resolution: "720p", duration: "5" }),
+  },
 } satisfies Record<string, ModelSpec>;
+
+/**
+ * Model pickers surfaced in the bot ("market bombing" the famous models by name).
+ * Order = display order; each entry must be a real MODELS key of the right kind.
+ */
+export const IMAGE_MODEL_PICKER = ["text_to_image", "nb2_image", "nbpro_image", "premium_image"] as const;
+export const VIDEO_MODEL_PICKER = ["animate", "kling3", "seedance_fast", "seedance"] as const;
 
 /**
  * One-tap style presets (Higgsfield-style): a curated prompt applied to the

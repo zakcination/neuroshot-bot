@@ -43,8 +43,13 @@ export function verifyInitData(initData: string, botToken: string, maxAgeSec = 8
   const b = Buffer.from(hash, "hex");
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
 
-  const authDate = Number(params.get("auth_date") ?? 0);
-  if (maxAgeSec > 0 && authDate > 0 && Date.now() / 1000 - authDate > maxAgeSec) return null;
+  // Require a valid auth_date and reject stale or future-dated payloads
+  // (missing/non-numeric auth_date must NOT be treated as always-fresh).
+  const authDate = Number(params.get("auth_date"));
+  if (!Number.isFinite(authDate) || authDate <= 0) return null;
+  const ageSec = Date.now() / 1000 - authDate;
+  if (maxAgeSec > 0 && ageSec > maxAgeSec) return null;
+  if (ageSec < -300) return null; // >5min in the future → clock skew / forged
 
   try {
     const user = JSON.parse(params.get("user") ?? "null") as TgUser | null;
