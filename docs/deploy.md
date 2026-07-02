@@ -42,8 +42,13 @@ docker compose logs -f app                      # "NeuroShot bot starting…" + 
 Open the bot → `/start` shows the 🌐 button; `/app` opens the cabinet.
 
 ### Operate
-- **Data** persists in the `botdata` volume (`/data/bot.db`, WAL). Back it up:
-  `docker compose cp app:/data/bot.db ./backup-$(date +%F).db`
+- **Data** persists in the `botdata` volume (`/data/bot.db`, WAL mode). Take a
+  **consistent hot backup** with SQLite's online backup (safe while the app runs —
+  do not just copy `bot.db`, recent writes live in `-wal`):
+  ```bash
+  docker compose exec app node -e "require('better-sqlite3')('/data/bot.db').backup('/data/backup.db').then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)})"
+  docker compose cp app:/data/backup.db ./backup-$(date +%F).db
+  ```
 - **Update**: `git pull && docker compose up -d --build`
 - **Logs**: `docker compose logs -f app`
 - **Bot only, no Mini App**: leave `WEBAPP_URL`/`WEBAPP_DOMAIN` empty and run just

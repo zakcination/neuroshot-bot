@@ -23,8 +23,10 @@ ENV NODE_ENV=production \
 EXPOSE 8080
 VOLUME ["/data"]
 
-# Liveness: the Mini App server exposes /healthz (only when WEBAPP_URL is set).
+# Liveness: probe the Mini App /healthz on WEBAPP_PORT when the web layer is on.
+# In bot-only mode (no WEBAPP_URL) there is no HTTP server, so report healthy and
+# let Docker's own process supervision handle liveness.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1
+  CMD sh -c '[ -z "$WEBAPP_URL" ] || wget -qO- "http://127.0.0.1:${WEBAPP_PORT:-8080}/healthz" >/dev/null 2>&1'
 
 CMD ["npm", "start"]
