@@ -70,14 +70,27 @@ await step("verifyInitData rejects a payload signed with a different token", () 
   assert.equal(verifyInitData(forged, BOT_TOKEN), null);
 });
 
-await step("verifyInitData rejects a stale auth_date", () => {
+/** Sign an initData with a caller-chosen auth_date (or none) — for freshness tests. */
+function signWithAuthDate(authDate: number | null): string {
   const params = new URLSearchParams();
   params.set("user", JSON.stringify({ id: 7 }));
-  params.set("auth_date", String(Math.floor(Date.now() / 1000) - 90000)); // ~25h old
+  if (authDate !== null) params.set("auth_date", String(authDate));
   const pairs = [...params].map(([k, v]) => `${k}=${v}`).sort();
   const secret = createHmac("sha256", "WebAppData").update(BOT_TOKEN).digest();
   params.set("hash", createHmac("sha256", secret).update(pairs.join("\n")).digest("hex"));
-  assert.equal(verifyInitData(params.toString(), BOT_TOKEN), null);
+  return params.toString();
+}
+
+await step("verifyInitData rejects a stale auth_date", () => {
+  assert.equal(verifyInitData(signWithAuthDate(Math.floor(Date.now() / 1000) - 90000), BOT_TOKEN), null);
+});
+
+await step("verifyInitData rejects a missing auth_date (no always-fresh bypass)", () => {
+  assert.equal(verifyInitData(signWithAuthDate(null), BOT_TOKEN), null);
+});
+
+await step("verifyInitData rejects a future-dated auth_date (clock skew guard)", () => {
+  assert.equal(verifyInitData(signWithAuthDate(Math.floor(Date.now() / 1000) + 3600), BOT_TOKEN), null);
 });
 
 // ---- API over HTTP, backed by the shared DB ----

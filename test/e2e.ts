@@ -134,6 +134,7 @@ const alice: From = { id: 1001, is_bot: false, first_name: "Alice", username: "a
 const bob: From = { id: 1002, is_bot: false, first_name: "Bob", username: "bob" };
 const admin: From = { id: 9999, is_bot: false, first_name: "Admin", username: "admin" };
 const carol: From = { id: 1003, is_bot: false, first_name: "Carol", username: "carol" };
+const dave: From = { id: 1004, is_bot: false, first_name: "Dave", username: "dave" };
 
 function chatOf(from: From) {
   return { id: from.id, type: "private" as const, first_name: from.first_name };
@@ -483,6 +484,46 @@ await step("menu media: animate shows a video preview, text shows example images
   const aBefore = calls("sendMediaGroup").length;
   await pressButton(carol, "menu:text");
   assert.ok(calls("sendMediaGroup").length > aBefore, "no text example album sent");
+});
+
+await step("top models: image picker routes text→image to the chosen model (accurate endpoint)", async () => {
+  await sendText(dave, "/start");
+  await payForPack(dave, "pro", 1200); // +150 credits to afford premium models
+  await pressButton(dave, "menu:models");
+  const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data: string }>>;
+  };
+  const buttons = kb.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(buttons.includes("txt:nbpro_image"), "Nano Banana Pro missing from image picker");
+  assert.ok(buttons.includes("txt:nb2_image"), "Nano Banana 2 missing from image picker");
+
+  await pressButton(dave, "txt:nbpro_image");
+  await sendText(dave, "cyberpunk cat");
+  const call = falCalls.at(-1)!;
+  assert.equal(call.endpoint, "fal-ai/nano-banana-pro"); // verified fal endpoint
+  assert.equal(call.input.prompt, "cyberpunk cat");
+  assert.equal(call.input.resolution, "2K");
+  assert.equal(credits(dave.id), 150); // 153 − 3
+});
+
+await step("top models: video picker routes photo→video to the chosen model (Seedance 2.0)", async () => {
+  await sendPhoto(dave, "dave-1");
+  await pressButton(dave, "menu:videopick");
+  const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data: string }>>;
+  };
+  const buttons = kb.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(buttons.includes("act:kling3"), "Kling 3.0 missing from video picker");
+  assert.ok(buttons.includes("act:seedance"), "Seedance 2.0 missing from video picker");
+
+  await pressButton(dave, "act:seedance");
+  await sendText(dave, "slow dolly in");
+  const call = falCalls.at(-1)!;
+  assert.equal(call.endpoint, "fal-ai/bytedance/seedance-2.0/image-to-video"); // verified fal endpoint
+  assert.ok((call.input.image_url as string).startsWith("https://api.telegram.org/file/bot"));
+  assert.equal(call.input.duration, "5");
+  assert.equal(call.input.resolution, "720p");
+  assert.equal(credits(dave.id), 125); // 150 − 25
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_PATH})`);

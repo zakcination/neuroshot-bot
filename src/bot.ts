@@ -7,7 +7,14 @@ import { Bot, GrammyError, HttpError, InlineKeyboard, InputFile, InputMediaBuild
 import { config } from "./config.js";
 import { funnel, getOrCreateUser, logEvent, setPending, stats, type UserRow } from "./db.js";
 import { modelByKey, runGeneration } from "./generate.js";
-import { MODELS, PRESET_MODEL, PRESETS, type Preset } from "./models.js";
+import {
+  IMAGE_MODEL_PICKER,
+  MODELS,
+  PRESET_MODEL,
+  PRESETS,
+  VIDEO_MODEL_PICKER,
+  type Preset,
+} from "./models.js";
 import { registerPayments, sendBalance } from "./payments.js";
 
 function user(ctx: { from?: { id: number; username?: string } }, referrerId: number | null = null): UserRow {
@@ -28,12 +35,34 @@ export function mainMenu(): InlineKeyboard {
     .row()
     .text("🛍 Фото товара для маркетплейса", "menu:product")
     .row()
-    .text(`🎬 Оживить фото в видео (${MODELS.animate.credits} кр)`, "menu:animate")
+    .text(`🎬 Оживить фото в видео (от ${MODELS.animate.credits} кр)`, "menu:animate")
     .row()
     .text("✨ Картинка из текста", "menu:text")
+    .row()
+    .text("⚡ Топ AI-модели", "menu:models")
     .row();
   if (config.webappUrl) kb.webApp("🌐 Открыть приложение", config.webappUrl).row();
   return kb.text("💰 Баланс и пакеты", "menu:balance").text("🎁 Заработать 10%", "menu:ref");
+}
+
+/** Picker of the top text-to-image models (famous names, priced). */
+function imageModelsKeyboard(): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  for (const key of IMAGE_MODEL_PICKER) {
+    const m = MODELS[key];
+    kb.text(`${m.label} (${m.credits} кр)`, `txt:${key}`).row();
+  }
+  return kb.text("🎬 Видео из фото →", "menu:animate").row().text("📋 Меню", "menu:main");
+}
+
+/** Picker of the top image-to-video models (famous names, priced). Needs a photo. */
+function videoModelsKeyboard(): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  for (const key of VIDEO_MODEL_PICKER) {
+    const m = MODELS[key];
+    kb.text(`${m.label} (${m.credits} кр)`, `act:${key}`).row();
+  }
+  return kb.text("📋 Меню", "menu:main");
 }
 
 function presetsKeyboard(category: Preset["category"]): InlineKeyboard {
@@ -267,14 +296,23 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   bot.callbackQuery("menu:animate", async (ctx) => {
     await ctx.answerCallbackQuery();
     const u = user(ctx);
-    setPending(u.id, "mode_animate", u.pending_file_id);
     await sendMenuVideo(ctx, "animate"); // example of the expected result
-    await ctx.reply(
-      u.pending_file_id
-        ? "Опишите движение (например: «медленный наезд камеры, волосы развеваются»):"
-        : "Вот пример 👆 Пришлите фото 🎬 — превратим его в 5-секундное видео.",
-    );
-    if (u.pending_file_id) setPending(u.id, "animate", u.pending_file_id);
+    if (u.pending_file_id) {
+      await ctx.reply("🎬 Выберите видео-модель:", { reply_markup: videoModelsKeyboard() });
+      return;
+    }
+    setPending(u.id, "mode_animate", null);
+    await ctx.reply("Вот пример 👆 Пришлите фото 🎬 — и выберите модель (Kling / Seedance).");
+  });
+
+  bot.callbackQuery("menu:videopick", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = user(ctx);
+    if (!u.pending_file_id) {
+      await ctx.reply("Сначала пришлите фото 🙂");
+      return;
+    }
+    await ctx.reply("🎬 Выберите видео-модель:", { reply_markup: videoModelsKeyboard() });
   });
 
   bot.callbackQuery("menu:text", async (ctx) => {
@@ -282,11 +320,19 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     const u = user(ctx);
     setPending(u.id, null, u.pending_file_id); // leave photo mode so the next text becomes a t2i prompt
     await sendMenuAlbum(ctx, ["text_example_1", "text_example_2"]); // examples of the expected result
+    await ctx.reply("✨ Выберите модель для картинки по тексту:", {
+      reply_markup: imageModelsKeyboard(),
+    });
+  });
+
+  // Top-models hub: image-model picker + a route into the video-model picker.
+  bot.callbackQuery("menu:models", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = user(ctx);
+    setPending(u.id, null, u.pending_file_id);
     await ctx.reply(
-      [
-        `✨ Просто напишите сообщением, что нарисовать (${MODELS.text_to_image.credits} кр).`,
-        `💎 Максимальное качество: /premium ваш запрос (${MODELS.premium_image.credits} кр).`,
-      ].join("\n"),
+      "⚡ Топовые модели ИИ.\nКартинка по тексту — выберите модель (или пришлите фото для видео):",
+      { reply_markup: imageModelsKeyboard() },
     );
   });
 
@@ -336,8 +382,8 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       return;
     }
     if (mode === "mode_animate") {
-      setPending(u.id, "animate", fileId);
-      await ctx.reply("Опишите движение (например: «медленный наезд камеры, волосы развеваются»):");
+      setPending(u.id, "await_action", fileId);
+      await ctx.reply("🎬 Выберите видео-модель:", { reply_markup: videoModelsKeyboard() });
       return;
     }
 
@@ -349,7 +395,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       .row()
       .text(`🖼 Редактировать по описанию (${MODELS.photo_edit.credits} кр)`, "act:photo_edit")
       .row()
-      .text(`🎬 Оживить в видео (${MODELS.animate.credits} кр)`, "act:animate");
+      .text("🎬 Оживить в видео (Kling / Seedance)", "menu:videopick");
     await ctx.reply("Что сделать с этим фото?", { reply_markup: kb });
   });
 
@@ -367,6 +413,19 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
         ? "Опишите движение (например: «медленный наезд камеры, волосы развеваются»):"
         : "Опишите, что изменить (например: «замени фон на парижскую улицу на закате»):",
     );
+  });
+
+  // Text-to-image model picked from a picker — no photo needed, next text runs it.
+  bot.callbackQuery(/^txt:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = user(ctx);
+    const model = modelByKey(ctx.match[1]);
+    if (!model || model.kind !== "text_to_image") {
+      await ctx.reply("Модель недоступна 🙂");
+      return;
+    }
+    setPending(u.id, model.key, null); // text model: no photo
+    await ctx.reply(`✍️ Напишите, что нарисовать — ${model.label} (${model.credits} кр):`);
   });
 
   // One-tap presets: curated prompt through the premium model, no typing.
@@ -400,9 +459,13 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       }
     }
 
-    if (u.pending_action && u.pending_action !== "await_action" && !u.pending_action.startsWith("mode_") && u.pending_file_id) {
+    if (u.pending_action && u.pending_action !== "await_action" && !u.pending_action.startsWith("mode_")) {
       const model = modelByKey(u.pending_action);
-      if (model) {
+      if (model?.kind === "text_to_image") {
+        await runGeneration(ctx, u, model, text); // picked text model, no photo needed
+        return;
+      }
+      if (model && u.pending_file_id) {
         await runGeneration(ctx, u, model, text, u.pending_file_id);
         return;
       }
