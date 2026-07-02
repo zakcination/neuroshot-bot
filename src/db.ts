@@ -44,7 +44,17 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_user ON events(user_id);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
+CREATE INDEX IF NOT EXISTS idx_generations_user ON generations(user_id);
 `);
+
+// Migration: store the delivered result URL so the same content the bot
+// produced is reusable in the web app (shared gallery). Guarded for old DBs.
+{
+  const cols = db.prepare("PRAGMA table_info(generations)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === "output_url")) {
+    db.exec("ALTER TABLE generations ADD COLUMN output_url TEXT");
+  }
+}
 
 /** Minutes of inactivity after which the next interaction counts as a new visit. */
 const SESSION_GAP_MIN = 30;
@@ -118,10 +128,69 @@ export function logGeneration(
   prompt: string,
   credits: number,
   status: "ok" | "error",
+  outputUrl?: string,
 ): void {
   db.prepare(
-    "INSERT INTO generations (user_id, model, prompt, credits, status) VALUES (?, ?, ?, ?, ?)",
-  ).run(userId, model, prompt, credits, status);
+    "INSERT INTO generations (user_id, model, prompt, credits, status, output_url) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(userId, model, prompt, credits, status, outputUrl ?? null);
+}
+
+export interface GenerationRow {
+  id: number;
+  model: string;
+  prompt: string | null;
+  credits: number;
+  status: string;
+  output_url: string | null;
+  created_at: string;
+}
+
+/** A user's recent generations (newest first) — powers the web-app gallery. */
+export function recentGenerations(userId: number, limit = 30): GenerationRow[] {
+  return db
+    .prepare(
+      "SELECT id, model, prompt, credits, status, output_url, created_at FROM generations WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+    )
+    .all(userId, limit) as GenerationRow[];
+}
+
+/** Per-user dashboard totals for the web app (own analytics — novel for the genre). */
+export function userDashboard(userId: number): {
+  credits: number;
+  totalGenerations: number;
+  okGenerations: number;
+  creditsSpent: number;
+  purchases: number;
+  referralEarned: number;
+  referralCount: number;
+} {
+  const one = <T>(sql: string, ...args: unknown[]) => db.prepare(sql).get(...args) as T;
+  const u = one<{ credits: number } | undefined>("SELECT credits FROM users WHERE id = ?", userId);
+  const gen = one<{ total: number; ok: number }>(
+    "SELECT COUNT(*) total, COALESCE(SUM(CASE WHEN status='ok' THEN 1 ELSE 0 END),0) ok FROM generations WHERE user_id = ?",
+    userId,
+  );
+  const spent = one<{ s: number }>(
+    "SELECT COALESCE(SUM(-delta),0) s FROM ledger WHERE user_id = ? AND reason = 'generation'",
+    userId,
+  );
+  const purchases = one<{ c: number }>(
+    "SELECT COUNT(*) c FROM ledger WHERE user_id = ? AND reason = 'purchase'",
+    userId,
+  );
+  const ref = one<{ earned: number; c: number }>(
+    "SELECT COALESCE(SUM(delta),0) earned, COUNT(*) c FROM ledger WHERE user_id = ? AND reason = 'referral'",
+    userId,
+  );
+  return {
+    credits: u?.credits ?? 0,
+    totalGenerations: gen.total,
+    okGenerations: gen.ok,
+    creditsSpent: spent.s,
+    purchases: purchases.c,
+    referralEarned: ref.earned,
+    referralCount: ref.c,
+  };
 }
 
 /**

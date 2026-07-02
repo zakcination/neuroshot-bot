@@ -92,6 +92,10 @@ function lastText(method = "sendMessage"): string {
   const c = calls(method).at(-1);
   return (c?.payload.text as string) ?? "";
 }
+/** Delivered generation results are caption-less photos; hero/menu images carry a caption. */
+function resultPhotos(): ApiCall[] {
+  return calls("sendPhoto").filter((c) => !c.payload.caption);
+}
 
 // ---------- fal.ai stub ----------
 
@@ -234,8 +238,10 @@ await step("signup: /start creates user with 3 free credits and shows the use-ca
   await sendText(alice, "/start");
   assert.equal(credits(alice.id), 3);
   assert.equal(ledgerCount("signup"), 1);
-  assert.match(lastText(), /3 бесплатных кредита/);
-  const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
+  // Main menu ships as a hero photo carrying the welcome caption + keyboard.
+  const hero = calls("sendPhoto").at(-1)!;
+  assert.match(hero.payload.caption as string, /3 бесплатных кредита/);
+  const kb = hero.payload.reply_markup as {
     inline_keyboard: Array<Array<{ callback_data: string }>>;
   };
   const buttons = kb.inline_keyboard.flat().map((b) => b.callback_data);
@@ -249,10 +255,10 @@ await step("text→image: prompt charges 1 credit, calls Seedream, delivers phot
   assert.equal(falCalls.length, 1);
   assert.equal(falCalls[0].endpoint, "fal-ai/bytedance/seedream/v4/text-to-image");
   assert.equal(falCalls[0].input.prompt, "a red fox in the snow");
-  assert.equal(calls("sendPhoto").length, 1);
+  assert.equal(resultPhotos().length, 1);
   assert.equal(credits(alice.id), 2);
   // No source photo → «Ещё стиль» must NOT appear (Copilot: it would dead-end).
-  const kb = calls("sendPhoto").at(-1)!.payload.reply_markup as {
+  const kb = resultPhotos().at(-1)!.payload.reply_markup as {
     inline_keyboard: Array<Array<{ callback_data: string }>>;
   };
   assert.deepEqual(kb.inline_keyboard.flat().map((b) => b.callback_data), ["menu:main"]);
@@ -270,7 +276,7 @@ await step("photo→edit: action keyboard, prompt, Nano Banana edit charges 1 cr
     `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/photos/test.jpg`,
   ]);
   assert.equal(calls("getFile").length, 1);
-  assert.equal(calls("sendPhoto").length, 2);
+  assert.equal(resultPhotos().length, 2);
   assert.equal(credits(alice.id), 1);
 });
 
@@ -385,7 +391,7 @@ await step("photoshoot preset: photo → menu:photoshoot → one tap renders via
   assert.equal(credits(alice.id), 9); // 13 - 4
 
   // Every delivered result carries the next-step keyboard.
-  const delivered = calls("sendPhoto").at(-1)!.payload.reply_markup as {
+  const delivered = resultPhotos().at(-1)!.payload.reply_markup as {
     inline_keyboard: Array<Array<{ callback_data: string }>>;
   };
   const after = delivered.inline_keyboard.flat().map((b) => b.callback_data);
@@ -467,6 +473,16 @@ await step("analytics: events logged; /funnel shows the conversion funnel to adm
   assert.ok(f.succeededGen >= 1, `succeededGen ${f.succeededGen}`);
   assert.ok(f.hitPaywall >= 1, `hitPaywall ${f.hitPaywall}`); // alice hit the animate paywall
   assert.ok(f.dropoff.neverGenerated >= 0);
+});
+
+await step("menu media: animate shows a video preview, text shows example images", async () => {
+  const vBefore = calls("sendVideo").length;
+  await pressButton(carol, "menu:animate");
+  assert.ok(calls("sendVideo").length > vBefore, "no animate video preview sent");
+
+  const aBefore = calls("sendMediaGroup").length;
+  await pressButton(carol, "menu:text");
+  assert.ok(calls("sendMediaGroup").length > aBefore, "no text example album sent");
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_PATH})`);

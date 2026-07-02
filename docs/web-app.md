@@ -1,0 +1,77 @@
+# Web layer — Telegram Mini App (and beyond)
+
+The bot and the web app are **one product over one state**. Both read and write
+the same SQLite database (credits, ledger, generations), so a user's balance and
+their gallery of creations are identical whether they're in the chat or the app.
+The same store later backs a public website — no content or logic is duplicated.
+
+```
+        ┌──────────────┐        ┌──────────────────┐
+Telegram│  Bot (grammY)│        │ Mini App (webapp)│  ← same HTML later served
+ chat   │ long polling │        │  http + initData │     as the public website
+        └──────┬───────┘        └────────┬─────────┘
+               │      shared writes/reads │
+               └──────────► SQLite ◄───────┘
+                    users · ledger · generations · events
+```
+
+## What ships here (foundation)
+
+- **`src/webapp.ts`** — Node HTTP server. Validates Telegram WebApp `initData`
+  by HMAC against the bot token (`verifyInitData`, per Telegram spec: tampered
+  hashes, foreign-token signatures and stale `auth_date` are all rejected). No
+  separate login.
+- **`GET /api/me`** — returns the caller's shared state: `dashboard` (balance,
+  creations, credits spent, referral earnings), `generations` (recent gallery
+  with result URLs). Opening the app onboards idempotently, same as the bot.
+- **`src/webapp.html`** — the Mini App: a personal cabinet (balance, top-up,
+  gallery of the user's own work, usage stats). Adapts to Telegram theme.
+- **Bot integration** — a `🌐 Приложение` menu button + `/app` command +
+  chat menu button, all gated on `WEBAPP_URL`. Dark until you deploy.
+- Result URLs are now persisted (`generations.output_url`) so the app shows the
+  exact images the bot produced.
+
+Enable by setting `WEBAPP_URL` (public HTTPS), `WEBAPP_PORT`, `BOT_USERNAME`,
+and registering the domain in @BotFather → Configure Mini App. Tested by
+`npm run test:webapp` (auth + shared-state, no Telegram needed).
+
+## Why this is the moat — differentiation
+
+Competitors in this niche (VeoSee/Neuroplace-class bots) are **consumer
+prompt-toys**: model-first menus, paste-a-200-word-prompt UX, no user account,
+no dashboard, no B2B surface. Their own channel data shows the ceiling of that
+model (engagement halved over 10 months of "все нейросети в одном боте").
+
+NeuroShot's wedge is the opposite: a **managed creative workspace** for
+marketplace sellers and small agencies. The web layer is what makes the
+management features below possible — and they're exactly the surface a
+chat-only competitor structurally cannot add quickly.
+
+## Novel management features — first-player roadmap
+
+Ordered by leverage. None of these exist in the incumbent bots today.
+
+1. **Personal creative dashboard** — *shipped foundation.* The user sees their
+   own balance, gallery, spend and referral earnings. Nobody in the niche shows
+   the user their own data.
+2. **Projects / collections** — organize generations into named sets
+   ("Весенний каталог"), re-run a whole set with a new style.
+3. **Brand kits** — save logo, palette, product reference shots; one tap applies
+   consistent brand styling across every generation. The retention hook for sellers.
+4. **Batch queue** — drop an album/CSV of products, get all marketplace cards in
+   one managed job with progress + per-item status. Turns a toy into a tool.
+5. **Team / agency workspaces** — a shared credit pool, member roles, per-member
+   usage. The B2B management layer that unlocks agency revenue.
+6. **Affiliate console** — live referral earnings, sub-affiliates, payout
+   management (the incumbents pay referrals but expose no console).
+7. **Scheduled auto-posting** — push finished content to the seller's own TG
+   channel / marketplace on a calendar.
+8. **Spend & ROI analytics** — cost-per-listing, forecast, model mix — for power
+   sellers deciding where credits go.
+9. **API keys / integrations** — wire NeuroShot into a seller's Ozon/WB listing
+   flow; makes the product infrastructure, not a novelty.
+10. **White-label / reseller mode** — agencies run NeuroShot under their own
+    brand for clients.
+
+The foundation (shared state + authenticated app + persisted gallery) is the
+prerequisite for all ten; each becomes an additive API + page, not a rewrite.

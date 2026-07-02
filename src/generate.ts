@@ -78,7 +78,7 @@ export async function runGeneration(
     } else {
       await ctx.replyWithPhoto(new InputFile({ url }), { reply_markup: after });
     }
-    logGeneration(user.id, model.key, prompt, model.credits, "ok");
+    logGeneration(user.id, model.key, prompt, model.credits, "ok", url);
     logEvent(user.id, "gen_ok", model.key);
   } catch (err) {
     addCredits(user.id, model.credits, "refund", model.key);

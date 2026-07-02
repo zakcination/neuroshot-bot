@@ -16,4 +16,9 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean)
     .map(Number),
+  // Telegram Mini App (web layer). Public HTTPS URL of the deployed app; when
+  // set, the bot shows a "🌐 Приложение" button and index.ts starts the server.
+  webappUrl: process.env.WEBAPP_URL ?? "",
+  webappPort: Number(process.env.WEBAPP_PORT ?? 8080),
+  webappBotUsername: process.env.BOT_USERNAME ?? "",
 };
