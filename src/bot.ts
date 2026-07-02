@@ -72,6 +72,49 @@ async function showPresets(ctx: Context, category: Preset["category"], header: s
   await ctx.reply(header, { reply_markup: presetsKeyboard(category) });
 }
 
+// Menu-level media (hero, per-flow examples) shipped in the repo.
+const MENU_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "assets", "menu");
+
+/** Main menu with the hero image (if shipped) carrying the caption + keyboard. */
+async function sendMainMenu(ctx: Context, caption: string): Promise<void> {
+  const hero = join(MENU_DIR, "hero.jpg");
+  if (existsSync(hero)) {
+    try {
+      await ctx.replyWithPhoto(new InputFile(hero), {
+        caption,
+        parse_mode: "HTML",
+        reply_markup: mainMenu(),
+      });
+      return;
+    } catch (e) {
+      console.error("hero image failed:", e);
+    }
+  }
+  await ctx.reply(caption, { parse_mode: "HTML", reply_markup: mainMenu() });
+}
+
+/** Send a menu example video (e.g. the animate preview) if the asset exists. */
+async function sendMenuVideo(ctx: Context, name: string): Promise<void> {
+  const file = join(MENU_DIR, `${name}.mp4`);
+  if (!existsSync(file)) return;
+  try {
+    await ctx.replyWithVideo(new InputFile(file));
+  } catch (e) {
+    console.error(`menu video ${name} failed:`, e);
+  }
+}
+
+/** Send a small album of example images for a flow (e.g. text-to-image). */
+async function sendMenuAlbum(ctx: Context, names: string[]): Promise<void> {
+  const files = names.map((n) => join(MENU_DIR, `${n}.jpg`)).filter((f) => existsSync(f));
+  if (files.length < 2) return;
+  try {
+    await ctx.replyWithMediaGroup(files.map((f) => InputMediaBuilder.photo(new InputFile(f))));
+  } catch (e) {
+    console.error("menu album failed:", e);
+  }
+}
+
 const WELCOME = [
   "📸 <b>NeuroShot</b> — AI-фотосессии и продающие фото товаров в один тап.",
   "",
@@ -112,16 +155,13 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     const payload = ctx.match?.trim();
     const referrerId = payload && /^\d+$/.test(payload) ? Number(payload) : null;
     const u = user(ctx, referrerId);
-    await ctx.reply(`${WELCOME}\n\n🎁 У вас <b>${u.credits} бесплатных кредита</b>.`, {
-      parse_mode: "HTML",
-      reply_markup: mainMenu(),
-    });
+    await sendMainMenu(ctx, `${WELCOME}\n\n🎁 У вас <b>${u.credits} бесплатных кредита</b>.`);
   });
 
   bot.command("menu", async (ctx) => {
     const u = user(ctx);
     setPending(u.id, null, u.pending_file_id); // escape any mode/prompt-await, keep the photo
-    await ctx.reply("Что создаём?", { reply_markup: mainMenu() });
+    await sendMainMenu(ctx, "Что создаём?");
   });
 
   bot.command("balance", async (ctx) => sendBalance(ctx, user(ctx).credits));
@@ -215,10 +255,11 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     await ctx.answerCallbackQuery();
     const u = user(ctx);
     setPending(u.id, "mode_animate", u.pending_file_id);
+    await sendMenuVideo(ctx, "animate"); // example of the expected result
     await ctx.reply(
       u.pending_file_id
         ? "Опишите движение (например: «медленный наезд камеры, волосы развеваются»):"
-        : "Пришлите фото 🎬 — превратим его в 5-секундное видео.",
+        : "Вот пример 👆 Пришлите фото 🎬 — превратим его в 5-секундное видео.",
     );
     if (u.pending_file_id) setPending(u.id, "animate", u.pending_file_id);
   });
@@ -227,6 +268,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     await ctx.answerCallbackQuery();
     const u = user(ctx);
     setPending(u.id, null, u.pending_file_id); // leave photo mode so the next text becomes a t2i prompt
+    await sendMenuAlbum(ctx, ["text_example_1", "text_example_2"]); // examples of the expected result
     await ctx.reply(
       [
         `✨ Просто напишите сообщением, что нарисовать (${MODELS.text_to_image.credits} кр).`,

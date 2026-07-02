@@ -45,6 +45,7 @@ CI (`.github/workflows/ci.yml`) runs all three on every push and PR.
 | `src/models.ts` | Model registry (fal endpoint, credit price, provider cost) + style presets + credit packs + referral rate. **This is the tuning surface** — add models/packs/presets here only. |
 | `scripts/brand-assets.mts` | Content population: generates avatar candidates, seed-post creatives and onboarding examples with GPT Image 2 into `brand-assets/` (gitignored) |
 | `assets/previews/` | Per-preset example-result images shown as an album when a category menu opens (see its README) |
+| `assets/menu/` | Top-level menu media: `/start` hero, animate video preview, text-flow examples (see its README) |
 | `src/db.ts` | SQLite schema + atomic credit ledger (spend is check-and-decrement, every movement journaled) |
 | `src/generate.ts` | Charge → call fal → deliver → refund-on-error pipeline |
 | `src/payments.ts` | Stars invoices, pre-checkout, crediting, referral payout |
