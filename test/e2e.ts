@@ -71,6 +71,12 @@ bot.api.config.use(async (_prev, method, payload) => {
     case "setMyCommands":
       result = true;
       break;
+    case "sendMediaGroup": {
+      // returns an array of Messages, one per media item
+      const media = (payload as { media?: unknown[] }).media ?? [];
+      result = media.map(() => stubMessage(payload as Record<string, unknown>));
+      break;
+    }
     default:
       // sendMessage / sendPhoto / sendVideo / sendInvoice all return a Message
       result = stubMessage(payload as Record<string, unknown>);
@@ -360,7 +366,10 @@ await step("balance: /balance reflects the ledger", async () => {
 
 await step("photoshoot preset: photo → menu:photoshoot → one tap renders via GPT Image 2 edit (4 cr)", async () => {
   await sendPhoto(alice, "photo-3");
+  const albumsBefore = calls("sendMediaGroup").length;
   await pressButton(alice, "menu:photoshoot");
+  // Preview album (expected results) is shown above the keyboard when assets ship.
+  assert.ok(calls("sendMediaGroup").length > albumsBefore, "no preview album sent");
   const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
     inline_keyboard: Array<Array<{ callback_data: string }>>;
   };

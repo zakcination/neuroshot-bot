@@ -1,6 +1,9 @@
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import type { UserFromGetMe } from "grammy/types";
 import type { Context } from "grammy";
-import { Bot, GrammyError, HttpError, InlineKeyboard } from "grammy";
+import { Bot, GrammyError, HttpError, InlineKeyboard, InputFile, InputMediaBuilder } from "grammy";
 import { config } from "./config.js";
 import { funnel, getOrCreateUser, logEvent, setPending, stats, type UserRow } from "./db.js";
 import { modelByKey, runGeneration } from "./generate.js";
@@ -41,6 +44,32 @@ function presetsKeyboard(category: Preset["category"]): InlineKeyboard {
   kb.text(`✍️ Свой промпт (${MODELS.premium_edit.credits} кр)`, "act:premium_edit").row();
   kb.text("📋 Меню", "menu:main");
   return kb;
+}
+
+// Preview images (expected results) live next to the built bot; shipped in the repo.
+const PREVIEW_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "assets", "previews");
+
+/** Example-results album for a category, so newcomers see outcomes before spending. */
+async function sendPreviewAlbum(ctx: Context, category: Preset["category"]): Promise<void> {
+  const items = PRESETS.filter((p) => p.category === category)
+    .map((p) => ({ p, file: join(PREVIEW_DIR, `${p.id}.jpg`) }))
+    .filter((x) => existsSync(x.file));
+  if (items.length >= 2) {
+    try {
+      await ctx.replyWithMediaGroup(
+        items.map((x) => InputMediaBuilder.photo(new InputFile(x.file), { caption: x.p.label })),
+      );
+    } catch (e) {
+      // Previews are a nicety — never let an album failure block the keyboard below.
+      console.error("preview album failed:", e);
+    }
+  }
+}
+
+/** Preview album + the tappable preset keyboard (used once a photo is on file). */
+async function showPresets(ctx: Context, category: Preset["category"], header: string): Promise<void> {
+  await sendPreviewAlbum(ctx, category);
+  await ctx.reply(header, { reply_markup: presetsKeyboard(category) });
 }
 
 const WELCOME = [
@@ -160,24 +189,26 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     await ctx.answerCallbackQuery();
     const u = user(ctx);
     if (u.pending_file_id) {
-      await ctx.reply("Выберите стиль — один тап, без промптов:", {
-        reply_markup: presetsKeyboard("photo"),
-      });
+      await showPresets(ctx, "photo", "Выберите стиль — один тап, без промптов:");
       return;
     }
     setPending(u.id, "mode_photo", null);
-    await ctx.reply("Пришлите своё фото 📸 (портрет без ретуши работает лучше всего) — и выберите стиль.");
+    await sendPreviewAlbum(ctx, "photo");
+    await ctx.reply(
+      "Вот что можно получить 👆 Пришлите своё фото 📸 (портрет без ретуши работает лучше всего) — и выберите стиль.",
+    );
   });
 
   bot.callbackQuery("menu:product", async (ctx) => {
     await ctx.answerCallbackQuery();
     const u = user(ctx);
     if (u.pending_file_id) {
-      await ctx.reply("Выберите подачу товара:", { reply_markup: presetsKeyboard("product") });
+      await showPresets(ctx, "product", "Выберите подачу товара:");
       return;
     }
     setPending(u.id, "mode_product", null);
-    await ctx.reply("Пришлите фото товара 🛍 (можно прямо со стола — фон мы заменим).");
+    await sendPreviewAlbum(ctx, "product");
+    await ctx.reply("Вот примеры 👆 Пришлите фото товара 🛍 (можно прямо со стола — фон мы заменим).");
   });
 
   bot.callbackQuery("menu:animate", async (ctx) => {
@@ -222,7 +253,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       await ctx.reply("Пришлите фото — и выбирайте стиль 🙂");
       return;
     }
-    await ctx.reply("Выберите стиль:", { reply_markup: presetsKeyboard("photo") });
+    await showPresets(ctx, "photo", "Выберите стиль:");
   });
 
   async function sendRefLink(ctx: Context) {
@@ -241,16 +272,12 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
     if (mode === "mode_product") {
       setPending(u.id, "await_action", fileId);
-      await ctx.reply("Отличный кадр! Выберите подачу товара:", {
-        reply_markup: presetsKeyboard("product"),
-      });
+      await showPresets(ctx, "product", "Отличный кадр! Выберите подачу товара:");
       return;
     }
     if (mode === "mode_photo") {
       setPending(u.id, "await_action", fileId);
-      await ctx.reply("Выберите стиль — один тап, без промптов:", {
-        reply_markup: presetsKeyboard("photo"),
-      });
+      await showPresets(ctx, "photo", "Выберите стиль — один тап, без промптов:");
       return;
     }
     if (mode === "mode_animate") {
