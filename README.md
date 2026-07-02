@@ -50,7 +50,8 @@ CI (`.github/workflows/ci.yml`) runs all three on every push and PR.
 | `src/generate.ts` | Charge → call fal → deliver → refund-on-error pipeline |
 | `src/payments.ts` | Stars invoices, pre-checkout, crediting, referral payout |
 | `src/bot.ts` | Bot wiring: commands, photo/text flows, pending-action state (`createBot()`, also used by the e2e harness) |
-| `src/index.ts` | Entrypoint: builds the bot, registers commands, starts long polling |
+| `src/webapp.ts` + `src/webapp.html` | Telegram Mini App: shared-state API (`initData` HMAC auth) + personal cabinet, over the same SQLite. See `docs/web-app.md` |
+| `src/index.ts` | Entrypoint: builds the bot, starts long polling + the Mini App server (if `WEBAPP_URL` set) |
 
 ## Before going live
 

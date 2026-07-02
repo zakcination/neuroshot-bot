@@ -23,7 +23,7 @@ function user(ctx: { from?: { id: number; username?: string } }, referrerId: num
  * - every delivered result carries a "next step" keyboard.
  */
 export function mainMenu(): InlineKeyboard {
-  return new InlineKeyboard()
+  const kb = new InlineKeyboard()
     .text("📸 AI-фотосессия", "menu:photoshoot")
     .row()
     .text("🛍 Фото товара для маркетплейса", "menu:product")
@@ -31,9 +31,9 @@ export function mainMenu(): InlineKeyboard {
     .text(`🎬 Оживить фото в видео (${MODELS.animate.credits} кр)`, "menu:animate")
     .row()
     .text("✨ Картинка из текста", "menu:text")
-    .row()
-    .text("💰 Баланс и пакеты", "menu:balance")
-    .text("🎁 Заработать 10%", "menu:ref");
+    .row();
+  if (config.webappUrl) kb.webApp("🌐 Открыть приложение", config.webappUrl).row();
+  return kb.text("💰 Баланс и пакеты", "menu:balance").text("🎁 Заработать 10%", "menu:ref");
 }
 
 function presetsKeyboard(category: Preset["category"]): InlineKeyboard {
@@ -156,12 +156,25 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     const referrerId = payload && /^\d+$/.test(payload) ? Number(payload) : null;
     const u = user(ctx, referrerId);
     await sendMainMenu(ctx, `${WELCOME}\n\n🎁 У вас <b>${u.credits} бесплатных кредита</b>.`);
+    // Deep link from the Mini App's "Пополнить" button.
+    if (payload === "buy") await sendBalance(ctx, u.credits);
   });
 
   bot.command("menu", async (ctx) => {
     const u = user(ctx);
     setPending(u.id, null, u.pending_file_id); // escape any mode/prompt-await, keep the photo
     await sendMainMenu(ctx, "Что создаём?");
+  });
+
+  bot.command("app", async (ctx) => {
+    user(ctx);
+    if (!config.webappUrl) {
+      await ctx.reply("Приложение скоро откроется 🌐");
+      return;
+    }
+    await ctx.reply("🌐 Ваш личный кабинет: баланс, галерея работ и статистика.", {
+      reply_markup: new InlineKeyboard().webApp("Открыть приложение", config.webappUrl),
+    });
   });
 
   bot.command("balance", async (ctx) => sendBalance(ctx, user(ctx).credits));

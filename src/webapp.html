@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>NeuroShot</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: var(--tg-theme-bg-color, #0f1216);
+      --card: var(--tg-theme-secondary-bg-color, #1a1f26);
+      --text: var(--tg-theme-text-color, #f2f4f7);
+      --hint: var(--tg-theme-hint-color, #8b95a1);
+      --accent: var(--tg-theme-button-color, #7c5cff);
+      --accent-text: var(--tg-theme-button-text-color, #ffffff);
+      --radius: 16px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 16px 16px 40px;
+    }
+    h1 { font-size: 20px; margin: 4px 0 2px; }
+    .sub { color: var(--hint); font-size: 13px; margin-bottom: 16px; }
+    .balance {
+      background: linear-gradient(135deg, #7c5cff, #d14bff);
+      color: #fff; border-radius: var(--radius); padding: 18px 20px; margin-bottom: 14px;
+    }
+    .balance .n { font-size: 34px; font-weight: 700; line-height: 1; }
+    .balance .l { opacity: .9; font-size: 13px; margin-top: 4px; }
+    .buy {
+      margin-top: 14px; width: 100%; border: 0; border-radius: 12px; padding: 12px;
+      background: rgba(255,255,255,.18); color: #fff; font-weight: 600; font-size: 15px; cursor: pointer;
+    }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px; }
+    .stat { background: var(--card); border-radius: 12px; padding: 12px; text-align: center; }
+    .stat .n { font-size: 20px; font-weight: 700; }
+    .stat .l { color: var(--hint); font-size: 11px; margin-top: 2px; }
+    h2 { font-size: 15px; margin: 18px 0 10px; }
+    .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .gallery a { display: block; aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: var(--card); }
+    .gallery img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .empty { color: var(--hint); text-align: center; padding: 30px 0; }
+    .err { color: #ff6b6b; text-align: center; padding: 40px 16px; }
+  </style>
+</head>
+<body>
+  <div id="root"><div class="empty">Загрузка…</div></div>
+
+  <script>
+    const tg = window.Telegram?.WebApp;
+    tg?.ready(); tg?.expand();
+    const $ = (h) => { const t = document.createElement("template"); t.innerHTML = h.trim(); return t.content.firstChild; };
+    const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+
+    async function load() {
+      const root = document.getElementById("root");
+      try {
+        const r = await fetch("/api/me", { headers: { Authorization: "tma " + (tg?.initData || "") } });
+        if (!r.ok) throw new Error("auth " + r.status);
+        const d = await r.json();
+        const dash = d.dashboard;
+        const gens = (d.generations || []).filter((g) => g.status === "ok" && g.output_url);
+
+        root.innerHTML = "";
+        root.appendChild($(`<div>
+          <h1>Привет, ${esc(d.user.first_name || "друг")} 👋</h1>
+          <div class="sub">Ваш кабинет NeuroShot</div>
+          <div class="balance">
+            <div class="n">${dash.credits}</div>
+            <div class="l">кредитов на балансе</div>
+            <button class="buy" id="buy">💳 Пополнить</button>
+          </div>
+          <div class="stats">
+            <div class="stat"><div class="n">${dash.okGenerations}</div><div class="l">создано</div></div>
+            <div class="stat"><div class="n">${dash.creditsSpent}</div><div class="l">потрачено</div></div>
+            <div class="stat"><div class="n">${dash.referralEarned}</div><div class="l">с рефералов</div></div>
+          </div>
+          <h2>🖼 Мои работы</h2>
+          <div class="gallery" id="g"></div>
+        </div>`));
+
+        const g = document.getElementById("g");
+        if (!gens.length) g.appendChild($(`<div class="empty">Пока пусто — создайте первую работу в боте ✨</div>`));
+        for (const item of gens) {
+          const a = $(`<a href="${esc(item.output_url)}" target="_blank"><img loading="lazy" src="${esc(item.output_url)}" alt=""></a>`);
+          g.appendChild(a);
+        }
+
+        document.getElementById("buy").onclick = () => {
+          if (d.bot_username) tg?.openTelegramLink("https://t.me/" + d.bot_username + "?start=buy");
+          else tg?.close();
+        };
+      } catch (e) {
+        root.innerHTML = '<div class="err">Не удалось загрузить кабинет.<br>Откройте приложение из бота.</div>';
+      }
+    }
+    load();
+  </script>
+</body>
+</html>
