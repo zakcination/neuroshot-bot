@@ -19,5 +19,11 @@ preview, run the model below with the prompt and replace the file (keep the
 | product_white | GPT Image 2 (1:1, high) | white sneaker on pure #FFFFFF, soft drop shadow, marketplace listing |
 | product_lifestyle | GPT Image 2 (1:1, high) | ceramic mug on wood by a window, daylight, aspirational magazine |
 
-Generated with the Higgsfield CLI (`hf generate create <model> --prompt … --wait`);
-full prompts are in the session's `scratchpad/hf-previews.sh`.
+Regenerate all previews with the committed script (needs the Higgsfield CLI,
+an authenticated session and a selected workspace):
+
+```bash
+bash scripts/generate-previews.sh
+```
+
+The full prompt and model for each preset live in that script.

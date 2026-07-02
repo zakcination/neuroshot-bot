@@ -55,9 +55,14 @@ async function sendPreviewAlbum(ctx: Context, category: Preset["category"]): Pro
     .map((p) => ({ p, file: join(PREVIEW_DIR, `${p.id}.jpg`) }))
     .filter((x) => existsSync(x.file));
   if (items.length >= 2) {
-    await ctx.replyWithMediaGroup(
-      items.map((x) => InputMediaBuilder.photo(new InputFile(x.file), { caption: x.p.label })),
-    );
+    try {
+      await ctx.replyWithMediaGroup(
+        items.map((x) => InputMediaBuilder.photo(new InputFile(x.file), { caption: x.p.label })),
+      );
+    } catch (e) {
+      // Previews are a nicety — never let an album failure block the keyboard below.
+      console.error("preview album failed:", e);
+    }
   }
 }
 
