@@ -1,0 +1,7 @@
+# Automatic HTTPS for the Mini App. WEBAPP_DOMAIN comes from the environment
+# (set in .env, passed through docker-compose). Caddy fetches + renews the
+# Let's Encrypt certificate on its own.
+{$WEBAPP_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy app:8080
+}
