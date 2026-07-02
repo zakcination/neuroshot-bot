@@ -2,7 +2,7 @@ import type { UserFromGetMe } from "grammy/types";
 import type { Context } from "grammy";
 import { Bot, GrammyError, HttpError, InlineKeyboard } from "grammy";
 import { config } from "./config.js";
-import { getOrCreateUser, setPending, stats, type UserRow } from "./db.js";
+import { funnel, getOrCreateUser, logEvent, setPending, stats, type UserRow } from "./db.js";
 import { modelByKey, runGeneration } from "./generate.js";
 import { MODELS, PRESET_MODEL, PRESETS, type Preset } from "./models.js";
 import { registerPayments, sendBalance } from "./payments.js";
@@ -54,6 +54,31 @@ const WELCOME = [
 export function createBot(botInfo?: UserFromGetMe): Bot {
   const bot = new Bot(config.botToken, botInfo ? { botInfo } : undefined);
 
+  // Behavioural analytics: one central logger for every interaction (sessions,
+  // menu selects, photo uploads). Generation/paywall/purchase events are logged
+  // at their source. Runs before handlers; never blocks them.
+  bot.use(async (ctx, next) => {
+    const from = ctx.from;
+    if (from) {
+      try {
+        const data = ctx.callbackQuery?.data;
+        if (data) {
+          if (data.startsWith("preset:")) logEvent(from.id, "preset", data.slice(7));
+          else logEvent(from.id, "select", data); // menu:* | act:* | buy:* | show_packs
+        } else if (ctx.message?.photo) {
+          logEvent(from.id, "photo");
+        } else if (ctx.message?.text?.startsWith("/start")) {
+          logEvent(from.id, "menu_open", "start");
+        } else if (ctx.message?.text === "/menu") {
+          logEvent(from.id, "menu_open", "menu");
+        }
+      } catch (e) {
+        console.error("analytics log failed:", e);
+      }
+    }
+    await next();
+  });
+
   bot.command("start", async (ctx) => {
     const payload = ctx.match?.trim();
     const referrerId = payload && /^\d+$/.test(payload) ? Number(payload) : null;
@@ -65,7 +90,8 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   });
 
   bot.command("menu", async (ctx) => {
-    user(ctx);
+    const u = user(ctx);
+    setPending(u.id, null, u.pending_file_id); // escape any mode/prompt-await, keep the photo
     await ctx.reply("Что создаём?", { reply_markup: mainMenu() });
   });
 
@@ -95,13 +121,38 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     );
   });
 
+  // Admin conversion funnel + "why didn't they order" drop-off buckets.
+  bot.command("funnel", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const f = funnel();
+    const pct = (n: number) => (f.visitors ? `${Math.round((n / f.visitors) * 100)}%` : "—");
+    await ctx.reply(
+      [
+        "📊 Воронка (по посетителям)",
+        `Визитов: ${f.visits} · Уникальных: ${f.visitors}`,
+        `📸 Загрузили фото: ${f.uploadedPhoto} (${pct(f.uploadedPhoto)})`,
+        `⚙️ Начали генерацию: ${f.startedGen} (${pct(f.startedGen)})`,
+        `✅ Получили результат: ${f.succeededGen} (${pct(f.succeededGen)})`,
+        `💳 Дошли до оплаты: ${f.hitPaywall} (${pct(f.hitPaywall)})`,
+        `💰 Купили: ${f.paid} (${pct(f.paid)})`,
+        "",
+        "❓ Почему не купили:",
+        `• не начали генерить: ${f.dropoff.neverGenerated} (активация)`,
+        `• была ошибка провайдера: ${f.dropoff.genFailedNoPaid} (надёжность)`,
+        `• видели пейволл, не купили: ${f.dropoff.paywallNoPaid} (цена/ценность)`,
+        `• израсходовали бесплатные, не купили: ${f.dropoff.triedFreeNoPaid} (ценность)`,
+      ].join("\n"),
+    );
+  });
+
   registerPayments(bot);
 
   // ---- Main menu navigation ----
 
   bot.callbackQuery("menu:main", async (ctx) => {
     await ctx.answerCallbackQuery();
-    user(ctx);
+    const u = user(ctx);
+    setPending(u.id, null, u.pending_file_id); // escape any mode/prompt-await, keep the photo
     await ctx.reply("Что создаём?", { reply_markup: mainMenu() });
   });
 
@@ -115,7 +166,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       return;
     }
     setPending(u.id, "mode_photo", null);
-    await ctx.reply("Пришлите своё фото 📸 (портрет без ретуши работает лучше всего) — и выберете стиль.");
+    await ctx.reply("Пришлите своё фото 📸 (портрет без ретуши работает лучше всего) — и выберите стиль.");
   });
 
   bot.callbackQuery("menu:product", async (ctx) => {
@@ -143,7 +194,8 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   bot.callbackQuery("menu:text", async (ctx) => {
     await ctx.answerCallbackQuery();
-    user(ctx);
+    const u = user(ctx);
+    setPending(u.id, null, u.pending_file_id); // leave photo mode so the next text becomes a t2i prompt
     await ctx.reply(
       [
         `✨ Просто напишите сообщением, что нарисовать (${MODELS.text_to_image.credits} кр).`,

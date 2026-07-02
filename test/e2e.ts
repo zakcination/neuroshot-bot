@@ -21,7 +21,7 @@ process.env.ADMIN_IDS = "9999";
 
 const { fal } = await import("@fal-ai/client");
 const { createBot } = await import("../src/bot.js");
-const { db } = await import("../src/db.js");
+const { db, funnel } = await import("../src/db.js");
 
 // ---------- Telegram API stub (transformer: intercepts every outgoing call) ----------
 
@@ -123,6 +123,7 @@ interface From {
 const alice: From = { id: 1001, is_bot: false, first_name: "Alice", username: "alice" };
 const bob: From = { id: 1002, is_bot: false, first_name: "Bob", username: "bob" };
 const admin: From = { id: 9999, is_bot: false, first_name: "Admin", username: "admin" };
+const carol: From = { id: 1003, is_bot: false, first_name: "Carol", username: "carol" };
 
 function chatOf(from: From) {
   return { id: from.id, type: "private" as const, first_name: from.first_name };
@@ -237,13 +238,18 @@ await step("signup: /start creates user with 3 free credits and shows the use-ca
   }
 });
 
-await step("text→image: prompt charges 1 credit, calls Seedream, delivers photo", async () => {
+await step("text→image: prompt charges 1 credit, calls Seedream, delivers photo (menu-only keyboard)", async () => {
   await sendText(alice, "a red fox in the snow");
   assert.equal(falCalls.length, 1);
   assert.equal(falCalls[0].endpoint, "fal-ai/bytedance/seedream/v4/text-to-image");
   assert.equal(falCalls[0].input.prompt, "a red fox in the snow");
   assert.equal(calls("sendPhoto").length, 1);
   assert.equal(credits(alice.id), 2);
+  // No source photo → «Ещё стиль» must NOT appear (Copilot: it would dead-end).
+  const kb = calls("sendPhoto").at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data: string }>>;
+  };
+  assert.deepEqual(kb.inline_keyboard.flat().map((b) => b.callback_data), ["menu:main"]);
 });
 
 await step("photo→edit: action keyboard, prompt, Nano Banana edit charges 1 credit", async () => {
@@ -269,7 +275,7 @@ await step("insufficient credits: animate (8 cr) with 1 cr is rejected, nothing 
   const falBefore = falCalls.length;
   await sendText(alice, "slow zoom in");
   assert.equal(falCalls.length, falBefore);
-  assert.match(lastText(), /Не хватает кредитов: «🎬 Оживление фото» стоит 8, у вас 1/);
+  assert.match(lastText(), /Не хватает кредитов: «🎬 Оживление фото» стоит 8 кредитов, у вас 1 кредит/);
   assert.equal(credits(alice.id), 1);
 });
 
@@ -413,6 +419,45 @@ await step("product flow: menu:product → photo → product preset renders (4 c
   assert.equal(call.endpoint, "openai/gpt-image-2/edit");
   assert.match(call.input.prompt as string, /white studio background/);
   assert.equal(credits(alice.id), 1); // 5 - 4
+});
+
+await step("mode escape: menu:main clears a photo mode so text→image works again", async () => {
+  await sendText(carol, "/start");
+  await pressButton(carol, "menu:photoshoot"); // no photo yet → enters mode_photo, asks for a photo
+  const falBefore = falCalls.length;
+  await sendText(carol, "just text without a photo"); // blocked by the mode guard (correct)
+  assert.equal(falCalls.length, falBefore);
+  assert.match(lastText(), /Пришлите фото/);
+
+  await pressButton(carol, "menu:main"); // escape the mode (Copilot fix)
+  await sendText(carol, "a blue cat"); // now a normal text-to-image prompt
+  assert.equal(falCalls.length, falBefore + 1);
+  assert.equal(falCalls.at(-1)!.endpoint, "fal-ai/bytedance/seedream/v4/text-to-image");
+  assert.equal(falCalls.at(-1)!.input.prompt, "a blue cat");
+});
+
+await step("credit pluralization: '2 кредита' declension is correct (not 'кредитов')", async () => {
+  await sendText(carol, "/balance");
+  assert.match(lastText(), /Баланс: 2 кредита/); // carol: 3 free − 1 for "a blue cat"
+});
+
+await step("analytics: events logged; /funnel shows the conversion funnel to admin only", async () => {
+  const before = calls("sendMessage").length;
+  await sendText(carol, "/funnel"); // non-admin → silence
+  assert.equal(calls("sendMessage").length, before);
+
+  await sendText(admin, "/funnel");
+  const text = lastText();
+  assert.match(text, /Воронка/);
+  assert.match(text, /Купили:/);
+  assert.match(text, /Почему не купили/);
+
+  const f = funnel();
+  assert.ok(f.visitors >= 3, `visitors ${f.visitors}`); // alice, bob, carol (+admin)
+  assert.ok(f.paid >= 2, `paid ${f.paid}`); // alice + bob purchased
+  assert.ok(f.succeededGen >= 1, `succeededGen ${f.succeededGen}`);
+  assert.ok(f.hitPaywall >= 1, `hitPaywall ${f.hitPaywall}`); // alice hit the animate paywall
+  assert.ok(f.dropoff.neverGenerated >= 0);
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_PATH})`);

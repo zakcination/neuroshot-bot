@@ -1,7 +1,8 @@
 import type { Bot, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import { addCredits, db } from "./db.js";
+import { addCredits, db, logEvent } from "./db.js";
 import { PACKS, REFERRAL_BONUS } from "./models.js";
+import { nCredits } from "./text.js";
 
 export function packsKeyboard(): InlineKeyboard {
   const kb = new InlineKeyboard();
@@ -26,7 +27,7 @@ export function registerPayments(bot: Bot): void {
     // Telegram Stars: currency XTR, empty provider token, amount = stars (no cents).
     await ctx.replyWithInvoice(
       pack.title,
-      `${pack.credits} кредитов на генерации`,
+      `${nCredits(pack.credits)} на генерации`,
       `pack:${pack.id}`,
       "XTR",
       [{ label: pack.title, amount: pack.stars }],
@@ -42,6 +43,7 @@ export function registerPayments(bot: Bot): void {
     if (!pack || !ctx.from) return;
 
     addCredits(ctx.from.id, pack.credits, "purchase", String(payment.total_amount));
+    logEvent(ctx.from.id, "purchase", `${packId}:${payment.total_amount}`);
 
     const user = db.prepare("SELECT referrer_id FROM users WHERE id = ?").get(ctx.from.id) as
       | { referrer_id: number | null }
@@ -51,17 +53,17 @@ export function registerPayments(bot: Bot): void {
       if (bonus > 0) {
         addCredits(user.referrer_id, bonus, "referral", String(ctx.from.id));
         await ctx.api
-          .sendMessage(user.referrer_id, `🎁 +${bonus} кредитов — ваш реферал купил пакет!`)
+          .sendMessage(user.referrer_id, `🎁 +${nCredits(bonus)} — ваш реферал купил пакет!`)
           .catch(() => {});
       }
     }
-    await ctx.reply(`✅ Начислено ${pack.credits} кредитов. Пришлите фото или напишите идею!`);
+    await ctx.reply(`✅ Начислено ${nCredits(pack.credits)}. Пришлите фото или напишите идею!`);
   });
 }
 
 export async function sendBalance(ctx: Context, credits: number): Promise<void> {
   await ctx.reply(
-    `💰 Баланс: ${credits} кредитов\n\nКартинка = 1 кр · Стиль/премиум = 4 кр · Видео = 8 кр`,
+    `💰 Баланс: ${nCredits(credits)}\n\nКартинка = 1 кр · Стиль/премиум = 4 кр · Видео = 8 кр`,
     { reply_markup: packsKeyboard() },
   );
 }
