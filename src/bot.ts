@@ -35,7 +35,7 @@ export function mainMenu(): InlineKeyboard {
     .row()
     .text("🛍 Фото товара для маркетплейса", "menu:product")
     .row()
-    .text(`🎬 Оживить фото в видео (${MODELS.animate.credits} кр)`, "menu:animate")
+    .text(`🎬 Оживить фото в видео (от ${MODELS.animate.credits} кр)`, "menu:animate")
     .row()
     .text("✨ Картинка из текста", "menu:text")
     .row()
