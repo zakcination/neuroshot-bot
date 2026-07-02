@@ -24,7 +24,12 @@ function extractResultUrl(data: unknown): string | null {
 }
 
 export const buyKeyboard = new InlineKeyboard()
-  .text("💳 Buy credits", "show_packs");
+  .text("💳 Купить кредиты", "show_packs");
+
+/** Attached to every delivered result — the next tap is always visible. */
+export const afterKeyboard = new InlineKeyboard()
+  .text("🎭 Ещё стиль", "menu:styles")
+  .text("📋 Меню", "menu:main");
 
 /**
  * Charge credits, run the model, deliver the result.
@@ -39,14 +44,15 @@ export async function runGeneration(
 ): Promise<void> {
   if (!spendCredits(user.id, model.credits, model.key)) {
     await ctx.reply(
-      `Not enough credits: "${model.label}" costs ${model.credits}, you have ${user.credits}.`,
+      `Не хватает кредитов: «${model.label}» стоит ${model.credits}, у вас ${user.credits}.`,
       { reply_markup: buyKeyboard },
     );
     return;
   }
-  setPending(user.id, null, null);
+  // Keep the photo for one-tap follow-ups ("ещё стиль"), clear the prompt-await state.
+  setPending(user.id, fileId ? "await_action" : null, fileId ?? null);
   const progress = await ctx.reply(
-    model.kind === "image_to_video" ? "🎬 Rendering video (1–3 min)…" : "✨ Generating…",
+    model.kind === "image_to_video" ? "🎬 Рендерим видео (1–3 мин)…" : "✨ Генерируем…",
   );
 
   try {
@@ -58,16 +64,16 @@ export async function runGeneration(
     if (!url) throw new Error(`No output URL in fal response for ${model.falEndpoint}`);
 
     if (model.kind === "image_to_video") {
-      await ctx.replyWithVideo(new InputFile({ url }));
+      await ctx.replyWithVideo(new InputFile({ url }), { reply_markup: afterKeyboard });
     } else {
-      await ctx.replyWithPhoto(new InputFile({ url }));
+      await ctx.replyWithPhoto(new InputFile({ url }), { reply_markup: afterKeyboard });
     }
     logGeneration(user.id, model.key, prompt, model.credits, "ok");
   } catch (err) {
     addCredits(user.id, model.credits, "refund", model.key);
     logGeneration(user.id, model.key, prompt, model.credits, "error");
     console.error(`generation failed (${model.key}):`, err);
-    await ctx.reply("⚠️ Generation failed — your credits were refunded. Please try again.");
+    await ctx.reply("⚠️ Не получилось — кредиты автоматически возвращены. Попробуйте ещё раз.");
   } finally {
     await ctx.api.deleteMessage(progress.chat.id, progress.message_id).catch(() => {});
   }

@@ -26,7 +26,7 @@ export const MODELS = {
     falEndpoint: "fal-ai/nano-banana/edit",
     credits: 1,
     approxCostUsd: 0.06,
-    label: "🖼 Edit photo",
+    label: "🖼 Редактирование фото",
     input: (prompt, imageUrl) => ({ prompt, image_urls: [imageUrl] }),
   },
   text_to_image: {
@@ -35,7 +35,7 @@ export const MODELS = {
     falEndpoint: "fal-ai/bytedance/seedream/v4/text-to-image",
     credits: 1,
     approxCostUsd: 0.03,
-    label: "✨ Generate image",
+    label: "✨ Картинка из текста",
     input: (prompt) => ({ prompt }),
   },
   animate: {
@@ -44,7 +44,7 @@ export const MODELS = {
     falEndpoint: "fal-ai/kling-video/v2.5-turbo/standard/image-to-video",
     credits: 8,
     approxCostUsd: 0.5,
-    label: "🎬 Animate photo",
+    label: "🎬 Оживление фото",
     input: (prompt, imageUrl) => ({ prompt, image_url: imageUrl, duration: "5" }),
   },
   premium_image: {
@@ -53,7 +53,7 @@ export const MODELS = {
     falEndpoint: "fal-ai/gpt-image-2",
     credits: 4,
     approxCostUsd: 0.21, // high quality, 1024x1024
-    label: "💎 Premium image",
+    label: "💎 Премиум-картинка",
     input: (prompt) => ({ prompt, quality: "high", image_size: { width: 1024, height: 1024 } }),
   },
   premium_edit: {
@@ -62,7 +62,7 @@ export const MODELS = {
     falEndpoint: "openai/gpt-image-2/edit",
     credits: 4,
     approxCostUsd: 0.22, // high quality, 1024x1024
-    label: "💎 Premium edit",
+    label: "💎 Премиум-правка",
     input: (prompt, imageUrl) => ({ prompt, image_urls: [imageUrl], quality: "high" }),
   },
 } satisfies Record<string, ModelSpec>;
@@ -74,6 +74,8 @@ export const MODELS = {
 export interface Preset {
   id: string;
   label: string;
+  /** Which use-case menu the preset belongs to. */
+  category: "photo" | "product";
   prompt: string;
 }
 
@@ -83,7 +85,8 @@ export const PRESET_MODEL: ModelSpec = MODELS.premium_edit;
 export const PRESETS: Preset[] = [
   {
     id: "headshot",
-    label: "💼 Business headshot",
+    label: "💼 Бизнес-портрет",
+    category: "photo",
     prompt:
       "Transform into a professional corporate headshot: tailored suit, soft studio key light, " +
       "clean neutral gray backdrop, shallow depth of field, confident expression, magazine-cover retouching. " +
@@ -91,32 +94,54 @@ export const PRESETS: Preset[] = [
   },
   {
     id: "fashion",
-    label: "🕶 Fashion editorial",
+    label: "🕶 Fashion-съёмка",
+    category: "photo",
     prompt:
       "Transform into a high-fashion editorial photo: designer outfit, dramatic cinematic lighting, " +
       "Vogue-style composition, film grain, bold styling. Preserve the person's identity and facial features exactly.",
   },
   {
     id: "travel",
-    label: "🌅 Golden-hour travel",
+    label: "🌅 Закат на Санторини",
+    category: "photo",
     prompt:
       "Place the subject in a breathtaking golden-hour travel scene: Santorini rooftop at sunset, warm rim light, " +
       "editorial travel-magazine look. Preserve the subject's identity exactly.",
   },
   {
+    id: "cinematic",
+    label: "🎥 Кино-портрет",
+    category: "photo",
+    prompt:
+      "Transform into a cinematic movie-still portrait: anamorphic look, teal-and-orange grade, atmospheric haze, " +
+      "dramatic side lighting, 35mm film aesthetic. Preserve the person's identity and facial features exactly.",
+  },
+  {
     id: "product_hero",
-    label: "🛍 Product hero card",
+    label: "🛍 Продающая карточка",
+    category: "product",
     prompt:
       "Turn this into a premium e-commerce hero shot: the product on a clean seamless studio background with soft " +
       "shadows, professional three-point lighting, subtle reflection, marketplace-listing composition, 4k quality. " +
       "Keep the product's shape, colors and branding exactly as in the photo.",
   },
   {
-    id: "cinematic",
-    label: "🎥 Cinematic portrait",
+    id: "product_white",
+    label: "⬜️ Белый фон (маркетплейс)",
+    category: "product",
     prompt:
-      "Transform into a cinematic movie-still portrait: anamorphic look, teal-and-orange grade, atmospheric haze, " +
-      "dramatic side lighting, 35mm film aesthetic. Preserve the person's identity and facial features exactly.",
+      "Cut out the product and place it on a pure seamless white studio background (#FFFFFF) with a soft natural " +
+      "shadow underneath, centered marketplace-listing composition, even professional lighting, 4k quality. " +
+      "Keep the product's shape, colors and branding exactly as in the photo.",
+  },
+  {
+    id: "product_lifestyle",
+    label: "🌿 Lifestyle-сцена",
+    category: "product",
+    prompt:
+      "Place the product into a premium lifestyle scene that matches its category: natural materials, soft daylight, " +
+      "shallow depth of field, aspirational magazine look, 4k quality. Keep the product's shape, colors and branding " +
+      "exactly as in the photo.",
   },
 ];
 
@@ -129,9 +154,9 @@ export interface Pack {
 }
 
 export const PACKS: Pack[] = [
-  { id: "mini", stars: 150, credits: 15, title: "Mini — 15 credits" },
-  { id: "standard", stars: 450, credits: 50, title: "Standard — 50 credits" },
-  { id: "pro", stars: 1200, credits: 150, title: "Pro — 150 credits" },
+  { id: "mini", stars: 150, credits: 15, title: "Мини — 15 кредитов" },
+  { id: "standard", stars: 450, credits: 50, title: "Стандарт — 50 кредитов" },
+  { id: "pro", stars: 1200, credits: 150, title: "Про — 150 кредитов" },
 ];
 
 /** Share of purchased credits granted to the referrer. */
