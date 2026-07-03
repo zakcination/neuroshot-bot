@@ -54,16 +54,40 @@ Open the bot → `/start` shows the 🌐 button; `/app` opens the cabinet.
 - **Bot only, no Mini App**: leave `WEBAPP_URL`/`WEBAPP_DOMAIN` empty and run just
   the `app` service (`docker compose up -d --build app`); the web server stays off.
 
-## Option B — PaaS (Fly.io / Railway / Render)
+## Option B — Fly.io (recommended PaaS)
 
-The same `Dockerfile` deploys as-is; the platform gives you the HTTPS URL, so you
-skip Caddy.
-1. Create an app from this repo (Docker build).
-2. Set env vars: `BOT_TOKEN`, `FAL_KEY`, `BOT_USERNAME`, `ADMIN_IDS`,
-   `WEBAPP_URL=https://<app>.fly.dev` (the platform URL), `WEBAPP_PORT=8080`.
-   Leave `WEBAPP_DOMAIN` unset (no Caddy).
-3. Add a **persistent volume mounted at `/data`** (SQLite lives there).
-4. Register `WEBAPP_URL` in @BotFather → Configure Mini App.
+Fits the app as-is: one always-on Docker VM + a volume for SQLite; Fly provides
+the HTTPS URL (no Caddy). Config is in `fly.toml`.
+
+```bash
+fly launch --no-deploy                       # or: fly apps create <name>
+fly volumes create botdata --size 1 --region waw
+fly secrets set BOT_TOKEN=... FAL_KEY=... BOT_USERNAME=neuroshot_ai_bot \
+  ADMIN_IDS=<your_id> WEBAPP_URL=https://<app>.fly.dev
+fly deploy
+```
+Then @BotFather → Configure Mini App → `https://<app>.fly.dev`. `fly.toml` pins
+`min_machines_running = 1` and disables auto-stop so the long poller never pauses.
+
+## Option C — Railway / Render (connect-the-repo)
+
+Both build the `Dockerfile` directly — no CLI needed, deploy from the dashboard:
+1. New project → Deploy from GitHub repo (this repo).
+2. Add a **persistent volume/disk mounted at `/data`** (SQLite lives there).
+3. Set env vars: `BOT_TOKEN`, `FAL_KEY`, `BOT_USERNAME`, `ADMIN_IDS`,
+   `WEBAPP_URL=https://<app>.up.railway.app` (or `.onrender.com`), `WEBAPP_PORT=8080`.
+   Leave `WEBAPP_DOMAIN` unset.
+4. Ensure the service is **always-on** (Railway: default; Render: a paid Web
+   Service — the free tier sleeps on inactivity, which breaks long polling).
+5. Register `WEBAPP_URL` in @BotFather → Configure Mini App.
+
+## Not a fit: Vercel / Netlify / Cloudflare Pages
+
+These are serverless — no persistent process (long polling can't stay up) and an
+ephemeral/read-only FS (SQLite won't persist). Running here needs a refactor:
+switch the bot to **webhook** mode (`grammy` `webhookCallback` in a serverless
+function) and move state to a **hosted DB** (e.g. Turso/libSQL, minimal change
+from SQLite; or Postgres). Ask if you want that path built.
 
 ## Notes
 - The app is executed with `tsx` (matches `npm start`), so the image keeps
