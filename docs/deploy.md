@@ -13,6 +13,8 @@ $5 VPS" design.
 - A Linux VPS with Docker + Docker Compose.
 - A domain (or subdomain) with a DNS **A record → your VPS IP**, e.g.
   `app.example.com`. Required for the Mini App HTTPS certificate.
+- A **Postgres database** — a free Neon project works; grab its pooled
+  connection string.
 - `BOT_TOKEN` (@BotFather), `FAL_KEY` (fal.ai), and a **funded fal.ai balance**
   (generations fail-and-refund until topped up).
 
@@ -23,8 +25,9 @@ cd neuroshot-bot
 cp .env.example .env
 # edit .env — at minimum:
 #   BOT_TOKEN=...            FAL_KEY=...
+#   DATABASE_URL=postgresql://…-pooler.…neon.tech/…?sslmode=require
 #   BOT_USERNAME=neuroshot_ai_bot
-#   ADMIN_IDS=<your_tg_id>
+#   ADMIN_IDS=<your_tg_id[,id2,...]>
 #   WEBAPP_DOMAIN=app.example.com
 #   WEBAPP_URL=https://app.example.com
 docker compose up -d --build
@@ -42,13 +45,9 @@ docker compose logs -f app                      # "NeuroShot bot starting…" + 
 Open the bot → `/start` shows the 🌐 button; `/app` opens the cabinet.
 
 ### Operate
-- **Data** persists in the `botdata` volume (`/data/bot.db`, WAL mode). Take a
-  **consistent hot backup** with SQLite's online backup (safe while the app runs —
-  do not just copy `bot.db`, recent writes live in `-wal`):
-  ```bash
-  docker compose exec app node -e "require('better-sqlite3')('/data/bot.db').backup('/data/backup.db').then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)})"
-  docker compose cp app:/data/backup.db ./backup-$(date +%F).db
-  ```
+- **Data** lives in your Postgres (`DATABASE_URL`) — the container is stateless.
+  Back up with your provider's tooling (Neon has point-in-time restore + branch
+  snapshots), or `pg_dump "$DATABASE_URL" > backup-$(date +%F).sql`.
 - **Update**: `git pull && docker compose up -d --build`
 - **Logs**: `docker compose logs -f app`
 - **Bot only, no Mini App**: leave `WEBAPP_URL`/`WEBAPP_DOMAIN` empty and run just
@@ -56,14 +55,14 @@ Open the bot → `/start` shows the 🌐 button; `/app` opens the cabinet.
 
 ## Option B — Fly.io (recommended PaaS)
 
-Fits the app as-is: one always-on Docker VM + a volume for SQLite; Fly provides
+Fits the app as-is: one always-on Docker VM (state in Postgres); Fly provides
 the HTTPS URL (no Caddy). Config is in `fly.toml`.
 
 ```bash
 fly launch --no-deploy                       # or: fly apps create <name>
-fly volumes create botdata --size 1 --region waw
 fly secrets set BOT_TOKEN=... FAL_KEY=... BOT_USERNAME=neuroshot_ai_bot \
-  ADMIN_IDS=<your_tg_id[,id2,...]> WEBAPP_URL=https://<app>.fly.dev   # comma-separated
+  ADMIN_IDS=<your_tg_id[,id2,...]> WEBAPP_URL=https://<app>.fly.dev \
+  DATABASE_URL="postgresql://…-pooler.…neon.tech/…?sslmode=require"
 fly deploy
 ```
 Then @BotFather → Configure Mini App → `https://<app>.fly.dev`. `fly.toml` pins
@@ -73,25 +72,22 @@ Then @BotFather → Configure Mini App → `https://<app>.fly.dev`. `fly.toml` p
 
 Both build the `Dockerfile` directly — no CLI needed, deploy from the dashboard:
 1. New project → Deploy from GitHub repo (this repo).
-2. Add a **persistent volume/disk mounted at `/data`** (SQLite lives there).
-3. Set env vars: `BOT_TOKEN`, `FAL_KEY`, `BOT_USERNAME`, `ADMIN_IDS`,
-   `WEBAPP_URL=https://<app>.up.railway.app` (or `.onrender.com`), `WEBAPP_PORT=8080`.
-   Leave `WEBAPP_DOMAIN` unset.
-4. Ensure the service is **always-on** (Railway: default; Render: a paid Web
+2. Set env vars: `BOT_TOKEN`, `FAL_KEY`, `DATABASE_URL` (Neon), `BOT_USERNAME`,
+   `ADMIN_IDS`, `WEBAPP_URL=https://<app>.up.railway.app` (or `.onrender.com`),
+   `WEBAPP_PORT=8080`. Leave `WEBAPP_DOMAIN` unset.
+3. Ensure the service is **always-on** (Railway: default; Render: a paid Web
    Service — the free tier sleeps on inactivity, which breaks long polling).
-5. Register `WEBAPP_URL` in @BotFather → Configure Mini App.
+4. Register `WEBAPP_URL` in @BotFather → Configure Mini App.
 
-## Not a fit: Vercel / Netlify / Cloudflare Pages
+## Vercel + Neon (serverless)
 
-These are serverless — no persistent process (long polling can't stay up) and an
-ephemeral/read-only FS (SQLite won't persist). Running here needs a refactor:
-switch the bot to **webhook** mode (`grammy` `webhookCallback` in a serverless
-function) and move state to a **hosted DB** (e.g. Turso/libSQL, minimal change
-from SQLite; or Postgres). Ask if you want that path built.
+Not supported in this PR. This change only migrates the existing long-polling
+app to async Postgres; Vercel serverless functions/webhook mode lands in PR 2.
+For now, deploy with one of the always-on process-based options above.
 
 ## Notes
 - The app is executed with `tsx` (matches `npm start`), so the image keeps
-  devDeps — no build step. `DATABASE_PATH` defaults to `/data/bot.db` in the image.
+  devDeps — no build step. State is in Postgres via `DATABASE_URL`.
 - Long polling means a single instance only — do **not** scale the `app` service
   to >1 replica (two pollers conflict). The Mini App server is stateless behind it.
 - Before real traffic: top up fal.ai and smoke-test each model endpoint in

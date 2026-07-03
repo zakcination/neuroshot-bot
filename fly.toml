@@ -3,9 +3,9 @@
 # by Fly, so no Caddy is needed here.
 #
 #   fly launch --no-deploy         # or: fly apps create <name>
-#   fly volumes create botdata --size 1 --region waw
 #   fly secrets set BOT_TOKEN=... FAL_KEY=... BOT_USERNAME=neuroshot_ai_bot \
-#     ADMIN_IDS=<your_tg_id[,id2,...]> WEBAPP_URL=https://<app>.fly.dev
+#     ADMIN_IDS=<your_tg_id[,id2,...]> WEBAPP_URL=https://<app>.fly.dev \
+#     DATABASE_URL=postgresql://…-pooler.…neon.tech/…?sslmode=require
 #   fly deploy
 #   # then @BotFather → Configure Mini App → https://<app>.fly.dev
 #
@@ -17,14 +17,10 @@ primary_region = "waw" # Warsaw — close to RU/KZ users; pick your own
   dockerfile = "Dockerfile"
 
 [env]
-  DATABASE_PATH = "/data/bot.db"
   WEBAPP_PORT = "8080"
-  # WEBAPP_URL / BOT_TOKEN / FAL_KEY / BOT_USERNAME / ADMIN_IDS → `fly secrets set`
+  # DATABASE_URL / WEBAPP_URL / BOT_TOKEN / FAL_KEY / BOT_USERNAME / ADMIN_IDS → `fly secrets set`
 
-# SQLite lives on a persistent volume (create it once, see header).
-[[mounts]]
-  source = "botdata"
-  destination = "/data"
+# State lives in Postgres (Neon) via DATABASE_URL — no local volume needed.
 
 [http_service]
   internal_port = 8080

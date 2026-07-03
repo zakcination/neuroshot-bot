@@ -6,16 +6,13 @@
  */
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 
 const BOT_TOKEN = "1000000:TEST_TOKEN";
-const tmp = mkdtempSync(join(tmpdir(), "neuroshot-web-"));
 process.env.BOT_TOKEN = BOT_TOKEN;
 process.env.FAL_KEY = "test-fal-key";
-process.env.DATABASE_PATH = join(tmp, "web.db");
+// Force hermetic embedded pglite (see test/e2e.ts): never touch a real Postgres.
+process.env.DATABASE_URL = "";
 process.env.FREE_CREDITS = "3";
 process.env.WEBAPP_URL = "https://app.test"; // enable app-config paths
 process.env.BOT_USERNAME = "neuroshot_test_bot";
@@ -127,9 +124,9 @@ await step("GET /api/me onboards a new user with free credits (shared with bot)"
 
 await step("app reflects the SAME state the bot writes: spend + gallery", async () => {
   // Simulate what the bot does: onboard, spend a credit, log a delivered result.
-  getOrCreateUser(555, "sam", null, 3);
-  assert.equal(spendCredits(555, 1, "photo_edit"), true);
-  logGeneration(555, "photo_edit", "make it pop", 1, "ok", "https://fal.test/out/1.png");
+  await getOrCreateUser(555, "sam", null, 3);
+  assert.equal(await spendCredits(555, 1, "photo_edit"), true);
+  await logGeneration(555, "photo_edit", "make it pop", 1, "ok", "https://fal.test/out/1.png");
 
   const { body } = await apiMe(signInitData({ id: 555 }));
   assert.equal(body.dashboard.credits, 2); // 3 − 1

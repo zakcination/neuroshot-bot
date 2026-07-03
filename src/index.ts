@@ -1,6 +1,9 @@
 import { createBot } from "./bot.js";
 import { config } from "./config.js";
+import { initDb } from "./db.js";
 import { startWebApp } from "./webapp.js";
+
+await initDb(); // create the Postgres schema before serving
 
 const bot = createBot();
 
