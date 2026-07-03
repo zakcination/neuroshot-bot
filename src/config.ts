@@ -13,6 +13,14 @@ export const config = {
   // (db.ts stays importable without the bot's required env, so it doesn't depend
   // on this config). Neon in prod; unset → embedded pglite for tests/local.
   freeCredits: Number(process.env.FREE_CREDITS ?? 3),
+  // --- Referral program (abuse-safe: referrer rewards are purchase-gated) ---
+  // Extra credits the invited friend gets on top of freeCredits when they join
+  // via a referral link (the only farmable surface — kept small on purpose).
+  referralJoinBonus: Number(process.env.REFERRAL_JOIN_BONUS ?? 3),
+  // One-time credits to the referrer when their friend makes their FIRST purchase.
+  referralFirstPurchaseBonus: Number(process.env.REFERRAL_FIRST_PURCHASE_BONUS ?? 10),
+  // Lifetime share of every pack a referred friend buys, paid to the referrer.
+  referralPercent: Number(process.env.REFERRAL_PERCENT ?? 0.1),
   adminIds: (process.env.ADMIN_IDS ?? "")
     .split(",")
     .map((s) => s.trim())

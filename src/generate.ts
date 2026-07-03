@@ -4,7 +4,7 @@ import { InlineKeyboard, InputFile } from "grammy";
 import { config } from "./config.js";
 import { addCredits, logEvent, logGeneration, setPending, spendCredits, type UserRow } from "./db.js";
 import { MODELS, type ModelSpec } from "./models.js";
-import { nCredits } from "./text.js";
+import { nUnits } from "./text.js";
 
 fal.config({ credentials: config.falKey });
 
@@ -25,7 +25,7 @@ function extractResultUrl(data: unknown): string | null {
 }
 
 export const buyKeyboard = new InlineKeyboard()
-  .text("💳 Купить кредиты", "show_packs");
+  .text("💳 Купить 🔫 патроны", "show_packs");
 
 /**
  * Next-step keyboard on every delivered result. «Ещё стиль» only makes sense
@@ -52,7 +52,7 @@ export async function runGeneration(
   if (!(await spendCredits(user.id, model.credits, model.key))) {
     await logEvent(user.id, "paywall", model.key);
     await ctx.reply(
-      `Не хватает кредитов: «${model.label}» стоит ${nCredits(model.credits)}, у вас ${nCredits(user.credits)}.`,
+      `Не хватает 🔫: «${model.label}» стоит ${nUnits(model.credits)}, у вас ${nUnits(user.credits)}.`,
       { reply_markup: buyKeyboard },
     );
     return;
@@ -85,7 +85,7 @@ export async function runGeneration(
     await logGeneration(user.id, model.key, prompt, model.credits, "error");
     await logEvent(user.id, "gen_error", model.key);
     console.error(`generation failed (${model.key}):`, err);
-    await ctx.reply("⚠️ Не получилось — кредиты автоматически возвращены. Попробуйте ещё раз.");
+    await ctx.reply("⚠️ Не получилось — 🔫 патроны автоматически возвращены. Попробуйте ещё раз.");
   } finally {
     await ctx.api.deleteMessage(progress.chat.id, progress.message_id).catch(() => {});
   }

@@ -5,24 +5,40 @@ import type { UserFromGetMe } from "grammy/types";
 import type { Context } from "grammy";
 import { Bot, GrammyError, HttpError, InlineKeyboard, InputFile, InputMediaBuilder } from "grammy";
 import { config } from "./config.js";
-import { funnel, getOrCreateUser, logEvent, setPending, stats, type UserRow } from "./db.js";
+import {
+  funnel,
+  getOrCreateUser,
+  logEvent,
+  referralStats,
+  setPending,
+  stats,
+  type UserRow,
+} from "./db.js";
 import { modelByKey, runGeneration } from "./generate.js";
 import {
   IMAGE_MODEL_PICKER,
   MODELS,
   PRESET_MODEL,
   PRESETS,
+  REFERRAL_MILESTONES,
   VIDEO_MODEL_PICKER,
   type Preset,
 } from "./models.js";
 import { registerPayments, sendBalance } from "./payments.js";
+import { nUnits, UNIT_EMOJI } from "./text.js";
 
 async function user(
   ctx: { from?: { id: number; username?: string } },
   referrerId: number | null = null,
 ): Promise<UserRow> {
   if (!ctx.from) throw new Error("no ctx.from");
-  return getOrCreateUser(ctx.from.id, ctx.from.username, referrerId, config.freeCredits);
+  return getOrCreateUser(
+    ctx.from.id,
+    ctx.from.username,
+    referrerId,
+    config.freeCredits,
+    config.referralJoinBonus,
+  );
 }
 
 /**
@@ -38,14 +54,14 @@ export function mainMenu(): InlineKeyboard {
     .row()
     .text("🛍 Фото товара для маркетплейса", "menu:product")
     .row()
-    .text(`🎬 Оживить фото в видео (от ${MODELS.animate.credits} кр)`, "menu:animate")
+    .text(`🎬 Оживить фото в видео (от ${MODELS.animate.credits} 🔫)`, "menu:animate")
     .row()
     .text("✨ Картинка из текста", "menu:text")
     .row()
     .text("⚡ Топ AI-модели", "menu:models")
     .row();
   if (config.webappUrl) kb.webApp("🌐 Открыть приложение", config.webappUrl).row();
-  return kb.text("💰 Баланс и пакеты", "menu:balance").text("🎁 Заработать 10%", "menu:ref");
+  return kb.text("💰 Баланс и пакеты", "menu:balance").text("🎁 Пригласить друга", "menu:ref");
 }
 
 /** Picker of the top text-to-image models (famous names, priced). */
@@ -53,7 +69,7 @@ function imageModelsKeyboard(): InlineKeyboard {
   const kb = new InlineKeyboard();
   for (const key of IMAGE_MODEL_PICKER) {
     const m = MODELS[key];
-    kb.text(`${m.label} (${m.credits} кр)`, `txt:${key}`).row();
+    kb.text(`${m.label} (${m.credits} 🔫)`, `txt:${key}`).row();
   }
   return kb.text("🎬 Видео из фото →", "menu:animate").row().text("📋 Меню", "menu:main");
 }
@@ -63,7 +79,7 @@ function videoModelsKeyboard(): InlineKeyboard {
   const kb = new InlineKeyboard();
   for (const key of VIDEO_MODEL_PICKER) {
     const m = MODELS[key];
-    kb.text(`${m.label} (${m.credits} кр)`, `act:${key}`).row();
+    kb.text(`${m.label} (${m.credits} 🔫)`, `act:${key}`).row();
   }
   return kb.text("📋 Меню", "menu:main");
 }
@@ -71,9 +87,9 @@ function videoModelsKeyboard(): InlineKeyboard {
 function presetsKeyboard(category: Preset["category"]): InlineKeyboard {
   const kb = new InlineKeyboard();
   for (const p of PRESETS.filter((x) => x.category === category)) {
-    kb.text(`${p.label} (${PRESET_MODEL.credits} кр)`, `preset:${p.id}`).row();
+    kb.text(`${p.label} (${PRESET_MODEL.credits} 🔫)`, `preset:${p.id}`).row();
   }
-  kb.text(`✍️ Свой промпт (${MODELS.premium_edit.credits} кр)`, "act:premium_edit").row();
+  kb.text(`✍️ Свой промпт (${MODELS.premium_edit.credits} 🔫)`, "act:premium_edit").row();
   kb.text("📋 Меню", "menu:main");
   return kb;
 }
@@ -187,7 +203,15 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     const payload = ctx.match?.trim();
     const referrerId = payload && /^\d+$/.test(payload) ? Number(payload) : null;
     const u = await user(ctx, referrerId);
-    await sendMainMenu(ctx, `${WELCOME}\n\n🎁 У вас <b>${u.credits} бесплатных кредита</b>.`);
+    let msg = `${WELCOME}\n\n`;
+    if (u.justCreated) {
+      msg += `🎁 Вам начислено <b>${UNIT_EMOJI} ${nUnits(u.credits)}</b> на старт.`;
+      if (u.joinBonus && u.joinBonus > 0)
+        msg += `\nИз них <b>+${nUnits(u.joinBonus)}</b> — бонус за приглашение. Спасибо другу! 🤝`;
+    } else {
+      msg += `💰 На балансе: <b>${UNIT_EMOJI} ${nUnits(u.credits)}</b>.`;
+    }
+    await sendMainMenu(ctx, msg);
     // Deep link from the Mini App's "Пополнить" button.
     if (payload === "buy") await sendBalance(ctx, u.credits);
   });
@@ -220,7 +244,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     const prompt = ctx.match?.trim();
     if (!prompt) {
       await ctx.reply(
-        `💎 Премиум-картинка (${MODELS.premium_image.credits} кр) — напишите запрос сразу после команды:\n/premium флакон духов на мокром чёрном мраморе`,
+        `💎 Премиум-картинка (${MODELS.premium_image.credits} 🔫) — напишите запрос сразу после команды:\n/premium флакон духов на мокром чёрном мраморе`,
       );
       return;
     }
@@ -361,9 +385,35 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   });
 
   async function sendRefLink(ctx: Context) {
-    await ctx.reply(
-      `🎁 Ваша ссылка:\nhttps://t.me/${ctx.me.username}?start=${ctx.from!.id}\n\nВы получаете 10% кредитов с каждого пакета, купленного по вашей ссылке.`,
-    );
+    const u = await user(ctx);
+    const link = `https://t.me/${ctx.me.username}?start=${u.id}`;
+    const st = await referralStats(u.id);
+    const pct = Math.round(config.referralPercent * 100);
+
+    // One-tap share: opens Telegram's share sheet with the link + a prefilled pitch.
+    const pitch =
+      `Держи ${nUnits(config.referralJoinBonus)} 🔫 в подарок на AI-фото и видео в NeuroShot 🎁 ` +
+      `Оживляй фото, делай карточки товара и аватары:`;
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(pitch)}`;
+
+    const next = REFERRAL_MILESTONES.find((m) => st.paying < m.friends);
+    const milestone = next
+      ? `🏆 До бонуса <b>+${nUnits(next.bonus)}</b>: ещё ${next.friends - st.paying} друзей с покупкой`
+      : "🏆 Все бонусы-вехи получены — вы легенда! 🔥";
+
+    const text =
+      `🎁 <b>Приглашайте друзей — зарабатывайте ${UNIT_EMOJI} патроны</b>\n\n` +
+      `👥 Приглашено: <b>${st.invited}</b>   ·   💳 покупают: <b>${st.paying}</b>\n` +
+      `💰 Всего заработано: <b>${UNIT_EMOJI} ${nUnits(st.earned)}</b>\n\n` +
+      `<b>Как это работает:</b>\n` +
+      `• Друг получает <b>+${nUnits(config.referralJoinBonus)}</b> при входе по ссылке\n` +
+      `• Вы — <b>+${nUnits(config.referralFirstPurchaseBonus)}</b> за его первую покупку\n` +
+      `• И <b>${pct}%</b> с каждого его пакета — навсегда\n` +
+      `• ${milestone}\n\n` +
+      `🔗 Ваша ссылка:\n<code>${link}</code>`;
+
+    const kb = new InlineKeyboard().url("📣 Поделиться с другом", shareUrl);
+    await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
   }
 
   // ---- Photo in → route by selected mode (or show the action menu) ----
@@ -396,7 +446,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       .row()
       .text("🛍 Продающее фото товара", "menu:product")
       .row()
-      .text(`🖼 Редактировать по описанию (${MODELS.photo_edit.credits} кр)`, "act:photo_edit")
+      .text(`🖼 Редактировать по описанию (${MODELS.photo_edit.credits} 🔫)`, "act:photo_edit")
       .row()
       .text("🎬 Оживить в видео (Kling / Seedance)", "menu:videopick");
     await ctx.reply("Что сделать с этим фото?", { reply_markup: kb });
@@ -428,7 +478,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       return;
     }
     await setPending(u.id, model.key, null); // text model: no photo
-    await ctx.reply(`✍️ Напишите, что нарисовать — ${model.label} (${model.credits} кр):`);
+    await ctx.reply(`✍️ Напишите, что нарисовать — ${model.label} (${model.credits} 🔫):`);
   });
 
   // One-tap presets: curated prompt through the premium model, no typing.

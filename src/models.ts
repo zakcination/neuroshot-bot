@@ -24,7 +24,7 @@ export const MODELS = {
     key: "photo_edit",
     kind: "image_edit",
     falEndpoint: "fal-ai/nano-banana/edit",
-    credits: 1,
+    credits: 3,
     approxCostUsd: 0.06,
     label: "🖼 Редактирование фото",
     input: (prompt, imageUrl) => ({ prompt, image_urls: [imageUrl] }),
@@ -33,7 +33,7 @@ export const MODELS = {
     key: "text_to_image",
     kind: "text_to_image",
     falEndpoint: "fal-ai/bytedance/seedream/v4/text-to-image",
-    credits: 1,
+    credits: 2,
     approxCostUsd: 0.03,
     label: "✨ Картинка из текста",
     input: (prompt) => ({ prompt }),
@@ -42,7 +42,7 @@ export const MODELS = {
     key: "animate",
     kind: "image_to_video",
     falEndpoint: "fal-ai/kling-video/v2.5-turbo/standard/image-to-video",
-    credits: 8,
+    credits: 25,
     approxCostUsd: 0.5,
     label: "🎬 Оживление фото",
     input: (prompt, imageUrl) => ({ prompt, image_url: imageUrl, duration: "5" }),
@@ -51,7 +51,7 @@ export const MODELS = {
     key: "premium_image",
     kind: "text_to_image",
     falEndpoint: "fal-ai/gpt-image-2",
-    credits: 4,
+    credits: 11,
     approxCostUsd: 0.21, // high quality, 1024x1024
     label: "💎 Премиум-картинка",
     input: (prompt) => ({ prompt, quality: "high", image_size: { width: 1024, height: 1024 } }),
@@ -60,22 +60,24 @@ export const MODELS = {
     key: "premium_edit",
     kind: "image_edit",
     falEndpoint: "openai/gpt-image-2/edit",
-    credits: 4,
+    credits: 11,
     approxCostUsd: 0.22, // high quality, 1024x1024
     label: "💎 Премиум-правка",
     input: (prompt, imageUrl) => ({ prompt, image_urls: [imageUrl], quality: "high" }),
   },
 
   // --- Top-tier models (verified against fal.ai model pages, Jul 2026) ---
-  // Endpoint IDs, params and USD costs confirmed from the fal model pages; credit
-  // prices target ~2–3× provider cost at pack pricing. Re-verify before launch.
+  // Endpoint IDs, params and USD costs confirmed from the fal model pages.
+  // Credits = ceil(approxCostUsd / CREDIT_COST_BASIS) so cost-per-credit ≤ $0.02
+  // (see CREDIT_COST_BASIS below); at pack pricing this yields ≥3.5× margin even
+  // on mobile Stars payout and after the referral share. Re-verify before launch.
 
   // Nano Banana 2 (Google) — fast SOTA image, $0.08/img @1K.
   nb2_image: {
     key: "nb2_image",
     kind: "text_to_image",
     falEndpoint: "fal-ai/nano-banana-2",
-    credits: 2,
+    credits: 4,
     approxCostUsd: 0.08,
     label: "🍌 Nano Banana 2",
     input: (prompt) => ({ prompt, resolution: "1K" }),
@@ -84,7 +86,7 @@ export const MODELS = {
     key: "nb2_edit",
     kind: "image_edit",
     falEndpoint: "fal-ai/nano-banana-2/edit",
-    credits: 2,
+    credits: 4,
     approxCostUsd: 0.08,
     label: "🍌 Nano Banana 2 — правка",
     input: (prompt, imageUrl) => ({ prompt, image_urls: [imageUrl] }),
@@ -94,7 +96,7 @@ export const MODELS = {
     key: "nbpro_image",
     kind: "text_to_image",
     falEndpoint: "fal-ai/nano-banana-pro",
-    credits: 3,
+    credits: 8,
     approxCostUsd: 0.15,
     label: "🍌 Nano Banana Pro",
     input: (prompt) => ({ prompt, resolution: "2K" }),
@@ -103,7 +105,7 @@ export const MODELS = {
     key: "nbpro_edit",
     kind: "image_edit",
     falEndpoint: "fal-ai/nano-banana-pro/edit",
-    credits: 3,
+    credits: 8,
     approxCostUsd: 0.15,
     label: "🍌 Nano Banana Pro — правка",
     input: (prompt, imageUrl) => ({ prompt, image_urls: [imageUrl], resolution: "2K" }),
@@ -113,7 +115,7 @@ export const MODELS = {
     key: "kling3",
     kind: "image_to_video",
     falEndpoint: "fal-ai/kling-video/v3/pro/image-to-video",
-    credits: 14,
+    credits: 42,
     approxCostUsd: 0.84,
     label: "🎬 Kling 3.0",
     input: (prompt, imageUrl) => ({ prompt, start_image_url: imageUrl, duration: "5" }),
@@ -123,7 +125,7 @@ export const MODELS = {
     key: "seedance_fast",
     kind: "image_to_video",
     falEndpoint: "fal-ai/bytedance/seedance-2.0/fast/image-to-video",
-    credits: 20,
+    credits: 61,
     approxCostUsd: 1.21,
     label: "🎬 Seedance 2.0 Fast",
     input: (prompt, imageUrl) => ({ prompt, image_url: imageUrl, resolution: "720p", duration: "5" }),
@@ -133,7 +135,7 @@ export const MODELS = {
     key: "seedance",
     kind: "image_to_video",
     falEndpoint: "fal-ai/bytedance/seedance-2.0/image-to-video",
-    credits: 25,
+    credits: 76,
     approxCostUsd: 1.51,
     label: "🎬 Seedance 2.0",
     input: (prompt, imageUrl) => ({ prompt, image_url: imageUrl, resolution: "720p", duration: "5" }),
@@ -225,7 +227,19 @@ export const PRESETS: Preset[] = [
   },
 ];
 
-/** Credit packs sold via Telegram Stars (XTR). 1 star ≈ $0.013 gross. */
+/**
+ * The AI-cost each credit is priced to cover. Credits per model = ceil(cost /
+ * this). Keep this in sync with any provider-cost changes; it's the anchor the
+ * whole margin model rests on. See docs/pricing.md.
+ */
+export const CREDIT_COST_BASIS = 0.02; // USD of provider cost per credit
+
+/**
+ * Credit packs sold via Telegram Stars (XTR). Price ladder in ⭐/credit:
+ * 12 → 11 → 10 → 9 (bigger pack = better rate). At the conservative ~$0.010
+ * Stars payout, even the cheapest 9⭐/credit clears ≥3.5× on every model after
+ * the referral share; smaller packs run 4.5–6×. See docs/pricing.md.
+ */
 export interface Pack {
   id: string;
   stars: number;
@@ -234,10 +248,24 @@ export interface Pack {
 }
 
 export const PACKS: Pack[] = [
-  { id: "mini", stars: 150, credits: 15, title: "Мини — 15 кредитов" },
-  { id: "standard", stars: 450, credits: 50, title: "Стандарт — 50 кредитов" },
-  { id: "pro", stars: 1200, credits: 150, title: "Про — 150 кредитов" },
+  { id: "start", stars: 720, credits: 60, title: "Старт — 60 🔫" }, // 12 ⭐/cr
+  { id: "popular", stars: 2200, credits: 200, title: "Популярный — 200 🔫" }, // 11 ⭐/cr
+  { id: "pro", stars: 5000, credits: 500, title: "Про — 500 🔫" }, // 10 ⭐/cr
+  { id: "studio", stars: 8100, credits: 900, title: "Студия — 900 🔫" }, // 9 ⭐/cr
 ];
 
-/** Share of purchased credits granted to the referrer. */
-export const REFERRAL_BONUS = 0.1;
+/**
+ * Referral rewards (scalars are env-tunable via config). Structure is abuse-safe: the
+ * referrer's rewards are PURCHASE-gated (they only pay out when a referred
+ * friend spends real Stars), so multi-accounting can't farm them — a farm would
+ * have to spend real money to earn anything. Milestones count *paying* friends.
+ */
+export interface Milestone {
+  friends: number; // distinct referred friends who have purchased at least once
+  bonus: number; // credits awarded to the referrer when this tier is reached
+}
+export const REFERRAL_MILESTONES: Milestone[] = [
+  { friends: 3, bonus: 20 },
+  { friends: 10, bonus: 75 },
+  { friends: 25, bonus: 250 },
+];
