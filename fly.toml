@@ -13,7 +13,7 @@
 #
 # App name is global on Fly — change it (or let `fly launch` generate one).
 app = "neuroshot-bot"
-primary_region = "waw" # Warsaw — close to RU/KZ users; pick your own
+primary_region = "fra" # Frankfurt — close to RU/KZ users; pick your own (waw/Warsaw is deprecated on Fly)
 
 [build]
   dockerfile = "Dockerfile"
