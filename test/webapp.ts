@@ -6,16 +6,13 @@
  */
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 
 const BOT_TOKEN = "1000000:TEST_TOKEN";
-const tmp = mkdtempSync(join(tmpdir(), "neuroshot-web-"));
 process.env.BOT_TOKEN = BOT_TOKEN;
 process.env.FAL_KEY = "test-fal-key";
-process.env.DATABASE_PATH = join(tmp, "web.db");
+// Force hermetic embedded pglite (see test/e2e.ts): never touch a real Postgres.
+process.env.DATABASE_URL = "";
 process.env.FREE_CREDITS = "3";
 process.env.WEBAPP_URL = "https://app.test"; // enable app-config paths
 process.env.BOT_USERNAME = "neuroshot_test_bot";

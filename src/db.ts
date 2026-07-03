@@ -19,7 +19,12 @@ const driver: Driver = (() => {
   }
   if (url) {
     const sql = neon(url);
-    return async (text, params) => (await sql.query(text, params)).rows as Row[];
+    // Default neon config (fullResults:false) returns the rows array directly;
+    // tolerate a {rows} result too so a future fullResults flip stays correct.
+    return async (text, params) => {
+      const r = (await sql.query(text, params)) as unknown;
+      return (Array.isArray(r) ? r : (r as { rows: Row[] }).rows) as Row[];
+    };
   }
   // Embedded Postgres (in-memory) — hermetic for tests, ephemeral for local dev.
   const pg = new PGlite();

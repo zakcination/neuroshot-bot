@@ -9,9 +9,9 @@ function required(name: string): string {
 export const config = {
   botToken: required("BOT_TOKEN"),
   falKey: required("FAL_KEY"),
-  // Postgres connection (Neon in prod). Unset → embedded in-memory Postgres
-  // (ephemeral) — fine for tests/local, NOT for a real deployment.
-  databaseUrl: process.env.DATABASE_URL ?? "",
+  // Postgres selection is read directly from process.env.DATABASE_URL in db.ts
+  // (db.ts stays importable without the bot's required env, so it doesn't depend
+  // on this config). Neon in prod; unset → embedded pglite for tests/local.
   freeCredits: Number(process.env.FREE_CREDITS ?? 3),
   adminIds: (process.env.ADMIN_IDS ?? "")
     .split(",")

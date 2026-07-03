@@ -7,15 +7,13 @@
  * Run: npm run test:e2e
  */
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 // Env must be set before the app modules load (config/db read it at import time).
-const tmp = mkdtempSync(join(tmpdir(), "neuroshot-e2e-"));
 process.env.BOT_TOKEN = "1000000:TEST_TOKEN";
 process.env.FAL_KEY = "test-fal-key";
-process.env.DATABASE_PATH = join(tmp, "e2e.db");
+// Force hermetic embedded pglite: clear any DATABASE_URL from the dev's shell/.env
+// so the suite never runs against (and mutates) a real Postgres.
+process.env.DATABASE_URL = "";
 process.env.FREE_CREDITS = "3";
 process.env.ADMIN_IDS = "9999";
 
