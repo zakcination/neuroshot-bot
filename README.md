@@ -52,7 +52,10 @@ CI (`.github/workflows/ci.yml`) runs all three on every push and PR.
 | `src/generate.ts` | Charge → call fal → deliver → refund-on-error pipeline |
 | `src/payments.ts` | Stars invoices, pre-checkout, crediting, referral payout |
 | `src/bot.ts` | Bot wiring: commands, photo/text flows, pending-action state (`createBot()`, also used by the e2e harness) |
-| `src/webapp.ts` + `src/webapp.html` | Telegram Mini App: shared-state API (`initData` HMAC auth) + personal cabinet, over the same Postgres. See `docs/web-app.md` |
+| `src/webapp.ts` + `public/app.html` | Telegram Mini App: shared-state API + personal cabinet, over the same Postgres. Auth by `initData` HMAC **or** a Bearer session token. See `docs/web-app.md` |
+| `src/auth.ts` | Client-agnostic session tokens (JWT, HS256) — lets an installed PWA / future iOS app hit the same API outside Telegram |
+| `public/` | PWA shell: `app.html`, `manifest.webmanifest`, `sw.js`, `icon.svg` (installable / offline app shell; also served statically by Vercel) |
+| `api/auth.ts` + `api/me.ts` | Vercel serverless entry points wrapping the shared web handlers. See `docs/vercel.md` |
 | `src/index.ts` | Entrypoint: builds the bot, starts long polling + the Mini App server (if `WEBAPP_URL` set) |
 
 ## Before going live

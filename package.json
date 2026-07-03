@@ -8,7 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src test scripts",
+    "lint": "eslint src test scripts api",
     "test:e2e": "tsx test/e2e.ts",
     "test:webapp": "tsx test/webapp.ts",
     "test": "npm run test:e2e && npm run test:webapp"

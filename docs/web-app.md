@@ -17,23 +17,32 @@ Telegram│  Bot (grammY)│        │ Mini App (webapp)│  ← same HTML late
 
 ## What ships here (foundation)
 
-- **`src/webapp.ts`** — Node HTTP server. Validates Telegram WebApp `initData`
+- **`src/webapp.ts`** — the web handlers, shared by the Node HTTP server (process
+  host) and the Vercel functions in `api/`. Validates Telegram WebApp `initData`
   by HMAC against the bot token (`verifyInitData`, per Telegram spec: tampered
-  hashes, foreign-token signatures and stale `auth_date` are all rejected). No
-  separate login.
+  hashes, foreign-token signatures and stale `auth_date` are all rejected).
+- **`POST /api/auth`** — exchanges `initData` for a **client-agnostic session
+  token** (`src/auth.ts`: compact JWT, HS256, key derived from the bot token).
+  Called once at launch; the client caches it so an installed PWA / native app
+  keeps working outside Telegram, where there is no `initData`.
 - **`GET /api/me`** — returns the caller's shared state: `dashboard` (balance,
   creations, credits spent, referral earnings), `generations` (recent gallery
-  with result URLs). Opening the app onboards idempotently, same as the bot.
-- **`src/webapp.html`** — the Mini App: a personal cabinet (balance, top-up,
+  with result URLs). Authenticates by `initData` **or** a `Bearer` session token.
+  Opening the app onboards idempotently, same as the bot.
+- **`public/app.html`** — the Mini App: a personal cabinet (balance, top-up,
   gallery of the user's own work, usage stats). Adapts to Telegram theme.
+- **`public/manifest.webmanifest` + `public/sw.js`** — make it an **installable
+  PWA**: home-screen launch, offline app shell (the auth'd API is never cached).
 - **Bot integration** — a `🌐 Приложение` menu button + `/app` command +
   chat menu button, all gated on `WEBAPP_URL`. Dark until you deploy.
-- Result URLs are now persisted (`generations.output_url`) so the app shows the
+- Result URLs are persisted (`generations.output_url`) so the app shows the
   exact images the bot produced.
 
-Enable by setting `WEBAPP_URL` (public HTTPS), `WEBAPP_PORT`, `BOT_USERNAME`,
-and registering the domain in @BotFather → Configure Mini App. Tested by
-`npm run test:webapp` (auth + shared-state, no Telegram needed).
+Run the process-host server by setting `WEBAPP_URL` (public HTTPS), `WEBAPP_PORT`,
+`BOT_USERNAME`; or deploy the web layer to Vercel (see [`vercel.md`](./vercel.md)).
+Register the URL in @BotFather → Configure Mini App. Tested by
+`npm run test:webapp` (initData + session-token auth + shared-state, no Telegram
+needed).
 
 ## Why this is the moat — differentiation
 

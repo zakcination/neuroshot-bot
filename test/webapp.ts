@@ -18,6 +18,7 @@ process.env.WEBAPP_URL = "https://app.test"; // enable app-config paths
 process.env.BOT_USERNAME = "neuroshot_test_bot";
 
 const { verifyInitData, createWebApp } = await import("../src/webapp.js");
+const { issueSession, verifySession } = await import("../src/auth.js");
 const { getOrCreateUser, logGeneration, spendCredits } = await import("../src/db.js");
 
 /** Build a validly-signed initData string for a user, per Telegram spec. */
@@ -142,6 +143,96 @@ await step("GET / serves the Mini App HTML", async () => {
   assert.equal(res.status, 200);
   assert.match(res.headers.get("content-type") ?? "", /text\/html/);
   assert.match(html, /telegram-web-app\.js/);
+});
+
+// ---- client-agnostic session tokens (PWA / iOS enabler) ----
+
+await step("issueSession → verifySession round-trips the claims", () => {
+  const { token, expiresAt } = issueSession({ sub: 77, username: "eve", first_name: "Eve" }, BOT_TOKEN);
+  assert.ok(expiresAt > Math.floor(Date.now() / 1000));
+  const claims = verifySession(token, BOT_TOKEN);
+  assert.equal(claims!.sub, 77);
+  assert.equal(claims!.username, "eve");
+});
+
+await step("verifySession rejects a token signed with a different bot token", () => {
+  const { token } = issueSession({ sub: 77 }, BOT_TOKEN);
+  assert.equal(verifySession(token, "9999:OTHER"), null);
+});
+
+await step("verifySession rejects a tampered payload", () => {
+  const { token } = issueSession({ sub: 77 }, BOT_TOKEN);
+  const [h, , s] = token.split(".");
+  const forged = Buffer.from(JSON.stringify({ sub: 1, exp: 9999999999 }), "utf8")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  assert.equal(verifySession(`${h}.${forged}.${s}`, BOT_TOKEN), null);
+});
+
+await step("verifySession rejects an expired token", () => {
+  // Issue already-expired: ttl negative via injected now.
+  const past = Math.floor(Date.now() / 1000) - 10_000;
+  const { token } = issueSession({ sub: 77 }, BOT_TOKEN, 5, past);
+  assert.equal(verifySession(token, BOT_TOKEN), null);
+});
+
+await step("POST /api/auth exchanges initData for a Bearer token", async () => {
+  const res = await fetch(`${base}/api/auth`, {
+    method: "POST",
+    headers: { Authorization: `tma ${signInitData({ id: 888, username: "pwa", first_name: "Pat" })}` },
+  });
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { token: string; token_type: string; user: { id: number } };
+  assert.equal(body.token_type, "Bearer");
+  assert.equal(body.user.id, 888);
+  assert.equal(verifySession(body.token, BOT_TOKEN)!.sub, 888);
+});
+
+await step("POST /api/auth rejects invalid initData with 401", async () => {
+  const res = await fetch(`${base}/api/auth`, {
+    method: "POST",
+    headers: { Authorization: "tma user=%7B%22id%22%3A1%7D&hash=deadbeef" },
+  });
+  assert.equal(res.status, 401);
+});
+
+await step("GET /api/me accepts a Bearer session token (no initData — installed PWA)", async () => {
+  const { token } = issueSession({ sub: 555, username: "sam" }, BOT_TOKEN);
+  const res = await fetch(`${base}/api/me`, { headers: { Authorization: `Bearer ${token}` } });
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as MeResponse;
+  assert.equal(body.user.id, 555);
+  assert.equal(body.dashboard.credits, 2); // same shared state as the initData path above
+});
+
+await step("GET /api/me rejects a Bearer token signed with a different token", async () => {
+  const { token } = issueSession({ sub: 555 }, "9999:OTHER");
+  const res = await fetch(`${base}/api/me`, { headers: { Authorization: `Bearer ${token}` } });
+  assert.equal(res.status, 401);
+});
+
+await step("serves the PWA manifest and service worker (SW is no-cache)", async () => {
+  const m = await fetch(`${base}/manifest.webmanifest`);
+  assert.equal(m.status, 200);
+  assert.match(m.headers.get("content-type") ?? "", /manifest/);
+  assert.equal((await m.json() as { name: string }).name.includes("NeuroShot"), true);
+
+  const sw = await fetch(`${base}/sw.js`);
+  assert.equal(sw.status, 200);
+  assert.match(sw.headers.get("content-type") ?? "", /javascript/);
+  assert.match(sw.headers.get("cache-control") ?? "", /no-cache/); // prompt SW updates
+});
+
+await step("method gating: /api/auth is POST-only, /api/me is GET-only (405 otherwise)", async () => {
+  const getAuth = await fetch(`${base}/api/auth`); // GET
+  assert.equal(getAuth.status, 405);
+  assert.equal(getAuth.headers.get("allow"), "POST");
+
+  const postMe = await fetch(`${base}/api/me`, { method: "POST" });
+  assert.equal(postMe.status, 405);
+  assert.equal(postMe.headers.get("allow"), "GET");
 });
 
 await new Promise<void>((r) => server.close(() => r()));
