@@ -63,7 +63,7 @@ the HTTPS URL (no Caddy). Config is in `fly.toml`.
 fly launch --no-deploy                       # or: fly apps create <name>
 fly volumes create botdata --size 1 --region waw
 fly secrets set BOT_TOKEN=... FAL_KEY=... BOT_USERNAME=neuroshot_ai_bot \
-  ADMIN_IDS=<your_id> WEBAPP_URL=https://<app>.fly.dev
+  ADMIN_IDS=<your_tg_id[,id2,...]> WEBAPP_URL=https://<app>.fly.dev   # comma-separated
 fly deploy
 ```
 Then @BotFather → Configure Mini App → `https://<app>.fly.dev`. `fly.toml` pins
