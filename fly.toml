@@ -1,6 +1,10 @@
-# Fly.io deploy — best fit for this app: an always-on Docker VM (long polling
-# needs a persistent process) with a volume for SQLite. Public HTTPS is provided
-# by Fly, so no Caddy is needed here.
+# Fly.io deploy — best fit for this app: one always-on Docker VM (long polling
+# needs a persistent process). State lives in Postgres (Neon) via DATABASE_URL,
+# so no volume is needed. Runs bot + Mini App in one process; Fly provides public
+# HTTPS (no Caddy). WEBAPP_URL both enables the 🌐 Mini App button and starts the
+# web server — set it to this app's URL. To instead host the web layer on Vercel,
+# point WEBAPP_URL at the Vercel URL (the button opens it; the local server keeps
+# serving /healthz for the check below). See docs/vercel.md.
 #
 #   fly launch --no-deploy         # or: fly apps create <name>
 #   fly secrets set BOT_TOKEN=... FAL_KEY=... BOT_USERNAME=neuroshot_ai_bot \
@@ -11,7 +15,7 @@
 #
 # App name is global on Fly — change it (or let `fly launch` generate one).
 app = "neuroshot-bot"
-primary_region = "waw" # Warsaw — close to RU/KZ users; pick your own
+primary_region = "fra" # Frankfurt — close to RU/KZ users; pick your own (waw/Warsaw is deprecated on Fly)
 
 [build]
   dockerfile = "Dockerfile"
