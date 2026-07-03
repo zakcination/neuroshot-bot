@@ -1,0 +1,9 @@
+node_modules
+data
+.env
+.git
+.github
+brand-assets
+*.log
+npm-debug.log*
+docs
