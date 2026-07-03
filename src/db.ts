@@ -1,60 +1,90 @@
-import Database from "better-sqlite3";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-import { config } from "./config.js";
+/**
+ * Data layer — async Postgres, one code path for two backends:
+ *   • production  → Neon (`DATABASE_URL` set) via @neondatabase/serverless (HTTP,
+ *     works in both a long-polling process and Vercel serverless functions);
+ *   • tests / local without a DB → embedded Postgres (@electric-sql/pglite).
+ *
+ * Same SQL on both. All exported functions are async.
+ */
+import { neon } from "@neondatabase/serverless";
+import { PGlite } from "@electric-sql/pglite";
 
-mkdirSync(dirname(config.databasePath), { recursive: true });
-export const db = new Database(config.databasePath);
-db.pragma("journal_mode = WAL");
+type Row = Record<string, unknown>;
+type Driver = (text: string, params: unknown[]) => Promise<Row[]>;
 
-db.exec(`
-CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY,            -- telegram user id
-  username TEXT,
-  credits INTEGER NOT NULL DEFAULT 0,
-  referrer_id INTEGER,
-  pending_action TEXT,               -- model key awaiting a prompt
-  pending_file_id TEXT,              -- telegram file_id awaiting a prompt
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE TABLE IF NOT EXISTS ledger (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  delta INTEGER NOT NULL,
-  reason TEXT NOT NULL,              -- signup | purchase | referral | generation | refund
-  meta TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE TABLE IF NOT EXISTS generations (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  model TEXT NOT NULL,
-  prompt TEXT,
-  credits INTEGER NOT NULL,
-  status TEXT NOT NULL,              -- ok | error
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE TABLE IF NOT EXISTS events (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  session_id INTEGER NOT NULL,       -- monotonic per-user visit counter
-  type TEXT NOT NULL,                -- session_start | menu_open | select | photo | preset | paywall | gen_start | gen_ok | gen_error | purchase
-  meta TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_events_user ON events(user_id);
-CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
-CREATE INDEX IF NOT EXISTS idx_generations_user ON generations(user_id);
-`);
-
-// Migration: store the delivered result URL so the same content the bot
-// produced is reusable in the web app (shared gallery). Guarded for old DBs.
-{
-  const cols = db.prepare("PRAGMA table_info(generations)").all() as { name: string }[];
-  if (!cols.some((c) => c.name === "output_url")) {
-    db.exec("ALTER TABLE generations ADD COLUMN output_url TEXT");
+const driver: Driver = (() => {
+  const url = process.env.DATABASE_URL;
+  if (url) {
+    const sql = neon(url);
+    return (text, params) => sql.query(text, params) as Promise<Row[]>;
   }
+  // Embedded Postgres (in-memory) — hermetic for tests, ephemeral for local dev.
+  const pg = new PGlite();
+  return async (text, params) => (await pg.query(text, params)).rows as Row[];
+})();
+
+const SCHEMA: string[] = [
+  `CREATE TABLE IF NOT EXISTS users (
+    id BIGINT PRIMARY KEY,
+    username TEXT,
+    credits INTEGER NOT NULL DEFAULT 0,
+    referrer_id BIGINT,
+    pending_action TEXT,
+    pending_file_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE TABLE IF NOT EXISTS ledger (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    delta INTEGER NOT NULL,
+    reason TEXT NOT NULL,            -- signup | purchase | referral | generation | refund
+    meta TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE TABLE IF NOT EXISTS generations (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    model TEXT NOT NULL,
+    prompt TEXT,
+    credits INTEGER NOT NULL,
+    status TEXT NOT NULL,           -- ok | error
+    output_url TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE TABLE IF NOT EXISTS events (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    session_id INTEGER NOT NULL,    -- monotonic per-user visit counter
+    type TEXT NOT NULL,
+    meta TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_events_user ON events(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_events_type ON events(type)`,
+  `CREATE INDEX IF NOT EXISTS idx_generations_user ON generations(user_id)`,
+];
+
+let schemaReady: Promise<void> | null = null;
+function ensureSchema(): Promise<void> {
+  schemaReady ??= (async () => {
+    for (const stmt of SCHEMA) await driver(stmt, []);
+  })();
+  return schemaReady;
 }
+
+/** Run a parameterized query (schema is ensured on first use). */
+async function q(text: string, params: unknown[] = []): Promise<Row[]> {
+  await ensureSchema();
+  return driver(text, params);
+}
+
+/** Await schema creation explicitly (call once at startup). */
+export async function initDb(): Promise<void> {
+  await ensureSchema();
+}
+
+/** Raw parameterized query — for tests and ad-hoc reads. */
+export const query = q;
 
 /** Minutes of inactivity after which the next interaction counts as a new visit. */
 const SESSION_GAP_MIN = 30;
@@ -68,71 +98,94 @@ export interface UserRow {
   pending_file_id: string | null;
 }
 
-export function getOrCreateUser(
+// Postgres returns BIGINT as string — coerce id fields (Telegram ids are < 2^53).
+function mapUser(r: Row): UserRow {
+  return {
+    id: Number(r.id),
+    username: (r.username as string | null) ?? null,
+    credits: Number(r.credits),
+    referrer_id: r.referrer_id == null ? null : Number(r.referrer_id),
+    pending_action: (r.pending_action as string | null) ?? null,
+    pending_file_id: (r.pending_file_id as string | null) ?? null,
+  };
+}
+
+export async function getOrCreateUser(
   id: number,
   username: string | undefined,
   referrerId: number | null,
   freeCredits: number,
-): UserRow {
-  const existing = db.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow | undefined;
-  if (existing) return existing;
+): Promise<UserRow> {
   const ref = referrerId && referrerId !== id ? referrerId : null;
-  db.prepare("INSERT INTO users (id, username, credits, referrer_id) VALUES (?, ?, ?, ?)").run(
-    id,
-    username ?? null,
-    freeCredits,
-    ref,
+  const inserted = await q(
+    `INSERT INTO users (id, username, credits, referrer_id) VALUES ($1, $2, $3, $4)
+     ON CONFLICT (id) DO NOTHING RETURNING *`,
+    [id, username ?? null, freeCredits, ref],
   );
-  db.prepare("INSERT INTO ledger (user_id, delta, reason) VALUES (?, ?, 'signup')").run(id, freeCredits);
-  return db.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow;
+  if (inserted.length) {
+    await q("INSERT INTO ledger (user_id, delta, reason) VALUES ($1, $2, 'signup')", [id, freeCredits]);
+    return mapUser(inserted[0]);
+  }
+  const existing = await q("SELECT * FROM users WHERE id = $1", [id]);
+  return mapUser(existing[0]);
 }
 
-export function addCredits(userId: number, delta: number, reason: string, meta?: string): void {
-  const tx = db.transaction(() => {
-    db.prepare("UPDATE users SET credits = credits + ? WHERE id = ?").run(delta, userId);
-    db.prepare("INSERT INTO ledger (user_id, delta, reason, meta) VALUES (?, ?, ?, ?)").run(
-      userId,
-      delta,
-      reason,
-      meta ?? null,
-    );
-  });
-  tx();
+export async function getUser(id: number): Promise<UserRow | undefined> {
+  const rows = await q("SELECT * FROM users WHERE id = $1", [id]);
+  return rows[0] ? mapUser(rows[0]) : undefined;
+}
+
+/** Add credits and journal the movement atomically (single CTE statement). */
+export async function addCredits(
+  userId: number,
+  delta: number,
+  reason: string,
+  meta?: string,
+): Promise<void> {
+  await q(
+    `WITH upd AS (UPDATE users SET credits = credits + $1 WHERE id = $2 RETURNING id)
+     INSERT INTO ledger (user_id, delta, reason, meta) SELECT $2, $1, $3, $4 FROM upd`,
+    [delta, userId, reason, meta ?? null],
+  );
 }
 
 /** Atomically spend credits; returns false if balance is insufficient. */
-export function spendCredits(userId: number, amount: number, meta?: string): boolean {
-  const result = db
-    .prepare("UPDATE users SET credits = credits - ? WHERE id = ? AND credits >= ?")
-    .run(amount, userId, amount);
-  if (result.changes === 0) return false;
-  db.prepare("INSERT INTO ledger (user_id, delta, reason, meta) VALUES (?, ?, 'generation', ?)").run(
-    userId,
-    -amount,
-    meta ?? null,
+export async function spendCredits(userId: number, amount: number, meta?: string): Promise<boolean> {
+  const rows = await q(
+    `WITH upd AS (
+       UPDATE users SET credits = credits - $1 WHERE id = $2 AND credits >= $1 RETURNING id
+     )
+     INSERT INTO ledger (user_id, delta, reason, meta)
+     SELECT $2, -$1, 'generation', $3 FROM upd RETURNING user_id`,
+    [amount, userId, meta ?? null],
   );
-  return true;
+  return rows.length > 0;
 }
 
-export function setPending(userId: number, action: string | null, fileId: string | null): void {
-  db.prepare("UPDATE users SET pending_action = ?, pending_file_id = ? WHERE id = ?").run(
+export async function setPending(
+  userId: number,
+  action: string | null,
+  fileId: string | null,
+): Promise<void> {
+  await q("UPDATE users SET pending_action = $1, pending_file_id = $2 WHERE id = $3", [
     action,
     fileId,
     userId,
-  );
+  ]);
 }
 
-export function logGeneration(
+export async function logGeneration(
   userId: number,
   model: string,
   prompt: string,
   credits: number,
   status: "ok" | "error",
   outputUrl?: string,
-): void {
-  db.prepare(
-    "INSERT INTO generations (user_id, model, prompt, credits, status, output_url) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(userId, model, prompt, credits, status, outputUrl ?? null);
+): Promise<void> {
+  await q(
+    "INSERT INTO generations (user_id, model, prompt, credits, status, output_url) VALUES ($1, $2, $3, $4, $5, $6)",
+    [userId, model, prompt, credits, status, outputUrl ?? null],
+  );
 }
 
 export interface GenerationRow {
@@ -146,16 +199,54 @@ export interface GenerationRow {
 }
 
 /** A user's recent generations (newest first) — powers the web-app gallery. */
-export function recentGenerations(userId: number, limit = 30): GenerationRow[] {
-  return db
-    .prepare(
-      "SELECT id, model, prompt, credits, status, output_url, created_at FROM generations WHERE user_id = ? ORDER BY id DESC LIMIT ?",
-    )
-    .all(userId, limit) as GenerationRow[];
+export async function recentGenerations(userId: number, limit = 30): Promise<GenerationRow[]> {
+  const rows = await q(
+    `SELECT id, model, prompt, credits, status, output_url, created_at
+     FROM generations WHERE user_id = $1 ORDER BY id DESC LIMIT $2`,
+    [userId, limit],
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    model: r.model as string,
+    prompt: (r.prompt as string | null) ?? null,
+    credits: Number(r.credits),
+    status: r.status as string,
+    output_url: (r.output_url as string | null) ?? null,
+    created_at: String(r.created_at),
+  }));
 }
 
-/** Per-user dashboard totals for the web app (own analytics — novel for the genre). */
-export function userDashboard(userId: number): {
+/**
+ * Records a behavioural event, opening a new visit (session_start) when the
+ * previous event is older than SESSION_GAP_MIN (or on the first event).
+ */
+export async function logEvent(userId: number, type: string, meta?: string): Promise<void> {
+  const last = await q(
+    `SELECT session_id, EXTRACT(EPOCH FROM (now() - created_at)) AS age_sec
+     FROM events WHERE user_id = $1 ORDER BY id DESC LIMIT 1`,
+    [userId],
+  );
+  const prevSession = last[0] ? Number(last[0].session_id) : 0;
+  const ageSec = last[0] ? Number(last[0].age_sec) : Infinity;
+
+  let sessionId = prevSession || 1;
+  if (!last[0] || ageSec >= SESSION_GAP_MIN * 60) {
+    sessionId = prevSession + 1;
+    await q("INSERT INTO events (user_id, session_id, type) VALUES ($1, $2, 'session_start')", [
+      userId,
+      sessionId,
+    ]);
+  }
+  await q("INSERT INTO events (user_id, session_id, type, meta) VALUES ($1, $2, $3, $4)", [
+    userId,
+    sessionId,
+    type,
+    meta ?? null,
+  ]);
+}
+
+/** Per-user dashboard totals for the web app. */
+export async function userDashboard(userId: number): Promise<{
   credits: number;
   totalGenerations: number;
   okGenerations: number;
@@ -163,71 +254,41 @@ export function userDashboard(userId: number): {
   purchases: number;
   referralEarned: number;
   referralCount: number;
-} {
-  const one = <T>(sql: string, ...args: unknown[]) => db.prepare(sql).get(...args) as T;
-  const u = one<{ credits: number } | undefined>("SELECT credits FROM users WHERE id = ?", userId);
-  const gen = one<{ total: number; ok: number }>(
-    "SELECT COUNT(*) total, COALESCE(SUM(CASE WHEN status='ok' THEN 1 ELSE 0 END),0) ok FROM generations WHERE user_id = ?",
-    userId,
+}> {
+  const u = await q("SELECT credits FROM users WHERE id = $1", [userId]);
+  const gen = await q(
+    `SELECT COUNT(*)::int AS total,
+            COALESCE(SUM(CASE WHEN status='ok' THEN 1 ELSE 0 END),0)::int AS ok
+     FROM generations WHERE user_id = $1`,
+    [userId],
   );
-  const spent = one<{ s: number }>(
-    "SELECT COALESCE(SUM(-delta),0) s FROM ledger WHERE user_id = ? AND reason = 'generation'",
-    userId,
+  const spent = await q(
+    "SELECT COALESCE(SUM(-delta),0)::int AS s FROM ledger WHERE user_id = $1 AND reason = 'generation'",
+    [userId],
   );
-  const purchases = one<{ c: number }>(
-    "SELECT COUNT(*) c FROM ledger WHERE user_id = ? AND reason = 'purchase'",
-    userId,
+  const purchases = await q(
+    "SELECT COUNT(*)::int AS c FROM ledger WHERE user_id = $1 AND reason = 'purchase'",
+    [userId],
   );
-  const ref = one<{ earned: number; c: number }>(
-    "SELECT COALESCE(SUM(delta),0) earned, COUNT(*) c FROM ledger WHERE user_id = ? AND reason = 'referral'",
-    userId,
+  const ref = await q(
+    "SELECT COALESCE(SUM(delta),0)::int AS earned, COUNT(*)::int AS c FROM ledger WHERE user_id = $1 AND reason = 'referral'",
+    [userId],
   );
   return {
-    credits: u?.credits ?? 0,
-    totalGenerations: gen.total,
-    okGenerations: gen.ok,
-    creditsSpent: spent.s,
-    purchases: purchases.c,
-    referralEarned: ref.earned,
-    referralCount: ref.c,
+    credits: u[0] ? Number(u[0].credits) : 0,
+    totalGenerations: Number(gen[0].total),
+    okGenerations: Number(gen[0].ok),
+    creditsSpent: Number(spent[0].s),
+    purchases: Number(purchases[0].c),
+    referralEarned: Number(ref[0].earned),
+    referralCount: Number(ref[0].c),
   };
 }
 
 /**
- * Records a behavioural event and returns the current session id for the user.
- * A new visit (session_start) is opened when the previous event is older than
- * SESSION_GAP_MIN, or on the very first event.
- */
-export function logEvent(userId: number, type: string, meta?: string): void {
-  const last = db
-    .prepare("SELECT session_id, created_at FROM events WHERE user_id = ? ORDER BY id DESC LIMIT 1")
-    .get(userId) as { session_id: number; created_at: string } | undefined;
-
-  let sessionId = last?.session_id ?? 1;
-  // SQLite datetime('now') → "YYYY-MM-DD HH:MM:SS" (UTC): normalize to ISO for Date.
-  const lastMs = last ? new Date(last.created_at.replace(" ", "T") + "Z").getTime() : 0;
-  const isNewVisit = !last || (Date.now() - lastMs) / 60000 >= SESSION_GAP_MIN;
-
-  if (isNewVisit) {
-    sessionId = (last?.session_id ?? 0) + 1;
-    db.prepare("INSERT INTO events (user_id, session_id, type) VALUES (?, ?, 'session_start')").run(
-      userId,
-      sessionId,
-    );
-  }
-  db.prepare("INSERT INTO events (user_id, session_id, type, meta) VALUES (?, ?, ?, ?)").run(
-    userId,
-    sessionId,
-    type,
-    meta ?? null,
-  );
-}
-
-/**
  * Conversion funnel + drop-off diagnosis over the whole event log.
- * Answers "why didn't they order?" by bucketing users at the stage they stalled.
  */
-export function funnel(): {
+export async function funnel(): Promise<{
   visitors: number;
   visits: number;
   uploadedPhoto: number;
@@ -236,39 +297,39 @@ export function funnel(): {
   hitPaywall: number;
   paid: number;
   dropoff: {
-    neverGenerated: number; // visited, never even started a generation → activation gap
-    genFailedNoPaid: number; // hit a provider error, never bought → reliability
-    paywallNoPaid: number; // saw the paywall, didn't buy → price/value objection
-    triedFreeNoPaid: number; // used free generations, didn't buy → value not proven
+    neverGenerated: number;
+    genFailedNoPaid: number;
+    paywallNoPaid: number;
+    triedFreeNoPaid: number;
   };
-} {
-  const distinct = (type: string) =>
-    (db.prepare("SELECT COUNT(DISTINCT user_id) c FROM events WHERE type = ?").get(type) as { c: number })
-      .c;
-  const usersWith = (type: string) =>
+}> {
+  const distinct = async (type: string) =>
+    Number(
+      (await q("SELECT COUNT(DISTINCT user_id)::int AS c FROM events WHERE type = $1", [type]))[0].c,
+    );
+  const usersWith = async (type: string) =>
     new Set(
-      (db.prepare("SELECT DISTINCT user_id FROM events WHERE type = ?").all(type) as { user_id: number }[]).map(
-        (r) => r.user_id,
+      (await q("SELECT DISTINCT user_id FROM events WHERE type = $1", [type])).map((r) =>
+        Number(r.user_id),
       ),
     );
 
-  const visitors = distinct("session_start");
-  const visits = (db.prepare("SELECT COUNT(*) c FROM events WHERE type = 'session_start'").get() as {
-    c: number;
-  }).c;
-  const starters = usersWith("gen_start");
-  const succeeders = usersWith("gen_ok");
-  const errored = usersWith("gen_error");
-  const paywalled = usersWith("paywall");
-  const paidSet = usersWith("purchase");
-  const visitorSet = usersWith("session_start");
+  const visits = Number(
+    (await q("SELECT COUNT(*)::int AS c FROM events WHERE type = 'session_start'"))[0].c,
+  );
+  const visitorSet = await usersWith("session_start");
+  const starters = await usersWith("gen_start");
+  const succeeders = await usersWith("gen_ok");
+  const errored = await usersWith("gen_error");
+  const paywalled = await usersWith("paywall");
+  const paidSet = await usersWith("purchase");
 
   const minus = (a: Set<number>, b: Set<number>) => [...a].filter((x) => !b.has(x)).length;
 
   return {
-    visitors,
+    visitors: visitorSet.size,
     visits,
-    uploadedPhoto: distinct("photo"),
+    uploadedPhoto: await distinct("photo"),
     startedGen: starters.size,
     succeededGen: succeeders.size,
     hitPaywall: paywalled.size,
@@ -282,20 +343,23 @@ export function funnel(): {
   };
 }
 
-export function stats(): { users: number; paid: number; generations: number; starsRevenue: number } {
-  const users = (db.prepare("SELECT COUNT(*) c FROM users").get() as { c: number }).c;
-  const paid = (
-    db.prepare("SELECT COUNT(DISTINCT user_id) c FROM ledger WHERE reason = 'purchase'").get() as {
-      c: number;
-    }
-  ).c;
-  const generations = (db.prepare("SELECT COUNT(*) c FROM generations").get() as { c: number }).c;
-  const starsRevenue = (
-    db
-      .prepare(
-        "SELECT COALESCE(SUM(CAST(meta AS INTEGER)), 0) s FROM ledger WHERE reason = 'purchase'",
+export async function stats(): Promise<{
+  users: number;
+  paid: number;
+  generations: number;
+  starsRevenue: number;
+}> {
+  const users = Number((await q("SELECT COUNT(*)::int AS c FROM users"))[0].c);
+  const paid = Number(
+    (await q("SELECT COUNT(DISTINCT user_id)::int AS c FROM ledger WHERE reason = 'purchase'"))[0].c,
+  );
+  const generations = Number((await q("SELECT COUNT(*)::int AS c FROM generations"))[0].c);
+  const starsRevenue = Number(
+    (
+      await q(
+        "SELECT COALESCE(SUM(CAST(meta AS INTEGER)),0)::int AS s FROM ledger WHERE reason = 'purchase'",
       )
-      .get() as { s: number }
-  ).s;
+    )[0].s,
+  );
   return { users, paid, generations, starsRevenue };
 }

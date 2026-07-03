@@ -17,7 +17,10 @@ import {
 } from "./models.js";
 import { registerPayments, sendBalance } from "./payments.js";
 
-function user(ctx: { from?: { id: number; username?: string } }, referrerId: number | null = null): UserRow {
+async function user(
+  ctx: { from?: { id: number; username?: string } },
+  referrerId: number | null = null,
+): Promise<UserRow> {
   if (!ctx.from) throw new Error("no ctx.from");
   return getOrCreateUser(ctx.from.id, ctx.from.username, referrerId, config.freeCredits);
 }
@@ -164,14 +167,14 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       try {
         const data = ctx.callbackQuery?.data;
         if (data) {
-          if (data.startsWith("preset:")) logEvent(from.id, "preset", data.slice(7));
-          else logEvent(from.id, "select", data); // menu:* | act:* | buy:* | show_packs
+          if (data.startsWith("preset:")) await logEvent(from.id, "preset", data.slice(7));
+          else await logEvent(from.id, "select", data); // menu:* | act:* | buy:* | show_packs
         } else if (ctx.message?.photo) {
-          logEvent(from.id, "photo");
+          await logEvent(from.id, "photo");
         } else if (ctx.message?.text?.startsWith("/start")) {
-          logEvent(from.id, "menu_open", "start");
+          await logEvent(from.id, "menu_open", "start");
         } else if (ctx.message?.text === "/menu") {
-          logEvent(from.id, "menu_open", "menu");
+          await logEvent(from.id, "menu_open", "menu");
         }
       } catch (e) {
         console.error("analytics log failed:", e);
@@ -183,20 +186,20 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   bot.command("start", async (ctx) => {
     const payload = ctx.match?.trim();
     const referrerId = payload && /^\d+$/.test(payload) ? Number(payload) : null;
-    const u = user(ctx, referrerId);
+    const u = await user(ctx, referrerId);
     await sendMainMenu(ctx, `${WELCOME}\n\n🎁 У вас <b>${u.credits} бесплатных кредита</b>.`);
     // Deep link from the Mini App's "Пополнить" button.
     if (payload === "buy") await sendBalance(ctx, u.credits);
   });
 
   bot.command("menu", async (ctx) => {
-    const u = user(ctx);
-    setPending(u.id, null, u.pending_file_id); // escape any mode/prompt-await, keep the photo
+    const u = await user(ctx);
+    await setPending(u.id, null, u.pending_file_id); // escape any mode/prompt-await, keep the photo
     await sendMainMenu(ctx, "Что создаём?");
   });
 
   bot.command("app", async (ctx) => {
-    user(ctx);
+    await user(ctx);
     if (!config.webappUrl) {
       await ctx.reply("Приложение скоро откроется 🌐");
       return;
@@ -206,14 +209,14 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     });
   });
 
-  bot.command("balance", async (ctx) => sendBalance(ctx, user(ctx).credits));
-  bot.command("buy", async (ctx) => sendBalance(ctx, user(ctx).credits));
+  bot.command("balance", async (ctx) => sendBalance(ctx, (await user(ctx)).credits));
+  bot.command("buy", async (ctx) => sendBalance(ctx, (await user(ctx)).credits));
 
   bot.command("ref", async (ctx) => sendRefLink(ctx));
 
   // Premium text-to-image: /premium <prompt> (GPT Image 2, high quality).
   bot.command("premium", async (ctx) => {
-    const u = user(ctx);
+    const u = await user(ctx);
     const prompt = ctx.match?.trim();
     if (!prompt) {
       await ctx.reply(
@@ -226,7 +229,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   bot.command("stats", async (ctx) => {
     if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
-    const s = stats();
+    const s = await stats();
     await ctx.reply(
       `👥 Users: ${s.users}\n💳 Paying: ${s.paid}\n🎨 Generations: ${s.generations}\n⭐ Stars revenue: ${s.starsRevenue}`,
     );
@@ -235,7 +238,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   // Admin conversion funnel + "why didn't they order" drop-off buckets.
   bot.command("funnel", async (ctx) => {
     if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
-    const f = funnel();
+    const f = await funnel();
     const pct = (n: number) => (f.visitors ? `${Math.round((n / f.visitors) * 100)}%` : "—");
     await ctx.reply(
       [
@@ -262,19 +265,19 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   bot.callbackQuery("menu:main", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const u = user(ctx);
-    setPending(u.id, null, u.pending_file_id); // escape any mode/prompt-await, keep the photo
+    const u = await user(ctx);
+    await setPending(u.id, null, u.pending_file_id); // escape any mode/prompt-await, keep the photo
     await ctx.reply("Что создаём?", { reply_markup: mainMenu() });
   });
 
   bot.callbackQuery("menu:photoshoot", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const u = user(ctx);
+    const u = await user(ctx);
     if (u.pending_file_id) {
       await showPresets(ctx, "photo", "Выберите стиль — один тап, без промптов:");
       return;
     }
-    setPending(u.id, "mode_photo", null);
+    await setPending(u.id, "mode_photo", null);
     await sendPreviewAlbum(ctx, "photo");
     await ctx.reply(
       "Вот что можно получить 👆 Пришлите своё фото 📸 (портрет без ретуши работает лучше всего) — и выберите стиль.",
@@ -283,31 +286,31 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   bot.callbackQuery("menu:product", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const u = user(ctx);
+    const u = await user(ctx);
     if (u.pending_file_id) {
       await showPresets(ctx, "product", "Выберите подачу товара:");
       return;
     }
-    setPending(u.id, "mode_product", null);
+    await setPending(u.id, "mode_product", null);
     await sendPreviewAlbum(ctx, "product");
     await ctx.reply("Вот примеры 👆 Пришлите фото товара 🛍 (можно прямо со стола — фон мы заменим).");
   });
 
   bot.callbackQuery("menu:animate", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const u = user(ctx);
+    const u = await user(ctx);
     await sendMenuVideo(ctx, "animate"); // example of the expected result
     if (u.pending_file_id) {
       await ctx.reply("🎬 Выберите видео-модель:", { reply_markup: videoModelsKeyboard() });
       return;
     }
-    setPending(u.id, "mode_animate", null);
+    await setPending(u.id, "mode_animate", null);
     await ctx.reply("Вот пример 👆 Пришлите фото 🎬 — и выберите модель (Kling / Seedance).");
   });
 
   bot.callbackQuery("menu:videopick", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const u = user(ctx);
+    const u = await user(ctx);
     if (!u.pending_file_id) {
       await ctx.reply("Сначала пришлите фото 🙂");
       return;
@@ -317,8 +320,8 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   bot.callbackQuery("menu:text", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const u = user(ctx);
-    setPending(u.id, null, u.pending_file_id); // leave photo mode so the next text becomes a t2i prompt
+    const u = await user(ctx);
+    await setPending(u.id, null, u.pending_file_id); // leave photo mode so the next text becomes a t2i prompt
     await sendMenuAlbum(ctx, ["text_example_1", "text_example_2"]); // examples of the expected result
     await ctx.reply("✨ Выберите модель для картинки по тексту:", {
       reply_markup: imageModelsKeyboard(),
@@ -328,8 +331,8 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   // Top-models hub: image-model picker + a route into the video-model picker.
   bot.callbackQuery("menu:models", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const u = user(ctx);
-    setPending(u.id, null, u.pending_file_id);
+    const u = await user(ctx);
+    await setPending(u.id, null, u.pending_file_id);
     await ctx.reply(
       "⚡ Топовые модели ИИ.\nКартинка по тексту — выберите модель (или пришлите фото для видео):",
       { reply_markup: imageModelsKeyboard() },
@@ -338,7 +341,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   bot.callbackQuery("menu:balance", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await sendBalance(ctx, user(ctx).credits);
+    await sendBalance(ctx, (await user(ctx)).credits);
   });
 
   bot.callbackQuery("menu:ref", async (ctx) => {
@@ -349,7 +352,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   // "Ещё стиль" on a delivered result: reuse the last photo if we still have it.
   bot.callbackQuery("menu:styles", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const u = user(ctx);
+    const u = await user(ctx);
     if (!u.pending_file_id) {
       await ctx.reply("Пришлите фото — и выбирайте стиль 🙂");
       return;
@@ -366,28 +369,28 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   // ---- Photo in → route by selected mode (or show the action menu) ----
 
   bot.on("message:photo", async (ctx) => {
-    const u = user(ctx);
+    const u = await user(ctx);
     const photos = ctx.message.photo;
     const fileId = photos[photos.length - 1].file_id; // largest size
     const mode = u.pending_action;
 
     if (mode === "mode_product") {
-      setPending(u.id, "await_action", fileId);
+      await setPending(u.id, "await_action", fileId);
       await showPresets(ctx, "product", "Отличный кадр! Выберите подачу товара:");
       return;
     }
     if (mode === "mode_photo") {
-      setPending(u.id, "await_action", fileId);
+      await setPending(u.id, "await_action", fileId);
       await showPresets(ctx, "photo", "Выберите стиль — один тап, без промптов:");
       return;
     }
     if (mode === "mode_animate") {
-      setPending(u.id, "await_action", fileId);
+      await setPending(u.id, "await_action", fileId);
       await ctx.reply("🎬 Выберите видео-модель:", { reply_markup: videoModelsKeyboard() });
       return;
     }
 
-    setPending(u.id, "await_action", fileId);
+    await setPending(u.id, "await_action", fileId);
     const kb = new InlineKeyboard()
       .text("📸 AI-фотосессия — стили", "menu:photoshoot")
       .row()
@@ -401,13 +404,13 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   bot.callbackQuery(/^act:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
-    const u = user(ctx);
+    const u = await user(ctx);
     const model = modelByKey(ctx.match[1]);
     if (!model || !u.pending_file_id) {
       await ctx.reply("Сначала пришлите фото 🙂");
       return;
     }
-    setPending(u.id, model.key, u.pending_file_id);
+    await setPending(u.id, model.key, u.pending_file_id);
     await ctx.reply(
       model.kind === "image_to_video"
         ? "Опишите движение (например: «медленный наезд камеры, волосы развеваются»):"
@@ -418,20 +421,20 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   // Text-to-image model picked from a picker — no photo needed, next text runs it.
   bot.callbackQuery(/^txt:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
-    const u = user(ctx);
+    const u = await user(ctx);
     const model = modelByKey(ctx.match[1]);
     if (!model || model.kind !== "text_to_image") {
       await ctx.reply("Модель недоступна 🙂");
       return;
     }
-    setPending(u.id, model.key, null); // text model: no photo
+    await setPending(u.id, model.key, null); // text model: no photo
     await ctx.reply(`✍️ Напишите, что нарисовать — ${model.label} (${model.credits} кр):`);
   });
 
   // One-tap presets: curated prompt through the premium model, no typing.
   bot.callbackQuery(/^preset:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
-    const u = user(ctx);
+    const u = await user(ctx);
     const preset = PRESETS.find((p) => p.id === ctx.match[1]);
     if (!preset) {
       await ctx.reply("Этот стиль больше недоступен — пришлите фото и выберите заново 🙂");
@@ -447,7 +450,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   // ---- Text in → prompt for a pending action, or plain text-to-image ----
 
   bot.on("message:text", async (ctx) => {
-    const u = user(ctx);
+    const u = await user(ctx);
     const text = ctx.message.text.trim();
     if (text.startsWith("/")) return;
 

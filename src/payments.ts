@@ -1,6 +1,6 @@
 import type { Bot, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import { addCredits, db, logEvent } from "./db.js";
+import { addCredits, getUser, logEvent } from "./db.js";
 import { PACKS, REFERRAL_BONUS } from "./models.js";
 import { nCredits } from "./text.js";
 
@@ -42,18 +42,16 @@ export function registerPayments(bot: Bot): void {
     const pack = PACKS.find((p) => p.id === packId);
     if (!pack || !ctx.from) return;
 
-    addCredits(ctx.from.id, pack.credits, "purchase", String(payment.total_amount));
-    logEvent(ctx.from.id, "purchase", `${packId}:${payment.total_amount}`);
+    await addCredits(ctx.from.id, pack.credits, "purchase", String(payment.total_amount));
+    await logEvent(ctx.from.id, "purchase", `${packId}:${payment.total_amount}`);
 
-    const user = db.prepare("SELECT referrer_id FROM users WHERE id = ?").get(ctx.from.id) as
-      | { referrer_id: number | null }
-      | undefined;
-    if (user?.referrer_id) {
+    const buyer = await getUser(ctx.from.id);
+    if (buyer?.referrer_id) {
       const bonus = Math.floor(pack.credits * REFERRAL_BONUS);
       if (bonus > 0) {
-        addCredits(user.referrer_id, bonus, "referral", String(ctx.from.id));
+        await addCredits(buyer.referrer_id, bonus, "referral", String(ctx.from.id));
         await ctx.api
-          .sendMessage(user.referrer_id, `🎁 +${nCredits(bonus)} — ваш реферал купил пакет!`)
+          .sendMessage(buyer.referrer_id, `🎁 +${nCredits(bonus)} — ваш реферал купил пакет!`)
           .catch(() => {});
       }
     }

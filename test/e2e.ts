@@ -21,7 +21,7 @@ process.env.ADMIN_IDS = "9999";
 
 const { fal } = await import("@fal-ai/client");
 const { createBot } = await import("../src/bot.js");
-const { db, funnel } = await import("../src/db.js");
+const { funnel, query, getUser } = await import("../src/db.js");
 
 // ---------- Telegram API stub (transformer: intercepts every outgoing call) ----------
 
@@ -212,11 +212,12 @@ async function payForPack(from: From, packId: string, stars: number): Promise<vo
 
 // ---------- db helpers ----------
 
-function credits(userId: number): number {
-  return (db.prepare("SELECT credits FROM users WHERE id = ?").get(userId) as { credits: number }).credits;
+async function credits(userId: number): Promise<number> {
+  return (await getUser(userId))!.credits;
 }
-function ledgerCount(reason: string): number {
-  return (db.prepare("SELECT COUNT(*) c FROM ledger WHERE reason = ?").get(reason) as { c: number }).c;
+async function ledgerCount(reason: string): Promise<number> {
+  const rows = await query("SELECT COUNT(*)::int AS c FROM ledger WHERE reason = $1", [reason]);
+  return Number(rows[0].c);
 }
 
 // ---------- scenario ----------
@@ -237,8 +238,8 @@ console.log("NeuroShot e2e — full user journey\n");
 
 await step("signup: /start creates user with 3 free credits and shows the use-case menu", async () => {
   await sendText(alice, "/start");
-  assert.equal(credits(alice.id), 3);
-  assert.equal(ledgerCount("signup"), 1);
+  assert.equal(await credits(alice.id), 3);
+  assert.equal(await ledgerCount("signup"), 1);
   // Main menu ships as a hero photo carrying the welcome caption + keyboard.
   const hero = calls("sendPhoto").at(-1)!;
   assert.match(hero.payload.caption as string, /3 бесплатных кредита/);
@@ -257,7 +258,7 @@ await step("text→image: prompt charges 1 credit, calls Seedream, delivers phot
   assert.equal(falCalls[0].endpoint, "fal-ai/bytedance/seedream/v4/text-to-image");
   assert.equal(falCalls[0].input.prompt, "a red fox in the snow");
   assert.equal(resultPhotos().length, 1);
-  assert.equal(credits(alice.id), 2);
+  assert.equal(await credits(alice.id), 2);
   // No source photo → «Ещё стиль» must NOT appear (Copilot: it would dead-end).
   const kb = resultPhotos().at(-1)!.payload.reply_markup as {
     inline_keyboard: Array<Array<{ callback_data: string }>>;
@@ -278,7 +279,7 @@ await step("photo→edit: action keyboard, prompt, Nano Banana edit charges 1 cr
   ]);
   assert.equal(calls("getFile").length, 1);
   assert.equal(resultPhotos().length, 2);
-  assert.equal(credits(alice.id), 1);
+  assert.equal(await credits(alice.id), 1);
 });
 
 await step("insufficient credits: animate (8 cr) with 1 cr is rejected, nothing charged", async () => {
@@ -289,7 +290,7 @@ await step("insufficient credits: animate (8 cr) with 1 cr is rejected, nothing 
   await sendText(alice, "slow zoom in");
   assert.equal(falCalls.length, falBefore);
   assert.match(lastText(), /Не хватает кредитов: «🎬 Оживление фото» стоит 8 кредитов, у вас 1 кредит/);
-  assert.equal(credits(alice.id), 1);
+  assert.equal(await credits(alice.id), 1);
 });
 
 await step("purchase: /buy → invoice → pre-checkout → payment credits the pack", async () => {
@@ -308,8 +309,8 @@ await step("purchase: /buy → invoice → pre-checkout → payment credits the 
   await payForPack(alice, "mini", 150);
   assert.equal(calls("answerPreCheckoutQuery").at(-1)!.payload.ok, true);
   assert.match(lastText(), /Начислено 15 кредитов/);
-  assert.equal(credits(alice.id), 16);
-  assert.equal(ledgerCount("purchase"), 1);
+  assert.equal(await credits(alice.id), 16);
+  assert.equal(await ledgerCount("purchase"), 1);
 });
 
 await step("pending action survives the paywall: motion prompt now renders Kling video (8 cr)", async () => {
@@ -319,7 +320,7 @@ await step("pending action survives the paywall: motion prompt now renders Kling
   assert.equal(anim.input.duration, "5");
   assert.ok((anim.input.image_url as string).startsWith("https://api.telegram.org/file/bot"));
   assert.equal(calls("sendVideo").length, 1);
-  assert.equal(credits(alice.id), 8);
+  assert.equal(await credits(alice.id), 8);
 });
 
 await step("provider failure: credits auto-refunded, error logged", async () => {
@@ -327,21 +328,19 @@ await step("provider failure: credits auto-refunded, error logged", async () => 
   await sendText(alice, "another fox");
   falShouldFail = false;
   assert.match(lastText(), /кредиты автоматически возвращены/);
-  assert.equal(credits(alice.id), 8);
-  assert.equal(ledgerCount("refund"), 1);
-  const gen = db
-    .prepare("SELECT status FROM generations ORDER BY id DESC LIMIT 1")
-    .get() as { status: string };
-  assert.equal(gen.status, "error");
+  assert.equal(await credits(alice.id), 8);
+  assert.equal(await ledgerCount("refund"), 1);
+  const gen = await query("SELECT status FROM generations ORDER BY id DESC LIMIT 1");
+  assert.equal(gen[0].status, "error");
 });
 
 await step("referral: /start with payload links referrer; purchase pays 10% bonus", async () => {
   await sendText(bob, `/start ${alice.id}`);
-  assert.equal(credits(bob.id), 3);
+  assert.equal(await credits(bob.id), 3);
   await payForPack(bob, "standard", 450);
-  assert.equal(credits(bob.id), 53);
-  assert.equal(credits(alice.id), 13); // 8 + floor(50 * 0.10)
-  assert.equal(ledgerCount("referral"), 1);
+  assert.equal(await credits(bob.id), 53);
+  assert.equal(await credits(alice.id), 13); // 8 + floor(50 * 0.10)
+  assert.equal(await ledgerCount("referral"), 1);
   const notify = calls("sendMessage")
     .filter((c) => c.payload.chat_id === alice.id)
     .at(-1)!;
@@ -389,7 +388,7 @@ await step("photoshoot preset: photo → menu:photoshoot → one tap renders via
   assert.equal(call.input.quality, "high");
   assert.match(call.input.prompt as string, /corporate headshot/);
   assert.ok(Array.isArray(call.input.image_urls));
-  assert.equal(credits(alice.id), 9); // 13 - 4
+  assert.equal(await credits(alice.id), 9); // 13 - 4
 
   // Every delivered result carries the next-step keyboard.
   const delivered = resultPhotos().at(-1)!.payload.reply_markup as {
@@ -410,14 +409,14 @@ await step("«ещё стиль»: the photo is remembered after a generation", 
 await step("/premium: premium text-to-image charges 4 credits via GPT Image 2", async () => {
   await sendText(alice, "/premium");
   assert.match(lastText(), /напишите запрос сразу после команды/);
-  assert.equal(credits(alice.id), 9); // bare command charges nothing
+  assert.equal(await credits(alice.id), 9); // bare command charges nothing
 
   await sendText(alice, "/premium a perfume bottle on wet black marble");
   const call = falCalls.at(-1)!;
   assert.equal(call.endpoint, "fal-ai/gpt-image-2");
   assert.equal(call.input.quality, "high");
   assert.equal(call.input.prompt, "a perfume bottle on wet black marble");
-  assert.equal(credits(alice.id), 5); // 9 - 4
+  assert.equal(await credits(alice.id), 5); // 9 - 4
 });
 
 await step("product flow: menu:product → photo → product preset renders (4 cr)", async () => {
@@ -434,7 +433,7 @@ await step("product flow: menu:product → photo → product preset renders (4 c
   const call = falCalls.at(-1)!;
   assert.equal(call.endpoint, "openai/gpt-image-2/edit");
   assert.match(call.input.prompt as string, /white studio background/);
-  assert.equal(credits(alice.id), 1); // 5 - 4
+  assert.equal(await credits(alice.id), 1); // 5 - 4
 });
 
 await step("mode escape: menu:main clears a photo mode so text→image works again", async () => {
@@ -468,7 +467,7 @@ await step("analytics: events logged; /funnel shows the conversion funnel to adm
   assert.match(text, /Купили:/);
   assert.match(text, /Почему не купили/);
 
-  const f = funnel();
+  const f = await funnel();
   assert.ok(f.visitors >= 3, `visitors ${f.visitors}`); // alice, bob, carol (+admin)
   assert.ok(f.paid >= 2, `paid ${f.paid}`); // alice + bob purchased
   assert.ok(f.succeededGen >= 1, `succeededGen ${f.succeededGen}`);
@@ -503,7 +502,7 @@ await step("top models: image picker routes text→image to the chosen model (ac
   assert.equal(call.endpoint, "fal-ai/nano-banana-pro"); // verified fal endpoint
   assert.equal(call.input.prompt, "cyberpunk cat");
   assert.equal(call.input.resolution, "2K");
-  assert.equal(credits(dave.id), 150); // 153 − 3
+  assert.equal(await credits(dave.id), 150); // 153 − 3
 });
 
 await step("top models: video picker routes photo→video to the chosen model (Seedance 2.0)", async () => {
@@ -523,7 +522,7 @@ await step("top models: video picker routes photo→video to the chosen model (S
   assert.ok((call.input.image_url as string).startsWith("https://api.telegram.org/file/bot"));
   assert.equal(call.input.duration, "5");
   assert.equal(call.input.resolution, "720p");
-  assert.equal(credits(dave.id), 125); // 150 − 25
+  assert.equal(await credits(dave.id), 125); // 150 − 25
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_PATH})`);

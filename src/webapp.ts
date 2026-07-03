@@ -75,31 +75,44 @@ function initDataFromReq(req: IncomingMessage): string {
   return typeof alt === "string" ? alt : "";
 }
 
+/** Fetch the caller's shared state for the Mini App (onboards idempotently). */
+export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
+  await getOrCreateUser(user.id, user.username, null, config.freeCredits);
+  const [dashboard, generations] = await Promise.all([
+    userDashboard(user.id),
+    recentGenerations(user.id, 30),
+  ]);
+  return {
+    user: { id: user.id, username: user.username, first_name: user.first_name },
+    dashboard,
+    generations,
+    bot_username: config.webappBotUsername,
+  };
+}
+
 /** Build the Mini App HTTP server (exported for tests; not started here). */
 export function createWebApp(): Server {
-  return createServer((req, res) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
+  return createServer(async (req, res) => {
+    try {
+      const url = new URL(req.url ?? "/", "http://localhost");
 
-    if (url.pathname === "/healthz") return json(res, 200, { ok: true });
+      if (url.pathname === "/healthz") return json(res, 200, { ok: true });
 
-    if (url.pathname === "/" || url.pathname === "/app") {
-      return send(res, 200, APP_HTML, "text/html; charset=utf-8");
+      if (url.pathname === "/" || url.pathname === "/app") {
+        return send(res, 200, APP_HTML, "text/html; charset=utf-8");
+      }
+
+      if (url.pathname === "/api/me") {
+        const user = verifyInitData(initDataFromReq(req), config.botToken);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        return json(res, 200, await meResponse(user));
+      }
+
+      return json(res, 404, { error: "not_found" });
+    } catch (e) {
+      console.error("webapp error:", e);
+      return json(res, 500, { error: "server_error" });
     }
-
-    if (url.pathname === "/api/me") {
-      const user = verifyInitData(initDataFromReq(req), config.botToken);
-      if (!user) return json(res, 401, { error: "unauthorized" });
-      // Opening the app also onboards (idempotent) — shared with the bot.
-      getOrCreateUser(user.id, user.username, null, config.freeCredits);
-      return json(res, 200, {
-        user: { id: user.id, username: user.username, first_name: user.first_name },
-        dashboard: userDashboard(user.id),
-        generations: recentGenerations(user.id, 30),
-        bot_username: config.webappBotUsername,
-      });
-    }
-
-    return json(res, 404, { error: "not_found" });
   });
 }
 

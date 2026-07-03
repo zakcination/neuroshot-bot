@@ -10,7 +10,7 @@ Telegram GenAI photo/video bot — the MVP from `research/saas-ideas/veosee-clon
   restyle it with 🎭 one-tap presets (business headshot, fashion editorial, product hero…), or
   🎬 animate it into a 5s video (Kling)
 - Send a **text prompt** → ✨ generate an image (Seedream), or `/premium <prompt>` for GPT Image 2 high quality
-- **Credits ledger** in SQLite: 3 free credits on signup, image = 1 credit, 💎 premium = 4, video = 8
+- **Credits ledger** in Postgres (Neon): 3 free credits on signup, image = 1 credit, 💎 premium = 4, video = 8
 - **Payments via Telegram Stars** (XTR) — works worldwide, no legal entity or payment provider needed
 - **Referral program**: 10% of every purchased pack credited to the referrer
 - Automatic **refund on provider failure**; `/stats` for admins
@@ -23,14 +23,16 @@ cp .env.example .env   # fill in BOT_TOKEN (from @BotFather) and FAL_KEY (fal.ai
 npm run dev
 ```
 
-Long polling — no webhook or public URL needed; runs on any $5 VPS.
+Long polling — no webhook or public URL needed; runs on any $5 VPS. State lives in
+Postgres: set `DATABASE_URL` to your Neon connection string for production; leave it
+empty for local/dev and an embedded (ephemeral, in-memory) Postgres is used.
 
 ## Test it
 
 ```bash
 npm run lint        # eslint over src + test
 npm run typecheck   # tsc --noEmit
-npm run test:e2e    # full user journey against a throwaway SQLite db
+npm run test:e2e    # full user journey against embedded Postgres (pglite)
 ```
 
 `test/e2e.ts` drives the real handlers through grammY's update pipeline — signup,
@@ -46,11 +48,11 @@ CI (`.github/workflows/ci.yml`) runs all three on every push and PR.
 | `scripts/brand-assets.mts` | Content population: generates avatar candidates, seed-post creatives and onboarding examples with GPT Image 2 into `brand-assets/` (gitignored) |
 | `assets/previews/` | Per-preset example-result images shown as an album when a category menu opens (see its README) |
 | `assets/menu/` | Top-level menu media: `/start` hero, animate video preview, text-flow examples (see its README) |
-| `src/db.ts` | SQLite schema + atomic credit ledger (spend is check-and-decrement, every movement journaled) |
+| `src/db.ts` | Async Postgres data layer (Neon in prod, embedded pglite in tests) + atomic credit ledger (check-and-decrement, journaled) |
 | `src/generate.ts` | Charge → call fal → deliver → refund-on-error pipeline |
 | `src/payments.ts` | Stars invoices, pre-checkout, crediting, referral payout |
 | `src/bot.ts` | Bot wiring: commands, photo/text flows, pending-action state (`createBot()`, also used by the e2e harness) |
-| `src/webapp.ts` + `src/webapp.html` | Telegram Mini App: shared-state API (`initData` HMAC auth) + personal cabinet, over the same SQLite. See `docs/web-app.md` |
+| `src/webapp.ts` + `src/webapp.html` | Telegram Mini App: shared-state API (`initData` HMAC auth) + personal cabinet, over the same Postgres. See `docs/web-app.md` |
 | `src/index.ts` | Entrypoint: builds the bot, starts long polling + the Mini App server (if `WEBAPP_URL` set) |
 
 ## Before going live

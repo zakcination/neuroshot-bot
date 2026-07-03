@@ -9,7 +9,9 @@ function required(name: string): string {
 export const config = {
   botToken: required("BOT_TOKEN"),
   falKey: required("FAL_KEY"),
-  databasePath: process.env.DATABASE_PATH ?? "./data/bot.db",
+  // Postgres connection (Neon in prod). Unset → embedded in-memory Postgres
+  // (ephemeral) — fine for tests/local, NOT for a real deployment.
+  databaseUrl: process.env.DATABASE_URL ?? "",
   freeCredits: Number(process.env.FREE_CREDITS ?? 3),
   adminIds: (process.env.ADMIN_IDS ?? "")
     .split(",")

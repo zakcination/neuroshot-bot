@@ -49,17 +49,17 @@ export async function runGeneration(
   prompt: string,
   fileId?: string,
 ): Promise<void> {
-  if (!spendCredits(user.id, model.credits, model.key)) {
-    logEvent(user.id, "paywall", model.key);
+  if (!(await spendCredits(user.id, model.credits, model.key))) {
+    await logEvent(user.id, "paywall", model.key);
     await ctx.reply(
       `Не хватает кредитов: «${model.label}» стоит ${nCredits(model.credits)}, у вас ${nCredits(user.credits)}.`,
       { reply_markup: buyKeyboard },
     );
     return;
   }
-  logEvent(user.id, "gen_start", model.key);
+  await logEvent(user.id, "gen_start", model.key);
   // Keep the photo for one-tap follow-ups ("ещё стиль"), clear the prompt-await state.
-  setPending(user.id, fileId ? "await_action" : null, fileId ?? null);
+  await setPending(user.id, fileId ? "await_action" : null, fileId ?? null);
   const after = afterKeyboard(!!fileId);
   const progress = await ctx.reply(
     model.kind === "image_to_video" ? "🎬 Рендерим видео (1–3 мин)…" : "✨ Генерируем…",
@@ -78,12 +78,12 @@ export async function runGeneration(
     } else {
       await ctx.replyWithPhoto(new InputFile({ url }), { reply_markup: after });
     }
-    logGeneration(user.id, model.key, prompt, model.credits, "ok", url);
-    logEvent(user.id, "gen_ok", model.key);
+    await logGeneration(user.id, model.key, prompt, model.credits, "ok", url);
+    await logEvent(user.id, "gen_ok", model.key);
   } catch (err) {
-    addCredits(user.id, model.credits, "refund", model.key);
-    logGeneration(user.id, model.key, prompt, model.credits, "error");
-    logEvent(user.id, "gen_error", model.key);
+    await addCredits(user.id, model.credits, "refund", model.key);
+    await logGeneration(user.id, model.key, prompt, model.credits, "error");
+    await logEvent(user.id, "gen_error", model.key);
     console.error(`generation failed (${model.key}):`, err);
     await ctx.reply("⚠️ Не получилось — кредиты автоматически возвращены. Попробуйте ещё раз.");
   } finally {

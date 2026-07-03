@@ -1,11 +1,10 @@
 # NeuroShot — bot (long polling) + Mini App server in one process (src/index.ts).
 # Runs via tsx (the repo's `npm start`), so devDeps (tsx/typescript) are needed.
+# State is in Postgres (set DATABASE_URL) — no native modules, no local volume.
 FROM node:22-bookworm-slim
 
-# better-sqlite3 ships prebuilt binaries for this platform; keep a toolchain as a
-# fallback so `npm ci` still works if a prebuild is ever unavailable.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 make g++ ca-certificates wget \
+  && apt-get install -y --no-install-recommends ca-certificates wget \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -18,10 +17,8 @@ RUN npm ci
 COPY . .
 
 ENV NODE_ENV=production \
-    DATABASE_PATH=/data/bot.db \
     WEBAPP_PORT=8080
 EXPOSE 8080
-VOLUME ["/data"]
 
 # Liveness: probe the Mini App /healthz on WEBAPP_PORT when the web layer is on.
 # In bot-only mode (no WEBAPP_URL) there is no HTTP server, so report healthy and

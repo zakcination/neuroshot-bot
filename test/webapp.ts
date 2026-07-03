@@ -127,9 +127,9 @@ await step("GET /api/me onboards a new user with free credits (shared with bot)"
 
 await step("app reflects the SAME state the bot writes: spend + gallery", async () => {
   // Simulate what the bot does: onboard, spend a credit, log a delivered result.
-  getOrCreateUser(555, "sam", null, 3);
-  assert.equal(spendCredits(555, 1, "photo_edit"), true);
-  logGeneration(555, "photo_edit", "make it pop", 1, "ok", "https://fal.test/out/1.png");
+  await getOrCreateUser(555, "sam", null, 3);
+  assert.equal(await spendCredits(555, 1, "photo_edit"), true);
+  await logGeneration(555, "photo_edit", "make it pop", 1, "ok", "https://fal.test/out/1.png");
 
   const { body } = await apiMe(signInitData({ id: 555 }));
   assert.equal(body.dashboard.credits, 2); // 3 − 1
