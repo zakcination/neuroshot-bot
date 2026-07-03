@@ -4,6 +4,13 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>NeuroShot</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#0f0f14" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/icon.svg" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="NeuroShot" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
@@ -54,10 +61,34 @@
     const $ = (h) => { const t = document.createElement("template"); t.innerHTML = h.trim(); return t.content.firstChild; };
     const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
 
+    // Installable app: register the service worker (offline shell + home-screen launch).
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+
+    // Client-agnostic auth: inside Telegram we have fresh initData — exchange it
+    // once for a session token and cache it, so the SAME installed app keeps
+    // working later outside Telegram (home-screen PWA / future native client).
+    const TOKEN_KEY = "neuroshot_session";
+    async function authHeader() {
+      const initData = tg?.initData || "";
+      if (initData) {
+        try {
+          const r = await fetch("/api/auth", { method: "POST", headers: { Authorization: "tma " + initData } });
+          if (r.ok) { const d = await r.json(); localStorage.setItem(TOKEN_KEY, d.token); return "Bearer " + d.token; }
+        } catch (e) { /* fall through to raw initData */ }
+        return "tma " + initData;
+      }
+      const tok = localStorage.getItem(TOKEN_KEY);
+      return tok ? "Bearer " + tok : "";
+    }
+
     async function load() {
       const root = document.getElementById("root");
       try {
-        const r = await fetch("/api/me", { headers: { Authorization: "tma " + (tg?.initData || "") } });
+        const auth = await authHeader();
+        const r = await fetch("/api/me", { headers: { Authorization: auth } });
+        if (r.status === 401) localStorage.removeItem(TOKEN_KEY); // stale token → drop it
         if (!r.ok) throw new Error("auth " + r.status);
         const d = await r.json();
         const dash = d.dashboard;

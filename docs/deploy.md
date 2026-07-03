@@ -79,11 +79,19 @@ Both build the `Dockerfile` directly — no CLI needed, deploy from the dashboar
    Service — the free tier sleeps on inactivity, which breaks long polling).
 4. Register `WEBAPP_URL` in @BotFather → Configure Mini App.
 
-## Vercel + Neon (serverless)
+## Vercel + Neon — the web layer (Mini App / PWA / API)
 
-Not supported in this PR. This change only migrates the existing long-polling
-app to async Postgres; Vercel serverless functions/webhook mode lands in PR 2.
-For now, deploy with one of the always-on process-based options above.
+The **stateless web layer** — the Mini App, its API (`/api/auth`, `/api/me`) and
+the installable PWA — runs on Vercel serverless against Neon. This is also the
+layer that lets a home-screen PWA or a future iOS app talk to the same data. See
+**[`docs/vercel.md`](./vercel.md)** for the full walkthrough.
+
+**The bot itself stays on a process host** (Docker/Fly/Railway above): it uses
+long polling and each generation blocks on fal.ai for up to ~3 minutes — neither
+fits a stateless serverless webhook (Vercel's max duration and Telegram's webhook
+timeout both cut it off). So the production shape is **bot on a process host +
+web layer on Vercel, both pointed at the same Neon `DATABASE_URL`.** A
+queue-backed webhook that would let the bot run on Vercel too is future work.
 
 ## Notes
 - The app is executed with `tsx` (matches `npm start`), so the image keeps

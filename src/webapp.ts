@@ -8,19 +8,27 @@
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
+import { issueSession, verifySession } from "./auth.js";
 import { getOrCreateUser, recentGenerations, userDashboard } from "./db.js";
 
-const APP_HTML = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "webapp.html"), "utf8");
+const HERE = dirname(fileURLToPath(import.meta.url));
+// Static PWA assets live in public/ (Vercel serves them at root automatically;
+// the Node server below mirrors that) — one source of truth for both hosts.
+const PUBLIC_DIR = join(HERE, "..", "public");
+const APP_HTML = readFileSync(join(PUBLIC_DIR, "app.html"), "utf8");
 
 export interface TgUser {
   id: number;
   username?: string;
   first_name?: string;
 }
+
+/** Minimal header bag shared by node:http and Vercel request objects. */
+export type Headers = Record<string, string | string[] | undefined>;
 
 /**
  * Validate Telegram WebApp initData and return the user, or null if invalid.
@@ -67,12 +75,63 @@ function json(res: ServerResponse, status: number, obj: unknown): void {
   send(res, status, JSON.stringify(obj), "application/json; charset=utf-8");
 }
 
-/** initData from the `Authorization: tma <initData>` header (Telegram convention). */
-function initDataFromReq(req: IncomingMessage): string {
-  const auth = req.headers["authorization"];
-  if (typeof auth === "string" && auth.startsWith("tma ")) return auth.slice(4);
-  const alt = req.headers["x-telegram-init-data"];
-  return typeof alt === "string" ? alt : "";
+function header(headers: Headers, name: string): string {
+  const v = headers[name] ?? headers[name.toLowerCase()];
+  return Array.isArray(v) ? (v[0] ?? "") : (v ?? "");
+}
+
+/** initData from `Authorization: tma <initData>` (Telegram convention) or the alt header. */
+function initDataFromHeaders(headers: Headers): string {
+  const auth = header(headers, "authorization");
+  if (auth.startsWith("tma ")) return auth.slice(4);
+  return header(headers, "x-telegram-init-data");
+}
+
+/** Session JWT from `Authorization: Bearer <token>` (non-Telegram clients: PWA/iOS). */
+function bearerFromHeaders(headers: Headers): string {
+  const auth = header(headers, "authorization");
+  return auth.startsWith("Bearer ") ? auth.slice(7) : "";
+}
+
+/**
+ * Resolve the caller from request headers, accepting EITHER credential:
+ *   • Telegram Mini App → `initData` (verified by HMAC against the bot token);
+ *   • PWA / iOS / any non-Telegram client → a `Bearer` session token.
+ * Returns null when neither is present or valid.
+ */
+export function resolveUser(headers: Headers): TgUser | null {
+  const initData = initDataFromHeaders(headers);
+  if (initData) return verifyInitData(initData, config.botToken);
+
+  const token = bearerFromHeaders(headers);
+  if (token) {
+    const claims = verifySession(token, config.botToken);
+    if (claims) return { id: claims.sub, username: claims.username, first_name: claims.first_name };
+  }
+  return null;
+}
+
+/**
+ * POST /api/auth — exchange Telegram `initData` for a client-agnostic session
+ * token. Called once at Mini App launch; the client keeps the token so it can
+ * hit the same API later outside Telegram (installed PWA, native app).
+ */
+export function authResponse(headers: Headers): { status: number; body: Record<string, unknown> } {
+  const user = verifyInitData(initDataFromHeaders(headers), config.botToken);
+  if (!user) return { status: 401, body: { error: "unauthorized" } };
+  const { token, expiresAt } = issueSession(
+    { sub: user.id, username: user.username, first_name: user.first_name },
+    config.botToken,
+  );
+  return {
+    status: 200,
+    body: {
+      token,
+      token_type: "Bearer",
+      expires_at: expiresAt,
+      user: { id: user.id, username: user.username, first_name: user.first_name },
+    },
+  };
 }
 
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
@@ -90,6 +149,14 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
   };
 }
 
+/** Static PWA assets (installable web app / iOS home-screen). Served at root so
+ *  the service worker can control the whole origin. */
+const STATIC: Record<string, { file: string; type: string }> = {
+  "/manifest.webmanifest": { file: "manifest.webmanifest", type: "application/manifest+json" },
+  "/sw.js": { file: "sw.js", type: "text/javascript; charset=utf-8" },
+  "/icon.svg": { file: "icon.svg", type: "image/svg+xml" },
+};
+
 /** Build the Mini App HTTP server (exported for tests; not started here). */
 export function createWebApp(): Server {
   return createServer(async (req, res) => {
@@ -102,8 +169,21 @@ export function createWebApp(): Server {
         return send(res, 200, APP_HTML, "text/html; charset=utf-8");
       }
 
+      const asset = STATIC[url.pathname];
+      if (asset) {
+        // no-store would defeat installability; let the SW/browser cache these.
+        res.writeHead(200, { "Content-Type": asset.type, "Cache-Control": "public, max-age=3600" });
+        return res.end(readFileSync(join(PUBLIC_DIR, asset.file)));
+      }
+
+      // POST /api/auth — initData → session token (client-agnostic).
+      if (url.pathname === "/api/auth") {
+        const { status, body } = authResponse(req.headers);
+        return json(res, status, body);
+      }
+
       if (url.pathname === "/api/me") {
-        const user = verifyInitData(initDataFromReq(req), config.botToken);
+        const user = resolveUser(req.headers);
         if (!user) return json(res, 401, { error: "unauthorized" });
         return json(res, 200, await meResponse(user));
       }

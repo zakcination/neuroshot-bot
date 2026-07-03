@@ -13,7 +13,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-# App source + shipped assets (previews, menu media, webapp.html).
+# App source + shipped assets (previews, menu media, public/ PWA + app.html).
 COPY . .
 
 ENV NODE_ENV=production \

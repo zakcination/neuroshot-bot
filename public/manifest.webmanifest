@@ -1,0 +1,22 @@
+{
+  "name": "NeuroShot — AI фото и видео",
+  "short_name": "NeuroShot",
+  "description": "AI-фотосессии и видео для товаров и аватаров. Ваши кредиты и галерея — те же, что в боте.",
+  "id": "/",
+  "start_url": "/app",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f0f14",
+  "theme_color": "#0f0f14",
+  "lang": "ru",
+  "categories": ["photo", "graphics", "productivity"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
