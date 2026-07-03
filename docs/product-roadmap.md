@@ -89,7 +89,7 @@ The incumbent leads its welcome copy with **"ОПЛАТА ДОСТУПНА АБ�
 (Любые карты, Crypto, PayPal), оплата из любой точки земли"** — payment breadth is a
 *headline* differentiator in this market, not a nice-to-have (RU-card sanctions make
 "pay from anywhere" a real pain point they solve). Their checkout (Mini App) offers:
-Карта МИР, ЮKassa (RU cards), СБП, Visa/MC (KZ/СНГ), PayPal, SEPA (EUR), Apple Pay,
+Карта МИР, YooKassa (RU cards), СБП, Visa/MC (KZ/СНГ), PayPal, SEPA (EUR), Apple Pay,
 **Kaspi.kz**, Crypto — plus email-for-receipt, promo code, and currency (USD/RUB) select.
 
 Adopt (in the Mini App checkout — Telegram Stars alone can't cover this):
@@ -101,7 +101,7 @@ Adopt (in the Mini App checkout — Telegram Stars alone can't cover this):
   (RU 54-ФЗ / YooKassa needs email); show price in USD/RUB/KZT.
 - **Promo codes** · S — % or fixed discount at checkout, capped activations (they ran
   `VALENTIN -20%`, 100 uses). Great for посевы attribution and seasonal campaigns.
-- **Subscription tiers** · M — recurring monthly plans (their "Start 100 кр / $7.5·600₽,
+- **Subscription tiers** · M — recurring monthly plans (their "Start 100 кр / $7.5 (600₽),
   доступ ко всем моделям, +5% реф-выплата") alongside one-off packs. Recurring revenue;
   depends on card billing above. Keep our tiers use-case-framed, not "all neural nets".
 
