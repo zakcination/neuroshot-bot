@@ -1,0 +1,46 @@
+# Fly.io deploy — best fit for this app: an always-on Docker VM (long polling
+# needs a persistent process) with a volume for SQLite. Public HTTPS is provided
+# by Fly, so no Caddy is needed here.
+#
+#   fly launch --no-deploy         # or: fly apps create <name>
+#   fly volumes create botdata --size 1 --region waw
+#   fly secrets set BOT_TOKEN=... FAL_KEY=... BOT_USERNAME=neuroshot_ai_bot \
+#     ADMIN_IDS=<your_tg_id[,id2,...]> WEBAPP_URL=https://<app>.fly.dev
+#   fly deploy
+#   # then @BotFather → Configure Mini App → https://<app>.fly.dev
+#
+# App name is global on Fly — change it (or let `fly launch` generate one).
+app = "neuroshot-bot"
+primary_region = "waw" # Warsaw — close to RU/KZ users; pick your own
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  DATABASE_PATH = "/data/bot.db"
+  WEBAPP_PORT = "8080"
+  # WEBAPP_URL / BOT_TOKEN / FAL_KEY / BOT_USERNAME / ADMIN_IDS → `fly secrets set`
+
+# SQLite lives on a persistent volume (create it once, see header).
+[[mounts]]
+  source = "botdata"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Long polling must never be paused — keep exactly one machine always running.
+  auto_stop_machines = false
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "20s"
+    interval = "30s"
+    method = "get"
+    path = "/healthz"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
