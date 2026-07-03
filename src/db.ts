@@ -14,9 +14,12 @@ type Driver = (text: string, params: unknown[]) => Promise<Row[]>;
 
 const driver: Driver = (() => {
   const url = process.env.DATABASE_URL;
+  if (!url && process.env.NODE_ENV === "production") {
+    throw new Error("DATABASE_URL is required in production");
+  }
   if (url) {
     const sql = neon(url);
-    return (text, params) => sql.query(text, params) as Promise<Row[]>;
+    return async (text, params) => (await sql.query(text, params)).rows as Row[];
   }
   // Embedded Postgres (in-memory) — hermetic for tests, ephemeral for local dev.
   const pg = new PGlite();
