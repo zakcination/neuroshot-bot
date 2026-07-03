@@ -525,4 +525,4 @@ await step("top models: video picker routes photo→video to the chosen model (S
   assert.equal(await credits(dave.id), 125); // 150 − 25
 });
 
-console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_PATH})`);
+console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL ?? "embedded (pglite)"})`);
