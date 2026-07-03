@@ -70,7 +70,12 @@ const SCHEMA: string[] = [
 let schemaReady: Promise<void> | null = null;
 function ensureSchema(): Promise<void> {
   schemaReady ??= (async () => {
-    for (const stmt of SCHEMA) await driver(stmt, []);
+    try {
+      for (const stmt of SCHEMA) await driver(stmt, []);
+    } catch (err) {
+      schemaReady = null; // allow retry on transient failures
+      throw err;
+    }
   })();
   return schemaReady;
 }
