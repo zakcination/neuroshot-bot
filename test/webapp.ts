@@ -213,7 +213,7 @@ await step("GET /api/me rejects a Bearer token signed with a different token", a
   assert.equal(res.status, 401);
 });
 
-await step("serves the PWA manifest and service worker", async () => {
+await step("serves the PWA manifest and service worker (SW is no-cache)", async () => {
   const m = await fetch(`${base}/manifest.webmanifest`);
   assert.equal(m.status, 200);
   assert.match(m.headers.get("content-type") ?? "", /manifest/);
@@ -222,6 +222,17 @@ await step("serves the PWA manifest and service worker", async () => {
   const sw = await fetch(`${base}/sw.js`);
   assert.equal(sw.status, 200);
   assert.match(sw.headers.get("content-type") ?? "", /javascript/);
+  assert.match(sw.headers.get("cache-control") ?? "", /no-cache/); // prompt SW updates
+});
+
+await step("method gating: /api/auth is POST-only, /api/me is GET-only (405 otherwise)", async () => {
+  const getAuth = await fetch(`${base}/api/auth`); // GET
+  assert.equal(getAuth.status, 405);
+  assert.equal(getAuth.headers.get("allow"), "POST");
+
+  const postMe = await fetch(`${base}/api/me`, { method: "POST" });
+  assert.equal(postMe.status, 405);
+  assert.equal(postMe.headers.get("allow"), "GET");
 });
 
 await new Promise<void>((r) => server.close(() => r()));

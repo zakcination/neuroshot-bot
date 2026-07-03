@@ -6,7 +6,9 @@
  * Bump CACHE on any shell change so old assets are evicted.
  */
 const CACHE = "neuroshot-shell-v1";
-const SHELL = ["/app", "/manifest.webmanifest", "/icon.svg"];
+// Include both entry URLs — the app is reachable at "/" (rewritten to the shell)
+// and at "/app" — so an offline launch from either resolves from cache.
+const SHELL = ["/", "/app", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -40,7 +42,9 @@ self.addEventListener("fetch", (event) => {
           }
           return res;
         })
-        .catch(() => cached);
+        // Offline: fall back to this request's cache, then the app shell for
+        // navigations, so we never resolve respondWith with undefined.
+        .catch(() => cached || (request.mode === "navigate" ? caches.match("/") : undefined));
       return cached || network;
     }),
   );

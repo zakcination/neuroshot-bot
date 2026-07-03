@@ -71,6 +71,13 @@ function send(res: ServerResponse, status: number, body: string, contentType: st
   res.writeHead(status, { "Content-Type": contentType, "Cache-Control": "no-store" });
   res.end(body);
 }
+/** Enforce a route's HTTP method; on mismatch write 405 and return false. */
+function methodIs(res: ServerResponse, method: string | undefined, allowed: string): boolean {
+  if (method === allowed) return true;
+  res.setHeader("Allow", allowed);
+  json(res, 405, { error: "method_not_allowed" });
+  return false;
+}
 function json(res: ServerResponse, status: number, obj: unknown): void {
   send(res, status, JSON.stringify(obj), "application/json; charset=utf-8");
 }
@@ -151,10 +158,12 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
 
 /** Static PWA assets (installable web app / iOS home-screen). Served at root so
  *  the service worker can control the whole origin. */
-const STATIC: Record<string, { file: string; type: string }> = {
-  "/manifest.webmanifest": { file: "manifest.webmanifest", type: "application/manifest+json" },
-  "/sw.js": { file: "sw.js", type: "text/javascript; charset=utf-8" },
-  "/icon.svg": { file: "icon.svg", type: "image/svg+xml" },
+const STATIC: Record<string, { file: string; type: string; cache: string }> = {
+  "/manifest.webmanifest": { file: "manifest.webmanifest", type: "application/manifest+json", cache: "public, max-age=3600" },
+  // no-cache: let the browser revalidate the SW every load so updates ship
+  // promptly (mirrors vercel.json). The SW itself controls asset caching.
+  "/sw.js": { file: "sw.js", type: "text/javascript; charset=utf-8", cache: "no-cache" },
+  "/icon.svg": { file: "icon.svg", type: "image/svg+xml", cache: "public, max-age=3600" },
 };
 
 /** Build the Mini App HTTP server (exported for tests; not started here). */
@@ -171,18 +180,20 @@ export function createWebApp(): Server {
 
       const asset = STATIC[url.pathname];
       if (asset) {
-        // no-store would defeat installability; let the SW/browser cache these.
-        res.writeHead(200, { "Content-Type": asset.type, "Cache-Control": "public, max-age=3600" });
+        res.writeHead(200, { "Content-Type": asset.type, "Cache-Control": asset.cache });
         return res.end(readFileSync(join(PUBLIC_DIR, asset.file)));
       }
 
       // POST /api/auth — initData → session token (client-agnostic).
       if (url.pathname === "/api/auth") {
+        if (!methodIs(res, req.method, "POST")) return;
         const { status, body } = authResponse(req.headers);
         return json(res, status, body);
       }
 
+      // GET /api/me — the caller's shared state.
       if (url.pathname === "/api/me") {
+        if (!methodIs(res, req.method, "GET")) return;
         const user = resolveUser(req.headers);
         if (!user) return json(res, 401, { error: "unauthorized" });
         return json(res, 200, await meResponse(user));

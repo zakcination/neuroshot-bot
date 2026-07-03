@@ -10,6 +10,12 @@ import { meResponse, resolveUser } from "../src/webapp.js";
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
+  if (req.method !== "GET") {
+    res.statusCode = 405;
+    res.setHeader("Allow", "GET");
+    res.end(JSON.stringify({ error: "method_not_allowed" }));
+    return;
+  }
   try {
     const user = resolveUser(req.headers);
     if (!user) {
