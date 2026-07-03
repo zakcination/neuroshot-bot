@@ -81,9 +81,9 @@ Both build the `Dockerfile` directly — no CLI needed, deploy from the dashboar
 
 ## Vercel + Neon (serverless)
 
-Now supported via webhook mode — the bot + Mini App API run as Vercel functions
-against Neon Postgres. See the dedicated Vercel guide (added with the serverless
-functions) rather than the process-based options above.
+Not supported in this PR. This change only migrates the existing long-polling
+app to async Postgres; Vercel serverless functions/webhook mode lands in PR 2.
+For now, deploy with one of the always-on process-based options above.
 
 ## Notes
 - The app is executed with `tsx` (matches `npm start`), so the image keeps
