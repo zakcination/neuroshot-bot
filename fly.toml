@@ -1,6 +1,8 @@
-# Fly.io deploy — best fit for this app: an always-on Docker VM (long polling
-# needs a persistent process) with a volume for SQLite. Public HTTPS is provided
-# by Fly, so no Caddy is needed here.
+# Fly.io deploy — best fit for this app: one always-on Docker VM (long polling
+# needs a persistent process). State lives in Postgres (Neon) via DATABASE_URL,
+# so no volume is needed. This runs bot + Mini App in one process; Fly provides
+# public HTTPS (no Caddy). The web layer can also live on Vercel instead — then
+# leave WEBAPP_URL unset here and drop the [http_service] block below.
 #
 #   fly launch --no-deploy         # or: fly apps create <name>
 #   fly secrets set BOT_TOKEN=... FAL_KEY=... BOT_USERNAME=neuroshot_ai_bot \
