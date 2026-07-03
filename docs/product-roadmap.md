@@ -84,6 +84,41 @@ collect an email/contact channel from day one as a hedge.
 Soul-style character/identity consistency, batch generation, brand kits for sellers,
 premium video tier (Veo/Sora via reseller with fal fallback).
 
+### F. Payments & monetization — from the competitor Mini-App teardown  · L
+The incumbent leads its welcome copy with **"ОПЛАТА ДОСТУПНА АБСОЛЮТНО ВСЕМИ СПОСОБАМИ
+(Любые карты, Crypto, PayPal), оплата из любой точки земли"** — payment breadth is a
+*headline* differentiator in this market, not a nice-to-have (RU-card sanctions make
+"pay from anywhere" a real pain point they solve). Their checkout (Mini App) offers:
+Карта МИР, ЮKassa (RU cards), СБП, Visa/MC (KZ/СНГ), PayPal, SEPA (EUR), Apple Pay,
+**Kaspi.kz**, Crypto — plus email-for-receipt, promo code, and currency (USD/RUB) select.
+
+Adopt (in the Mini App checkout — Telegram Stars alone can't cover this):
+- **Multi-provider card checkout** · L — YooKassa (RU cards + СБП + Мир), **Kaspi** (KZ,
+  essential), **Crypto** (CryptoBot/TON — no entity, cross-border, the sanctions hedge),
+  PayPal, cards for KZ/CIS, SEPA. Each path just credits the same ledger. (See the payment
+  options analysis; sequence: Crypto → Kaspi → YooKassa.)
+- **Email-for-receipt + currency select** · S — required for card/fiscal receipts
+  (RU 54-ФЗ / YooKassa needs email); show price in USD/RUB/KZT.
+- **Promo codes** · S — % or fixed discount at checkout, capped activations (they ran
+  `VALENTIN -20%`, 100 uses). Great for посевы attribution and seasonal campaigns.
+- **Subscription tiers** · M — recurring monthly plans (their "Start 100 кр / $7.5·600₽,
+  доступ ко всем моделям, +5% реф-выплата") alongside one-off packs. Recurring revenue;
+  depends on card billing above. Keep our tiers use-case-framed, not "all neural nets".
+
+Already covered (do NOT rebuild): profile + credit balance, generation-history gallery,
+partnership/affiliate tab → shipped in the Mini App / on the roadmap (§A).
+
+Reviewed and **not adopting** (against the wedge — see Anti-goals):
+- **Audio AI, Text/LLM AI** menu sections — pure aggregator surface; dilutes the
+  "AI photoshoots & product videos" wedge. Skip.
+- **Persistent reply-keyboard menu** — cosmetic; our guided inline flow is a deliberate
+  UX choice and reads better for newcomers. Skip (revisit only if data shows menu friction).
+- **"Самые низкие цены" / lowest-price positioning** — that's the price-war trap that
+  compressed their margins. Compete on one-tap UX + results, not price.
+
+Small standalone win worth pulling forward: **`/support`** contact (command + link) — they
+expose "Служба поддержки"; we have none. · S
+
 ---
 
 ## ⚠️ Anti-goals (errors to avoid — from the decline curve)
