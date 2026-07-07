@@ -46,12 +46,25 @@ const SCHEMA: string[] = [
   // Forward migrations for existing databases (columns added after launch).
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS ref_first_purchase_at TIMESTAMPTZ`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS ref_milestones INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS partner_code TEXT`,
+  // Creator/partner codes: negotiated deals with bloggers & course authors.
+  // Deep link: t.me/<bot>?start=c_<code>. Each code carries its own revenue
+  // share and join bonus (per-deal terms) — see docs/creator-program.md.
+  `CREATE TABLE IF NOT EXISTS partner_codes (
+    code TEXT PRIMARY KEY,          -- lowercase slug used in the deep link
+    user_id BIGINT NOT NULL,        -- owner (the creator's Telegram id)
+    title TEXT,
+    percent REAL NOT NULL,          -- lifetime share of attributed purchases (0–1)
+    join_bonus INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
   `CREATE TABLE IF NOT EXISTS ledger (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
     delta INTEGER NOT NULL,
     -- signup | purchase | generation | refund | referral (lifetime share)
     -- | referral_join (invitee bonus) | referral_bonus (1st-purchase) | referral_milestone
+    -- | partner (creator revenue share) | partner_join (creator-code welcome bonus)
     reason TEXT NOT NULL,
     meta TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -116,10 +129,14 @@ export interface UserRow {
   referrer_id: number | null;
   pending_action: string | null;
   pending_file_id: string | null;
+  /** Creator code this user was acquired through (first-touch, immutable). */
+  partner_code: string | null;
   /** Set only by getOrCreateUser on the call that actually inserted the row. */
   justCreated?: boolean;
-  /** Referral welcome bonus granted at creation (0 unless joined via a link). */
+  /** Welcome bonus granted at creation (0 unless joined via a link/code). */
   joinBonus?: number;
+  /** What granted the join bonus — friend referral link or a creator code. */
+  joinVia?: "friend" | "partner";
 }
 
 // Postgres returns BIGINT as string — coerce id fields (Telegram ids are < 2^53).
@@ -131,6 +148,7 @@ function mapUser(r: Row): UserRow {
     referrer_id: r.referrer_id == null ? null : Number(r.referrer_id),
     pending_action: (r.pending_action as string | null) ?? null,
     pending_file_id: (r.pending_file_id as string | null) ?? null,
+    partner_code: (r.partner_code as string | null) ?? null,
   };
 }
 
@@ -140,27 +158,42 @@ export async function getOrCreateUser(
   referrerId: number | null,
   freeCredits: number,
   joinBonus = 0,
+  partner: PartnerCodeRow | null = null,
 ): Promise<UserRow> {
   const ref = referrerId && referrerId !== id ? referrerId : null;
-  // The invitee's welcome bonus applies only when they actually joined via a link.
-  const bonus = ref ? Math.max(0, Math.floor(joinBonus)) : 0;
+  // Attribution is first-touch and exclusive: friend referral OR creator code.
+  const via = !ref && partner && partner.user_id !== id ? partner : null;
+  const bonus = ref
+    ? Math.max(0, Math.floor(joinBonus))
+    : via
+      ? Math.max(0, Math.floor(via.join_bonus))
+      : 0;
   const inserted = await q(
-    `INSERT INTO users (id, username, credits, referrer_id) VALUES ($1, $2, $3, $4)
+    `INSERT INTO users (id, username, credits, referrer_id, partner_code) VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (id) DO NOTHING RETURNING *`,
-    [id, username ?? null, freeCredits + bonus, ref],
+    [id, username ?? null, freeCredits + bonus, ref, via?.code ?? null],
   );
   if (inserted.length) {
     await q("INSERT INTO ledger (user_id, delta, reason) VALUES ($1, $2, 'signup')", [id, freeCredits]);
     if (bonus > 0) {
-      await q("INSERT INTO ledger (user_id, delta, reason, meta) VALUES ($1, $2, 'referral_join', $3)", [
-        id,
-        bonus,
-        String(ref),
-      ]);
+      if (ref) {
+        await q("INSERT INTO ledger (user_id, delta, reason, meta) VALUES ($1, $2, 'referral_join', $3)", [
+          id,
+          bonus,
+          String(ref),
+        ]);
+      } else if (via) {
+        await q("INSERT INTO ledger (user_id, delta, reason, meta) VALUES ($1, $2, 'partner_join', $3)", [
+          id,
+          bonus,
+          via.code,
+        ]);
+      }
     }
     const u = mapUser(inserted[0]);
     u.justCreated = true;
     u.joinBonus = bonus;
+    u.joinVia = ref ? "friend" : via ? "partner" : undefined;
     return u;
   }
   const existing = await q("SELECT * FROM users WHERE id = $1", [id]);
@@ -255,6 +288,91 @@ export async function referralStats(
     [userId],
   );
   return { invited: Number(c[0].invited), paying: Number(c[0].paying), earned: Number(e[0].earned) };
+}
+
+// ---- Creator / partner program (negotiated per-deal terms) ----
+
+export interface PartnerCodeRow {
+  code: string;
+  user_id: number;
+  title: string | null;
+  percent: number; // 0–1 lifetime share of attributed purchases
+  join_bonus: number;
+}
+
+function mapPartner(r: Row): PartnerCodeRow {
+  return {
+    code: String(r.code),
+    user_id: Number(r.user_id),
+    title: (r.title as string | null) ?? null,
+    percent: Number(r.percent),
+    join_bonus: Number(r.join_bonus),
+  };
+}
+
+/** Create or update a creator code (admin action — terms are per-deal). */
+export async function upsertPartnerCode(
+  code: string,
+  userId: number,
+  percent: number,
+  joinBonus: number,
+  title: string | null,
+): Promise<void> {
+  await q(
+    `INSERT INTO partner_codes (code, user_id, percent, join_bonus, title) VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (code) DO UPDATE SET user_id = $2, percent = $3, join_bonus = $4, title = $5`,
+    [code, userId, percent, joinBonus, title],
+  );
+}
+
+export async function getPartnerCode(code: string): Promise<PartnerCodeRow | undefined> {
+  const rows = await q("SELECT * FROM partner_codes WHERE code = $1", [code]);
+  return rows[0] ? mapPartner(rows[0]) : undefined;
+}
+
+export async function listPartnerCodes(ownerId: number): Promise<PartnerCodeRow[]> {
+  const rows = await q("SELECT * FROM partner_codes WHERE user_id = $1 ORDER BY created_at", [ownerId]);
+  return rows.map(mapPartner);
+}
+
+/**
+ * Pay a creator for a purchase by a user acquired through their code. Like the
+ * friend referral this is purchase-gated (payouts only on real Stars spend);
+ * unlike it there is no first-purchase bonus or milestones — the creator's
+ * entire deal is the (negotiated) lifetime percent. Returns the payout or null.
+ */
+export async function rewardPartnerOnPurchase(
+  buyerId: number,
+  packCredits: number,
+): Promise<{ code: string; ownerId: number; amount: number } | null> {
+  const buyer = await getUser(buyerId);
+  if (!buyer?.partner_code) return null;
+  const pc = await getPartnerCode(buyer.partner_code);
+  if (!pc || pc.user_id === buyerId) return null;
+  const amount = Math.floor(packCredits * pc.percent);
+  if (amount > 0) await addCredits(pc.user_id, amount, "partner", `${pc.code}:${buyerId}`);
+  // Mark the buyer as paying (powers the partner dashboard's conversion stat).
+  await q("UPDATE users SET ref_first_purchase_at = now() WHERE id = $1 AND ref_first_purchase_at IS NULL", [
+    buyerId,
+  ]);
+  return { code: pc.code, ownerId: pc.user_id, amount };
+}
+
+/** Per-code funnel for the creator dashboard: joined → paying → patrons earned. */
+export async function partnerStats(
+  code: string,
+): Promise<{ joined: number; paying: number; earned: number }> {
+  const c = await q(
+    `SELECT COUNT(*)::int AS joined,
+            COALESCE(SUM(CASE WHEN ref_first_purchase_at IS NOT NULL THEN 1 ELSE 0 END),0)::int AS paying
+     FROM users WHERE partner_code = $1`,
+    [code],
+  );
+  const e = await q(
+    "SELECT COALESCE(SUM(delta),0)::int AS earned FROM ledger WHERE reason = 'partner' AND meta LIKE $1",
+    [`${code}:%`],
+  );
+  return { joined: Number(c[0].joined), paying: Number(c[0].paying), earned: Number(e[0].earned) };
 }
 
 /** Add credits and journal the movement atomically (single CTE statement). */

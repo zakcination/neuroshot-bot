@@ -1,7 +1,7 @@
 import type { Bot, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { config } from "./config.js";
-import { addCredits, logEvent, rewardReferralOnPurchase } from "./db.js";
+import { addCredits, logEvent, rewardPartnerOnPurchase, rewardReferralOnPurchase } from "./db.js";
 import { PACKS, REFERRAL_MILESTONES } from "./models.js";
 import { nUnits, UNIT_EMOJI } from "./text.js";
 
@@ -46,12 +46,24 @@ export function registerPayments(bot: Bot): void {
     await addCredits(ctx.from.id, pack.credits, "purchase", String(payment.total_amount));
     await logEvent(ctx.from.id, "purchase", `${packId}:${payment.total_amount}`);
 
-    // Reward the referrer — purchase-gated (abuse-safe). Notify them of any payout.
-    const payout = await rewardReferralOnPurchase(ctx.from.id, pack.credits, {
-      percent: config.referralPercent,
-      firstPurchaseBonus: config.referralFirstPurchaseBonus,
-      milestones: REFERRAL_MILESTONES,
-    });
+    // Attribution is exclusive: a buyer came via a creator code OR a friend link.
+    // Both payout paths are purchase-gated (abuse-safe by construction).
+    const partnerPayout = await rewardPartnerOnPurchase(ctx.from.id, pack.credits);
+    if (partnerPayout && partnerPayout.amount > 0) {
+      await ctx.api
+        .sendMessage(
+          partnerPayout.ownerId,
+          `🤝 +${nUnits(partnerPayout.amount)} — покупка по вашему коду c_${partnerPayout.code}!`,
+        )
+        .catch(() => {});
+    }
+    const payout = partnerPayout
+      ? null
+      : await rewardReferralOnPurchase(ctx.from.id, pack.credits, {
+          percent: config.referralPercent,
+          firstPurchaseBonus: config.referralFirstPurchaseBonus,
+          milestones: REFERRAL_MILESTONES,
+        });
     if (payout) {
       const pct = Math.round(config.referralPercent * 100);
       const lines: string[] = [];
