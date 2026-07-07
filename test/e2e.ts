@@ -605,6 +605,44 @@ await step("partner program: admin creates a code; c_<code> joins get the gift; 
   assert.equal(calls("sendMessage").length, before);
 });
 
+await step("campaigns: one-tap fairy-tale image → one-tap «Оживить» animates the GENERATED image", async () => {
+  const parent: From = { id: 5501, is_bot: false, first_name: "Parent", username: "parent" };
+  await sendText(parent, "/start"); // 12 free
+  await payForPack(parent, "start", 720); // +60 → 72
+
+  await pressButton(parent, "menu:campaigns");
+  let kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data: string }>>;
+  };
+  const camps = kb.inline_keyboard.flat().map((b) => b.callback_data);
+  for (const c of ["camp:skazka", "camp:cartoon", "camp:worldcup", "camp:oldphoto", "camp:poster"]) {
+    assert.ok(camps.includes(c), `campaign menu misses ${c}`);
+  }
+
+  await pressButton(parent, "camp:skazka");
+  assert.match(lastText(), /Пришлите фото ребёнка/);
+  await sendPhoto(parent, "kid-1");
+  kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data: string }>>;
+  };
+  assert.ok(kb.inline_keyboard.flat().some((b) => b.callback_data === "cpre:skazka:forest"));
+
+  await pressButton(parent, "cpre:skazka:forest");
+  const gen = falCalls.at(-1)!;
+  assert.equal(gen.endpoint, "openai/gpt-image-2/edit"); // premium preset model
+  assert.match(gen.input.prompt as string, /fairy tale/i);
+  assert.equal(await credits(parent.id), 61); // 72 − 11
+  const resultUrl = `https://fal.test/out/${falCalls.length}.png`;
+  assert.match(lastText(), /оживить результат/i); // upsell offered
+
+  await pressButton(parent, "camv:skazka");
+  const anim = falCalls.at(-1)!;
+  assert.equal(anim.endpoint, "fal-ai/kling-video/v2.5-turbo/standard/image-to-video");
+  assert.equal(anim.input.image_url, resultUrl); // animates the RESULT, not the original photo
+  assert.match(anim.input.prompt as string, /fireflies/i); // canned campaign motion prompt
+  assert.equal(await credits(parent.id), 36); // 61 − 25
+});
+
 await step("partner attribution is exclusive: no friend-referral double payout", async () => {
   // student was acquired via c_mentor → no referrer_id → referral path never fires.
   const st = await getUser(4101);

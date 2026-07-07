@@ -39,8 +39,10 @@ export function afterKeyboard(hasPhoto: boolean): InlineKeyboard {
 }
 
 /**
- * Charge credits, run the model, deliver the result.
- * Refunds automatically on provider failure.
+ * Charge credits, run the model, deliver the result. Refunds automatically on
+ * provider failure. `fileId` may be a Telegram file_id OR a direct https URL
+ * (e.g. a previous generation's output — powers campaign image→video chains).
+ * Returns the output URL on success, null on paywall/failure.
  */
 export async function runGeneration(
   ctx: Context,
@@ -48,14 +50,14 @@ export async function runGeneration(
   model: ModelSpec,
   prompt: string,
   fileId?: string,
-): Promise<void> {
+): Promise<string | null> {
   if (!(await spendCredits(user.id, model.credits, model.key))) {
     await logEvent(user.id, "paywall", model.key);
     await ctx.reply(
       `Не хватает 🔫: «${model.label}» стоит ${nUnits(model.credits)}, у вас ${nUnits(user.credits)}.`,
       { reply_markup: buyKeyboard },
     );
-    return;
+    return null;
   }
   await logEvent(user.id, "gen_start", model.key);
   // Keep the photo for one-tap follow-ups ("ещё стиль"), clear the prompt-await state.
@@ -66,7 +68,11 @@ export async function runGeneration(
   );
 
   try {
-    const imageUrl = fileId ? await telegramFileUrl(ctx, fileId) : undefined;
+    const imageUrl = fileId
+      ? /^https?:\/\//.test(fileId)
+        ? fileId
+        : await telegramFileUrl(ctx, fileId)
+      : undefined;
     const result = await fal.subscribe(model.falEndpoint, {
       input: model.input(prompt, imageUrl),
     });
@@ -80,12 +86,14 @@ export async function runGeneration(
     }
     await logGeneration(user.id, model.key, prompt, model.credits, "ok", url);
     await logEvent(user.id, "gen_ok", model.key);
+    return url;
   } catch (err) {
     await addCredits(user.id, model.credits, "refund", model.key);
     await logGeneration(user.id, model.key, prompt, model.credits, "error");
     await logEvent(user.id, "gen_error", model.key);
     console.error(`generation failed (${model.key}):`, err);
     await ctx.reply("⚠️ Не получилось — 🔫 патроны автоматически возвращены. Попробуйте ещё раз.");
+    return null;
   } finally {
     await ctx.api.deleteMessage(progress.chat.id, progress.message_id).catch(() => {});
   }
