@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>NeuroShot</title>
   <link rel="manifest" href="/manifest.webmanifest" />
-  <meta name="theme-color" content="#0f0f14" />
+  <meta name="theme-color" content="#08070c" />
   <link rel="icon" href="/icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="/icon.svg" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -13,62 +13,201 @@
   <meta name="apple-mobile-web-app-title" content="NeuroShot" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
+    /* ————— NeuroShot design system: dark luxe, aurora accent (violet→magenta) ————— */
     :root {
-      --bg: var(--tg-theme-bg-color, #0f1216);
-      --card: var(--tg-theme-secondary-bg-color, #1a1f26);
-      --text: var(--tg-theme-text-color, #f2f4f7);
-      --hint: var(--tg-theme-hint-color, #8b95a1);
-      --accent: var(--tg-theme-button-color, #7c5cff);
-      --accent-text: var(--tg-theme-button-text-color, #ffffff);
-      --radius: 16px;
+      --bg: #08070c;
+      --bg-2: #0d0b13;
+      --surface: #14111c;
+      --surface-2: #1b1726;
+      --line: rgba(255, 255, 255, 0.07);
+      --ink: #f4f2fa;
+      --muted: #8f8aa3;
+      --faint: #5e5975;
+      --violet: #7c5cff;
+      --magenta: #ff4d8d;
+      --amber: #f5b64a;
+      --aurora: linear-gradient(120deg, #7c5cff, #b44dff 45%, #ff4d8d);
+      --radius: 20px;
+      --radius-s: 14px;
     }
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html { color-scheme: dark; }
     body {
-      margin: 0; background: var(--bg); color: var(--text);
-      font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      padding: 16px 16px 40px;
+      margin: 0; background: var(--bg); color: var(--ink);
+      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      min-height: 100dvh; overflow-x: hidden;
     }
-    h1 { font-size: 20px; margin: 4px 0 2px; }
-    .sub { color: var(--hint); font-size: 13px; margin-bottom: 16px; }
-    .balance {
-      background: linear-gradient(135deg, #7c5cff, #d14bff);
-      color: #fff; border-radius: var(--radius); padding: 18px 20px; margin-bottom: 14px;
+    ::selection { background: rgba(124, 92, 255, .4); }
+
+    /* ambient aurora field behind everything */
+    .sky { position: fixed; inset: -20% -30%; z-index: 0; pointer-events: none; filter: blur(90px); opacity: .5; }
+    .sky i { position: absolute; border-radius: 50%; }
+    .sky i:nth-child(1) { width: 55vmax; height: 55vmax; left: -12vmax; top: -18vmax; background: radial-gradient(circle, rgba(124,92,255,.5), transparent 65%); animation: drift1 26s ease-in-out infinite alternate; }
+    .sky i:nth-child(2) { width: 45vmax; height: 45vmax; right: -15vmax; top: 10vmax; background: radial-gradient(circle, rgba(255,77,141,.35), transparent 65%); animation: drift2 32s ease-in-out infinite alternate; }
+    @keyframes drift1 { to { transform: translate(9vmax, 7vmax) scale(1.12); } }
+    @keyframes drift2 { to { transform: translate(-8vmax, -6vmax) scale(.94); } }
+
+    .wrap { position: relative; z-index: 1; max-width: 720px; margin: 0 auto; padding: 14px 16px calc(44px + env(safe-area-inset-bottom)); }
+
+    /* ————— top bar ————— */
+    .top { display: flex; align-items: center; justify-content: space-between; padding: 6px 2px 16px; }
+    .word { display: flex; align-items: center; gap: 9px; font-weight: 800; letter-spacing: .14em; font-size: 13px; }
+    .word .dot { width: 22px; height: 22px; border-radius: 7px; background: var(--aurora); box-shadow: 0 0 18px rgba(180, 77, 255, .55); }
+    .word small { color: var(--magenta); }
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px;
+      background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 7px 13px;
+      font-variant-numeric: tabular-nums;
     }
-    .balance .n { font-size: 34px; font-weight: 700; line-height: 1; }
-    .balance .l { opacity: .9; font-size: 13px; margin-top: 4px; }
-    .buy {
-      margin-top: 14px; width: 100%; border: 0; border-radius: 12px; padding: 12px;
-      background: rgba(255,255,255,.18); color: #fff; font-weight: 600; font-size: 15px; cursor: pointer;
+
+    /* ————— hero wallet ————— */
+    .wallet { position: relative; border-radius: var(--radius); padding: 1px; background: linear-gradient(140deg, rgba(124,92,255,.7), rgba(255,77,141,.5) 55%, rgba(124,92,255,.2)); }
+    .wallet .in {
+      border-radius: calc(var(--radius) - 1px); padding: 22px 22px 20px; overflow: hidden; position: relative;
+      background:
+        radial-gradient(120% 160% at 85% -20%, rgba(255,77,141,.22), transparent 55%),
+        radial-gradient(130% 170% at 0% 110%, rgba(124,92,255,.28), transparent 55%),
+        var(--bg-2);
     }
-    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px; }
-    .stat { background: var(--card); border-radius: 12px; padding: 12px; text-align: center; }
-    .stat .n { font-size: 20px; font-weight: 700; }
-    .stat .l { color: var(--hint); font-size: 11px; margin-top: 2px; }
-    h2 { font-size: 15px; margin: 18px 0 10px; }
-    .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-    .gallery a { display: block; aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: var(--card); }
-    .gallery img { width: 100%; height: 100%; object-fit: cover; display: block; }
-    .empty { color: var(--hint); text-align: center; padding: 30px 0; }
-    .err { color: #ff6b6b; text-align: center; padding: 40px 16px; }
+    .eyebrow { font-size: 10.5px; letter-spacing: .22em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+    .balance { display: flex; align-items: baseline; gap: 10px; margin-top: 8px; }
+    .balance .n { font-size: clamp(44px, 13vw, 60px); font-weight: 800; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+    .balance .u { font-size: 24px; }
+    .balance .l { color: var(--muted); font-size: 13px; }
+    .hello { margin-top: 6px; color: var(--muted); font-size: 13px; }
+    .cta-row { display: flex; gap: 10px; margin-top: 18px; }
+    .btn {
+      appearance: none; border: 0; cursor: pointer; border-radius: var(--radius-s);
+      font: inherit; font-weight: 700; font-size: 14.5px; padding: 13px 18px; color: #fff;
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px; flex: 1;
+      transition: transform .12s ease, filter .2s ease; text-decoration: none;
+    }
+    .btn:active { transform: scale(.97); }
+    .btn.primary { background: var(--aurora); box-shadow: 0 8px 28px rgba(180, 77, 255, .35); }
+    .btn.primary:hover { filter: brightness(1.08); }
+    .btn.ghost { background: rgba(255,255,255,.06); border: 1px solid var(--line); }
+    .btn.ghost:hover { background: rgba(255,255,255,.1); }
+    .btn:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
+
+    /* ————— sections ————— */
+    section { margin-top: 30px; }
+    .sec-h { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 13px; }
+    .sec-h h2 { margin: 0; font-size: 11.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); font-weight: 800; }
+    .sec-h .more { font-size: 12.5px; color: var(--violet); text-decoration: none; font-weight: 600; }
+
+    /* action cards — horizontal snap rail */
+    .rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(158px, 1fr); gap: 11px; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 6px; margin: 0 -16px; padding-left: 16px; padding-right: 16px; scrollbar-width: none; }
+    .rail::-webkit-scrollbar { display: none; }
+    .act {
+      scroll-snap-align: start; position: relative; border-radius: var(--radius-s); overflow: hidden;
+      background: var(--surface); border: 1px solid var(--line); padding: 16px 14px 14px;
+      min-height: 128px; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px;
+      text-decoration: none; color: var(--ink); transition: transform .15s ease, border-color .2s ease;
+    }
+    .act:hover { transform: translateY(-3px); border-color: rgba(124,92,255,.45); }
+    .act::before { content: ""; position: absolute; inset: 0; background: var(--art, none); opacity: .8; }
+    .act .em { position: relative; font-size: 26px; line-height: 1; margin-bottom: auto; }
+    .act b { position: relative; font-size: 14px; line-height: 1.25; font-weight: 700; }
+    .act span { position: relative; font-size: 11.5px; color: var(--muted); }
+    .a1 { --art: radial-gradient(140% 110% at 100% 0%, rgba(124,92,255,.35), transparent 60%); }
+    .a2 { --art: radial-gradient(140% 110% at 100% 0%, rgba(245,182,74,.28), transparent 60%); }
+    .a3 { --art: radial-gradient(140% 110% at 100% 0%, rgba(255,77,141,.32), transparent 60%); }
+    .a4 { --art: radial-gradient(140% 110% at 100% 0%, rgba(77,205,255,.25), transparent 60%); }
+
+    /* stats */
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .stat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 13px 10px; text-align: center; }
+    .stat .n { font-size: 19px; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .stat .l { color: var(--muted); font-size: 10.5px; margin-top: 3px; letter-spacing: .04em; }
+    @media (max-width: 400px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+
+    /* gallery */
+    .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
+    @media (min-width: 560px) { .gallery { grid-template-columns: repeat(4, 1fr); } }
+    .shot { position: relative; aspect-ratio: 1; border-radius: var(--radius-s); overflow: hidden; background: var(--surface); border: 1px solid var(--line); display: block; transition: transform .15s ease; }
+    .shot:hover { transform: scale(1.03); }
+    .shot img, .shot video { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .shot .tag { position: absolute; left: 7px; bottom: 7px; font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; background: rgba(0,0,0,.55); backdrop-filter: blur(6px); padding: 3px 7px; border-radius: 999px; }
+    .empty {
+      grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 34px 18px;
+      border: 1px dashed rgba(255,255,255,.14); border-radius: var(--radius-s); font-size: 13.5px; line-height: 1.6;
+    }
+
+    /* packs */
+    .packs { display: grid; gap: 11px; }
+    @media (min-width: 560px) { .packs { grid-template-columns: 1fr 1fr; } }
+    .pack {
+      position: relative; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s);
+      padding: 16px; cursor: pointer; transition: transform .15s ease, border-color .2s ease; text-align: left;
+      color: var(--ink); font: inherit;
+    }
+    .pack:hover { transform: translateY(-2px); border-color: rgba(124,92,255,.5); }
+    .pack .amount { font-size: 21px; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .pack .per { color: var(--faint); font-size: 11px; margin-top: 3px; }
+    .pack .stars { font-weight: 800; color: var(--amber); font-size: 16px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .pack .hot {
+      position: absolute; top: -9px; left: 14px; font-size: 9.5px; font-weight: 800; letter-spacing: .1em;
+      text-transform: uppercase; background: var(--aurora); padding: 4px 9px; border-radius: 999px; color: #fff;
+    }
+    .pack.best { border-color: rgba(255,77,141,.55); box-shadow: 0 6px 30px rgba(255,77,141,.12); }
+
+    /* referral */
+    .refcard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 19px; }
+    .refcard h3 { margin: 0 0 5px; font-size: 16px; }
+    .refcard p { margin: 0 0 14px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .linkrow { display: flex; gap: 9px; }
+    .linkbox {
+      flex: 1; min-width: 0; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-s);
+      padding: 11px 13px; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      font-family: ui-monospace, Menlo, monospace;
+    }
+    .copy { flex: none; width: auto; padding: 11px 15px; }
+
+    footer { margin-top: 34px; text-align: center; color: var(--faint); font-size: 11px; letter-spacing: .05em; }
+
+    /* ————— motion choreography ————— */
+    .reveal { opacity: 0; transform: translateY(14px); transition: opacity .5s ease, transform .5s ease; }
+    .reveal.on { opacity: 1; transform: none; }
+    @media (prefers-reduced-motion: reduce) {
+      .sky i { animation: none; }
+      .reveal { opacity: 1; transform: none; transition: none; }
+      .btn, .act, .shot, .pack { transition: none; }
+    }
+
+    /* skeleton + gate states */
+    .skel { border-radius: var(--radius); height: 170px; background: linear-gradient(100deg, var(--surface) 40%, var(--surface-2) 50%, var(--surface) 60%); background-size: 200% 100%; animation: shimmer 1.3s infinite; }
+    @keyframes shimmer { to { background-position: -200% 0; } }
+    .gate { text-align: center; padding: 12vh 20px 0; }
+    .gate .dot { width: 62px; height: 62px; border-radius: 20px; background: var(--aurora); margin: 0 auto 22px; box-shadow: 0 0 60px rgba(180,77,255,.5); }
+    .gate h1 { font-size: 30px; margin: 0 0 10px; letter-spacing: -.02em; font-weight: 800; }
+    .gate p { color: var(--muted); margin: 0 auto 26px; max-width: 34ch; line-height: 1.6; }
+    .gate .btn { max-width: 280px; margin: 0 auto; }
   </style>
 </head>
 <body>
-  <div id="root"><div class="empty">Загрузка…</div></div>
+  <div class="sky" aria-hidden="true"><i></i><i></i></div>
+  <div class="wrap" id="root">
+    <div class="top">
+      <div class="word"><span class="dot"></span>NEURO<small>SHOT</small></div>
+    </div>
+    <div class="skel"></div>
+  </div>
 
   <script>
     const tg = window.Telegram?.WebApp;
     tg?.ready(); tg?.expand();
+    try { tg?.setHeaderColor?.("#08070c"); tg?.setBackgroundColor?.("#08070c"); } catch (e) { /* older clients */ }
+
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+
     const $ = (h) => { const t = document.createElement("template"); t.innerHTML = h.trim(); return t.content.firstChild; };
-    const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+    const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const plural = (n, one, few, many) => { const m100 = Math.abs(n) % 100, m10 = Math.abs(n) % 10;
+      return m100 >= 11 && m100 <= 14 ? many : m10 === 1 ? one : m10 >= 2 && m10 <= 4 ? few : many; };
 
-    // Installable app: register the service worker (offline shell + home-screen launch).
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(() => {});
-    }
-
-    // Client-agnostic auth: inside Telegram we have fresh initData — exchange it
-    // once for a session token and cache it, so the SAME installed app keeps
-    // working later outside Telegram (home-screen PWA / future native client).
+    // Session auth: inside Telegram exchange fresh initData for a Bearer token;
+    // outside (installed PWA / browser) reuse the cached token.
     const TOKEN_KEY = "neuroshot_session";
     async function authHeader() {
       const initData = tg?.initData || "";
@@ -83,49 +222,164 @@
       return tok ? "Bearer " + tok : "";
     }
 
+    function openBot(username, payload) {
+      const url = "https://t.me/" + username + (payload ? "?start=" + payload : "");
+      if (tg?.initData) tg.openTelegramLink(url); else location.href = url;
+    }
+
+    function countUp(el, target) {
+      if (matchMedia("(prefers-reduced-motion: reduce)").matches || target === 0) { el.textContent = target; return; }
+      const t0 = performance.now(), dur = 700;
+      const tick = (t) => {
+        const p = Math.min(1, (t - t0) / dur), eased = 1 - Math.pow(1 - p, 3);
+        el.textContent = Math.round(target * eased);
+        if (p < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    }
+
+    function reveal() {
+      const io = new IntersectionObserver((es) => es.forEach((e) => {
+        if (e.isIntersecting) { e.target.classList.add("on"); io.unobserve(e.target); }
+      }), { threshold: 0.12 });
+      document.querySelectorAll(".reveal").forEach((el, i) => { el.style.transitionDelay = Math.min(i * 60, 240) + "ms"; io.observe(el); });
+    }
+
+    function gate(title, text, btnLabel, href) {
+      document.getElementById("root").innerHTML = "";
+      document.getElementById("root").appendChild($(`
+        <div class="gate">
+          <div class="dot"></div>
+          <h1>NeuroShot</h1>
+          <p>${text}</p>
+          <a class="btn primary" href="${href}">${btnLabel}</a>
+        </div>`));
+    }
+
     async function load() {
       const root = document.getElementById("root");
+      let d;
       try {
         const auth = await authHeader();
+        if (!auth) {
+          gate("NeuroShot", "AI-фотосессии, карточки товара и оживление фото в видео. Откройте приложение из Telegram — и ваш кабинет появится здесь.", "Открыть в Telegram", "https://t.me/neuroshot_ai_bot");
+          return;
+        }
         const r = await fetch("/api/me", { headers: { Authorization: auth } });
-        if (r.status === 401) localStorage.removeItem(TOKEN_KEY); // stale token → drop it
+        if (r.status === 401) localStorage.removeItem(TOKEN_KEY);
         if (!r.ok) throw new Error("auth " + r.status);
-        const d = await r.json();
-        const dash = d.dashboard;
-        const gens = (d.generations || []).filter((g) => g.status === "ok" && g.output_url);
+        d = await r.json();
+      } catch (e) {
+        gate("NeuroShot", "Не удалось загрузить кабинет. Откройте приложение из бота — и всё появится.", "Открыть бота", "https://t.me/neuroshot_ai_bot");
+        return;
+      }
 
-        root.innerHTML = "";
-        root.appendChild($(`<div>
-          <h1>Привет, ${esc(d.user.first_name || "друг")} 👋</h1>
-          <div class="sub">Ваш кабинет NeuroShot</div>
-          <div class="balance">
-            <div class="n">🔫 ${dash.credits}</div>
-            <div class="l">патронов на балансе</div>
-            <button class="buy" id="buy">💳 Пополнить</button>
+      const dash = d.dashboard;
+      const bot = d.bot_username || "neuroshot_ai_bot";
+      const gens = (d.generations || []).filter((g) => g.status === "ok" && g.output_url);
+      const refLink = "https://t.me/" + bot + "?start=" + d.user.id;
+      const bestPack = (d.packs || [])[1]?.id; // «Популярный»
+
+      root.innerHTML = "";
+      root.appendChild($(`<div>
+        <div class="top">
+          <div class="word"><span class="dot"></span>NEURO<small>SHOT</small></div>
+          <span class="pill">🔫 <span id="pillN">${dash.credits}</span></span>
+        </div>
+
+        <div class="wallet reveal"><div class="in">
+          <div class="eyebrow">Баланс</div>
+          <div class="balance"><span class="n" id="balN">0</span><span class="u">🔫</span></div>
+          <div class="balance"><span class="l">${esc(plural(dash.credits, "патрон", "патрона", "патронов"))} · привет, ${esc(d.user.first_name || "друг")} 👋</span></div>
+          <div class="cta-row">
+            <button class="btn primary" id="buyTop">⭐ Пополнить</button>
+            <button class="btn ghost" id="createTop">✨ Создать</button>
           </div>
+        </div></div>
+
+        <section class="reveal">
+          <div class="sec-h"><h2>Что создаём</h2></div>
+          <div class="rail">
+            <a class="act a1" data-open><span class="em">📸</span><b>AI-фотосессия</b><span>аватары и портреты</span></a>
+            <a class="act a2" data-open><span class="em">🛍</span><b>Карточка товара</b><span>для маркетплейса</span></a>
+            <a class="act a3" data-open><span class="em">🎬</span><b>Оживить фото</b><span>видео от 25 🔫</span></a>
+            <a class="act a4" data-open><span class="em">✨</span><b>Из текста</b><span>картинка от 2 🔫</span></a>
+          </div>
+        </section>
+
+        <section class="reveal">
+          <div class="sec-h"><h2>Статистика</h2></div>
           <div class="stats">
             <div class="stat"><div class="n">${dash.okGenerations}</div><div class="l">создано</div></div>
             <div class="stat"><div class="n">${dash.creditsSpent}</div><div class="l">потрачено</div></div>
-            <div class="stat"><div class="n">${dash.referralEarned}</div><div class="l">с рефералов</div></div>
+            <div class="stat"><div class="n">${dash.referralEarned}</div><div class="l">заработано</div></div>
+            <div class="stat"><div class="n">${dash.referralCount}</div><div class="l">друзей</div></div>
           </div>
-          <h2>🖼 Мои работы</h2>
+        </section>
+
+        <section class="reveal">
+          <div class="sec-h"><h2>Мои работы</h2></div>
           <div class="gallery" id="g"></div>
-        </div>`));
+        </section>
 
-        const g = document.getElementById("g");
-        if (!gens.length) g.appendChild($(`<div class="empty">Пока пусто — создайте первую работу в боте ✨</div>`));
-        for (const item of gens) {
-          const a = $(`<a href="${esc(item.output_url)}" target="_blank" rel="noopener noreferrer"><img loading="lazy" src="${esc(item.output_url)}" alt=""></a>`);
-          g.appendChild(a);
-        }
+        <section class="reveal">
+          <div class="sec-h"><h2>Пакеты патронов</h2></div>
+          <div class="packs" id="p"></div>
+        </section>
 
-        document.getElementById("buy").onclick = () => {
-          if (d.bot_username) tg?.openTelegramLink("https://t.me/" + d.bot_username + "?start=buy");
-          else tg?.close();
-        };
-      } catch (e) {
-        root.innerHTML = '<div class="err">Не удалось загрузить кабинет.<br>Откройте приложение из бота.</div>';
+        <section class="reveal">
+          <div class="refcard">
+            <h3>🎁 Приглашай — зарабатывай</h3>
+            <p>Друг получает бонусные 🔫 при входе, вы — награду за его первую покупку и 10% со всех его пакетов. Навсегда.</p>
+            <div class="linkrow">
+              <div class="linkbox" id="refL">${esc(refLink)}</div>
+              <button class="btn primary copy" id="refC">Копировать</button>
+            </div>
+          </div>
+        </section>
+
+        <footer>NEUROSHOT — AI ФОТО И ВИДЕО</footer>
+      </div>`));
+
+      countUp(document.getElementById("balN"), dash.credits);
+
+      // gallery (videos autoplay muted — the Higgsfield-style living grid)
+      const g = document.getElementById("g");
+      if (!gens.length) {
+        g.appendChild($(`<div class="empty">Пока пусто.<br>Создайте первую работу — она появится здесь ✨</div>`));
       }
+      for (const item of gens) {
+        const isVideo = /\.(mp4|webm|mov)(\?|$)/i.test(item.output_url);
+        const media = isVideo
+          ? `<video src="${esc(item.output_url)}" muted loop playsinline autoplay preload="metadata"></video><span class="tag">видео</span>`
+          : `<img loading="lazy" src="${esc(item.output_url)}" alt="" />`;
+        g.appendChild($(`<a class="shot" href="${esc(item.output_url)}" target="_blank" rel="noopener noreferrer">${media}</a>`));
+      }
+
+      // packs from the API (single source of truth with the bot)
+      const p = document.getElementById("p");
+      for (const pack of d.packs || []) {
+        const per = (pack.stars / pack.credits).toFixed(0);
+        p.appendChild($(`
+          <button class="pack ${pack.id === bestPack ? "best" : ""}" data-buy>
+            ${pack.id === bestPack ? '<span class="hot">Популярный</span>' : ""}
+            <span><span class="amount">🔫 ${pack.credits}</span><div class="per">≈ ${per} ⭐ за патрон</div></span>
+            <span class="stars">⭐ ${pack.stars.toLocaleString("ru-RU")}</span>
+          </button>`));
+      }
+
+      const buy = () => openBot(bot, "buy");
+      document.getElementById("buyTop").onclick = buy;
+      document.querySelectorAll("[data-buy]").forEach((b) => (b.onclick = buy));
+      document.getElementById("createTop").onclick = () => openBot(bot);
+      document.querySelectorAll("[data-open]").forEach((a) => (a.onclick = () => openBot(bot)));
+      document.getElementById("refC").onclick = async () => {
+        try { await navigator.clipboard.writeText(refLink); } catch (e) { /* ignore */ }
+        document.getElementById("refC").textContent = "Скопировано ✓";
+        setTimeout(() => (document.getElementById("refC").textContent = "Копировать"), 1600);
+      };
+
+      reveal();
     }
     load();
   </script>

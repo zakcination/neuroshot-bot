@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
 import { getOrCreateUser, recentGenerations, userDashboard } from "./db.js";
+import { PACKS } from "./models.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // Static PWA assets live in public/ (Vercel serves them at root automatically;
@@ -153,6 +154,8 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     dashboard,
     generations,
     bot_username: config.webappBotUsername,
+    // Pack catalog for the app's pricing section — same source as the bot.
+    packs: PACKS.map((p) => ({ id: p.id, title: p.title, credits: p.credits, stars: p.stars })),
   };
 }
 

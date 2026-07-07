@@ -7,8 +7,8 @@
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0f0f14",
-  "theme_color": "#0f0f14",
+  "background_color": "#08070c",
+  "theme_color": "#08070c",
   "lang": "ru",
   "categories": ["photo", "graphics", "productivity"],
   "icons": [
