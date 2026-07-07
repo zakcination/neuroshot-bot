@@ -446,6 +446,20 @@ export function campaignById(id: string): Campaign | undefined {
   return CAMPAIGNS.find((c) => c.id === id);
 }
 
+/** Whole weeks since the Unix epoch — a stable, monotonically rising index. */
+export function weekIndex(date: Date): number {
+  return Math.floor(date.getTime() / (7 * 24 * 60 * 60 * 1000));
+}
+
+/**
+ * The "🆕 Новинка недели" — a deterministic weekly rotation over the campaigns,
+ * so returning users always find a fresh reason to spend (recurring-reason hook).
+ * No scheduler needed: it's a pure function of the current week.
+ */
+export function featuredCampaign(date: Date): Campaign {
+  return CAMPAIGNS[weekIndex(date) % CAMPAIGNS.length];
+}
+
 /**
  * The AI-cost each credit is priced to cover. Credits per model = ceil(cost /
  * this). Keep this in sync with any provider-cost changes; it's the anchor the

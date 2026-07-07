@@ -2,7 +2,7 @@ import type { Bot, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { config } from "./config.js";
 import { addCredits, logEvent, rewardPartnerOnPurchase, rewardReferralOnPurchase } from "./db.js";
-import { PACKS, REFERRAL_MILESTONES } from "./models.js";
+import { PACKS, REFERRAL_MILESTONES, type ModelSpec } from "./models.js";
 import { nUnits, UNIT_EMOJI } from "./text.js";
 
 export function packsKeyboard(): InlineKeyboard {
@@ -11,6 +11,38 @@ export function packsKeyboard(): InlineKeyboard {
     kb.text(`${pack.title} — ⭐${pack.stars}`, `buy:${pack.id}`).row();
   }
   return kb;
+}
+
+/** The entry-price pack, framed as the anchor CTA on the paywall. */
+const ENTRY_PACK = PACKS[0];
+
+/** How many of `model`'s results the entry pack buys (≥1, for the "N результатов" framing). */
+function resultsPerEntryPack(model: ModelSpec): number {
+  return Math.max(1, Math.floor(ENTRY_PACK.credits / model.credits));
+}
+
+/**
+ * Paywall as a sales page (not a naked "недостаточно"): outcome-first headline,
+ * the entry pack anchored and framed as "≈ N таких результатов", one dominant
+ * CTA (buy the entry pack) + a secondary "все пакеты". Contextual to the exact
+ * result the user just tried.
+ */
+export function paywallText(model: ModelSpec, credits: number): string {
+  const n = resultsPerEntryPack(model);
+  return (
+    `✨ <b>Ещё один шаг до результата!</b>\n\n` +
+    `«${model.label}» — ${nUnits(model.credits)}. У вас ${nUnits(credits)}.\n\n` +
+    `⭐ Пакет «${ENTRY_PACK.title}» = до <b>${n}</b> таких результатов — оплата в пару тапов через Telegram Stars.`
+  );
+}
+
+/** Primary CTA = the entry pack (framed by results); secondary = all packs. */
+export function paywallKeyboard(model: ModelSpec): InlineKeyboard {
+  const n = resultsPerEntryPack(model);
+  return new InlineKeyboard()
+    .text(`⭐${ENTRY_PACK.stars} · ${ENTRY_PACK.title} — до ${n} результатов`, `buy:${ENTRY_PACK.id}`)
+    .row()
+    .text("💎 Все пакеты", "show_packs");
 }
 
 export function registerPayments(bot: Bot): void {

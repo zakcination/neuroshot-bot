@@ -2,10 +2,19 @@ import { fal } from "@fal-ai/client";
 import type { Context } from "grammy";
 import { InlineKeyboard, InputFile } from "grammy";
 import { config } from "./config.js";
-import { addCredits, logEvent, logGeneration, setPending, spendCredits, type UserRow } from "./db.js";
+import {
+  addCredits,
+  consumeFreeResult,
+  hasFreeResult,
+  logEvent,
+  logGeneration,
+  setPending,
+  spendCredits,
+  type UserRow,
+} from "./db.js";
 import { MODELS, type ModelSpec } from "./models.js";
+import { paywallKeyboard, paywallText } from "./payments.js";
 import { craftPrompt } from "./promptcraft.js";
-import { nUnits } from "./text.js";
 
 fal.config({ credentials: config.falKey });
 
@@ -24,9 +33,6 @@ function extractResultUrl(data: unknown): string | null {
   };
   return d?.images?.[0]?.url ?? d?.image?.url ?? d?.video?.url ?? null;
 }
-
-export const buyKeyboard = new InlineKeyboard()
-  .text("💳 Купить 🔫 патроны", "show_packs");
 
 /**
  * Next-step keyboard on every delivered result. «Ещё стиль» only makes sense
@@ -53,16 +59,24 @@ export async function runGeneration(
   model: ModelSpec,
   prompt: string,
   fileId?: string,
-  opts: { crafted?: boolean } = {},
+  opts: { crafted?: boolean; allowFreeFirst?: boolean } = {},
 ): Promise<string | null> {
   prompt = craftPrompt(model.kind, prompt, opts.crafted ?? false);
+  // "First result on us": if a newcomer can't afford this and it's an eligible
+  // (image) flow, render one free wow instead of walling them before any result.
+  // Peek here, consume only on success (a provider failure must not burn it).
+  let free = false;
   if (!(await spendCredits(user.id, model.credits, model.key))) {
-    await logEvent(user.id, "paywall", model.key);
-    await ctx.reply(
-      `Не хватает 🔫: «${model.label}» стоит ${nUnits(model.credits)}, у вас ${nUnits(user.credits)}.`,
-      { reply_markup: buyKeyboard },
-    );
-    return null;
+    if ((opts.allowFreeFirst ?? false) && (await hasFreeResult(user.id))) {
+      free = true;
+    } else {
+      await logEvent(user.id, "paywall", model.key);
+      await ctx.reply(paywallText(model, user.credits), {
+        parse_mode: "HTML",
+        reply_markup: paywallKeyboard(model),
+      });
+      return null;
+    }
   }
   await logEvent(user.id, "gen_start", model.key);
   // Keep the photo for one-tap follow-ups ("ещё стиль"), clear the prompt-await state.
@@ -89,12 +103,16 @@ export async function runGeneration(
     } else {
       await ctx.replyWithPhoto(new InputFile({ url }), { reply_markup: after });
     }
-    await logGeneration(user.id, model.key, prompt, model.credits, "ok", url);
+    // Charge-free first result: claim it now (won by exactly one call) and celebrate.
+    if (free && (await consumeFreeResult(user.id))) {
+      await ctx.reply("🎁 Первый результат — бесплатно, патроны не списаны! Дальше — за 🔫.");
+    }
+    await logGeneration(user.id, model.key, prompt, free ? 0 : model.credits, "ok", url);
     await logEvent(user.id, "gen_ok", model.key);
     return url;
   } catch (err) {
-    await addCredits(user.id, model.credits, "refund", model.key);
-    await logGeneration(user.id, model.key, prompt, model.credits, "error");
+    if (!free) await addCredits(user.id, model.credits, "refund", model.key); // freebie: nothing charged
+    await logGeneration(user.id, model.key, prompt, free ? 0 : model.credits, "error");
     await logEvent(user.id, "gen_error", model.key);
     console.error(`generation failed (${model.key}):`, err);
     await ctx.reply("⚠️ Не получилось — 🔫 патроны автоматически возвращены. Попробуйте ещё раз.");

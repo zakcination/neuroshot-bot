@@ -41,12 +41,14 @@ const SCHEMA: string[] = [
     pending_file_id TEXT,
     ref_first_purchase_at TIMESTAMPTZ,  -- set on the invitee at their 1st purchase
     ref_milestones INTEGER NOT NULL DEFAULT 0, -- referral milestone tiers already paid
+    free_result_used BOOLEAN NOT NULL DEFAULT false, -- one-time "first result on us" claimed
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
   // Forward migrations for existing databases (columns added after launch).
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS ref_first_purchase_at TIMESTAMPTZ`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS ref_milestones INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS partner_code TEXT`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS free_result_used BOOLEAN NOT NULL DEFAULT false`,
   // Creator/partner codes: negotiated deals with bloggers & course authors.
   // Deep link: t.me/<bot>?start=c_<code>. Each code carries its own revenue
   // share and join bonus (per-deal terms) — see docs/creator-program.md.
@@ -398,6 +400,26 @@ export async function spendCredits(userId: number, amount: number, meta?: string
      INSERT INTO ledger (user_id, delta, reason, meta)
      SELECT $2, -$1, 'generation', $3 FROM upd RETURNING user_id`,
     [amount, userId, meta ?? null],
+  );
+  return rows.length > 0;
+}
+
+/**
+ * "First result on us" — activation safety net. A brand-new user who can't
+ * afford their first premium image gets ONE free render instead of a paywall
+ * before they've seen any result (corpus rule: first result free, second paid).
+ * Image-only and once per user; the referrer/partner economy is untouched.
+ */
+export async function hasFreeResult(userId: number): Promise<boolean> {
+  const rows = await q("SELECT free_result_used FROM users WHERE id = $1", [userId]);
+  return rows.length > 0 && rows[0].free_result_used === false;
+}
+
+/** Atomically claim the one-time free result; true only for the call that won it. */
+export async function consumeFreeResult(userId: number): Promise<boolean> {
+  const rows = await q(
+    "UPDATE users SET free_result_used = true WHERE id = $1 AND free_result_used = false RETURNING id",
+    [userId],
   );
   return rows.length > 0;
 }

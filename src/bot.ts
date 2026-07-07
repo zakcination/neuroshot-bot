@@ -23,6 +23,7 @@ import { modelByKey, runGeneration } from "./generate.js";
 import {
   CAMPAIGNS,
   campaignById,
+  featuredCampaign,
   IMAGE_MODEL_PICKER,
   MODELS,
   PRESET_MODEL,
@@ -57,10 +58,15 @@ async function user(
  * - every path reaches a generation in ≤2 taps, no prompt required;
  * - price in credits on every button that spends;
  * - every delivered result carries a "next step" keyboard.
+ *
+ * @param opts.featured  prepend a one-tap "🆕 Новинка недели" row (recurring reason)
+ * @param opts.hasPhoto  prepend "продолжить с вашим фото" (try-on-your-last-photo hook)
  */
-export function mainMenu(): InlineKeyboard {
-  const kb = new InlineKeyboard()
-    .text("📸 AI-фотосессия", "menu:photoshoot")
+export function mainMenu(opts: { featured?: Campaign; hasPhoto?: boolean } = {}): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  if (opts.hasPhoto) kb.text("📸 Продолжить с вашим фото", "menu:styles").row();
+  if (opts.featured) kb.text(`🆕 Новинка недели: ${opts.featured.label}`, `camp:${opts.featured.id}`).row();
+  kb.text("📸 AI-фотосессия", "menu:photoshoot")
     .row()
     .text("🛍 Фото товара для маркетплейса", "menu:product")
     .row()
@@ -136,21 +142,25 @@ async function showPresets(ctx: Context, category: Preset["category"], header: s
 const MENU_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "assets", "menu");
 
 /** Main menu with the hero image (if shipped) carrying the caption + keyboard. */
-async function sendMainMenu(ctx: Context, caption: string): Promise<void> {
+async function sendMainMenu(
+  ctx: Context,
+  caption: string,
+  menuOpts: { featured?: Campaign; hasPhoto?: boolean } = {},
+): Promise<void> {
   const hero = join(MENU_DIR, "hero.jpg");
   if (existsSync(hero)) {
     try {
       await ctx.replyWithPhoto(new InputFile(hero), {
         caption,
         parse_mode: "HTML",
-        reply_markup: mainMenu(),
+        reply_markup: mainMenu(menuOpts),
       });
       return;
     } catch (e) {
       console.error("hero image failed:", e);
     }
   }
-  await ctx.reply(caption, { parse_mode: "HTML", reply_markup: mainMenu() });
+  await ctx.reply(caption, { parse_mode: "HTML", reply_markup: mainMenu(menuOpts) });
 }
 
 /** Send a menu example video (e.g. the animate preview) if the asset exists. */
@@ -232,7 +242,13 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     } else {
       msg += `💰 На балансе: <b>${UNIT_EMOJI} ${nUnits(u.credits)}</b>.`;
     }
-    await sendMainMenu(ctx, msg);
+    // Returning users get a fresh reason to come back: the weekly rotating
+    // "новинка недели" + a one-tap continue-with-your-last-photo shortcut.
+    const menuOpts = u.justCreated
+      ? {}
+      : { featured: featuredCampaign(new Date()), hasPhoto: !!u.pending_file_id };
+    if (menuOpts.featured) msg += `\n\n🆕 Новинка недели: <b>${menuOpts.featured.label}</b> — попробуйте!`;
+    await sendMainMenu(ctx, msg, menuOpts);
     // Deep link from the Mini App's "Пополнить" button.
     if (payload === "buy") await sendBalance(ctx, u.credits);
   });
@@ -441,6 +457,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     }
     const url = await runGeneration(ctx, u, PRESET_MODEL, preset.prompt, u.pending_file_id, {
       crafted: true,
+      allowFreeFirst: true,
     });
     if (url) {
       await setPending(u.id, "await_action", url);
@@ -646,7 +663,10 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       await ctx.reply("Сначала пришлите фото 🙂");
       return;
     }
-    await runGeneration(ctx, u, PRESET_MODEL, preset.prompt, u.pending_file_id, { crafted: true });
+    await runGeneration(ctx, u, PRESET_MODEL, preset.prompt, u.pending_file_id, {
+      crafted: true,
+      allowFreeFirst: true,
+    });
   });
 
   // ---- Text in → prompt for a pending action, or plain text-to-image ----
