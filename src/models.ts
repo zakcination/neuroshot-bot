@@ -228,6 +228,225 @@ export const PRESETS: Preset[] = [
 ];
 
 /**
+ * Marketing campaigns: seasonal/viral one-click scenarios (docs/course-funnel.md).
+ * Each campaign = a photo in → one-tap premium image (PRESET_MODEL), then an
+ * optional one-tap «Оживить» upsell that animates the GENERATED image (kling).
+ * Zero prompting for the user — presets carry curated prompts.
+ *
+ * ⚠️ The cartoon campaign references well-known characters at the user's
+ * request (personal, non-commercial family images). Providers may filter some
+ * names; if a render is refused it fails-and-refunds automatically.
+ */
+export interface CampaignPreset {
+  id: string;
+  label: string;
+  prompt: string;
+}
+export interface Campaign {
+  id: string;
+  label: string; // menu button
+  header: string; // shown above the preset keyboard
+  ask: string; // what photo to send
+  presets: CampaignPreset[];
+  /** One-tap video upsell on the generated image (MODELS.animate). */
+  animateLabel: string;
+  animatePrompt: string;
+}
+
+const KEEP_ID = "Preserve the person's identity and facial features exactly.";
+const KEEP_KID = "Preserve the child's identity and facial features exactly.";
+
+export const CAMPAIGNS: Campaign[] = [
+  {
+    id: "skazka",
+    label: "📖 Сказка с вашим ребёнком",
+    header: "Выберите сказку — один тап, без промптов:",
+    ask: "Пришлите фото ребёнка 👶 — и он станет героем собственной сказки.",
+    presets: [
+      {
+        id: "forest",
+        label: "🌲 Волшебный лес",
+        prompt:
+          "Transform this child into the hero of a magical fairy tale: an enchanted glowing forest, drifting " +
+          "fireflies, soft golden light, storybook-illustration-meets-cinematic look, wonder on their face, richly " +
+          `detailed. ${KEEP_KID}`,
+      },
+      {
+        id: "dragon",
+        label: "🐉 Дракон и герой",
+        prompt:
+          "Turn this child into a brave storybook knight standing beside a friendly majestic dragon, epic castle in " +
+          `the background, warm sunset light, heroic fairy-tale atmosphere, cinematic detail. ${KEEP_KID}`,
+      },
+      {
+        id: "royal",
+        label: "👑 Королевство",
+        prompt:
+          "Dress this child in royal fairy-tale attire inside a grand castle ballroom: crown, elegant costume, " +
+          `sparkling chandeliers, magical festive atmosphere, storybook grandeur. ${KEEP_KID}`,
+      },
+    ],
+    animateLabel: "🎬 Оживить сказку",
+    animatePrompt:
+      "Gentle magical motion: soft camera push-in, fireflies drifting, hair and clothing moving in a light breeze, " +
+      "the child smiles with wonder, cinematic storybook atmosphere.",
+  },
+  {
+    id: "cartoon",
+    label: "🦸 Ребёнок и любимый герой",
+    header: "С кем встречаемся? Один тап:",
+    ask: "Пришлите фото ребёнка 👶 — и он встретится с любимым героем мультика.",
+    presets: [
+      {
+        id: "sponge",
+        label: "🧽 Губка Боб",
+        prompt:
+          "Place this child happily standing next to SpongeBob SquarePants in colorful underwater Bikini Bottom, " +
+          `the cartoon world blended photorealistically around the real child, joyful vibrant scene. ${KEEP_KID}`,
+      },
+      {
+        id: "gumball",
+        label: "😺 Гамбол",
+        prompt:
+          "Place this child next to Gumball Watterson from The Amazing World of Gumball in the town of Elmore, " +
+          `playful mixed cartoon-and-photo style, bright cheerful colors, both laughing together. ${KEEP_KID}`,
+      },
+      {
+        id: "trikota",
+        label: "🐱 Три кота",
+        prompt:
+          "Place this child alongside the three cheerful kitten characters of the cartoon «Три кота» (Kid-E-Cats) " +
+          `in their cozy cartoon town, warm family atmosphere, bright friendly colors. ${KEEP_KID}`,
+      },
+      {
+        id: "dbillions",
+        label: "🎵 D Billions",
+        prompt:
+          "Place this child dancing together with the colorful D Billions characters on a bright festive stage, " +
+          `confetti, joyful kids-show energy, vivid colors. ${KEEP_KID}`,
+      },
+      {
+        id: "shark",
+        label: "🦈 Baby Shark",
+        prompt:
+          "Place this child in a cheerful underwater scene swimming alongside Baby Shark and family, bubbles and " +
+          `sunbeams through the water, bright preschool-cartoon joy blended with the real child. ${KEEP_KID}`,
+      },
+    ],
+    animateLabel: "🎬 Оживить встречу",
+    animatePrompt:
+      "Playful lively motion: the cartoon character waves and bounces, the child laughs, confetti or bubbles drift, " +
+      "gentle camera push-in, joyful kids-show energy.",
+  },
+  {
+    id: "worldcup",
+    label: "⚽️ Матч мечты",
+    header: "С кем выходим на поле? Один тап:",
+    ask: "Пришлите своё фото ⚽️ — и окажитесь на поле финала с кумиром.",
+    presets: [
+      {
+        id: "messi",
+        label: "🇦🇷 С Месси",
+        prompt:
+          "Place this person on the pitch of a packed World Cup final stadium at night, standing shoulder to " +
+          "shoulder with Lionel Messi, both in football kits, stadium lights blazing, confetti falling, " +
+          `sports-photography realism. ${KEEP_ID}`,
+      },
+      {
+        id: "ronaldo",
+        label: "🇵🇹 С Роналду",
+        prompt:
+          "Place this person on the pitch of a packed World Cup final stadium at night, celebrating side by side " +
+          `with Cristiano Ronaldo, both in football kits, dramatic stadium lighting, sports-photography realism. ${KEEP_ID}`,
+      },
+      {
+        id: "yamal",
+        label: "🇪🇸 С Ямалем",
+        prompt:
+          "Place this person on the pitch of a packed World Cup final stadium celebrating with Lamine Yamal, both " +
+          `in football kits, golden confetti falling, electric atmosphere, sports-photography realism. ${KEEP_ID}`,
+      },
+      {
+        id: "kit",
+        label: "🏟 Я в форме сборной",
+        prompt:
+          "Transform this person into a professional footballer celebrating a goal in a packed World Cup stadium: " +
+          `national-team kit, roaring crowd, floodlights, confetti, epic sports-photography shot. ${KEEP_ID}`,
+      },
+    ],
+    animateLabel: "🎬 Оживить момент",
+    animatePrompt:
+      "Epic stadium motion: crowd roaring and waving flags, confetti falling, floodlight flares, slow heroic camera " +
+      "orbit around the subjects.",
+  },
+  {
+    id: "oldphoto",
+    label: "🕰 Оживить старое фото",
+    header: "Что делаем со снимком? Один тап:",
+    ask: "Пришлите старую фотографию 🕰 (можно скан или фото снимка) — вернём её к жизни.",
+    presets: [
+      {
+        id: "restore",
+        label: "✨ Реставрация",
+        prompt:
+          "Restore this old photograph: remove scratches, dust, creases and noise, repair damaged areas, fix fading, " +
+          "enhance sharpness and fine detail, natural tones, keep the authentic vintage character and composition. " +
+          "Preserve every person's identity and facial features exactly.",
+      },
+      {
+        id: "color",
+        label: "🎨 Реставрация + цвет",
+        prompt:
+          "Restore and colorize this old photograph: remove scratches, dust and damage, then add natural realistic " +
+          "colors true to the era — accurate skin tones, period-correct clothing colors, keep the authentic vintage " +
+          "composition. Preserve every person's identity and facial features exactly.",
+      },
+    ],
+    animateLabel: "🎬 Оживить (как живые)",
+    animatePrompt:
+      "Subtle lifelike motion, respectful and warm: the people gently blink, breathe and smile softly, a slight " +
+      "natural head movement, soft light shift — like a living memory.",
+  },
+  {
+    id: "poster",
+    label: "🎬 Постер с тобой",
+    header: "Жанр вашего фильма? Один тап:",
+    ask: "Пришлите своё фото 🎬 — и станьте звездой кинопостера.",
+    presets: [
+      {
+        id: "action",
+        label: "💥 Боевик",
+        prompt:
+          "Turn this person into the star of a blockbuster action movie poster: dramatic pose, explosions and " +
+          `cityscape behind, bold title typography, high-contrast cinematic grade, theatrical one-sheet layout. ${KEEP_ID}`,
+      },
+      {
+        id: "romance",
+        label: "❤️ Мелодрама",
+        prompt:
+          "Turn this person into the lead of a romantic drama movie poster: golden-hour light, soft wind, elegant " +
+          `serif title typography, emotional cinematic atmosphere, theatrical one-sheet layout. ${KEEP_ID}`,
+      },
+      {
+        id: "scifi",
+        label: "🚀 Фантастика",
+        prompt:
+          "Turn this person into the hero of an epic sci-fi movie poster: futuristic suit, neon-lit alien world, " +
+          `starships above, glowing title typography, cinematic one-sheet composition. ${KEEP_ID}`,
+      },
+    ],
+    animateLabel: "🎬 Оживить постер",
+    animatePrompt:
+      "Cinematic poster comes alive: slow parallax depth, drifting smoke and light flares, hair and clothing move " +
+      "in the wind, dramatic trailer-style atmosphere.",
+  },
+];
+
+export function campaignById(id: string): Campaign | undefined {
+  return CAMPAIGNS.find((c) => c.id === id);
+}
+
+/**
  * The AI-cost each credit is priced to cover. Credits per model = ceil(cost /
  * this). Keep this in sync with any provider-cost changes; it's the anchor the
  * whole margin model rests on. See docs/pricing.md.

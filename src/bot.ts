@@ -21,12 +21,15 @@ import {
 } from "./db.js";
 import { modelByKey, runGeneration } from "./generate.js";
 import {
+  CAMPAIGNS,
+  campaignById,
   IMAGE_MODEL_PICKER,
   MODELS,
   PRESET_MODEL,
   PRESETS,
   REFERRAL_MILESTONES,
   VIDEO_MODEL_PICKER,
+  type Campaign,
   type Preset,
 } from "./models.js";
 import { registerPayments, sendBalance } from "./payments.js";
@@ -62,6 +65,8 @@ export function mainMenu(): InlineKeyboard {
     .text("🛍 Фото товара для маркетплейса", "menu:product")
     .row()
     .text(`🎬 Оживить фото в видео (от ${MODELS.animate.credits} 🔫)`, "menu:animate")
+    .row()
+    .text("🎉 Кампании: сказки, кумиры, старые фото", "menu:campaigns")
     .row()
     .text("✨ Картинка из текста", "menu:text")
     .row()
@@ -191,7 +196,8 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
         const data = ctx.callbackQuery?.data;
         if (data) {
           if (data.startsWith("preset:")) await logEvent(from.id, "preset", data.slice(7));
-          else await logEvent(from.id, "select", data); // menu:* | act:* | buy:* | show_packs
+          else if (data.startsWith("cpre:")) await logEvent(from.id, "preset", data.slice(5));
+          else await logEvent(from.id, "select", data); // menu:* | camp:* | act:* | buy:* | show_packs
         } else if (ctx.message?.photo) {
           await logEvent(from.id, "photo");
         } else if (ctx.message?.text?.startsWith("/start")) {
@@ -387,6 +393,75 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     await ctx.reply("Вот примеры 👆 Пришлите фото товара 🛍 (можно прямо со стола — фон мы заменим).");
   });
 
+  // ---- Campaigns: one-click viral scenarios (image → optional video upsell) ----
+
+  function campaignPresetKeyboard(c: Campaign): InlineKeyboard {
+    const kb = new InlineKeyboard();
+    for (const p of c.presets) kb.text(`${p.label} (${PRESET_MODEL.credits} 🔫)`, `cpre:${c.id}:${p.id}`).row();
+    kb.text("📋 Меню", "menu:main");
+    return kb;
+  }
+
+  bot.callbackQuery("menu:campaigns", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await user(ctx);
+    const kb = new InlineKeyboard();
+    for (const c of CAMPAIGNS) kb.text(c.label, `camp:${c.id}`).row();
+    kb.text("📋 Меню", "menu:main");
+    await ctx.reply("🎉 Готовые сценарии — один тап, результат сразу:", { reply_markup: kb });
+  });
+
+  bot.callbackQuery(/^camp:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const c = campaignById(ctx.match[1]);
+    if (!c) return;
+    const u = await user(ctx);
+    if (u.pending_file_id) {
+      await ctx.reply(c.header, { reply_markup: campaignPresetKeyboard(c) });
+      return;
+    }
+    await setPending(u.id, `mode_camp_${c.id}`, null);
+    await ctx.reply(c.ask);
+  });
+
+  // One-tap campaign render; on success, offer the one-tap animate upsell that
+  // runs on the GENERATED image (the pending photo is swapped to the result).
+  bot.callbackQuery(/^cpre:([^:]+):(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const c = campaignById(ctx.match[1]);
+    const preset = c?.presets.find((p) => p.id === ctx.match[2]);
+    if (!c || !preset) {
+      await ctx.reply("Эта кампания больше недоступна — откройте /menu 🙂");
+      return;
+    }
+    const u = await user(ctx);
+    if (!u.pending_file_id) {
+      await ctx.reply(c.ask);
+      return;
+    }
+    const url = await runGeneration(ctx, u, PRESET_MODEL, preset.prompt, u.pending_file_id);
+    if (url) {
+      await setPending(u.id, "await_action", url);
+      await ctx.reply("Хотите оживить результат в видео? 👇", {
+        reply_markup: new InlineKeyboard().text(
+          `${c.animateLabel} (${MODELS.animate.credits} 🔫)`,
+          `camv:${c.id}`,
+        ),
+      });
+    }
+  });
+
+  bot.callbackQuery(/^camv:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const c = campaignById(ctx.match[1]);
+    const u = await user(ctx);
+    if (!c || !u.pending_file_id) {
+      await ctx.reply("Сначала создайте картинку в кампании 🙂");
+      return;
+    }
+    await runGeneration(ctx, u, MODELS.animate, c.animatePrompt, u.pending_file_id);
+  });
+
   bot.callbackQuery("menu:animate", async (ctx) => {
     await ctx.answerCallbackQuery();
     const u = await user(ctx);
@@ -505,6 +580,14 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       await setPending(u.id, "await_action", fileId);
       await ctx.reply("🎬 Выберите видео-модель:", { reply_markup: videoModelsKeyboard() });
       return;
+    }
+    if (mode?.startsWith("mode_camp_")) {
+      const c = campaignById(mode.slice("mode_camp_".length));
+      if (c) {
+        await setPending(u.id, "await_action", fileId);
+        await ctx.reply(c.header, { reply_markup: campaignPresetKeyboard(c) });
+        return;
+      }
     }
 
     await setPending(u.id, "await_action", fileId);
