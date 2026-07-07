@@ -4,6 +4,7 @@ import { InlineKeyboard, InputFile } from "grammy";
 import { config } from "./config.js";
 import { addCredits, logEvent, logGeneration, setPending, spendCredits, type UserRow } from "./db.js";
 import { MODELS, type ModelSpec } from "./models.js";
+import { craftPrompt } from "./promptcraft.js";
 import { nUnits } from "./text.js";
 
 fal.config({ credentials: config.falKey });
@@ -42,6 +43,8 @@ export function afterKeyboard(hasPhoto: boolean): InlineKeyboard {
  * Charge credits, run the model, deliver the result. Refunds automatically on
  * provider failure. `fileId` may be a Telegram file_id OR a direct https URL
  * (e.g. a previous generation's output — powers campaign image→video chains).
+ * Every prompt passes the promptcraft filter here; raw user text additionally
+ * gets the craft mapping (curated presets set `crafted: true` to skip it).
  * Returns the output URL on success, null on paywall/failure.
  */
 export async function runGeneration(
@@ -50,7 +53,9 @@ export async function runGeneration(
   model: ModelSpec,
   prompt: string,
   fileId?: string,
+  opts: { crafted?: boolean } = {},
 ): Promise<string | null> {
+  prompt = craftPrompt(model.kind, prompt, opts.crafted ?? false);
   if (!(await spendCredits(user.id, model.credits, model.key))) {
     await logEvent(user.id, "paywall", model.key);
     await ctx.reply(

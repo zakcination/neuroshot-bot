@@ -255,7 +255,8 @@ await step("text→image: prompt charges 2 🔫, calls Seedream, delivers photo 
   await sendText(alice, "a red fox in the snow");
   assert.equal(falCalls.length, 1);
   assert.equal(falCalls[0].endpoint, "fal-ai/bytedance/seedream/v4/text-to-image");
-  assert.equal(falCalls[0].input.prompt, "a red fox in the snow");
+  assert.ok((falCalls[0].input.prompt as string).startsWith("a red fox in the snow. "), "craft mapping missing");
+  assert.match(falCalls[0].input.prompt as string, /Avoid garbled text/);
   assert.equal(resultPhotos().length, 1);
   assert.equal(await credits(alice.id), 10); // 12 − 2
   // No source photo → «Ещё стиль» must NOT appear (Copilot: it would dead-end).
@@ -422,7 +423,7 @@ await step("/premium: premium text-to-image charges 11 🔫 via GPT Image 2", as
   const call = falCalls.at(-1)!;
   assert.equal(call.endpoint, "fal-ai/gpt-image-2");
   assert.equal(call.input.quality, "high");
-  assert.equal(call.input.prompt, "a perfume bottle on wet black marble");
+  assert.ok((call.input.prompt as string).startsWith("a perfume bottle on wet black marble. "));
   assert.equal(await credits(alice.id), 190); // 201 - 11
 });
 
@@ -455,7 +456,7 @@ await step("mode escape: menu:main clears a photo mode so text→image works aga
   await sendText(carol, "a blue cat"); // now a normal text-to-image prompt
   assert.equal(falCalls.length, falBefore + 1);
   assert.equal(falCalls.at(-1)!.endpoint, "fal-ai/bytedance/seedream/v4/text-to-image");
-  assert.equal(falCalls.at(-1)!.input.prompt, "a blue cat");
+  assert.ok((falCalls.at(-1)!.input.prompt as string).startsWith("a blue cat. "));
 });
 
 await step("🔫 pluralization: Russian declension is correct across cases", async () => {
@@ -512,7 +513,7 @@ await step("top models: image picker routes text→image to the chosen model (ac
   await sendText(dave, "cyberpunk cat");
   const call = falCalls.at(-1)!;
   assert.equal(call.endpoint, "fal-ai/nano-banana-pro"); // verified fal endpoint
-  assert.equal(call.input.prompt, "cyberpunk cat");
+  assert.ok((call.input.prompt as string).startsWith("cyberpunk cat. "));
   assert.equal(call.input.resolution, "2K");
   assert.equal(await credits(dave.id), 504); // 512 − 8
 });
@@ -648,6 +649,30 @@ await step("partner attribution is exclusive: no friend-referral double payout",
   const st = await getUser(4101);
   assert.equal(st!.referrer_id, null);
   assert.equal(st!.partner_code, "mentor");
+});
+
+await step("promptcraft: every generation is filtered; raw text mapped, curated presets untouched", async () => {
+  const { craftPrompt, sanitizePrompt } = await import("../src/promptcraft.js");
+  // Filter: control chars stripped, whitespace collapsed, length capped.
+  assert.equal(sanitizePrompt("  a  cat\n\n in   space  "), "a cat in space");
+  assert.equal(sanitizePrompt("x".repeat(2000)).length, 1500);
+  // Mapping per kind on raw user text.
+  assert.match(craftPrompt("image_edit", "make it night"), /keep everything else — identity/);
+  assert.match(craftPrompt("text_to_image", "a red fox"), /Avoid garbled text/);
+  assert.match(craftPrompt("image_to_video", "slow zoom"), /no morphing, flicker/);
+  // Curated prompts pass through the filter only — no double-wrapping.
+  assert.equal(craftPrompt("image_edit", "curated preset prompt", true), "curated preset prompt");
+
+  // And end-to-end through the bot: a free-text edit picks up the edit mapping…
+  await sendPhoto(carol, "craft-1");
+  await pressButton(carol, "act:photo_edit");
+  await sendText(carol, "замени фон   на\nпляж");
+  const edit = falCalls.at(-1)!;
+  assert.ok((edit.input.prompt as string).startsWith("замени фон на пляж. ")); // sanitized + mapped
+  assert.match(edit.input.prompt as string, /warped hands or faces/);
+  // …while the earlier campaign render (curated) carried its prompt verbatim-crafted:
+  const campaignCall = falCalls.find((c) => /fairy tale/i.test((c.input.prompt as string) ?? ""))!;
+  assert.ok(!/Avoid garbled text/.test(campaignCall.input.prompt as string), "curated prompt was double-wrapped");
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL || "embedded (pglite)"})`);
