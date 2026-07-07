@@ -1,8 +1,9 @@
 import type { Bot, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import { addCredits, getUser, logEvent } from "./db.js";
-import { PACKS, REFERRAL_BONUS } from "./models.js";
-import { nCredits } from "./text.js";
+import { config } from "./config.js";
+import { addCredits, logEvent, rewardReferralOnPurchase } from "./db.js";
+import { PACKS, REFERRAL_MILESTONES } from "./models.js";
+import { nUnits, UNIT_EMOJI } from "./text.js";
 
 export function packsKeyboard(): InlineKeyboard {
   const kb = new InlineKeyboard();
@@ -15,7 +16,7 @@ export function packsKeyboard(): InlineKeyboard {
 export function registerPayments(bot: Bot): void {
   bot.callbackQuery("show_packs", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply("Выберите пакет кредитов (оплата Telegram Stars):", {
+    await ctx.reply("Выберите пакет 🔫 патронов (оплата Telegram Stars):", {
       reply_markup: packsKeyboard(),
     });
   });
@@ -27,7 +28,7 @@ export function registerPayments(bot: Bot): void {
     // Telegram Stars: currency XTR, empty provider token, amount = stars (no cents).
     await ctx.replyWithInvoice(
       pack.title,
-      `${nCredits(pack.credits)} на генерации`,
+      `${nUnits(pack.credits)} на генерации`,
       `pack:${pack.id}`,
       "XTR",
       [{ label: pack.title, amount: pack.stars }],
@@ -45,23 +46,30 @@ export function registerPayments(bot: Bot): void {
     await addCredits(ctx.from.id, pack.credits, "purchase", String(payment.total_amount));
     await logEvent(ctx.from.id, "purchase", `${packId}:${payment.total_amount}`);
 
-    const buyer = await getUser(ctx.from.id);
-    if (buyer?.referrer_id) {
-      const bonus = Math.floor(pack.credits * REFERRAL_BONUS);
-      if (bonus > 0) {
-        await addCredits(buyer.referrer_id, bonus, "referral", String(ctx.from.id));
-        await ctx.api
-          .sendMessage(buyer.referrer_id, `🎁 +${nCredits(bonus)} — ваш реферал купил пакет!`)
-          .catch(() => {});
-      }
+    // Reward the referrer — purchase-gated (abuse-safe). Notify them of any payout.
+    const payout = await rewardReferralOnPurchase(ctx.from.id, pack.credits, {
+      percent: config.referralPercent,
+      firstPurchaseBonus: config.referralFirstPurchaseBonus,
+      milestones: REFERRAL_MILESTONES,
+    });
+    if (payout) {
+      const pct = Math.round(config.referralPercent * 100);
+      const lines: string[] = [];
+      if (payout.firstPurchase > 0)
+        lines.push(`🎉 +${nUnits(payout.firstPurchase)} — ваш друг сделал первую покупку!`);
+      if (payout.lifetime > 0) lines.push(`💸 +${nUnits(payout.lifetime)} — друг купил пакет (${pct}%)`);
+      for (const m of payout.milestones)
+        lines.push(`🏆 +${nUnits(m.bonus)} — ${m.friends} ваших друзей уже покупают!`);
+      if (lines.length) await ctx.api.sendMessage(payout.referrerId, lines.join("\n")).catch(() => {});
     }
-    await ctx.reply(`✅ Начислено ${nCredits(pack.credits)}. Пришлите фото или напишите идею!`);
+    await ctx.reply(`✅ Начислено ${UNIT_EMOJI} ${nUnits(pack.credits)}. Пришлите фото или напишите идею!`);
   });
 }
 
 export async function sendBalance(ctx: Context, credits: number): Promise<void> {
   await ctx.reply(
-    `💰 Баланс: ${nCredits(credits)}\n\nКартинка = 1 кр · Стиль/премиум = 4 кр · Видео = 8 кр`,
+    `💰 Баланс: ${UNIT_EMOJI} ${nUnits(credits)}\n\n` +
+      `Картинка от 2 · Премиум-фото 11 · Видео 25–76 ${UNIT_EMOJI}`,
     { reply_markup: packsKeyboard() },
   );
 }

@@ -1,17 +1,26 @@
 /** Russian-language helpers for user-facing copy. */
 
 /**
- * Correct Russian plural of "кредит" for any count.
- * 1 кредит · 2–4 кредита · 5–20 кредитов · 21 кредит · …
+ * The in-app currency. One place to rebrand it — change the emoji/name here and
+ * it updates everywhere (balance, packs, paywall, referral). "Патрон" = a round
+ * of ammo you spend on a shot (NeuroShot). Swap UNIT_EMOJI to 🎯/💥 if the
+ * water-pistol rendering of 🔫 ever reads wrong.
  */
-export function nCredits(n: number): string {
+export const UNIT_EMOJI = "🔫";
+export const UNIT_ONE = "патрон";
+
+/**
+ * Correct Russian plural of the currency for any count.
+ * 1 патрон · 2–4 патрона · 5–20 патронов · 21 патрон · …
+ */
+export function nUnits(n: number): string {
   const abs = Math.abs(n);
   const mod100 = abs % 100;
   const mod10 = abs % 10;
   let word: string;
-  if (mod100 >= 11 && mod100 <= 14) word = "кредитов";
-  else if (mod10 === 1) word = "кредит";
-  else if (mod10 >= 2 && mod10 <= 4) word = "кредита";
-  else word = "кредитов";
+  if (mod100 >= 11 && mod100 <= 14) word = "патронов";
+  else if (mod10 === 1) word = "патрон";
+  else if (mod10 >= 2 && mod10 <= 4) word = "патрона";
+  else word = "патронов";
   return `${n} ${word}`;
 }

@@ -39,13 +39,20 @@ const SCHEMA: string[] = [
     referrer_id BIGINT,
     pending_action TEXT,
     pending_file_id TEXT,
+    ref_first_purchase_at TIMESTAMPTZ,  -- set on the invitee at their 1st purchase
+    ref_milestones INTEGER NOT NULL DEFAULT 0, -- referral milestone tiers already paid
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
+  // Forward migrations for existing databases (columns added after launch).
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS ref_first_purchase_at TIMESTAMPTZ`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS ref_milestones INTEGER NOT NULL DEFAULT 0`,
   `CREATE TABLE IF NOT EXISTS ledger (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
     delta INTEGER NOT NULL,
-    reason TEXT NOT NULL,            -- signup | purchase | referral | generation | refund
+    -- signup | purchase | generation | refund | referral (lifetime share)
+    -- | referral_join (invitee bonus) | referral_bonus (1st-purchase) | referral_milestone
+    reason TEXT NOT NULL,
     meta TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
@@ -109,6 +116,10 @@ export interface UserRow {
   referrer_id: number | null;
   pending_action: string | null;
   pending_file_id: string | null;
+  /** Set only by getOrCreateUser on the call that actually inserted the row. */
+  justCreated?: boolean;
+  /** Referral welcome bonus granted at creation (0 unless joined via a link). */
+  joinBonus?: number;
 }
 
 // Postgres returns BIGINT as string — coerce id fields (Telegram ids are < 2^53).
@@ -128,16 +139,29 @@ export async function getOrCreateUser(
   username: string | undefined,
   referrerId: number | null,
   freeCredits: number,
+  joinBonus = 0,
 ): Promise<UserRow> {
   const ref = referrerId && referrerId !== id ? referrerId : null;
+  // The invitee's welcome bonus applies only when they actually joined via a link.
+  const bonus = ref ? Math.max(0, Math.floor(joinBonus)) : 0;
   const inserted = await q(
     `INSERT INTO users (id, username, credits, referrer_id) VALUES ($1, $2, $3, $4)
      ON CONFLICT (id) DO NOTHING RETURNING *`,
-    [id, username ?? null, freeCredits, ref],
+    [id, username ?? null, freeCredits + bonus, ref],
   );
   if (inserted.length) {
     await q("INSERT INTO ledger (user_id, delta, reason) VALUES ($1, $2, 'signup')", [id, freeCredits]);
-    return mapUser(inserted[0]);
+    if (bonus > 0) {
+      await q("INSERT INTO ledger (user_id, delta, reason, meta) VALUES ($1, $2, 'referral_join', $3)", [
+        id,
+        bonus,
+        String(ref),
+      ]);
+    }
+    const u = mapUser(inserted[0]);
+    u.justCreated = true;
+    u.joinBonus = bonus;
+    return u;
   }
   const existing = await q("SELECT * FROM users WHERE id = $1", [id]);
   return mapUser(existing[0]);
@@ -146,6 +170,91 @@ export async function getOrCreateUser(
 export async function getUser(id: number): Promise<UserRow | undefined> {
   const rows = await q("SELECT * FROM users WHERE id = $1", [id]);
   return rows[0] ? mapUser(rows[0]) : undefined;
+}
+
+export interface ReferralOpts {
+  percent: number; // lifetime share of the friend's purchases
+  firstPurchaseBonus: number; // one-time, on the friend's first purchase
+  milestones: { friends: number; bonus: number }[]; // by count of PAYING friends
+}
+export interface ReferralPayout {
+  referrerId: number;
+  lifetime: number;
+  firstPurchase: number;
+  milestones: { friends: number; bonus: number }[];
+}
+
+/**
+ * Pay a referrer for a referred friend's purchase. Abuse-safe by construction:
+ * every reward here is gated on a real, paid purchase, and the one-time and
+ * milestone rewards fire only on the friend's FIRST purchase (atomic set-once on
+ * ref_first_purchase_at guards against double payment / races). Returns what was
+ * paid (for notifications), or null if the buyer wasn't referred.
+ */
+export async function rewardReferralOnPurchase(
+  refereeId: number,
+  packCredits: number,
+  opts: ReferralOpts,
+): Promise<ReferralPayout | null> {
+  const referee = await getUser(refereeId);
+  if (!referee?.referrer_id) return null;
+  const refId = referee.referrer_id;
+  const payout: ReferralPayout = { referrerId: refId, lifetime: 0, firstPurchase: 0, milestones: [] };
+
+  // 1) Lifetime revenue share — on every purchase.
+  const lifetime = Math.floor(packCredits * opts.percent);
+  if (lifetime > 0) {
+    await addCredits(refId, lifetime, "referral", String(refereeId));
+    payout.lifetime = lifetime;
+  }
+
+  // 2) First-purchase only: atomically claim the "first purchase" flag.
+  const first = await q(
+    "UPDATE users SET ref_first_purchase_at = now() WHERE id = $1 AND ref_first_purchase_at IS NULL RETURNING id",
+    [refereeId],
+  );
+  if (!first.length) return payout; // already a returning buyer → nothing more
+
+  if (opts.firstPurchaseBonus > 0) {
+    await addCredits(refId, opts.firstPurchaseBonus, "referral_bonus", String(refereeId));
+    payout.firstPurchase = opts.firstPurchaseBonus;
+  }
+
+  // 3) Milestones — by count of DISTINCT paying friends; award newly-crossed tiers.
+  const cnt = await q(
+    "SELECT COUNT(*)::int AS c FROM users WHERE referrer_id = $1 AND ref_first_purchase_at IS NOT NULL",
+    [refId],
+  );
+  const paying = Number(cnt[0].c);
+  const mrow = await q("SELECT ref_milestones FROM users WHERE id = $1", [refId]);
+  const startTier = mrow[0] ? Number(mrow[0].ref_milestones) : 0;
+  let tier = startTier;
+  for (let i = startTier; i < opts.milestones.length; i++) {
+    if (paying < opts.milestones[i].friends) break;
+    await addCredits(refId, opts.milestones[i].bonus, "referral_milestone", String(opts.milestones[i].friends));
+    payout.milestones.push(opts.milestones[i]);
+    tier = i + 1;
+  }
+  if (tier !== startTier) await q("UPDATE users SET ref_milestones = $1 WHERE id = $2", [tier, refId]);
+  return payout;
+}
+
+/** Referral dashboard totals for a user: friends invited, of them paying, credits earned. */
+export async function referralStats(
+  userId: number,
+): Promise<{ invited: number; paying: number; earned: number }> {
+  const c = await q(
+    `SELECT COUNT(*)::int AS invited,
+            COALESCE(SUM(CASE WHEN ref_first_purchase_at IS NOT NULL THEN 1 ELSE 0 END),0)::int AS paying
+     FROM users WHERE referrer_id = $1`,
+    [userId],
+  );
+  const e = await q(
+    `SELECT COALESCE(SUM(delta),0)::int AS earned FROM ledger
+     WHERE user_id = $1 AND reason IN ('referral','referral_bonus','referral_milestone')`,
+    [userId],
+  );
+  return { invited: Number(c[0].invited), paying: Number(c[0].paying), earned: Number(e[0].earned) };
 }
 
 /** Add credits and journal the movement atomically (single CTE statement). */
@@ -266,7 +375,8 @@ export async function userDashboard(userId: number): Promise<{
   creditsSpent: number;
   purchases: number;
   referralEarned: number;
-  referralCount: number;
+  referralCount: number; // friends invited (distinct users)
+  referralPaying: number; // of them, friends who have purchased
 }> {
   const u = await q("SELECT credits FROM users WHERE id = $1", [userId]);
   const gen = await q(
@@ -283,8 +393,15 @@ export async function userDashboard(userId: number): Promise<{
     "SELECT COUNT(*)::int AS c FROM ledger WHERE user_id = $1 AND reason = 'purchase'",
     [userId],
   );
-  const ref = await q(
-    "SELECT COALESCE(SUM(delta),0)::int AS earned, COUNT(*)::int AS c FROM ledger WHERE user_id = $1 AND reason = 'referral'",
+  const earned = await q(
+    `SELECT COALESCE(SUM(delta),0)::int AS earned FROM ledger
+     WHERE user_id = $1 AND reason IN ('referral','referral_bonus','referral_milestone')`,
+    [userId],
+  );
+  const friends = await q(
+    `SELECT COUNT(*)::int AS invited,
+            COALESCE(SUM(CASE WHEN ref_first_purchase_at IS NOT NULL THEN 1 ELSE 0 END),0)::int AS paying
+     FROM users WHERE referrer_id = $1`,
     [userId],
   );
   return {
@@ -293,8 +410,9 @@ export async function userDashboard(userId: number): Promise<{
     okGenerations: Number(gen[0].ok),
     creditsSpent: Number(spent[0].s),
     purchases: Number(purchases[0].c),
-    referralEarned: Number(ref[0].earned),
-    referralCount: Number(ref[0].c),
+    referralEarned: Number(earned[0].earned),
+    referralCount: Number(friends[0].invited),
+    referralPaying: Number(friends[0].paying),
   };
 }
 

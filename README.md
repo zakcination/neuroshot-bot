@@ -10,9 +10,9 @@ Telegram GenAI photo/video bot — the MVP from `research/saas-ideas/veosee-clon
   restyle it with 🎭 one-tap presets (business headshot, fashion editorial, product hero…), or
   🎬 animate it into a 5s video (Kling)
 - Send a **text prompt** → ✨ generate an image (Seedream), or `/premium <prompt>` for GPT Image 2 high quality
-- **Credits ledger** in Postgres (Neon): 3 free credits on signup, image = 1 credit, 💎 premium = 4, video = 8
+- **🔫 patrons ledger** in Postgres (Neon): 3 free patrons on signup; image = 2, 💎 premium = 11, video = 25–76. Every model is priced at `ceil(cost/$0.02)` patrons for a ≥3.5× margin — see [`docs/pricing.md`](docs/pricing.md)
 - **Payments via Telegram Stars** (XTR) — works worldwide, no legal entity or payment provider needed
-- **Referral program**: 10% of every purchased pack credited to the referrer
+- **Referral program** (abuse-safe, purchase-gated): friend joins with bonus patrons; inviter earns on the friend's first purchase + 10% lifetime + milestone bonuses
 - Automatic **refund on provider failure**; `/stats` for admins
 
 ## Run it

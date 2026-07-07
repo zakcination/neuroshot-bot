@@ -11,7 +11,7 @@ bot.api.setMyCommands([
   { command: "menu", description: "📋 Меню — что создаём?" },
   { command: "app", description: "🌐 Открыть приложение" },
   { command: "premium", description: "💎 Премиум-картинка из текста" },
-  { command: "buy", description: "💰 Купить кредиты" },
+  { command: "buy", description: "💰 Купить патроны 🔫" },
   { command: "balance", description: "Мой баланс" },
   { command: "ref", description: "🎁 Реферальная ссылка (10%)" },
   { command: "start", description: "Перезапустить бота" },
