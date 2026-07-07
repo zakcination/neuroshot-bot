@@ -569,4 +569,47 @@ await step("referral is purchase-gated: a referred friend who never buys pays th
   assert.equal(await credits(host.id), before); // inviter earned nothing (no purchase)
 });
 
+await step("partner program: admin creates a code; c_<code> joins get the gift; purchases pay the custom %", async () => {
+  const mentor: From = { id: 4001, is_bot: false, first_name: "Mentor", username: "mentor" };
+  await sendText(mentor, "/start"); // 12 free
+  await sendText(admin, "/partner_add mentor 4001 25 10 Курс Ментора");
+  assert.match(lastText(), /c_mentor/);
+
+  const student: From = { id: 4101, is_bot: false, first_name: "Student", username: "student" };
+  await sendText(student, `/start c_mentor`);
+  assert.equal(await credits(student.id), 22); // 12 free + 10 partner gift
+  assert.equal(await ledgerCount("partner_join"), 1);
+  const greet = calls("sendPhoto").at(-1)!;
+  assert.match(greet.payload.caption as string, /подарок от Курс Ментора/);
+
+  await payForPack(student, "popular", 2200); // 200 🔫 → mentor gets floor(200*0.25)=50
+  assert.equal(await credits(mentor.id), 62); // 12 + 50
+  assert.equal(await ledgerCount("partner"), 1);
+  const notify = calls("sendMessage").filter((c) => c.payload.chat_id === mentor.id).at(-1)!;
+  assert.match(notify.payload.text as string, /c_mentor/);
+
+  // Lifetime: a SECOND purchase pays again (no one-time cap for partners).
+  await payForPack(student, "start", 720); // 60 🔫 → +15
+  assert.equal(await credits(mentor.id), 77);
+  assert.equal(await ledgerCount("partner"), 2);
+
+  // Creator dashboard shows the funnel.
+  await sendText(mentor, "/partner");
+  assert.match(lastText(), /c_mentor/);
+  assert.match(lastText(), /пришло: <b>1<\/b>/);
+  assert.match(lastText(), /покупают: <b>1<\/b>/);
+
+  // Non-admin cannot mint codes (silence, like /stats).
+  const before = calls("sendMessage").length;
+  await sendText(mentor, "/partner_add hack 4001 50 100");
+  assert.equal(calls("sendMessage").length, before);
+});
+
+await step("partner attribution is exclusive: no friend-referral double payout", async () => {
+  // student was acquired via c_mentor → no referrer_id → referral path never fires.
+  const st = await getUser(4101);
+  assert.equal(st!.referrer_id, null);
+  assert.equal(st!.partner_code, "mentor");
+});
+
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL || "embedded (pglite)"})`);

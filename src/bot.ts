@@ -8,10 +8,15 @@ import { config } from "./config.js";
 import {
   funnel,
   getOrCreateUser,
+  getPartnerCode,
+  listPartnerCodes,
   logEvent,
+  partnerStats,
   referralStats,
   setPending,
   stats,
+  upsertPartnerCode,
+  type PartnerCodeRow,
   type UserRow,
 } from "./db.js";
 import { modelByKey, runGeneration } from "./generate.js";
@@ -30,6 +35,7 @@ import { nUnits, UNIT_EMOJI } from "./text.js";
 async function user(
   ctx: { from?: { id: number; username?: string } },
   referrerId: number | null = null,
+  partner: PartnerCodeRow | null = null,
 ): Promise<UserRow> {
   if (!ctx.from) throw new Error("no ctx.from");
   return getOrCreateUser(
@@ -38,6 +44,7 @@ async function user(
     referrerId,
     config.freeCredits,
     config.referralJoinBonus,
+    partner,
   );
 }
 
@@ -201,13 +208,21 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   bot.command("start", async (ctx) => {
     const payload = ctx.match?.trim();
+    // Deep-link payloads: numeric = friend referral, c_<code> = creator/partner code.
     const referrerId = payload && /^\d+$/.test(payload) ? Number(payload) : null;
-    const u = await user(ctx, referrerId);
+    const partner = payload?.startsWith("c_")
+      ? ((await getPartnerCode(payload.slice(2).toLowerCase())) ?? null)
+      : null;
+    const u = await user(ctx, referrerId, partner);
     let msg = `${WELCOME}\n\n`;
     if (u.justCreated) {
       msg += `🎁 Вам начислено <b>${UNIT_EMOJI} ${nUnits(u.credits)}</b> на старт.`;
-      if (u.joinBonus && u.joinBonus > 0)
-        msg += `\nИз них <b>+${nUnits(u.joinBonus)}</b> — бонус за приглашение. Спасибо другу! 🤝`;
+      if (u.joinBonus && u.joinBonus > 0) {
+        msg +=
+          u.joinVia === "partner"
+            ? `\nИз них <b>+${nUnits(u.joinBonus)}</b> — подарок от ${partner?.title ?? "партнёра"} 🤝`
+            : `\nИз них <b>+${nUnits(u.joinBonus)}</b> — бонус за приглашение. Спасибо другу! 🤝`;
+      }
     } else {
       msg += `💰 На балансе: <b>${UNIT_EMOJI} ${nUnits(u.credits)}</b>.`;
     }
@@ -237,6 +252,58 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   bot.command("buy", async (ctx) => sendBalance(ctx, (await user(ctx)).credits));
 
   bot.command("ref", async (ctx) => sendRefLink(ctx));
+
+  // Creator/partner dashboard: per-code funnel + link for negotiated deals.
+  bot.command("partner", async (ctx) => {
+    const u = await user(ctx);
+    const codes = await listPartnerCodes(u.id);
+    if (!codes.length) {
+      await ctx.reply(
+        "🤝 Партнёрская программа для авторов, блогеров и школ: персональный код, " +
+          "повышенный процент с покупок вашей аудитории и подарочные 🔫 подписчикам.\n\n" +
+          "Напишите нам — обсудим условия. А пока работает обычная реферальная ссылка: /ref",
+      );
+      return;
+    }
+    const blocks: string[] = [];
+    for (const c of codes) {
+      const st = await partnerStats(c.code);
+      blocks.push(
+        `🔗 <b>${c.title ?? c.code}</b>\n` +
+          `<code>https://t.me/${ctx.me.username}?start=c_${c.code}</code>\n` +
+          `👥 пришло: <b>${st.joined}</b> · 💳 покупают: <b>${st.paying}</b> · ` +
+          `заработано: <b>${UNIT_EMOJI} ${nUnits(st.earned)}</b>\n` +
+          `условия: ${Math.round(c.percent * 100)}% с покупок · +${c.join_bonus} 🔫 новым`,
+      );
+    }
+    await ctx.reply(`🤝 <b>Ваши партнёрские коды</b>\n\n${blocks.join("\n\n")}`, { parse_mode: "HTML" });
+  });
+
+  // Admin: create/update a creator code with per-deal terms.
+  // /partner_add <code> <tg_id> <percent 1–50> <join_bonus> [display title]
+  bot.command("partner_add", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const args = (ctx.match ?? "").trim().split(/\s+/).filter(Boolean);
+    const [rawCode, idS, pctS, bonusS, ...titleParts] = args;
+    const ownerId = Number(idS);
+    const pct = Number(pctS);
+    const bonus = Number(bonusS ?? 0);
+    if (!rawCode || !/^[a-z0-9_]{2,32}$/i.test(rawCode) || !Number.isFinite(ownerId) || !Number.isFinite(pct) || pct <= 0 || pct > 50 || !Number.isFinite(bonus) || bonus < 0) {
+      await ctx.reply(
+        "Формат: /partner_add <код a-z0-9_> <tg_id> <процент 1–50> <бонус_новым> [название]\n" +
+          "Пример: /partner_add mentor 123456789 25 10 Курс Ментора\n" +
+          "⚠️ >25% съедает целевую маржу 3.5× на минимальном пакете — см. docs/creator-program.md",
+      );
+      return;
+    }
+    const code = rawCode.toLowerCase();
+    await upsertPartnerCode(code, ownerId, pct / 100, Math.floor(bonus), titleParts.join(" ") || null);
+    await ctx.reply(
+      `✅ Код <code>c_${code}</code> → ${ownerId}: ${pct}% с покупок, +${Math.floor(bonus)} 🔫 новым.\n` +
+        `Ссылка: https://t.me/${ctx.me.username}?start=c_${code}`,
+      { parse_mode: "HTML" },
+    );
+  });
 
   // Premium text-to-image: /premium <prompt> (GPT Image 2, high quality).
   bot.command("premium", async (ctx) => {

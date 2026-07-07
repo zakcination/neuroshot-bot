@@ -14,6 +14,7 @@ bot.api.setMyCommands([
   { command: "buy", description: "💰 Купить патроны 🔫" },
   { command: "balance", description: "Мой баланс" },
   { command: "ref", description: "🎁 Реферальная ссылка (10%)" },
+  { command: "partner", description: "🤝 Партнёрам и авторам" },
   { command: "start", description: "Перезапустить бота" },
 ]);
 
