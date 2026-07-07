@@ -98,6 +98,7 @@ interface MeResponse {
   dashboard: { credits: number; okGenerations: number; creditsSpent: number; referralEarned: number };
   generations: Array<{ output_url: string | null; status: string }>;
   bot_username: string;
+  packs: Array<{ id: string; title: string; credits: number; stars: number }>;
 }
 
 const server = createWebApp();
@@ -121,6 +122,9 @@ await step("GET /api/me onboards a new user with free credits (shared with bot)"
   assert.equal(body.dashboard.credits, 3); // FREE_CREDITS
   assert.equal(body.bot_username, "neuroshot_test_bot"); // from BOT_USERNAME env
   assert.deepEqual(body.generations, []);
+  // Pack catalog rides along — one source of truth with the bot's /buy.
+  assert.equal(body.packs.length, 4);
+  assert.ok(body.packs.every((p) => p.stars > 0 && p.credits > 0 && p.id));
 });
 
 await step("app reflects the SAME state the bot writes: spend + gallery", async () => {

@@ -5,7 +5,7 @@
  *   • shell   → cache-first with background refresh
  * Bump CACHE on any shell change so old assets are evicted.
  */
-const CACHE = "neuroshot-shell-v1";
+const CACHE = "neuroshot-shell-v2"; // v2: premium redesign of the app shell
 // Include both entry URLs — the app is reachable at "/" (rewritten to the shell)
 // and at "/app" — so an offline launch from either resolves from cache.
 const SHELL = ["/", "/app", "/manifest.webmanifest", "/icon.svg"];
