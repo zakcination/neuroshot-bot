@@ -439,7 +439,9 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       await ctx.reply(c.ask);
       return;
     }
-    const url = await runGeneration(ctx, u, PRESET_MODEL, preset.prompt, u.pending_file_id);
+    const url = await runGeneration(ctx, u, PRESET_MODEL, preset.prompt, u.pending_file_id, {
+      crafted: true,
+    });
     if (url) {
       await setPending(u.id, "await_action", url);
       await ctx.reply("Хотите оживить результат в видео? 👇", {
@@ -459,7 +461,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       await ctx.reply("Сначала создайте картинку в кампании 🙂");
       return;
     }
-    await runGeneration(ctx, u, MODELS.animate, c.animatePrompt, u.pending_file_id);
+    await runGeneration(ctx, u, MODELS.animate, c.animatePrompt, u.pending_file_id, { crafted: true });
   });
 
   bot.callbackQuery("menu:animate", async (ctx) => {
@@ -644,7 +646,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       await ctx.reply("Сначала пришлите фото 🙂");
       return;
     }
-    await runGeneration(ctx, u, PRESET_MODEL, preset.prompt, u.pending_file_id);
+    await runGeneration(ctx, u, PRESET_MODEL, preset.prompt, u.pending_file_id, { crafted: true });
   });
 
   // ---- Text in → prompt for a pending action, or plain text-to-image ----
