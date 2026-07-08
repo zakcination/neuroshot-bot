@@ -751,15 +751,24 @@ await step("admin /grant: target + self shorthand + negative; non-admin silent; 
 
   assert.equal(await ledgerCount("admin_grant"), grantsBefore + 3); // delta, not absolute
 
-  // Non-admin cannot grant (silence, like /stats).
+  // Non-admin cannot grant: silence AND no credits/ledger movement.
   const n = calls("sendMessage").length;
+  const aliceMid = await credits(alice.id);
   await sendText(alice, "/grant 999999");
   assert.equal(calls("sendMessage").length, n);
+  assert.equal(await credits(alice.id), aliceMid);
+  assert.equal(await ledgerCount("admin_grant"), grantsBefore + 3);
 
-  // Unknown target is rejected and nothing is credited.
+  // Trailing tokens are rejected (mistyped input must not grant anything).
+  await sendText(admin, `/grant ${alice.id} 100 500`);
+  assert.match(lastText(), /Формат/);
+  assert.equal(await credits(alice.id), aliceMid);
+
+  // Unknown target is rejected: nothing credited, nothing journaled.
   await sendText(admin, "/grant 424243 50");
   assert.match(lastText(), /не найден/);
   assert.equal(await credits(alice.id), aliceBefore + 100);
+  assert.equal(await ledgerCount("admin_grant"), grantsBefore + 3);
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL || "embedded (pglite)"})`);

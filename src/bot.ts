@@ -355,9 +355,17 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   bot.command("grant", async (ctx) => {
     if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
     const args = (ctx.match ?? "").trim().split(/\s+/).filter(Boolean);
-    const targetId = args.length >= 2 ? Number(args[0]) : ctx.from.id;
-    const amount = Number(args.length >= 2 ? args[1] : args[0]);
-    if (!Number.isInteger(targetId) || !Number.isInteger(amount) || amount === 0) {
+    const targetId = args.length === 2 ? Number(args[0]) : ctx.from.id;
+    const amount = Number(args.length === 2 ? args[1] : args[0]);
+    // Exactly 1 or 2 args — reject trailing tokens so a mistyped command can't
+    // silently grant something other than what the admin meant.
+    if (
+      args.length < 1 ||
+      args.length > 2 ||
+      !Number.isInteger(targetId) ||
+      !Number.isInteger(amount) ||
+      amount === 0
+    ) {
       await ctx.reply("Формат: /grant <кол-во> или /grant <tg_id> <кол-во>\nПример: /grant 9999");
       return;
     }
@@ -367,10 +375,11 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       return;
     }
     await addCredits(targetId, amount, "admin_grant", String(ctx.from.id));
-    const updated = await getUser(targetId);
+    // Defensive re-read: fall back to the computed balance if the row vanished.
+    const balance = (await getUser(targetId))?.credits ?? target.credits + amount;
     await ctx.reply(
       `✅ ${amount > 0 ? "Начислено" : "Списано"} ${UNIT_EMOJI} ${nUnits(Math.abs(amount))} → ${targetId}. ` +
-        `Баланс: ${UNIT_EMOJI} ${nUnits(updated!.credits)}.`,
+        `Баланс: ${UNIT_EMOJI} ${nUnits(balance)}.`,
     );
   });
 
