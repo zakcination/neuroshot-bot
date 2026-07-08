@@ -20,7 +20,7 @@ process.env.ADMIN_IDS = "9999";
 const { fal } = await import("@fal-ai/client");
 const { createBot } = await import("../src/bot.js");
 const { funnel, query, getUser } = await import("../src/db.js");
-const { nUnits } = await import("../src/text.js");
+const { nUnits, nResults } = await import("../src/text.js");
 
 // ---------- Telegram API stub (transformer: intercepts every outgoing call) ----------
 
@@ -475,6 +475,11 @@ await step("🔫 pluralization: Russian declension is correct across cases", asy
   assert.equal(nUnits(5), "5 патронов");
   assert.equal(nUnits(11), "11 патронов"); // 11–14 → genitive plural
   assert.equal(nUnits(21), "21 патрон");
+  // Paywall "результат" declension (singular case must read correctly for n=1).
+  assert.equal(nResults(1), "1 результат");
+  assert.equal(nResults(2), "2 результата");
+  assert.equal(nResults(5), "5 результатов");
+  assert.equal(nResults(11), "11 результатов");
 });
 
 await step("analytics: events logged; /funnel shows the conversion funnel to admin only", async () => {
@@ -670,6 +675,10 @@ await step("promptcraft: every generation is filtered; raw text mapped, curated 
   assert.match(craftPrompt("image_to_video", "slow zoom"), /no morphing, flicker/);
   // Curated prompts pass through the filter only — no double-wrapping.
   assert.equal(craftPrompt("image_edit", "curated preset prompt", true), "curated preset prompt");
+  // No double punctuation when the user's text already ends in a terminator.
+  assert.ok(craftPrompt("text_to_image", "make it pop!").startsWith("make it pop! Rich"));
+  assert.ok(!craftPrompt("text_to_image", "make it pop!").includes("!."));
+  assert.ok(craftPrompt("text_to_image", "a red fox").startsWith("a red fox. ")); // no terminator → full stop
 
   // And end-to-end through the bot: a free-text edit picks up the edit mapping…
   await sendPhoto(carol, "craft-1");

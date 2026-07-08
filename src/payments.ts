@@ -3,7 +3,7 @@ import { InlineKeyboard } from "grammy";
 import { config } from "./config.js";
 import { addCredits, logEvent, rewardPartnerOnPurchase, rewardReferralOnPurchase } from "./db.js";
 import { PACKS, REFERRAL_MILESTONES, type ModelSpec } from "./models.js";
-import { nUnits, UNIT_EMOJI } from "./text.js";
+import { nResults, nUnits, UNIT_EMOJI } from "./text.js";
 
 export function packsKeyboard(): InlineKeyboard {
   const kb = new InlineKeyboard();
@@ -32,15 +32,18 @@ export function paywallText(model: ModelSpec, credits: number): string {
   return (
     `✨ <b>Ещё один шаг до результата!</b>\n\n` +
     `«${model.label}» — ${nUnits(model.credits)}. У вас ${nUnits(credits)}.\n\n` +
-    `⭐ Пакет «${ENTRY_PACK.title}» = до <b>${n}</b> таких результатов — оплата в пару тапов через Telegram Stars.`
+    `⭐ Пакет «${ENTRY_PACK.title}»: <b>${nResults(n)}</b> за ⭐${ENTRY_PACK.stars} — оплата в пару тапов через Telegram Stars.`
   );
 }
+
+/** Short pack name for the CTA ("Старт — 60 🔫" → "Старт"). */
+const ENTRY_SHORT = ENTRY_PACK.title.split(" — ")[0];
 
 /** Primary CTA = the entry pack (framed by results); secondary = all packs. */
 export function paywallKeyboard(model: ModelSpec): InlineKeyboard {
   const n = resultsPerEntryPack(model);
   return new InlineKeyboard()
-    .text(`⭐${ENTRY_PACK.stars} · ${ENTRY_PACK.title} — до ${n} результатов`, `buy:${ENTRY_PACK.id}`)
+    .text(`⭐${ENTRY_PACK.stars} · ${ENTRY_SHORT}: ${nResults(n)}`, `buy:${ENTRY_PACK.id}`)
     .row()
     .text("💎 Все пакеты", "show_packs");
 }

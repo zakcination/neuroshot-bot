@@ -446,9 +446,14 @@ export function campaignById(id: string): Campaign | undefined {
   return CAMPAIGNS.find((c) => c.id === id);
 }
 
-/** Whole weeks since the Unix epoch — a stable, monotonically rising index. */
+/**
+ * Whole ISO weeks (Monday-aligned, UTC) as a stable, monotonically rising index.
+ * The Unix epoch (1970-01-01) is a Thursday, so +3 days shifts the boundary to
+ * Monday 00:00 UTC — the rotation flips on Mondays, matching docs.
+ */
 export function weekIndex(date: Date): number {
-  return Math.floor(date.getTime() / (7 * 24 * 60 * 60 * 1000));
+  const days = Math.floor(date.getTime() / (24 * 60 * 60 * 1000));
+  return Math.floor((days + 3) / 7);
 }
 
 /**

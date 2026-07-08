@@ -62,12 +62,20 @@ export async function runGeneration(
   opts: { crafted?: boolean; allowFreeFirst?: boolean } = {},
 ): Promise<string | null> {
   prompt = craftPrompt(model.kind, prompt, opts.crafted ?? false);
+  // Nothing survived sanitation (empty / whitespace-only) → don't spend or call
+  // the provider on an empty prompt; ask for a description instead.
+  if (!prompt) {
+    await ctx.reply("Напишите, что создать 🙂");
+    return null;
+  }
   // "First result on us": if a newcomer can't afford this and it's an eligible
-  // (image) flow, render one free wow instead of walling them before any result.
-  // Peek here, consume only on success (a provider failure must not burn it).
+  // IMAGE flow (never the expensive video upsell), render one free wow instead of
+  // walling them before any result. Peek here, consume only on success (a
+  // provider failure must not burn it).
+  const freeEligible = (opts.allowFreeFirst ?? false) && model.kind !== "image_to_video";
   let free = false;
   if (!(await spendCredits(user.id, model.credits, model.key))) {
-    if ((opts.allowFreeFirst ?? false) && (await hasFreeResult(user.id))) {
+    if (freeEligible && (await hasFreeResult(user.id))) {
       free = true;
     } else {
       await logEvent(user.id, "paywall", model.key);
