@@ -6,9 +6,11 @@ import type { Context } from "grammy";
 import { Bot, GrammyError, HttpError, InlineKeyboard, InputFile, InputMediaBuilder } from "grammy";
 import { config } from "./config.js";
 import {
+  addCredits,
   funnel,
   getOrCreateUser,
   getPartnerCode,
+  getUser,
   listPartnerCodes,
   logEvent,
   partnerStats,
@@ -345,6 +347,39 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     const s = await stats();
     await ctx.reply(
       `👥 Users: ${s.users}\n💳 Paying: ${s.paid}\n🎨 Generations: ${s.generations}\n⭐ Stars revenue: ${s.starsRevenue}`,
+    );
+  });
+
+  // Admin: top up 🔫 for testing (self by default, or a target user).
+  // /grant <amount>  |  /grant <tg_id> <amount>  (amount may be negative to deduct)
+  bot.command("grant", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const args = (ctx.match ?? "").trim().split(/\s+/).filter(Boolean);
+    const targetId = args.length === 2 ? Number(args[0]) : ctx.from.id;
+    const amount = Number(args.length === 2 ? args[1] : args[0]);
+    // Exactly 1 or 2 args — reject trailing tokens so a mistyped command can't
+    // silently grant something other than what the admin meant.
+    if (
+      args.length < 1 ||
+      args.length > 2 ||
+      !Number.isInteger(targetId) ||
+      !Number.isInteger(amount) ||
+      amount === 0
+    ) {
+      await ctx.reply("Формат: /grant <кол-во> или /grant <tg_id> <кол-во>\nПример: /grant 9999");
+      return;
+    }
+    const target = await getUser(targetId);
+    if (!target) {
+      await ctx.reply(`Пользователь ${targetId} не найден — пусть сначала откроет /start.`);
+      return;
+    }
+    await addCredits(targetId, amount, "admin_grant", String(ctx.from.id));
+    // Defensive re-read: fall back to the computed balance if the row vanished.
+    const balance = (await getUser(targetId))?.credits ?? target.credits + amount;
+    await ctx.reply(
+      `✅ ${amount > 0 ? "Начислено" : "Списано"} ${UNIT_EMOJI} ${nUnits(Math.abs(amount))} → ${targetId}. ` +
+        `Баланс: ${UNIT_EMOJI} ${nUnits(balance)}.`,
     );
   });
 

@@ -730,4 +730,45 @@ await step("recurring reason: a returning /start surfaces the weekly новин�
   assert.ok(buttons.includes("menu:styles"), "continue-with-photo shortcut missing");
 });
 
+await step("admin /grant: target + self shorthand + negative; non-admin silent; unknown rejected", async () => {
+  const grantsBefore = await ledgerCount("admin_grant"); // snapshot, not an absolute count
+
+  // Two-arg form: credit a target user.
+  const aliceBefore = await credits(alice.id);
+  await sendText(admin, `/grant ${alice.id} 100`);
+  assert.equal(await credits(alice.id), aliceBefore + 100);
+  assert.match(lastText(), /Начислено 🔫 100 патронов/);
+  assert.match(lastText(), /Баланс: 🔫/); // balance carries the currency emoji
+
+  // Self shorthand (needs the admin's own row) + negative deduction.
+  await sendText(admin, "/start"); // ensure the admin has a user row
+  const adminBefore = await credits(admin.id);
+  await sendText(admin, "/grant 500"); // self, positive
+  assert.equal(await credits(admin.id), adminBefore + 500);
+  await sendText(admin, "/grant -200"); // self, negative
+  assert.equal(await credits(admin.id), adminBefore + 300);
+  assert.match(lastText(), /Списано 🔫 200 патронов/);
+
+  assert.equal(await ledgerCount("admin_grant"), grantsBefore + 3); // delta, not absolute
+
+  // Non-admin cannot grant: silence AND no credits/ledger movement.
+  const n = calls("sendMessage").length;
+  const aliceMid = await credits(alice.id);
+  await sendText(alice, "/grant 999999");
+  assert.equal(calls("sendMessage").length, n);
+  assert.equal(await credits(alice.id), aliceMid);
+  assert.equal(await ledgerCount("admin_grant"), grantsBefore + 3);
+
+  // Trailing tokens are rejected (mistyped input must not grant anything).
+  await sendText(admin, `/grant ${alice.id} 100 500`);
+  assert.match(lastText(), /Формат/);
+  assert.equal(await credits(alice.id), aliceMid);
+
+  // Unknown target is rejected: nothing credited, nothing journaled.
+  await sendText(admin, "/grant 424243 50");
+  assert.match(lastText(), /не найден/);
+  assert.equal(await credits(alice.id), aliceBefore + 100);
+  assert.equal(await ledgerCount("admin_grant"), grantsBefore + 3);
+});
+
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL || "embedded (pglite)"})`);
