@@ -23,12 +23,15 @@ stuck students are told to DM the mentor personally. High-touch, small cohort.
    full product card: 11–12 images approved in chat → assembled into a clip
 3. **Character pipeline**: close-up with the face → full-height/waist shots
    with a prop → outfit/accessory change → animate. (Identity consistency is
-   the core taught skill — exactly what our presets' `KEEP_ID` lines do.)
+   the core taught skill — exactly what our identity-preservation prompt lines
+   do: the `KEEP_ID`/`KEEP_KID` constants in campaigns and the equivalent
+   "Preserve the person's identity…" sentences embedded in presets.)
 4. **Film/serial production**: character sheets (aged versions, relatives),
    scene-by-scene storyboards where every кадр = image prompt + narrator line;
    voiceover via **@steosvoice_bot** («Старец рассказчик») and **ElevenLabs**
 5. **Tools covered in эфиры**: Kling 3, Seedance 2.2 («сиденс22»), Veo, Grok,
-   ElevenLabs — the exact model set our bot resells by the патрон.
+   ElevenLabs — the same model families our bot resells by the патрон (we ship
+   Kling 3.0 and Seedance 2.0 today; version drift is a models.ts update away).
 6. **Distribution & monetization**: Instagram packaging (nick, bio, highlights,
    palette, avatar), the "залетающий" reels formula (hook ≤5s, script, cover,
    5 visible + 25 hidden hashtags split 10 geo / 10 broad / 10 topical,
@@ -50,7 +53,7 @@ in the bot converts his curriculum into our recurring usage.
 
 ## 2. His prompt library (mined from the export)
 
-Patterns he teaches, and how they map to what `promptcraft.ts` + presets already do:
+Patterns he teaches, and how they map to what `src/promptcraft.ts` + presets already do:
 
 | His pattern | Example from the chat | In NeuroShot today |
 |---|---|---|
