@@ -730,4 +730,22 @@ await step("recurring reason: a returning /start surfaces the weekly новин�
   assert.ok(buttons.includes("menu:styles"), "continue-with-photo shortcut missing");
 });
 
+await step("admin /grant tops up 🔫 for testing; non-admin silent; unknown user rejected", async () => {
+  const before = await credits(alice.id);
+  await sendText(admin, `/grant ${alice.id} 100`);
+  assert.equal(await credits(alice.id), before + 100);
+  assert.equal(await ledgerCount("admin_grant"), 1);
+  assert.match(lastText(), /Начислено 🔫 100 патронов/);
+
+  // Non-admin cannot grant (silence, like /stats).
+  const n = calls("sendMessage").length;
+  await sendText(alice, "/grant 999999");
+  assert.equal(calls("sendMessage").length, n);
+
+  // Unknown target is rejected and nothing is credited.
+  await sendText(admin, "/grant 424243 50");
+  assert.match(lastText(), /не найден/);
+  assert.equal(await credits(alice.id), before + 100);
+});
+
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL || "embedded (pglite)"})`);
