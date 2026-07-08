@@ -447,6 +447,25 @@ export function campaignById(id: string): Campaign | undefined {
 }
 
 /**
+ * Whole ISO weeks (Monday-aligned, UTC) as a stable, monotonically rising index.
+ * The Unix epoch (1970-01-01) is a Thursday, so +3 days shifts the boundary to
+ * Monday 00:00 UTC — the rotation flips on Mondays, matching docs.
+ */
+export function weekIndex(date: Date): number {
+  const days = Math.floor(date.getTime() / (24 * 60 * 60 * 1000));
+  return Math.floor((days + 3) / 7);
+}
+
+/**
+ * The "🆕 Новинка недели" — a deterministic weekly rotation over the campaigns,
+ * so returning users always find a fresh reason to spend (recurring-reason hook).
+ * No scheduler needed: it's a pure function of the current week.
+ */
+export function featuredCampaign(date: Date): Campaign {
+  return CAMPAIGNS[weekIndex(date) % CAMPAIGNS.length];
+}
+
+/**
  * The AI-cost each credit is priced to cover. Credits per model = ceil(cost /
  * this). Keep this in sync with any provider-cost changes; it's the anchor the
  * whole margin model rests on. See docs/pricing.md.

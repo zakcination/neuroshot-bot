@@ -45,5 +45,8 @@ const CRAFT: Record<ModelKind, string> = {
 export function craftPrompt(kind: ModelKind, raw: string, crafted = false): string {
   const clean = sanitizePrompt(raw);
   if (crafted || !clean) return clean;
-  return `${clean}. ${CRAFT[kind]}`;
+  // Don't double-punctuate: append a bare space when the text already ends in a
+  // sentence terminator (".", "!", "?", "…"), a full stop otherwise.
+  const sep = /[.!?…]$/.test(clean) ? " " : ". ";
+  return `${clean}${sep}${CRAFT[kind]}`;
 }

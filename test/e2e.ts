@@ -20,7 +20,7 @@ process.env.ADMIN_IDS = "9999";
 const { fal } = await import("@fal-ai/client");
 const { createBot } = await import("../src/bot.js");
 const { funnel, query, getUser } = await import("../src/db.js");
-const { nUnits } = await import("../src/text.js");
+const { nUnits, nResults } = await import("../src/text.js");
 
 // ---------- Telegram API stub (transformer: intercepts every outgoing call) ----------
 
@@ -282,14 +282,22 @@ await step("photo→edit: action keyboard, prompt, Nano Banana edit charges 3 �
   assert.equal(await credits(alice.id), 7); // 10 − 3
 });
 
-await step("insufficient 🔫: animate (25) with 7 is rejected, nothing charged", async () => {
+await step("insufficient 🔫: animate (25) with 7 shows the sales-page paywall, nothing charged", async () => {
   await sendPhoto(alice, "photo-2");
   await pressButton(alice, "act:animate");
   assert.match(lastText(), /Опишите движение/);
   const falBefore = falCalls.length;
   await sendText(alice, "slow zoom in");
   assert.equal(falCalls.length, falBefore);
-  assert.match(lastText(), /Не хватает 🔫: «🎬 Оживление фото» стоит 25 патронов, у вас 7 патронов/);
+  // Paywall is a sales page: outcome headline, the tried model, the anchored entry pack.
+  const wall = calls("sendMessage").at(-1)!;
+  assert.match(wall.payload.text as string, /Ещё один шаг до результата/);
+  assert.match(wall.payload.text as string, /🎬 Оживление фото/);
+  assert.match(wall.payload.text as string, /Старт/); // entry pack anchored
+  const kb = wall.payload.reply_markup as { inline_keyboard: Array<Array<{ callback_data: string }>> };
+  const buttons = kb.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(buttons.includes("buy:start"), "entry-pack CTA missing"); // one dominant CTA
+  assert.ok(buttons.includes("show_packs"), "all-packs fallback missing");
   assert.equal(await credits(alice.id), 7);
 });
 
@@ -467,6 +475,11 @@ await step("🔫 pluralization: Russian declension is correct across cases", asy
   assert.equal(nUnits(5), "5 патронов");
   assert.equal(nUnits(11), "11 патронов"); // 11–14 → genitive plural
   assert.equal(nUnits(21), "21 патрон");
+  // Paywall "результат" declension (singular case must read correctly for n=1).
+  assert.equal(nResults(1), "1 результат");
+  assert.equal(nResults(2), "2 результата");
+  assert.equal(nResults(5), "5 результатов");
+  assert.equal(nResults(11), "11 результатов");
 });
 
 await step("analytics: events logged; /funnel shows the conversion funnel to admin only", async () => {
@@ -662,6 +675,10 @@ await step("promptcraft: every generation is filtered; raw text mapped, curated 
   assert.match(craftPrompt("image_to_video", "slow zoom"), /no morphing, flicker/);
   // Curated prompts pass through the filter only — no double-wrapping.
   assert.equal(craftPrompt("image_edit", "curated preset prompt", true), "curated preset prompt");
+  // No double punctuation when the user's text already ends in a terminator.
+  assert.ok(craftPrompt("text_to_image", "make it pop!").startsWith("make it pop! Rich"));
+  assert.ok(!craftPrompt("text_to_image", "make it pop!").includes("!."));
+  assert.ok(craftPrompt("text_to_image", "a red fox").startsWith("a red fox. ")); // no terminator → full stop
 
   // And end-to-end through the bot: a free-text edit picks up the edit mapping…
   await sendPhoto(carol, "craft-1");
@@ -673,6 +690,44 @@ await step("promptcraft: every generation is filtered; raw text mapped, curated 
   // …while the earlier campaign render (curated) carried its prompt verbatim-crafted:
   const campaignCall = falCalls.find((c) => /fairy tale/i.test((c.input.prompt as string) ?? ""))!;
   assert.ok(!/Avoid garbled text/.test(campaignCall.input.prompt as string), "curated prompt was double-wrapped");
+});
+
+await step("first result on us: a stuck newcomer's first preset renders free, second one paywalls", async () => {
+  const nora: From = { id: 6001, is_bot: false, first_name: "Nora", username: "nora" };
+  await sendText(nora, "/start"); // 12 free
+  // Spend below a preset's 11 🔫 via text→image (which never uses the free-first path).
+  await sendText(nora, "a cat"); // −2 → 10
+  await sendText(nora, "a dog"); // −2 → 8
+  assert.equal(await credits(nora.id), 8);
+
+  await sendPhoto(nora, "nora-1");
+  await pressButton(nora, "menu:photoshoot");
+  const falBefore = falCalls.length;
+  await pressButton(nora, "preset:headshot"); // 11 > 8 → the first result is on us
+  assert.equal(falCalls.length, falBefore + 1); // it DID render (no wall before the wow)
+  assert.equal(await credits(nora.id), 8); // …and charged nothing
+  assert.match(lastText(), /Первый результат — бесплатно/);
+  assert.equal(await ledgerCount("refund"), 1); // free render ≠ a refund (still just alice's)
+
+  // The freebie is one-time: the second preset now hits the sales-page paywall.
+  const falBefore2 = falCalls.length;
+  await pressButton(nora, "preset:cinematic");
+  assert.equal(falCalls.length, falBefore2); // no render
+  assert.match(lastText(), /Ещё один шаг до результата/);
+  assert.equal(await credits(nora.id), 8); // still nothing charged
+});
+
+await step("recurring reason: a returning /start surfaces the weekly новинка + continue-with-photo", async () => {
+  const { featuredCampaign } = await import("../src/models.js");
+  const feat = featuredCampaign(new Date());
+  // Nora is a returning user who still has a photo on file from the preset flow above.
+  await sendText({ id: 6001, is_bot: false, first_name: "Nora", username: "nora" }, "/start");
+  const hero = calls("sendPhoto").at(-1)!; // the returning menu ships on the hero photo
+  assert.match(hero.payload.caption as string, /Новинка недели/);
+  const kb = hero.payload.reply_markup as { inline_keyboard: Array<Array<{ callback_data: string }>> };
+  const buttons = kb.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(buttons.includes(`camp:${feat.id}`), "featured campaign button missing");
+  assert.ok(buttons.includes("menu:styles"), "continue-with-photo shortcut missing");
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL || "embedded (pglite)"})`);

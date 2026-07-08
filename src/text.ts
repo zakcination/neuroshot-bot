@@ -24,3 +24,19 @@ export function nUnits(n: number): string {
   else word = "патронов";
   return `${n} ${word}`;
 }
+
+/**
+ * Correct Russian plural of "результат" for any count (paywall framing).
+ * 1 результат · 2–4 результата · 5–20 результатов · 21 результат · …
+ */
+export function nResults(n: number): string {
+  const abs = Math.abs(n);
+  const mod100 = abs % 100;
+  const mod10 = abs % 10;
+  let word: string;
+  if (mod100 >= 11 && mod100 <= 14) word = "результатов";
+  else if (mod10 === 1) word = "результат";
+  else if (mod10 >= 2 && mod10 <= 4) word = "результата";
+  else word = "результатов";
+  return `${n} ${word}`;
+}
