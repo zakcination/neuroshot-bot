@@ -145,9 +145,14 @@ export const MODELS = {
 /**
  * Model pickers surfaced in the bot ("market bombing" the famous models by name).
  * Order = display order; each entry must be a real MODELS key of the right kind.
+ * Default lineup (price/quality selection, Jul 2026): Nano Banana 2 for images,
+ * Kling 3.0 for video, Kling 2.5 kept as the budget («эконом») video entry.
  */
 export const IMAGE_MODEL_PICKER = ["text_to_image", "nb2_image", "nbpro_image", "premium_image"] as const;
-export const VIDEO_MODEL_PICKER = ["animate", "kling3", "seedance_fast", "seedance"] as const;
+export const VIDEO_MODEL_PICKER = ["kling3", "animate", "seedance_fast", "seedance"] as const;
+
+/** Default image→video model for campaign upsells and one-tap animate flows. */
+export const DEFAULT_VIDEO: ModelSpec = MODELS.kling3;
 
 /**
  * One-tap style presets (Higgsfield-style): a curated prompt applied to the
@@ -161,8 +166,13 @@ export interface Preset {
   prompt: string;
 }
 
-/** Model used to render presets — a checked reference, so a key drift fails typecheck. */
-export const PRESET_MODEL: ModelSpec = MODELS.premium_edit;
+/**
+ * Model used to render presets — a checked reference, so a key drift fails
+ * typecheck. Nano Banana 2 edit: 9/10 identity fidelity at $0.08 — the best
+ * price/quality in the catalog (GPT-Image-2 stays available via «Свой промпт»
+ * and the top-models picker for typography-heavy instructions).
+ */
+export const PRESET_MODEL: ModelSpec = MODELS.nb2_edit;
 
 export const PRESETS: Preset[] = [
   {
@@ -248,9 +258,11 @@ export interface Campaign {
   header: string; // shown above the preset keyboard
   ask: string; // what photo to send
   presets: CampaignPreset[];
-  /** One-tap video upsell on the generated image (MODELS.animate). */
+  /** One-tap video upsell on the generated image. */
   animateLabel: string;
   animatePrompt: string;
+  /** Video model for the upsell: Kling 3.0 by default; Seedance for story flows. */
+  animateModel: ModelSpec;
 }
 
 const KEEP_ID = "Preserve the person's identity and facial features exactly.";
@@ -290,6 +302,7 @@ export const CAMPAIGNS: Campaign[] = [
     animatePrompt:
       "Gentle magical motion: soft camera push-in, fireflies drifting, hair and clothing moving in a light breeze, " +
       "the child smiles with wonder, cinematic storybook atmosphere.",
+    animateModel: MODELS.kling3,
   },
   {
     id: "cartoon",
@@ -337,6 +350,7 @@ export const CAMPAIGNS: Campaign[] = [
     animatePrompt:
       "Playful lively motion: the cartoon character waves and bounces, the child laughs, confetti or bubbles drift, " +
       "gentle camera push-in, joyful kids-show energy.",
+    animateModel: MODELS.kling3,
   },
   {
     id: "worldcup",
@@ -378,6 +392,7 @@ export const CAMPAIGNS: Campaign[] = [
     animatePrompt:
       "Epic stadium motion: crowd roaring and waving flags, confetti falling, floodlight flares, slow heroic camera " +
       "orbit around the subjects.",
+    animateModel: MODELS.kling3,
   },
   {
     id: "oldphoto",
@@ -406,6 +421,7 @@ export const CAMPAIGNS: Campaign[] = [
     animatePrompt:
       "Subtle lifelike motion, respectful and warm: the people gently blink, breathe and smile softly, a slight " +
       "natural head movement, soft light shift — like a living memory.",
+    animateModel: MODELS.kling3,
   },
   {
     id: "poster",
@@ -439,6 +455,48 @@ export const CAMPAIGNS: Campaign[] = [
     animatePrompt:
       "Cinematic poster comes alive: slow parallax depth, drifting smoke and light flares, hair and clothing move " +
       "in the wind, dramatic trailer-style atmosphere.",
+    animateModel: MODELS.kling3,
+  },
+  // Story flow: film-still image (mentor's scene formula: era/place → emotion →
+  // rim light → 35mm framing → style tag) → Seedance multi-shot narrative clip.
+  {
+    id: "minifilm",
+    label: "🎞 Мини-фильм с вами",
+    header: "Выберите сцену вашего фильма — один тап:",
+    ask: "Пришлите своё фото 🎞 — и станьте героем короткого фильма со звуком.",
+    presets: [
+      {
+        id: "drama",
+        label: "🌅 Тёплая драма",
+        prompt:
+          "Cinematic 3D-animation film still in a warm realistic style: golden morning light in a cozy family " +
+          "kitchen, the person at the center of a quiet emotional moment, soft rim light, medium shot at eye " +
+          `level with a 35mm lens, gently blurred background, sandy-honey palette, ultra high resolution. ${KEEP_ID}`,
+      },
+      {
+        id: "retro",
+        label: "📼 Ретро 90-х",
+        prompt:
+          "Cinematic film still set in the 1990s: nostalgic street scene with period-correct cars and signage, " +
+          "warm faded film colors and grain, the person mid-story with an expressive look, medium shot, 35mm " +
+          `lens, shallow depth of field, authentic retro atmosphere. ${KEEP_ID}`,
+      },
+      {
+        id: "epic",
+        label: "⚔️ Эпичное кино",
+        prompt:
+          "Epic cinematic film still: the person as the hero at a dramatic turning point, sweeping landscape " +
+          "behind, atmospheric haze and god rays, IMAX-scale composition, low-angle medium shot, teal-and-gold " +
+          `grade, ultra high resolution. ${KEEP_ID}`,
+      },
+    ],
+    animateLabel: "🎞 Снять мини-фильм (со звуком)",
+    animatePrompt:
+      "Cinematic multi-shot narrative sequence with ambient sound: open on a slow establishing push-in, cut to a " +
+      "medium shot as the subject turns and reacts with genuine emotion, finish on a close-up with a subtle " +
+      "camera drift; natural motion, consistent identity and wardrobe across every shot, film-grade color, " +
+      "ambient atmosphere audio matching the scene.",
+    animateModel: MODELS.seedance_fast,
   },
 ];
 

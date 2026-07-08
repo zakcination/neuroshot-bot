@@ -498,7 +498,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       await setPending(u.id, "await_action", url);
       await ctx.reply("Хотите оживить результат в видео? 👇", {
         reply_markup: new InlineKeyboard().text(
-          `${c.animateLabel} (${MODELS.animate.credits} 🔫)`,
+          `${c.animateLabel} (${c.animateModel.credits} 🔫)`,
           `camv:${c.id}`,
         ),
       });
@@ -513,7 +513,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       await ctx.reply("Сначала создайте картинку в кампании 🙂");
       return;
     }
-    await runGeneration(ctx, u, MODELS.animate, c.animatePrompt, u.pending_file_id, { crafted: true });
+    await runGeneration(ctx, u, c.animateModel, c.animatePrompt, u.pending_file_id, { crafted: true });
   });
 
   bot.callbackQuery("menu:animate", async (ctx) => {

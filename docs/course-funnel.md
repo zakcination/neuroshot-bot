@@ -30,21 +30,23 @@ Mentor sells it → his partner code earns his negotiated % automatically.
 4. **Open cart** — $9 mini-course, 48-hour window, «60 🔫 внутри».
 5. **Ascend** — buyers of $9 get the $50 offer with the $9 credited.
 
-## The 5 live campaigns (one-tap presets in the bot)
+## The 6 live campaigns (one-tap presets in the bot)
 
 | Campaign | Hook | Pipeline | Revenue per full flow |
 |---|---|---|---|
-| 📖 Сказка с ребёнком | parents' hearts | photo → fairy-tale image (11 🔫) → «Оживить сказку» (25 🔫) | 36 🔫 |
-| 🦸 Ребёнок и герой | SpongeBob/Гамбол/Три кота/D Billions/Baby Shark | same | 36 🔫 |
-| ⚽️ Матч мечты | World Cup NOW — с Месси/Роналду/Ямалем | same | 36 🔫 |
-| 🕰 Оживить старое фото | the strongest emotional hook in CIS | restore/colorize (11) → «как живые» (25) | 36 🔫 |
-| 🎬 Постер с тобой | self-expression, shareable | poster (11) → living poster (25) | 36 🔫 |
+| 📖 Сказка с ребёнком | parents' hearts | photo → fairy-tale image (4 🔫, NB2) → «Оживить сказку» (42 🔫, Kling 3.0) | 46 🔫 |
+| 🦸 Ребёнок и герой | SpongeBob/Гамбол/Три кота/D Billions/Baby Shark | same | 46 🔫 |
+| ⚽️ Матч мечты | World Cup NOW — с Месси/Роналду/Ямалем | same | 46 🔫 |
+| 🕰 Оживить старое фото | the strongest emotional hook in CIS | restore/colorize (4) → «как живые» (42) | 46 🔫 |
+| 🎬 Постер с тобой | self-expression, shareable | poster (4) → living poster (42) | 46 🔫 |
+| 🎞 Мини-фильм с вами | «стань героем кино со звуком» | film still (4) → multi-shot clip with audio (61 🔫, Seedance 2.0 Fast) | 65 🔫 |
 
 Design notes:
 - **One click**: no prompt-typing anywhere; curated prompts carry the quality.
 - **The upsell is the funnel**: the image result instantly offers the video for
-  one more tap — the 36 🔫 full flow doesn't fit the 12 free 🔫, so delighted
-  users hit the paywall *after* seeing a real result. That's the moment packs sell.
+  one more tap — the image step fits the free 🔫 (exactly one NB2 render), the
+  video step never does, so delighted users hit the paywall *after* seeing a
+  real result. That's the moment packs sell.
 - **The video animates the generated image** (not the raw photo) — a true
   two-step pipeline (`runGeneration` accepts direct URLs).
 - ⚠️ **IP note**: the cartoon campaign names well-known characters for personal,
