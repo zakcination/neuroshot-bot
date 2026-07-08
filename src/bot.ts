@@ -370,7 +370,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     const updated = await getUser(targetId);
     await ctx.reply(
       `✅ ${amount > 0 ? "Начислено" : "Списано"} ${UNIT_EMOJI} ${nUnits(Math.abs(amount))} → ${targetId}. ` +
-        `Баланс: ${nUnits(updated!.credits)}.`,
+        `Баланс: ${UNIT_EMOJI} ${nUnits(updated!.credits)}.`,
     );
   });
 
