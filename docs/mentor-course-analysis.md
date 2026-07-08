@@ -92,9 +92,56 @@ No watermarks anywhere, auto-refund on provider failure, results in chat + app.
 4K/upscale tier, no multi-shot series per character, no subscription floor, no
 TTS/voice. Cheapest fixes first: upscale pass + «серия из 4 кадров» button.
 
-## 4. Ten competitors: anchor points & benefits
+## 4. Competitors: anchor points & benefits
 
-_To be filled from live research (agents running) — placeholder._
+Live-researched Jul 2026 (web sources; figures marked ~ are reported ranges).
+Six RU Telegram bots + five global apps = the landscape our users compare us to.
+
+| # | Competitor | Positioning | Free tier | Entry anchor | Premium anchor | Signature UX trick |
+|---|---|---|---|---|---|---|
+| 1 | **Syntx AI** (@syntxaibot) | «90+ нейросетей в одном боте, без VPN, рублями» | 5 токенов + 5 LLM-запросов | Basic 890₽/мес (260 ток.) | VIP 3990₽ → Ultra 11990₽ | Токен-кошелёк + «безлимитные» дешёвые LLM создают ощущение бездонной подписки; результаты стираются через 60 дней |
+| 2 | **@GPT4Telegrambot** (2.6M MAU) | All-in-one: ChatGPT/Claude/Midjourney | ~100 бесплатных запросов/нед на лёгких моделях | ~500₽/мес; Stars pay-as-you-go | ~100 GPT + 20 MJ генераций/день | Название бота = живой билборд («ChatGPT 5 \| Gemini 3 \| Nano Banana»); Stars-микрокошелёк прячет реальную цену юнита |
+| 3 | **ChadGPT** (chadgpt.ru) | «Одна подписка заменяет десяток», на русском | 3–7 запросов/день на лёгких моделях | Мини 290₽/мес (120k «искр») | Плюс 1690₽ (900k искр, все 54 модели) | «Искры» как единая валюта текста/картинок/видео; крошечный дневной кран заставляет решиться за считанные дни |
+| 4 | **BotHub** (@bothub_chat_bot) | 50+ моделей из России, MIR/рубли | 30 000 Caps разово (текст) | $3 = 2 000 000 Caps | Premium $7 / Elite $49 | Caps миллионами анкорят «щедрость»; кредиты **не сгорают** — «не платишь за воздух» как анти-подписочный оффер |
+| 5 | **Kandinsky (Сбер) + Шедеврум (Яндекс)** | Бесплатные генерации от бигтеха | Kandinsky: полностью бесплатен; Шедеврум: безлимит в приложении / 70 img + 10 video в день на вебе | — | Шедеврум Про **100₽/мес**: без вотермарки, без публикации в ленту, без очереди, коммерческое использование | Задают ценовой пол рынка: «бесплатно, но с вотермаркой/лентой/очередью». Платные боты вынуждены продавать качество, лицо, скорость и приватность |
+| 6 | **TurboText AI** (@TurboText_bot) | «Nano Banana 2 \| VEO3.1 \| Безлимит»; нейрофотосессия как флагман | ~10 пробных + ежедневный /get_bonus до 100 ток. + каждая 5-я генерация бесплатно | Токены от 2–3/картинка; тарифы «от 100₽», PRO-день 250₽ | Ultra/VIP 1090–15000₽ с обещанием «безлимита» | Казино-ретеншн: ежедневный бонус, каждая-5-я-бесплатно, лотерея для топ-спендера |
+| 7 | **Remini** (100M MAU) | «Old blurry photos → HD in one tap» | Несколько улучшений/день за просмотр рекламы, с вотермаркой | Lite ~$4.99–7.99/**нед** | Pro $9.99/нед; годовой «−50%» | Результат показывают ДО пейволла; недельная микро-цена кажется мелочью (годом — дорого) |
+| 8 | **Lensa AI** | «Influencers' best kept secret»: Magic Avatars | Нет (только 7-дневный триал редактора) | Пак аватаров $3.99/50 шт | $29.99–35.99/год + паки | Двойная монетизация: подписка продаётся как скидочная карта на паки аватаров |
+| 9 | **PhotoAI.com** | «Fire your photographer» — AI-фотосессии | Нет («принципиально без freemium») | $19/мес (50 кредитов, 1 модель) — «$9/мес при годовой = 6 месяцев бесплатно» | Pro $49 → Ultra $199/мес | Живой счётчик «30 158 126 фото»; 48 бесплатных фото с каждой обученной моделью как свитнер после оплаты |
+| 10 | **Higgsfield** | AI-native creative suite, 30+ моделей | Тонкий дневной кран кредитов, вотермарка | Starter $15/мес (200 кр., без топ-видео-моделей) | Plus $39 → Ultra $99/мес (годовые дают «unlimited»-карусель моделей) | Сгорающие кредиты + «безлимит» только на годовых тарифах толкают вверх и в 12-месячный лок-ин |
+| 11 | **PhotoRoom** | «Sell at first sight» — фото товара для e-com | 250 экспортов/мес, вотермарка, без коммерческой лицензии | Pro $7.50/мес (годом) / $4.99/нед на мобиле | Max $20.99 → Ultra $82.50/мес | Вотермарка + запрет коммерческого использования как рычаг конверсии: инструмент работает полностью, но продавать результат нельзя, пока не заплатишь |
+
+### Что это значит для NeuroShot (anchor-инсайты)
+
+1. **Бесплатная проба везде = 2–5 генераций.** Наши 3 🔫 + гарантированный
+   «первый результат за наш счёт» — в рынке, но с уникальным отличием: у нас
+   первая проба — **премиум-качество с лицом пользователя**, а не урезанная
+   модель. Это и есть наш «результат до пейволла» (приём Remini).
+2. **RU-якорь входа: 290–890₽/мес.** Наш «Старт» (720⭐ ≈ 1200–1400₽ разово)
+   выше входного якоря. Тест: «Проба» 180⭐/15 🔫 как **paywall-only** оффер
+   (1 премиум-фото + ощущение прогресса) — импульсная цена в зоне 290₽-нормы,
+   маржа держится (12⭐/🔫 = верх нашей лестницы).
+3. **Потребителю продают исходы, не кредиты** (50 аватаров, 48 фото, «фотосессия»).
+   Пакеты в /buy подписать исходами: «Старт — 5 фотосессий или 2 оживления»,
+   как уже сделано на пейволле («до N результатов»).
+4. **Дифференциация от бесплатного бигтеха** (Шедеврум 0–100₽ задаёт пол):
+   говорить в онбординге то, чего у них нет — **ваше лицо 1:1 без искажений,
+   топ-модели (Kling 3/Seedance/GPT-Image), без вотермарки, без очереди, без
+   публичной ленты, приватно**. Никогда не конкурировать с ними по цене.
+5. **Стандартные краны ретеншена** (daily bonus, канал-подписка, каждая-5-я)
+   у нас сознательно заменены purchase-gated экономикой. Безопасный аналог:
+   разовый бонус за подписку на канал + «новинка недели» (уже есть).
+6. **Премиум-рычаги рынка**: без вотермарки (у нас уже), коммерческая лицензия,
+   приоритет/параллельность, топ-модели, разрешение. Дешевле всего добавить:
+   **приоритетную очередь для пакетов 500+ 🔫 и 4K-апскейл за доплату**.
+7. **Подписка — отдельный трек**: недельные микро-цены (консюмер) или годовые
+   −50% (просьюмер). Telegram Stars поддерживает подписки — «PRO-проходка»
+   (например 250⭐/мес: приоритет + скидка на пакеты) — кандидат в роадмап, но
+   только после того, как пакетная экономика покажет стабильный LTV.
+8. **UX-приёмы, которые стоит забрать**: имя бота как билборд моделей
+   («NeuroShot \| Kling 3 \| Nano Banana»), живой счётчик генераций в вебапп,
+   счётчик «фото до конца пакета» после каждого результата. Приём, который
+   **не** берём: автоудаление результатов через 60 дней (Syntx) — враждебно.
 
 ## 5. Actions
 
@@ -104,7 +151,17 @@ _To be filled from live research (agents running) — placeholder._
 2. **Preset additions from his library**: `product_macro` (macro detail shot),
    `cinema_3d` (Bilal-style warm 3D film still), «трейлер» video preset with
    shot-breakdown prompt for Kling 3.
-3. **Premium ladder**: 4K upscale (+N 🔫), приоритетная очередь for 500+ pack
-   holders, «серия кадров» (4 consistent shots, one tap).
-4. **Content**: reuse his 7-day прогрев structure for our channel launch; his
-   reels formula (hook/cover/hashtags) for campaign promo posts.
+3. **Premium ladder** (market-standard levers we lack): 4K upscale (+N 🔫),
+   приоритетная очередь for 500+ pack holders, «серия кадров» (4 consistent
+   shots, one tap); commercial-license wording in pack descriptions (free =
+   personal use — the PhotoRoom lever, costs nothing to state).
+4. **Pricing tests from the anchor scan**: paywall-only «Проба» pack 180⭐/15 🔫
+   (impulse zone of the 290₽ RU entry norm, margin intact at 12⭐/🔫);
+   outcome-subtitles on all packs («≈ N фотосессий»); Stars-subscription
+   PRO-проходка parked until pack LTV is proven.
+5. **Positioning copy vs free big-tech**: onboarding and channel posts lead
+   with what Шедеврум/Kandinsky can't do — ваше лицо 1:1, топ-модели, без
+   вотермарки и очереди, приватно. Never compete on price with free.
+6. **Content**: reuse his 7-day прогрев structure for our channel launch; his
+   reels formula (hook/cover/hashtags) for campaign promo posts; bot name as
+   model billboard («NeuroShot | Kling 3 | Nano Banana»).
