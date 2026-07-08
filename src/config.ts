@@ -12,7 +12,9 @@ export const config = {
   // Postgres selection is read directly from process.env.DATABASE_URL in db.ts
   // (db.ts stays importable without the bot's required env, so it doesn't depend
   // on this config). Neon in prod; unset → embedded pglite for tests/local.
-  freeCredits: Number(process.env.FREE_CREDITS ?? 3),
+  // Sized so a newcomer affords exactly ONE Nano Banana 2 render (4 🔫) — the
+  // best price/quality trial in the catalog (~$0.08 of provider cost).
+  freeCredits: Number(process.env.FREE_CREDITS ?? 4),
   // --- Referral program (abuse-safe: referrer rewards are purchase-gated) ---
   // Extra credits the invited friend gets on top of freeCredits when they join
   // via a referral link (the only farmable surface — kept small on purpose).

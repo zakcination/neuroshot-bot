@@ -386,7 +386,7 @@ await step("balance: /balance reflects the ledger", async () => {
   assert.match(lastText(), /Баланс: 🔫 212 патронов/);
 });
 
-await step("photoshoot preset: photo → menu:photoshoot → one tap renders via GPT Image 2 edit (11 🔫)", async () => {
+await step("photoshoot preset: photo → menu:photoshoot → one tap renders via Nano Banana 2 edit (4 🔫)", async () => {
   await sendPhoto(alice, "photo-3");
   const albumsBefore = calls("sendMediaGroup").length;
   await pressButton(alice, "menu:photoshoot");
@@ -400,11 +400,10 @@ await step("photoshoot preset: photo → menu:photoshoot → one tap renders via
   assert.ok(!buttons.includes("preset:product_white"), "product presets leak into photo menu");
   await pressButton(alice, "preset:headshot");
   const call = falCalls.at(-1)!;
-  assert.equal(call.endpoint, "openai/gpt-image-2/edit");
-  assert.equal(call.input.quality, "high");
+  assert.equal(call.endpoint, "fal-ai/nano-banana-2/edit"); // best price/quality preset engine
   assert.match(call.input.prompt as string, /corporate headshot/);
   assert.ok(Array.isArray(call.input.image_urls));
-  assert.equal(await credits(alice.id), 201); // 212 - 11
+  assert.equal(await credits(alice.id), 208); // 212 - 4
 
   // Every delivered result carries the next-step keyboard.
   const delivered = resultPhotos().at(-1)!.payload.reply_markup as {
@@ -425,17 +424,17 @@ await step("«ещё стиль»: the photo is remembered after a generation", 
 await step("/premium: premium text-to-image charges 11 🔫 via GPT Image 2", async () => {
   await sendText(alice, "/premium");
   assert.match(lastText(), /напишите запрос сразу после команды/);
-  assert.equal(await credits(alice.id), 201); // bare command charges nothing
+  assert.equal(await credits(alice.id), 208); // bare command charges nothing
 
   await sendText(alice, "/premium a perfume bottle on wet black marble");
   const call = falCalls.at(-1)!;
   assert.equal(call.endpoint, "fal-ai/gpt-image-2");
   assert.equal(call.input.quality, "high");
   assert.ok((call.input.prompt as string).startsWith("a perfume bottle on wet black marble. "));
-  assert.equal(await credits(alice.id), 190); // 201 - 11
+  assert.equal(await credits(alice.id), 197); // 208 - 11
 });
 
-await step("product flow: menu:product → photo → product preset renders (11 🔫)", async () => {
+await step("product flow: menu:product → photo → product preset renders (4 🔫)", async () => {
   await pressButton(alice, "menu:product");
   assert.match(lastText(), /Пришлите фото товара/);
   await sendPhoto(alice, "product-1");
@@ -447,9 +446,9 @@ await step("product flow: menu:product → photo → product preset renders (11 
   assert.ok(!buttons.includes("preset:headshot"), "photo presets leak into product menu");
   await pressButton(alice, "preset:product_white");
   const call = falCalls.at(-1)!;
-  assert.equal(call.endpoint, "openai/gpt-image-2/edit");
+  assert.equal(call.endpoint, "fal-ai/nano-banana-2/edit");
   assert.match(call.input.prompt as string, /white studio background/);
-  assert.equal(await credits(alice.id), 179); // 190 - 11
+  assert.equal(await credits(alice.id), 193); // 197 - 4
 });
 
 await step("mode escape: menu:main clears a photo mode so text→image works again", async () => {
@@ -629,7 +628,7 @@ await step("campaigns: one-tap fairy-tale image → one-tap «Оживить» a
     inline_keyboard: Array<Array<{ callback_data: string }>>;
   };
   const camps = kb.inline_keyboard.flat().map((b) => b.callback_data);
-  for (const c of ["camp:skazka", "camp:cartoon", "camp:worldcup", "camp:oldphoto", "camp:poster"]) {
+  for (const c of ["camp:skazka", "camp:cartoon", "camp:worldcup", "camp:oldphoto", "camp:poster", "camp:minifilm"]) {
     assert.ok(camps.includes(c), `campaign menu misses ${c}`);
   }
 
@@ -643,18 +642,40 @@ await step("campaigns: one-tap fairy-tale image → one-tap «Оживить» a
 
   await pressButton(parent, "cpre:skazka:forest");
   const gen = falCalls.at(-1)!;
-  assert.equal(gen.endpoint, "openai/gpt-image-2/edit"); // premium preset model
+  assert.equal(gen.endpoint, "fal-ai/nano-banana-2/edit"); // default preset engine
   assert.match(gen.input.prompt as string, /fairy tale/i);
-  assert.equal(await credits(parent.id), 61); // 72 − 11
+  assert.equal(await credits(parent.id), 68); // 72 − 4
   const resultUrl = `https://fal.test/out/${falCalls.length}.png`;
   assert.match(lastText(), /оживить результат/i); // upsell offered
 
   await pressButton(parent, "camv:skazka");
   const anim = falCalls.at(-1)!;
-  assert.equal(anim.endpoint, "fal-ai/kling-video/v2.5-turbo/standard/image-to-video");
-  assert.equal(anim.input.image_url, resultUrl); // animates the RESULT, not the original photo
+  assert.equal(anim.endpoint, "fal-ai/kling-video/v3/pro/image-to-video"); // Kling 3.0 default video
+  assert.equal(anim.input.start_image_url, resultUrl); // animates the RESULT, not the original photo
   assert.match(anim.input.prompt as string, /fireflies/i); // canned campaign motion prompt
-  assert.equal(await credits(parent.id), 36); // 61 − 25
+  assert.equal(await credits(parent.id), 26); // 68 − 42
+});
+
+await step("мини-фильм campaign: NB2 film still → Seedance 2.0 Fast multi-shot upsell (65 🔫 flow)", async () => {
+  const actor: From = { id: 5502, is_bot: false, first_name: "Actor", username: "actor" };
+  await sendText(actor, "/start"); // 12 free
+  await payForPack(actor, "popular", 2200); // +200 → 212
+
+  await pressButton(actor, "camp:minifilm");
+  await sendPhoto(actor, "actor-1");
+  await pressButton(actor, "cpre:minifilm:drama");
+  const still = falCalls.at(-1)!;
+  assert.equal(still.endpoint, "fal-ai/nano-banana-2/edit");
+  assert.match(still.input.prompt as string, /film still/i);
+  assert.equal(await credits(actor.id), 208); // 212 − 4
+  const stillUrl = `https://fal.test/out/${falCalls.length}.png`;
+
+  await pressButton(actor, "camv:minifilm");
+  const clip = falCalls.at(-1)!;
+  assert.equal(clip.endpoint, "fal-ai/bytedance/seedance-2.0/fast/image-to-video"); // story model
+  assert.equal(clip.input.image_url, stillUrl); // animates the generated still
+  assert.match(clip.input.prompt as string, /multi-shot/i);
+  assert.equal(await credits(actor.id), 147); // 208 − 61
 });
 
 await step("partner attribution is exclusive: no friend-referral double payout", async () => {
@@ -695,17 +716,16 @@ await step("promptcraft: every generation is filtered; raw text mapped, curated 
 await step("first result on us: a stuck newcomer's first preset renders free, second one paywalls", async () => {
   const nora: From = { id: 6001, is_bot: false, first_name: "Nora", username: "nora" };
   await sendText(nora, "/start"); // 12 free
-  // Spend below a preset's 11 🔫 via text→image (which never uses the free-first path).
-  await sendText(nora, "a cat"); // −2 → 10
-  await sendText(nora, "a dog"); // −2 → 8
-  assert.equal(await credits(nora.id), 8);
+  // Spend below a preset's 4 🔫 via text→image (which never uses the free-first path).
+  for (const p of ["a cat", "a dog", "a fox", "a bee", "an owl"]) await sendText(nora, p); // 5×−2
+  assert.equal(await credits(nora.id), 2);
 
   await sendPhoto(nora, "nora-1");
   await pressButton(nora, "menu:photoshoot");
   const falBefore = falCalls.length;
-  await pressButton(nora, "preset:headshot"); // 11 > 8 → the first result is on us
+  await pressButton(nora, "preset:headshot"); // 4 > 2 → the first result is on us
   assert.equal(falCalls.length, falBefore + 1); // it DID render (no wall before the wow)
-  assert.equal(await credits(nora.id), 8); // …and charged nothing
+  assert.equal(await credits(nora.id), 2); // …and charged nothing
   assert.match(lastText(), /Первый результат — бесплатно/);
   assert.equal(await ledgerCount("refund"), 1); // free render ≠ a refund (still just alice's)
 
@@ -714,7 +734,7 @@ await step("first result on us: a stuck newcomer's first preset renders free, se
   await pressButton(nora, "preset:cinematic");
   assert.equal(falCalls.length, falBefore2); // no render
   assert.match(lastText(), /Ещё один шаг до результата/);
-  assert.equal(await credits(nora.id), 8); // still nothing charged
+  assert.equal(await credits(nora.id), 2); // still nothing charged
 });
 
 await step("recurring reason: a returning /start surfaces the weekly новинка + continue-with-photo", async () => {
