@@ -8,13 +8,24 @@
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { createServer, type Server, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fal } from "@fal-ai/client";
 import { config } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { getOrCreateUser, recentGenerations, userDashboard } from "./db.js";
-import { PACKS } from "./models.js";
+import { getGeneration, getOrCreateUser, getUser, recentGenerations, userDashboard } from "./db.js";
+import { modelByKey, startWebGeneration } from "./generate.js";
+import {
+  campaignById,
+  CAMPAIGNS,
+  IMAGE_MODEL_PICKER,
+  MODELS,
+  PACKS,
+  PRESET_MODEL,
+  PRESETS,
+  VIDEO_MODEL_PICKER,
+} from "./models.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // Static PWA assets live in public/ (Vercel serves them at root automatically;
@@ -142,6 +153,44 @@ export function authResponse(headers: Headers): { status: number; body: Record<s
   };
 }
 
+/** Pack catalog payload — one source of truth with the bot's /buy. */
+function packsPayload(): Array<Record<string, unknown>> {
+  return PACKS.map((p) => ({ id: p.id, title: p.title, credits: p.credits, stars: p.stars }));
+}
+
+/**
+ * The creation catalog for the in-app studio: everything the bot can render,
+ * with prices — presets, campaigns (incl. their video upsell) and the top-model
+ * pickers. Ids are validated server-side on /api/generate, so the client never
+ * supplies prompts for curated flows.
+ */
+function catalogPayload(): Record<string, unknown> {
+  return {
+    presetCredits: PRESET_MODEL.credits,
+    presets: PRESETS.map((p) => ({ id: p.id, label: p.label, category: p.category })),
+    campaigns: CAMPAIGNS.map((c) => ({
+      id: c.id,
+      label: c.label,
+      header: c.header,
+      ask: c.ask,
+      presets: c.presets.map((p) => ({ id: p.id, label: p.label })),
+      imageCredits: PRESET_MODEL.credits,
+      animateLabel: c.animateLabel,
+      videoCredits: c.animateModel.credits,
+    })),
+    imageModels: IMAGE_MODEL_PICKER.map((k) => ({
+      key: k,
+      label: MODELS[k].label,
+      credits: MODELS[k].credits,
+    })),
+    videoModels: VIDEO_MODEL_PICKER.map((k) => ({
+      key: k,
+      label: MODELS[k].label,
+      credits: MODELS[k].credits,
+    })),
+  };
+}
+
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
@@ -155,8 +204,137 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     generations,
     bot_username: config.webappBotUsername,
     // Pack catalog for the app's pricing section — same source as the bot.
-    packs: PACKS.map((p) => ({ id: p.id, title: p.title, credits: p.credits, stars: p.stars })),
+    packs: packsPayload(),
+    catalog: catalogPayload(),
   };
+}
+
+/** Read a JSON request body with a hard size cap (uploads are base64 images). */
+function readJsonBody(req: IncomingMessage, limit: number): Promise<Record<string, unknown> | null> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (c: Buffer) => {
+      size += c.length;
+      if (size > limit) {
+        resolve(null);
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>);
+      } catch {
+        resolve(null);
+      }
+    });
+    req.on("error", () => resolve(null));
+  });
+}
+
+const UPLOAD_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
+const UPLOAD_LIMIT = 9 * 1024 * 1024; // ~6.5MB of image as base64 JSON
+
+/** data:image/...;base64,… → public fal storage URL usable as model input. */
+export async function uploadResponse(
+  body: Record<string, unknown> | null,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const data = typeof body?.data === "string" ? body.data : "";
+  const m = /^data:([a-z/+.-]+);base64,(.+)$/is.exec(data);
+  if (!m || !UPLOAD_MIME.has(m[1].toLowerCase())) {
+    return { status: 400, body: { error: "bad_image" } };
+  }
+  const buf = Buffer.from(m[2], "base64");
+  if (!buf.length) return { status: 400, body: { error: "bad_image" } };
+  const url = await fal.storage.upload(new Blob([new Uint8Array(buf)], { type: m[1].toLowerCase() }));
+  return { status: 200, body: { url } };
+}
+
+/** Only ever feed generated/uploaded HTTPS URLs back into models. */
+function isHttpsUrl(v: unknown): v is string {
+  return typeof v === "string" && v.length < 2048 && /^https:\/\//.test(v);
+}
+
+/**
+ * POST /api/generate — the in-app studio's engine. The client sends a source
+ * reference (validated against the server-side catalog) — never a raw curated
+ * prompt; free-text prompts go through the same promptcraft mapping as the bot.
+ */
+export async function generateResponse(
+  userId: number,
+  body: Record<string, unknown> | null,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const source = body?.source;
+  const imageUrl = isHttpsUrl(body?.image_url) ? body.image_url : undefined;
+  let model, prompt: string, crafted;
+
+  if (source === "preset") {
+    const p = PRESETS.find((x) => x.id === body?.id);
+    if (!p || !imageUrl) return { status: 400, body: { error: "bad_request" } };
+    [model, prompt, crafted] = [PRESET_MODEL, p.prompt, true];
+  } else if (source === "campaign") {
+    const [campId, presetId] = String(body?.id ?? "").split(":");
+    const p = campaignById(campId)?.presets.find((x) => x.id === presetId);
+    if (!p || !imageUrl) return { status: 400, body: { error: "bad_request" } };
+    [model, prompt, crafted] = [PRESET_MODEL, p.prompt, true];
+  } else if (source === "campaign_video") {
+    const c = campaignById(String(body?.id ?? ""));
+    if (!c || !imageUrl) return { status: 400, body: { error: "bad_request" } };
+    [model, prompt, crafted] = [c.animateModel, c.animatePrompt, true];
+  } else if (source === "model") {
+    const m = modelByKey(String(body?.model ?? ""));
+    const allowed = new Set<string>([...IMAGE_MODEL_PICKER, ...VIDEO_MODEL_PICKER, "photo_edit", "premium_edit"]);
+    if (!m || !allowed.has(m.key)) return { status: 400, body: { error: "bad_request" } };
+    if (m.kind !== "text_to_image" && !imageUrl) return { status: 400, body: { error: "bad_request" } };
+    const raw = typeof body?.prompt === "string" ? body.prompt : "";
+    [model, prompt, crafted] = [m, raw, false];
+  } else {
+    return { status: 400, body: { error: "bad_request" } };
+  }
+
+  const r = await startWebGeneration(userId, model, prompt, imageUrl, crafted);
+  if (!r.ok) {
+    if (r.error === "insufficient") {
+      const balance = (await getUser(userId))?.credits ?? 0;
+      return {
+        status: 402,
+        body: { error: "insufficient", need: model.credits, balance, packs: packsPayload() },
+      };
+    }
+    return { status: 400, body: { error: r.error } };
+  }
+  const balance = (await getUser(userId))?.credits ?? 0;
+  return { status: 200, body: { id: r.id, credits: model.credits, balance } };
+}
+
+/**
+ * POST /api/invoice — a Telegram Stars invoice link for a pack, opened with
+ * WebApp.openInvoice so the purchase completes WITHOUT leaving the app. The
+ * payment lands in the bot's successful_payment handler (same payload format),
+ * so crediting/referrals/partner payouts share one code path.
+ */
+export async function invoiceResponse(
+  body: Record<string, unknown> | null,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const pack = PACKS.find((p) => p.id === body?.pack);
+  if (!pack) return { status: 400, body: { error: "bad_request" } };
+  const apiBase = process.env.TELEGRAM_API_BASE ?? "https://api.telegram.org";
+  const res = await fetch(`${apiBase}/bot${config.botToken}/createInvoiceLink`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: pack.title,
+      description: `${pack.credits} патронов на генерации`,
+      payload: `pack:${pack.id}`,
+      currency: "XTR",
+      prices: [{ label: pack.title, amount: pack.stars }],
+    }),
+  });
+  const data = (await res.json()) as { ok: boolean; result?: string };
+  if (!data.ok || !data.result) return { status: 502, body: { error: "invoice_failed" } };
+  return { status: 200, body: { link: data.result } };
 }
 
 /** Static PWA assets (installable web app / iOS home-screen). Served at root so
@@ -200,6 +378,51 @@ export function createWebApp(): Server {
         const user = resolveUser(req.headers);
         if (!user) return json(res, 401, { error: "unauthorized" });
         return json(res, 200, await meResponse(user));
+      }
+
+      // POST /api/upload — base64 image → public URL for model input.
+      if (url.pathname === "/api/upload") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const { status, body } = await uploadResponse(await readJsonBody(req, UPLOAD_LIMIT));
+        return json(res, status, body);
+      }
+
+      // POST /api/generate — charge + start a render; returns an id to poll.
+      if (url.pathname === "/api/generate") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        await getOrCreateUser(user.id, user.username, null, config.freeCredits);
+        const { status, body } = await generateResponse(user.id, await readJsonBody(req, 64 * 1024));
+        return json(res, status, body);
+      }
+
+      // GET /api/generations/:id — poll a render's status (owner-scoped).
+      const genMatch = /^\/api\/generations\/(\d+)$/.exec(url.pathname);
+      if (genMatch) {
+        if (!methodIs(res, req.method, "GET")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const g = await getGeneration(Number(genMatch[1]), user.id);
+        if (!g) return json(res, 404, { error: "not_found" });
+        return json(res, 200, {
+          id: g.id,
+          status: g.status,
+          output_url: g.output_url,
+          model: g.model,
+          credits: g.credits,
+        });
+      }
+
+      // POST /api/invoice — Stars invoice link for in-app pack purchase.
+      if (url.pathname === "/api/invoice") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const { status, body } = await invoiceResponse(await readJsonBody(req, 4 * 1024));
+        return json(res, status, body);
       }
 
       return json(res, 404, { error: "not_found" });

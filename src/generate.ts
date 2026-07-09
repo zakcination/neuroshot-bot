@@ -4,7 +4,9 @@ import { InlineKeyboard, InputFile } from "grammy";
 import { config } from "./config.js";
 import {
   addCredits,
+  completeGeneration,
   consumeFreeResult,
+  createPendingGeneration,
   hasFreeResult,
   logEvent,
   logGeneration,
@@ -34,6 +36,51 @@ function extractResultUrl(data: unknown): string | null {
   return d?.images?.[0]?.url ?? d?.image?.url ?? d?.video?.url ?? null;
 }
 
+/** Run a model on fal and return the output URL (throws on provider failure). */
+async function falRun(model: ModelSpec, prompt: string, imageUrl?: string): Promise<string> {
+  const result = await fal.subscribe(model.falEndpoint, { input: model.input(prompt, imageUrl) });
+  const url = extractResultUrl(result.data);
+  if (!url) throw new Error(`No output URL in fal response for ${model.falEndpoint}`);
+  return url;
+}
+
+/**
+ * Transport-agnostic generation for the web app: charge synchronously, insert a
+ * 'pending' generations row, then run the provider in the background — the HTTP
+ * response returns the row id immediately and the client polls it. Economics
+ * mirror the bot path exactly: promptcraft on entry, refund on failure, the
+ * same paywall/gen_* analytics events.
+ */
+export async function startWebGeneration(
+  userId: number,
+  model: ModelSpec,
+  prompt: string,
+  imageUrl?: string,
+  crafted = false,
+): Promise<{ ok: true; id: number } | { ok: false; error: "empty_prompt" | "insufficient" }> {
+  prompt = craftPrompt(model.kind, prompt, crafted);
+  if (!prompt) return { ok: false, error: "empty_prompt" };
+  if (!(await spendCredits(userId, model.credits, model.key))) {
+    await logEvent(userId, "paywall", model.key);
+    return { ok: false, error: "insufficient" };
+  }
+  await logEvent(userId, "gen_start", model.key);
+  const id = await createPendingGeneration(userId, model.key, prompt, model.credits);
+  void (async () => {
+    try {
+      const url = await falRun(model, prompt, imageUrl);
+      await completeGeneration(id, "ok", url);
+      await logEvent(userId, "gen_ok", model.key);
+    } catch (err) {
+      console.error(`web generation failed (${model.key}):`, err);
+      await addCredits(userId, model.credits, "refund", model.key);
+      await completeGeneration(id, "error");
+      await logEvent(userId, "gen_error", model.key);
+    }
+  })();
+  return { ok: true, id };
+}
+
 /**
  * Next-step keyboard on every delivered result. «Ещё стиль» only makes sense
  * when a source photo is still on file (image edits/presets/video); text→image
@@ -42,7 +89,10 @@ function extractResultUrl(data: unknown): string | null {
 export function afterKeyboard(hasPhoto: boolean): InlineKeyboard {
   const kb = new InlineKeyboard();
   if (hasPhoto) kb.text("🎭 Ещё стиль", "menu:styles");
-  return kb.text("📋 Меню", "menu:main");
+  kb.text("📋 Меню", "menu:main");
+  // Flagship surface: every delivered result routes into the app's studio/gallery.
+  if (config.webappUrl) kb.row().webApp("🌐 Открыть в студии", config.webappUrl);
+  return kb;
 }
 
 /**
@@ -100,11 +150,7 @@ export async function runGeneration(
         ? fileId
         : await telegramFileUrl(ctx, fileId)
       : undefined;
-    const result = await fal.subscribe(model.falEndpoint, {
-      input: model.input(prompt, imageUrl),
-    });
-    const url = extractResultUrl(result.data);
-    if (!url) throw new Error(`No output URL in fal response for ${model.falEndpoint}`);
+    const url = await falRun(model, prompt, imageUrl);
 
     if (model.kind === "image_to_video") {
       await ctx.replyWithVideo(new InputFile({ url }), { reply_markup: after });

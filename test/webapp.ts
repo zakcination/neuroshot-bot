@@ -17,9 +17,30 @@ process.env.FREE_CREDITS = "3";
 process.env.WEBAPP_URL = "https://app.test"; // enable app-config paths
 process.env.BOT_USERNAME = "neuroshot_test_bot";
 
+const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { getOrCreateUser, logGeneration, spendCredits } = await import("../src/db.js");
+const { addCredits, getOrCreateUser, logGeneration, spendCredits } = await import("../src/db.js");
+
+// ---- fal stubs (network edge): model runs + storage uploads ----
+interface FalCall {
+  endpoint: string;
+  input: Record<string, unknown>;
+}
+const falCalls: FalCall[] = [];
+(fal as { subscribe: unknown }).subscribe = async (
+  endpoint: string,
+  opts: { input: Record<string, unknown> },
+) => {
+  falCalls.push({ endpoint, input: opts.input });
+  const data = endpoint.includes("video")
+    ? { video: { url: `https://fal.test/out/${falCalls.length}.mp4` } }
+    : { images: [{ url: `https://fal.test/out/${falCalls.length}.png` }] };
+  return { data, requestId: `req-${falCalls.length}` };
+};
+// fal.storage is a getter — patch the method on the storage client instance.
+(fal.storage as unknown as { upload: unknown }).upload = async (blob: Blob) =>
+  `https://fal.test/storage/u-${blob.size}.jpg`;
 
 /** Build a validly-signed initData string for a user, per Telegram spec. */
 function signInitData(user: { id: number; username?: string; first_name?: string }, token = BOT_TOKEN): string {
@@ -99,6 +120,19 @@ interface MeResponse {
   generations: Array<{ output_url: string | null; status: string }>;
   bot_username: string;
   packs: Array<{ id: string; title: string; credits: number; stars: number }>;
+  catalog: {
+    presetCredits: number;
+    presets: Array<{ id: string; label: string; category: string }>;
+    campaigns: Array<{
+      id: string;
+      label: string;
+      imageCredits: number;
+      videoCredits: number;
+      presets: Array<{ id: string; label: string }>;
+    }>;
+    imageModels: Array<{ key: string; label: string; credits: number }>;
+    videoModels: Array<{ key: string; label: string; credits: number }>;
+  };
 }
 
 const server = createWebApp();
@@ -237,6 +271,180 @@ await step("method gating: /api/auth is POST-only, /api/me is GET-only (405 othe
   const postMe = await fetch(`${base}/api/me`, { method: "POST" });
   assert.equal(postMe.status, 405);
   assert.equal(postMe.headers.get("allow"), "GET");
+});
+
+// ---- In-app studio API: catalog → upload → generate → poll → invoice ----
+
+const maker = { id: 700, username: "maker", first_name: "Maker" };
+const makerHeaders = () => ({ Authorization: `tma ${signInitData(maker)}` });
+
+async function pollGen(id: number): Promise<{ status: string; output_url: string | null }> {
+  for (let i = 0; i < 200; i++) {
+    const r = await fetch(`${base}/api/generations/${id}`, { headers: makerHeaders() });
+    assert.equal(r.status, 200);
+    const d = (await r.json()) as { status: string; output_url: string | null };
+    if (d.status !== "pending") return d;
+    await new Promise((rr) => setTimeout(rr, 15));
+  }
+  throw new Error("generation stuck pending");
+}
+
+await step("catalog rides on /api/me: presets, campaigns with video prices, model pickers", async () => {
+  const { body } = await apiMe(signInitData(maker));
+  const c = body.catalog;
+  assert.ok(c.presets.some((p) => p.id === "headshot" && p.category === "photo"));
+  assert.ok(c.presets.some((p) => p.id === "product_white" && p.category === "product"));
+  assert.equal(c.presetCredits, 4); // Nano Banana 2 preset engine
+  const mini = c.campaigns.find((k) => k.id === "minifilm");
+  assert.ok(mini, "minifilm campaign missing from catalog");
+  assert.equal(mini!.videoCredits, 61); // Seedance 2.0 Fast story upsell
+  assert.ok(mini!.presets.length >= 3);
+  assert.ok(c.imageModels.some((m) => m.key === "nbpro_image"));
+  assert.equal(c.videoModels[0].key, "kling3"); // default video first
+});
+
+await step("POST /api/upload: base64 image → storage URL; bad mime and no auth rejected", async () => {
+  const png = `data:image/png;base64,${Buffer.from("tiny-png-bytes").toString("base64")}`;
+  const ok = await fetch(`${base}/api/upload`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ data: png }),
+  });
+  assert.equal(ok.status, 200);
+  const { url } = (await ok.json()) as { url: string };
+  assert.ok(url.startsWith("https://fal.test/storage/"));
+
+  const bad = await fetch(`${base}/api/upload`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ data: `data:text/plain;base64,${Buffer.from("hi").toString("base64")}` }),
+  });
+  assert.equal(bad.status, 400);
+
+  const noauth = await fetch(`${base}/api/upload`, { method: "POST", body: "{}" });
+  assert.equal(noauth.status, 401);
+});
+
+await step("POST /api/generate: preset charges, renders async, poll reaches ok", async () => {
+  await addCredits(maker.id, 100, "admin_grant", "test"); // 3 free + 100
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "preset", id: "headshot", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(r.status, 200);
+  const d = (await r.json()) as { id: number; credits: number; balance: number };
+  assert.equal(d.credits, 4);
+  assert.equal(d.balance, 99); // 103 − 4
+  const done = await pollGen(d.id);
+  assert.equal(done.status, "ok");
+  assert.match(done.output_url ?? "", /^https:\/\/fal\.test\/out\/.*\.png$/);
+  const call = falCalls.at(-1)!;
+  assert.equal(call.endpoint, "fal-ai/nano-banana-2/edit");
+  assert.match(call.input.prompt as string, /corporate headshot/);
+});
+
+await step("campaign video upsell via API: minifilm renders on Seedance 2.0 Fast (61 🔫)", async () => {
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "campaign_video", id: "minifilm", image_url: "https://fal.test/out/1.png" }),
+  });
+  assert.equal(r.status, 200);
+  const d = (await r.json()) as { id: number; credits: number; balance: number };
+  assert.equal(d.credits, 61);
+  assert.equal(d.balance, 38); // 99 − 61
+  const done = await pollGen(d.id);
+  assert.equal(done.status, "ok");
+  assert.match(done.output_url ?? "", /\.mp4$/);
+  const call = falCalls.at(-1)!;
+  assert.equal(call.endpoint, "fal-ai/bytedance/seedance-2.0/fast/image-to-video");
+  assert.equal(call.input.image_url, "https://fal.test/out/1.png");
+});
+
+await step("insufficient 🔫 → 402 with the pack catalog (in-app paywall)", async () => {
+  const broke = { id: 701, username: "broke" }; // fresh: 3 free < preset's 4
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { Authorization: `tma ${signInitData(broke)}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "preset", id: "headshot", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(r.status, 402);
+  const d = (await r.json()) as { error: string; need: number; balance: number; packs: unknown[] };
+  assert.equal(d.error, "insufficient");
+  assert.equal(d.need, 4);
+  assert.equal(d.balance, 3);
+  assert.equal(d.packs.length, 4);
+});
+
+await step("generate validation: unknown ids, missing photo, off-catalog models, empty prompt → 400", async () => {
+  const cases = [
+    { source: "preset", id: "nope", image_url: "https://x.test/a.jpg" },
+    { source: "preset", id: "headshot" }, // photo required
+    { source: "campaign", id: "minifilm:nope", image_url: "https://x.test/a.jpg" },
+    { source: "model", model: "nbpro_edit", prompt: "hi", image_url: "https://x.test/a.jpg" }, // not in pickers
+    { source: "model", model: "text_to_image", prompt: "   " }, // empty after sanitize
+    { source: "hack" },
+  ];
+  for (const body of cases) {
+    const r = await fetch(`${base}/api/generate`, {
+      method: "POST",
+      headers: { ...makerHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    assert.equal(r.status, 400, `expected 400 for ${JSON.stringify(body)}`);
+  }
+});
+
+await step("polling is owner-scoped: someone else's generation id → 404", async () => {
+  const r = await fetch(`${base}/api/generations/1`, {
+    headers: { Authorization: `tma ${signInitData({ id: 702 })}` },
+  });
+  assert.equal(r.status, 404);
+});
+
+await step("POST /api/invoice: creates a Stars invoice link via the Telegram API", async () => {
+  // Stub Telegram Bot API: assert the payload and return an invoice link.
+  const { createServer } = await import("node:http");
+  let seen: Record<string, unknown> | null = null;
+  const tgStub = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => {
+      seen = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, result: "https://t.me/invoice/test123" }));
+    });
+  });
+  await new Promise<void>((r) => tgStub.listen(0, r));
+  process.env.TELEGRAM_API_BASE = `http://127.0.0.1:${(tgStub.address() as AddressInfo).port}`;
+
+  const r = await fetch(`${base}/api/invoice`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ pack: "start" }),
+  });
+  assert.equal(r.status, 200);
+  assert.equal(((await r.json()) as { link: string }).link, "https://t.me/invoice/test123");
+  assert.equal(seen!.currency, "XTR");
+  assert.equal(seen!.payload, "pack:start"); // same payload the bot's payment handler expects
+  assert.deepEqual(seen!.prices, [{ label: "Старт — 60 🔫", amount: 720 }]);
+
+  const bad = await fetch(`${base}/api/invoice`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ pack: "nope" }),
+  });
+  assert.equal(bad.status, 400);
+  await new Promise<void>((r2) => tgStub.close(() => r2()));
+});
+
+await step("method gating on studio endpoints: GET /api/generate and /api/upload → 405", async () => {
+  for (const path of ["/api/generate", "/api/upload", "/api/invoice"]) {
+    const r = await fetch(`${base}${path}`, { headers: makerHeaders() });
+    assert.equal(r.status, 405, path);
+    assert.equal(r.headers.get("allow"), "POST", path);
+  }
 });
 
 await new Promise<void>((r) => server.close(() => r()));

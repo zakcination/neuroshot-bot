@@ -66,6 +66,8 @@ async function user(
  */
 export function mainMenu(opts: { featured?: Campaign; hasPhoto?: boolean } = {}): InlineKeyboard {
   const kb = new InlineKeyboard();
+  // The app is the flagship surface (in-app studio: create, pay, gallery) — top slot.
+  if (config.webappUrl) kb.webApp("🌐 Студия NeuroShot — создавать в приложении", config.webappUrl).row();
   if (opts.hasPhoto) kb.text("📸 Продолжить с вашим фото", "menu:styles").row();
   if (opts.featured) kb.text(`🆕 Новинка недели: ${opts.featured.label}`, `camp:${opts.featured.id}`).row();
   kb.text("📸 AI-фотосессия", "menu:photoshoot")
@@ -80,7 +82,6 @@ export function mainMenu(opts: { featured?: Campaign; hasPhoto?: boolean } = {})
     .row()
     .text("⚡ Топ AI-модели", "menu:models")
     .row();
-  if (config.webappUrl) kb.webApp("🌐 Открыть приложение", config.webappUrl).row();
   return kb.text("💰 Баланс и пакеты", "menu:balance").text("🎁 Пригласить друга", "menu:ref");
 }
 
