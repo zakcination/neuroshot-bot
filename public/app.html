@@ -203,6 +203,26 @@
     .choice .price { margin-top: auto; font-size: 12px; color: var(--amber); font-weight: 700; }
     .choice .desc { font-size: 11.5px; color: var(--muted); }
 
+    /* quiz chips (story builder) */
+    .quiz-q { font-size: 13px; font-weight: 700; color: var(--muted); margin: 14px 0 8px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 7px; }
+    .chip {
+      border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+      border-radius: 999px; padding: 8px 13px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    }
+    .chip.on { background: var(--aurora); border-color: transparent; color: #fff; }
+    input.words {
+      width: 100%; background: var(--surface); color: var(--ink); border: 1px solid var(--line);
+      border-radius: var(--radius-s); padding: 12px 14px; font: inherit; font-size: 14px; margin-top: 8px;
+    }
+    input.words:focus { outline: 2px solid rgba(124,92,255,.5); }
+
+    /* "from my works" source strip */
+    .mini { display: grid; grid-auto-flow: column; grid-auto-columns: 74px; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 4px 2px; }
+    .mini::-webkit-scrollbar { display: none; }
+    .mini img { width: 74px; height: 74px; object-fit: cover; border-radius: 12px; border: 2px solid transparent; cursor: pointer; display: block; }
+    .mini img.on { border-color: var(--violet); box-shadow: 0 0 14px rgba(124,92,255,.5); }
+
     .drop {
       display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center;
       border: 1.5px dashed rgba(124,92,255,.5); border-radius: var(--radius); background: rgba(124,92,255,.06);
@@ -350,10 +370,23 @@
 
     // ————— studio (create-in-app) —————
     const sheet = document.getElementById("sheet"), sheetBg = document.getElementById("sheetBg"), sheetBody = document.getElementById("sheetBody");
-    const st = { tab: "shoot", pick: null, photo: null, photoUrl: null, poll: 0, retry: null };
+    const st = { tab: "shoot", pick: null, photo: null, photoUrl: null, retry: null };
+    // Concurrent renders: every generation is an independent job with its own
+    // poll loop — minimizing the sheet or starting another render never
+    // interrupts the ones in flight, and each result stays bound to its job.
+    const jobs = new Map(); // genId -> {id, isVideo, campaignId}
+    let viewedJob = null; // job id currently displayed in the sheet (or null)
     function openSheet() { sheet.classList.add("on"); sheetBg.classList.add("on"); }
-    function closeSheet() { sheet.classList.remove("on"); sheetBg.classList.remove("on"); clearTimeout(st.poll); }
+    function closeSheet() { sheet.classList.remove("on"); sheetBg.classList.remove("on"); viewedJob = null; }
     sheetBg.onclick = closeSheet;
+
+    function updateJobsPill() {
+      const p = document.getElementById("jobsPill");
+      if (!p) return;
+      p.style.display = jobs.size ? "" : "none";
+      const n = document.getElementById("jobsN");
+      if (n) n.textContent = jobs.size;
+    }
 
     const TABS = [
       ["shoot", "📸 Фотосессия"], ["product", "🛍 Товар"], ["scenes", "🎉 Сценарии"], ["video", "🎬 Видео"], ["text", "✨ Из текста"],
@@ -427,18 +460,60 @@
         <div class="row"><button class="btn ghost" id="backBtn">← Назад</button></div>`;
       sheetBody.querySelector("#backBtn").onclick = () => viewPick();
       sheetBody.querySelectorAll("[data-cp]").forEach((b) => (b.onclick = () => {
-        st.pick = { source: "campaign", id: id + ":" + b.dataset.cp, campaignId: id, credits: k.imageCredits, needPhoto: true };
-        viewPhoto();
+        st.pick = { source: "campaign", id: id + ":" + b.dataset.cp, campaignId: id, credits: k.imageCredits, needPhoto: true, options: [], custom: "" };
+        if ((k.quiz || []).length) viewQuiz(k); else viewPhoto();
       }));
     }
 
+    /** Story builder: one quick pick per step + a short free-words field. */
+    function viewQuiz(k) {
+      const sel = {}; // stepId -> optionId
+      sheetBody.innerHTML = `
+        <h3>Соберите свою историю</h3>
+        <div class="sub">Пара быстрых выборов — и сцена станет вашей. Всё необязательно.</div>
+        ${k.quiz.map((s) => `
+          <div class="quiz-q">${esc(s.question)}</div>
+          <div class="chips" data-step="${s.id}">${s.options.map((o) =>
+            `<button class="chip" data-opt="${o.id}">${esc(o.label)}</button>`).join("")}</div>`).join("")}
+        <div class="quiz-q">Пара слов от себя (необязательно)</div>
+        <input class="words" id="qWords" maxlength="200" placeholder="например: с золотой короной и снегом" />
+        <div class="stack">
+          <button class="btn primary" id="qNext">Дальше →</button>
+          <button class="btn ghost" id="backBtn">← Назад</button>
+        </div>`;
+      sheetBody.querySelectorAll(".chips").forEach((row) => {
+        row.querySelectorAll(".chip").forEach((chip) => (chip.onclick = () => {
+          const on = chip.classList.contains("on");
+          row.querySelectorAll(".chip").forEach((c) => c.classList.remove("on"));
+          if (!on) { chip.classList.add("on"); sel[row.dataset.step] = chip.dataset.opt; }
+          else delete sel[row.dataset.step]; // tap again to unselect
+        }));
+      });
+      sheetBody.querySelector("#backBtn").onclick = () => viewCampaign(k.id);
+      sheetBody.querySelector("#qNext").onclick = () => {
+        st.pick.options = Object.values(sel);
+        st.pick.custom = sheetBody.querySelector("#qWords").value.trim();
+        viewPhoto();
+      };
+    }
+
+    /** The caller's previous image results — reusable as a source, no re-upload. */
+    function myImages() {
+      return (ME.generations || []).filter((g) => g.status === "ok" && g.output_url && !/\.(mp4|webm|mov)(\?|$)/i.test(g.output_url));
+    }
+
     function viewPhoto() {
+      st.photo = null; st.photoUrl = null; st.pick.generation_id = null;
+      const works = myImages().slice(0, 10);
       sheetBody.innerHTML = `
         <h3>Ваше фото</h3>
         <div id="photoZone">
           <label class="drop"><input type="file" accept="image/*" id="file" />
             <span class="em">📸</span><b>Выбрать фото</b><span>снимите или выберите из галереи</span>
           </label>
+          ${works.length ? `<div class="quiz-q">…или из моих работ</div>
+          <div class="mini" id="mini">${works.map((g) =>
+            `<img src="${esc(g.output_url)}" data-gid="${g.id}" loading="lazy" alt="" />`).join("")}</div>` : ""}
         </div>
         <div class="stack">
           <button class="btn primary" id="goBtn" disabled>Создать за ${st.pick.credits} 🔫</button>
@@ -451,12 +526,19 @@
         if (!f) return;
         const data = await downscale(f);
         if (!data) { toast("Не получилось прочитать фото"); return; }
-        st.photo = data; st.photoUrl = null;
+        st.photo = data; st.photoUrl = null; st.pick.generation_id = null;
         sheetBody.querySelector("#photoZone").innerHTML = `
           <div class="photo-preview"><img src="${data}" alt="" /><button class="redo" id="redo">↺ Другое</button></div>`;
         sheetBody.querySelector("#redo").onclick = () => viewPhoto();
         goBtn.disabled = false;
       };
+      sheetBody.querySelectorAll("#mini img").forEach((im) => (im.onclick = () => {
+        sheetBody.querySelectorAll("#mini img").forEach((x) => x.classList.remove("on"));
+        im.classList.add("on");
+        st.photo = null; st.photoUrl = null;
+        st.pick.generation_id = Number(im.dataset.gid); // server resolves the URL, owner-scoped
+        goBtn.disabled = false;
+      }));
       goBtn.onclick = () => run();
     }
 
@@ -491,56 +573,83 @@
       viewProgress(isVideo);
 
       let image_url;
-      if (pick.needPhoto) {
+      if (pick.needPhoto && !pick.generation_id) {
         image_url = await ensureUploaded();
         if (!image_url) { viewPhoto(); return; }
-      } else if (pick.image_url) {
-        image_url = pick.image_url;
       }
 
       const body = payloadOverride || {
         source: pick.source, id: pick.id, model: pick.model,
         prompt: pick.prompt, image_url,
+        generation_id: pick.generation_id || undefined,
+        options: pick.options && pick.options.length ? pick.options : undefined,
+        custom: pick.custom || undefined,
       };
-      st.retry = body;
+      st.retry = { body, campaignId: pick.campaignId || null };
       const { status, data } = await api("/api/generate", { method: "POST", body: JSON.stringify(body) });
       if (status === 402) { viewPaywall(data); return; }
       if (status !== 200) { toast("Что-то пошло не так — попробуйте ещё раз"); viewPick(); return; }
       setBalance(data.balance);
-      poll(data.id, isVideo);
+      startJob(data.id, isVideo, pick.campaignId || null);
     }
 
-    function viewProgress(isVideo) {
+    /** Register an independent render job and show its progress in the sheet. */
+    function startJob(id, isVideo, campaignId) {
+      const job = { id, isVideo, campaignId, started: Date.now() };
+      jobs.set(id, job); updateJobsPill();
+      viewedJob = id; viewProgress(isVideo, id);
+      pollJob(job);
+    }
+
+    function viewProgress(isVideo, jobId) {
+      openSheet();
       sheetBody.innerHTML = `
         <div class="progress">
           <div class="orb"></div>
           <h4>${isVideo ? "Рендерим видео…" : "Генерируем…"}</h4>
-          <p>${isVideo ? "Обычно 1–3 минуты. Можно свернуть — работа сохранится в галерее." : "Обычно 10–30 секунд ✨"}</p>
+          <p>${isVideo ? "Обычно 1–3 минуты." : "Обычно 10–30 секунд ✨"}</p>
+        </div>
+        <div class="stack">
+          <button class="btn ghost" id="hideBtn">⬇ Свернуть — рендер продолжится в фоне</button>
         </div>`;
+      sheetBody.querySelector("#hideBtn").onclick = () => closeSheet();
+      if (jobId) viewedJob = jobId;
     }
 
-    function poll(id, isVideo, started = Date.now()) {
-      clearTimeout(st.poll);
-      st.poll = setTimeout(async () => {
-        const { status, data } = await api("/api/generations/" + id);
-        if (status === 200 && data.status === "ok") { haptic("success"); viewResult(data); refreshMe(); return; }
-        if (status === 200 && data.status === "error") {
-          haptic("error");
-          toast("Не получилось — 🔫 патроны возвращены");
-          refreshMe(); viewPick(); return;
+    /** Each job polls on its own timer — jobs never block each other. */
+    function pollJob(job) {
+      setTimeout(async () => {
+        if (!jobs.has(job.id)) return; // already finished elsewhere
+        const { status, data } = await api("/api/generations/" + job.id);
+        if (status === 200 && data.status === "ok") {
+          jobs.delete(job.id); updateJobsPill(); refreshMe(); haptic("success");
+          if (viewedJob === job.id && sheet.classList.contains("on")) viewResult(data, job);
+          else toast("✨ Готово! Работа уже в «Мои работы»");
+          return;
         }
-        if (Date.now() - started > 5 * 60 * 1000) { toast("Долгий рендер — результат появится в галерее"); closeSheet(); return; }
-        poll(id, isVideo, started);
+        if (status === 200 && data.status === "error") {
+          jobs.delete(job.id); updateJobsPill(); refreshMe(); haptic("error");
+          toast("Не получилось — 🔫 патроны возвращены");
+          if (viewedJob === job.id && sheet.classList.contains("on")) viewPick();
+          return;
+        }
+        if (Date.now() - job.started > 6 * 60 * 1000) {
+          jobs.delete(job.id); updateJobsPill();
+          toast("Долгий рендер — результат появится в «Мои работы»");
+          if (viewedJob === job.id && sheet.classList.contains("on")) closeSheet();
+          return;
+        }
+        pollJob(job);
       }, 2500);
     }
 
-    function viewResult(g) {
+    function viewResult(g, job) {
       const isVideo = /\.(mp4|webm|mov)(\?|$)/i.test(g.output_url || "");
-      const camp = st.pick?.campaignId ? ME.catalog.campaigns.find((x) => x.id === st.pick.campaignId) : null;
+      const camp = job?.campaignId ? ME.catalog.campaigns.find((x) => x.id === job.campaignId) : null;
       const upsell = camp && !isVideo
         ? `<button class="btn primary" id="animBtn">${esc(camp.animateLabel)} · ${camp.videoCredits} 🔫</button>`
         : !isVideo
-          ? `<button class="btn primary" id="animBtn2">🎬 Оживить в видео · от ${ME.catalog.videoModels[0].credits} 🔫</button>`
+          ? `<button class="btn primary" id="animBtn2">🎬 Оживить в видео · ${ME.catalog.videoModels[0].credits} 🔫</button>`
           : "";
       sheetBody.innerHTML = `
         <h3>Готово ✨</h3>
@@ -550,22 +659,94 @@
         <div class="stack">
           ${upsell}
           <div class="row" style="margin-top:0">
+            <button class="btn ghost" id="saveBtn">📥 Скачать</button>
+            <button class="btn ghost" id="chatBtn">💬 В чат</button>
+          </div>
+          <div class="row" style="margin-top:0">
             <a class="btn ghost" href="${esc(g.output_url)}" target="_blank" rel="noopener noreferrer">↗ Открыть</a>
             <button class="btn ghost" id="moreBtn">➕ Ещё</button>
           </div>
         </div>`;
+      // Upsells reference the generation by ID — the server resolves the file,
+      // so chains survive app restarts and never depend on client state.
       const animBtn = sheetBody.querySelector("#animBtn");
       if (animBtn) animBtn.onclick = () => {
-        st.pick = { source: "campaign_video", id: camp.id, campaignId: camp.id, credits: camp.videoCredits, needPhoto: false, image_url: g.output_url };
+        st.pick = { source: "campaign_video", id: camp.id, campaignId: camp.id, credits: camp.videoCredits, needPhoto: false, generation_id: g.id };
         run();
       };
       const animBtn2 = sheetBody.querySelector("#animBtn2");
       if (animBtn2) animBtn2.onclick = () => {
         const m = ME.catalog.videoModels[0]; // default: Kling 3.0
-        st.pick = { source: "model", model: m.key, credits: m.credits, needPhoto: false, image_url: g.output_url, prompt: "плавное живое движение, лёгкий наезд камеры" };
+        st.pick = { source: "model", model: m.key, credits: m.credits, needPhoto: false, generation_id: g.id, prompt: "плавное живое движение, лёгкий наезд камеры" };
         run();
       };
+      sheetBody.querySelector("#saveBtn").onclick = () => saveMedia(g.output_url, g.id);
+      sheetBody.querySelector("#chatBtn").onclick = () => sendToChat(g.id);
       sheetBody.querySelector("#moreBtn").onclick = () => { st.pick = null; viewPick(); };
+    }
+
+    /** Save to the device: Telegram's native downloadFile when available. */
+    function saveMedia(url, id) {
+      const isVideo = /\.(mp4|webm|mov)(\?|$)/i.test(url);
+      const name = `neuroshot-${id}${isVideo ? ".mp4" : ".jpg"}`;
+      if (tg?.downloadFile) {
+        try { tg.downloadFile({ url, file_name: name }, () => {}); return; } catch (e) { /* fall through */ }
+      }
+      const a = document.createElement("a");
+      a.href = url; a.download = name; a.target = "_blank"; a.rel = "noopener";
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+
+    /** Deliver the file into the user's Telegram chat with the bot. */
+    async function sendToChat(id) {
+      const { status } = await api("/api/send", { method: "POST", body: JSON.stringify({ id }) });
+      if (status === 200) { haptic("success"); toast("Отправлено в чат с ботом 💬"); }
+      else toast("Не удалось отправить — попробуйте позже");
+    }
+
+    /** Gallery item viewer: save / send to chat / cross-sale into video. */
+    function openViewer(item) {
+      openSheet(); viewedJob = null;
+      const isVideo = /\.(mp4|webm|mov)(\?|$)/i.test(item.output_url || "");
+      sheetBody.innerHTML = `
+        <h3>Моя работа</h3>
+        <div class="result-media">${isVideo
+          ? `<video src="${esc(item.output_url)}" controls autoplay muted loop playsinline></video>`
+          : `<img src="${esc(item.output_url)}" alt="" />`}</div>
+        <div class="stack">
+          ${!isVideo ? `<button class="btn primary" id="vAnim">🎬 Оживить в видео · от ${ME.catalog.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} 🔫</button>` : ""}
+          <div class="row" style="margin-top:0">
+            <button class="btn ghost" id="vSave">📥 Скачать</button>
+            <button class="btn ghost" id="vChat">💬 В чат</button>
+          </div>
+          <div class="row" style="margin-top:0">
+            <a class="btn ghost" href="${esc(item.output_url)}" target="_blank" rel="noopener noreferrer">↗ Открыть</a>
+            <button class="btn ghost" id="vMore">✨ Создать ещё</button>
+          </div>
+        </div>`;
+      const vAnim = sheetBody.querySelector("#vAnim");
+      if (vAnim) vAnim.onclick = () => viewAnimateFrom(item);
+      sheetBody.querySelector("#vSave").onclick = () => saveMedia(item.output_url, item.id);
+      sheetBody.querySelector("#vChat").onclick = () => sendToChat(item.id);
+      sheetBody.querySelector("#vMore").onclick = () => { st.pick = null; viewPick(); };
+    }
+
+    /** Animate a previous work: model + motion, source = the generation id. */
+    function viewAnimateFrom(item) {
+      sheetBody.innerHTML = `
+        <h3>Оживить работу</h3>
+        <div class="result-media" style="max-height:26dvh;overflow:hidden"><img src="${esc(item.output_url)}" alt="" /></div>
+        <div class="quiz-q">Движение</div>
+        <textarea class="prompt" id="vprompt">плавное живое движение, лёгкий наезд камеры</textarea>
+        <div class="choices" style="margin-top:10px">${ME.catalog.videoModels.map((m) =>
+          `<button class="choice" data-vm="${m.key}"><b>${esc(m.label)}</b><span class="price">${m.credits} 🔫</span></button>`).join("")}</div>
+        <div class="row"><button class="btn ghost" id="backBtn">← Назад</button></div>`;
+      sheetBody.querySelector("#backBtn").onclick = () => openViewer(item);
+      sheetBody.querySelectorAll("[data-vm]").forEach((b) => (b.onclick = () => {
+        const m = ME.catalog.videoModels.find((x) => x.key === b.dataset.vm);
+        st.pick = { source: "model", model: m.key, credits: m.credits, needPhoto: false, generation_id: item.id, prompt: sheetBody.querySelector("#vprompt").value };
+        run();
+      }));
     }
 
     // ————— paywall: buy Stars packs WITHOUT leaving the app —————
@@ -594,11 +775,11 @@
           haptic("success"); toast("Оплачено! 🔫 патроны зачислены");
           await refreshMe();
           if (retryAfter && st.retry) { // resume the exact render they paid for
-            const body = st.retry;
+            const { body, campaignId } = st.retry;
             const isVideo = body.source === "campaign_video" || ME.catalog.videoModels.some((m) => m.key === body.model);
             viewProgress(isVideo);
             const r = await api("/api/generate", { method: "POST", body: JSON.stringify(body) });
-            if (r.status === 200) { setBalance(r.data.balance); poll(r.data.id, isVideo); }
+            if (r.status === 200) { setBalance(r.data.balance); startJob(r.data.id, isVideo, campaignId); }
             else viewPick();
           }
         } else if (st_ === "failed") { toast("Оплата не прошла"); }
@@ -635,7 +816,9 @@
         const media = isVideo
           ? `<video src="${esc(item.output_url)}" muted loop playsinline autoplay preload="metadata"></video><span class="tag">видео</span>`
           : `<img loading="lazy" src="${esc(item.output_url)}" alt="" />`;
-        g.appendChild($(`<a class="shot" href="${esc(item.output_url)}" target="_blank" rel="noopener noreferrer">${media}</a>`));
+        const el = $(`<a class="shot" href="#" role="button">${media}</a>`);
+        el.onclick = (e) => { e.preventDefault(); openViewer(item); }; // viewer: save / chat / animate
+        g.appendChild(el);
       }
     }
 
@@ -668,7 +851,10 @@
       root.appendChild($(`<div>
         <div class="top">
           <div class="word"><span class="dot"></span>NEURO<small>SHOT</small></div>
-          <span class="pill">🔫 <span id="pillN">${dash.credits}</span></span>
+          <span style="display:flex;gap:8px">
+            <span class="pill" id="jobsPill" style="display:none;cursor:pointer">⏳ <span id="jobsN">0</span></span>
+            <span class="pill">🔫 <span id="pillN">${dash.credits}</span></span>
+          </span>
         </div>
 
         <div class="wallet reveal"><div class="in">
@@ -743,6 +929,10 @@
           </button>`));
       }
 
+      document.getElementById("jobsPill").onclick = () => {
+        const job = [...jobs.values()].at(-1);
+        if (job) { viewedJob = job.id; viewProgress(job.isVideo, job.id); }
+      };
       document.getElementById("createTop").onclick = () => studio(feat ? "scenes" : "shoot");
       document.getElementById("buyTop").onclick = () => buyPack(bestPack || (d.packs || [])[0]?.id, false);
       document.querySelectorAll("[data-buy]").forEach((b) => (b.onclick = () => buyPack(b.dataset.buy, false)));

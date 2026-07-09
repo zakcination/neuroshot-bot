@@ -440,10 +440,152 @@ await step("POST /api/invoice: creates a Stars invoice link via the Telegram API
 });
 
 await step("method gating on studio endpoints: GET /api/generate and /api/upload → 405", async () => {
-  for (const path of ["/api/generate", "/api/upload", "/api/invoice"]) {
+  for (const path of ["/api/generate", "/api/upload", "/api/invoice", "/api/send"]) {
     const r = await fetch(`${base}${path}`, { headers: makerHeaders() });
     assert.equal(r.status, 405, path);
     assert.equal(r.headers.get("allow"), "POST", path);
+  }
+});
+
+// ---- Studio v2: story quiz, reusable generations, send-to-chat ----
+
+await step("catalog exposes the story quiz (ids+labels only — fragments stay server-side)", async () => {
+  const { body } = await apiMe(signInitData(maker));
+  const skazka = body.catalog.campaigns.find((k) => k.id === "skazka") as unknown as {
+    quiz: Array<{ id: string; question: string; options: Array<Record<string, unknown>> }>;
+  };
+  assert.equal(skazka.quiz.length, 3); // герой / кто рядом / финал
+  assert.ok(skazka.quiz[0].options.length >= 3);
+  for (const s of skazka.quiz) for (const o of s.options) {
+    assert.ok(!("fragment" in o), "prompt fragment leaked to the client");
+  }
+});
+
+await step("campaign generate composes quiz options + sanitized custom words server-side", async () => {
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "campaign", id: "skazka:forest", image_url: "https://fal.test/storage/u-1.jpg",
+      options: ["knight", "dragon", "epic"], custom: "  с золотой   короной ",
+    }),
+  });
+  assert.equal(r.status, 200);
+  const d = (await r.json()) as { id: number };
+  await pollGen(d.id);
+  const prompt = falCalls.at(-1)!.input.prompt as string;
+  assert.match(prompt, /brave young knight/); // hero fragment
+  assert.match(prompt, /baby dragon companion/); // friend fragment
+  assert.match(prompt, /god rays/); // mood fragment
+  assert.match(prompt, /Extra details from the user: с золотой короной/); // sanitized (control char + spaces)
+  assert.ok(!prompt.includes(" "));
+
+  // Unknown option ids are rejected — nothing charged.
+  const bad = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "campaign", id: "skazka:forest", image_url: "https://fal.test/storage/u-1.jpg", options: ["hack"] }),
+  });
+  assert.equal(bad.status, 400);
+  assert.equal(((await bad.json()) as { error: string }).error, "bad_option");
+});
+
+let videoGenId = 0; // captured for the video-as-source guard below
+
+await step("reusable works: generation_id feeds a video render without re-upload", async () => {
+  await addCredits(maker.id, 200, "admin_grant", "test");
+  // Make an image first…
+  const img = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "preset", id: "cinematic", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  const imgD = (await img.json()) as { id: number };
+  const done = await pollGen(imgD.id);
+  assert.equal(done.status, "ok");
+
+  // …then animate it BY ID — the server resolves the stored output URL.
+  const vid = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "kling3", prompt: "slow push-in", generation_id: imgD.id }),
+  });
+  assert.equal(vid.status, 200);
+  const vidD = (await vid.json()) as { id: number; credits: number };
+  assert.equal(vidD.credits, 42);
+  videoGenId = vidD.id;
+  const vDone = await pollGen(vidD.id);
+  assert.equal(vDone.status, "ok");
+  const call = falCalls.at(-1)!;
+  assert.equal(call.endpoint, "fal-ai/kling-video/v3/pro/image-to-video");
+  assert.equal(call.input.start_image_url, done.output_url); // the stored image, no re-upload
+
+  // Someone else's generation id is NOT a valid source (owner-scoped).
+  const foreign = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { Authorization: `tma ${signInitData({ id: 703 })}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "kling3", prompt: "zoom", generation_id: imgD.id }),
+  });
+  assert.equal(foreign.status, 400);
+});
+
+await step("a video result can't be an image source (bad_source, nothing charged)", async () => {
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "kling3", prompt: "zoom", generation_id: videoGenId }),
+  });
+  assert.equal(r.status, 400);
+  assert.equal(((await r.json()) as { error: string }).error, "bad_source");
+});
+
+await step("POST /api/send delivers a generation into the user's Telegram chat", async () => {
+  const { createServer } = await import("node:http");
+  const sends: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const tgStub = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => {
+      sends.push({ path: req.url ?? "", body: JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown> });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, result: {} }));
+    });
+  });
+  await new Promise<void>((r) => tgStub.listen(0, r));
+  process.env.TELEGRAM_API_BASE = `http://127.0.0.1:${(tgStub.address() as AddressInfo).port}`;
+
+  // Video generation → sendVideo with the file URL into the owner's chat.
+  const r = await fetch(`${base}/api/send`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ id: videoGenId }),
+  });
+  assert.equal(r.status, 200);
+  assert.match(sends[0].path, /\/sendVideo$/);
+  assert.equal(sends[0].body.chat_id, maker.id);
+  assert.match(String(sends[0].body.video), /^https:\/\/fal\.test\/out\/.*\.mp4$/);
+
+  // Someone else's generation → 404, nothing sent.
+  const foreign = await fetch(`${base}/api/send`, {
+    method: "POST",
+    headers: { Authorization: `tma ${signInitData({ id: 703 })}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ id: videoGenId }),
+  });
+  assert.equal(foreign.status, 404);
+  assert.equal(sends.length, 1);
+  await new Promise<void>((r2) => tgStub.close(() => r2()));
+});
+
+await step("prompt quality guards: kid-focus + no-duplicates baked into cartoon and star presets", async () => {
+  const { CAMPAIGNS } = await import("../src/models.js");
+  const cartoon = CAMPAIGNS.find((c) => c.id === "cartoon")!;
+  for (const p of cartoon.presets) {
+    assert.match(p.prompt, /MAIN subject/i, `${p.id} missing kid-focus`);
+    assert.match(p.prompt, /exactly (ONE|once)/i, `${p.id} missing de-dup guard`);
+  }
+  const wc = CAMPAIGNS.find((c) => c.id === "worldcup")!;
+  for (const p of wc.presets.filter((x) => x.id !== "kit")) {
+    assert.match(p.prompt, /no duplicated figures/, `${p.id} missing NO_CLONES`);
   }
 });
 
