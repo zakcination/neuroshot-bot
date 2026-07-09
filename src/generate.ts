@@ -14,7 +14,7 @@ import {
   spendCredits,
   type UserRow,
 } from "./db.js";
-import { MODELS, type ModelSpec } from "./models.js";
+import { MODELS, priceFor, type GenOpts, type ModelSpec } from "./models.js";
 import { paywallKeyboard, paywallText } from "./payments.js";
 import { craftPrompt } from "./promptcraft.js";
 
@@ -37,8 +37,13 @@ function extractResultUrl(data: unknown): string | null {
 }
 
 /** Run a model on fal and return the output URL (throws on provider failure). */
-async function falRun(model: ModelSpec, prompt: string, imageUrl?: string): Promise<string> {
-  const result = await fal.subscribe(model.falEndpoint, { input: model.input(prompt, imageUrl) });
+async function falRun(
+  model: ModelSpec,
+  prompt: string,
+  imageUrl?: string,
+  opts?: GenOpts,
+): Promise<string> {
+  const result = await fal.subscribe(model.falEndpoint, { input: model.input(prompt, imageUrl, opts) });
   const url = extractResultUrl(result.data);
   if (!url) throw new Error(`No output URL in fal response for ${model.falEndpoint}`);
   return url;
@@ -57,28 +62,30 @@ export async function startWebGeneration(
   prompt: string,
   imageUrl?: string,
   crafted = false,
-): Promise<{ ok: true; id: number } | { ok: false; error: "empty_prompt" | "insufficient" }> {
+  opts?: GenOpts,
+): Promise<{ ok: true; id: number; credits: number } | { ok: false; error: "empty_prompt" | "insufficient" }> {
   prompt = craftPrompt(model.kind, prompt, crafted);
   if (!prompt) return { ok: false, error: "empty_prompt" };
-  if (!(await spendCredits(userId, model.credits, model.key))) {
+  const credits = priceFor(model, opts); // video charge scales with duration
+  if (!(await spendCredits(userId, credits, model.key))) {
     await logEvent(userId, "paywall", model.key);
     return { ok: false, error: "insufficient" };
   }
   await logEvent(userId, "gen_start", model.key);
-  const id = await createPendingGeneration(userId, model.key, prompt, model.credits);
+  const id = await createPendingGeneration(userId, model.key, prompt, credits);
   void (async () => {
     try {
-      const url = await falRun(model, prompt, imageUrl);
+      const url = await falRun(model, prompt, imageUrl, opts);
       await completeGeneration(id, "ok", url);
       await logEvent(userId, "gen_ok", model.key);
     } catch (err) {
       console.error(`web generation failed (${model.key}):`, err);
-      await addCredits(userId, model.credits, "refund", model.key);
+      await addCredits(userId, credits, "refund", model.key);
       await completeGeneration(id, "error");
       await logEvent(userId, "gen_error", model.key);
     }
   })();
-  return { ok: true, id };
+  return { ok: true, id, credits };
 }
 
 /**

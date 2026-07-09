@@ -9,7 +9,7 @@
  */
 import { config } from "./config.js";
 import { query } from "./db.js";
-import { CREDIT_COST_BASIS, MODELS } from "./models.js";
+import { cheapestModel, CREDIT_COST_BASIS, MODELS } from "./models.js";
 
 const MODEL_COST = new Map(Object.values(MODELS).map((m) => [m.key, m.approxCostUsd]));
 
@@ -139,7 +139,23 @@ export function formatDigest(d: Digest): string {
       (d.marginPct == null ? "маржа: — (нет оплат)" : `маржа <b>${d.marginPct}%</b>`),
     `🎨 Генераций: ${d.genOk} ok / ${d.genError} err (${errRate}%) · возвратов: ${d.refunds}`,
     `🏦 Обязательства: <b>${d.creditLiability} 🔫</b> продано и не потрачено`,
+    cheapLine(),
   ].join("\n");
+}
+
+/**
+ * The daily cheapest-model line: which model is today's cheapest entry per
+ * kind, and whether the free 🔫 cover it (the free-trial anchor). Recomputed
+ * from the registry every digest — a fal price update moves it automatically.
+ */
+function cheapLine(): string {
+  const img = cheapestModel("image_edit");
+  const vid = cheapestModel("image_to_video");
+  const trial = img.credits <= config.freeCredits ? "✅ бесплатной пробы хватает" : "⚠️ дороже бесплатных 🔫";
+  return (
+    `💡 Дешёвый вход: фото — ${img.label} ${img.credits} 🔫 ($${img.approxCostUsd.toFixed(2)}, ${trial}) · ` +
+    `видео — ${vid.label} ${vid.credits} 🔫 ($${vid.approxCostUsd.toFixed(2)})`
+  );
 }
 
 export interface Alert {

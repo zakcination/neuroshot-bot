@@ -2,10 +2,11 @@
  * NeuroShot PWA service worker. Makes the Mini App installable + launchable
  * offline (app shell), while keeping user data always fresh:
  *   • /api/*  → network-only  (auth'd, per-user — never cached)
- *   • shell   → cache-first with background refresh
+ *   • shell   → network-first (offline falls back to cache)
+ *   • other static assets → cache-first with background refresh
  * Bump CACHE on any shell change so old assets are evicted.
  */
-const CACHE = "neuroshot-shell-v2"; // v2: premium redesign of the app shell
+const CACHE = "neuroshot-shell-v3"; // v3: creation studio (network-first shell)
 // Include both entry URLs — the app is reachable at "/" (rewritten to the shell)
 // and at "/app" — so an offline launch from either resolves from cache.
 const SHELL = ["/", "/app", "/manifest.webmanifest", "/icon.svg"];
@@ -32,6 +33,11 @@ self.addEventListener("fetch", (event) => {
   // Never cache the authenticated API — always hit the network.
   if (url.pathname.startsWith("/api/")) return;
 
+  // Navigations (the app shell) are NETWORK-FIRST: a deploy must never leave
+  // users on a stale shell talking to a newer API (mixed-version TypeErrors).
+  // The cache is only the offline fallback.
+  const isShell = request.mode === "navigate" || url.pathname === "/" || url.pathname === "/app";
+
   event.respondWith(
     caches.match(request).then((cached) => {
       const network = fetch(request)
@@ -42,10 +48,8 @@ self.addEventListener("fetch", (event) => {
           }
           return res;
         })
-        // Offline: fall back to this request's cache, then the app shell for
-        // navigations, so we never resolve respondWith with undefined.
         .catch(() => cached || (request.mode === "navigate" ? caches.match("/") : undefined));
-      return cached || network;
+      return isShell ? network : cached || network;
     }),
   );
 });

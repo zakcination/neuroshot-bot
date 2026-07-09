@@ -21,11 +21,17 @@ import {
   campaignById,
   CAMPAIGNS,
   IMAGE_MODEL_PICKER,
+  MODEL_NEWS,
   MODELS,
+  normalizeOpts,
   PACKS,
   PRESET_MODEL,
   PRESETS,
+  priceFor,
   VIDEO_MODEL_PICKER,
+  VIDEO_STORY,
+  type GenOpts,
+  type ModelSpec,
 } from "./models.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -178,6 +184,7 @@ function catalogPayload(): Record<string, unknown> {
       imageCredits: PRESET_MODEL.credits,
       animateLabel: c.animateLabel,
       videoCredits: c.animateModel.credits,
+      videoModelKey: c.animateModel.key, // composer reads its duration/ratio params
       // Story-builder steps (fragments stay server-side — labels/ids only).
       quiz: (c.quiz ?? []).map((s) => ({
         id: s.id,
@@ -194,6 +201,32 @@ function catalogPayload(): Record<string, unknown> {
       key: k,
       label: MODELS[k].label,
       credits: MODELS[k].credits,
+      // Composer capabilities: selectable durations (with per-length price) + ratios.
+      video: MODELS[k].video
+        ? {
+            durations: MODELS[k].video!.durations.map((d) => ({
+              seconds: d,
+              credits: priceFor(MODELS[k], { duration: d }),
+            })),
+            aspectRatios: MODELS[k].video!.aspectRatios,
+          }
+        : null,
+    })),
+    // Video story composer (personalize any image→video): ids/labels only.
+    videoStory: VIDEO_STORY.map((s) => ({
+      id: s.id,
+      question: s.question,
+      options: s.options.map((o) => ({ id: o.id, label: o.label })),
+    })),
+    // Sliding news banner: newest models, instantly triable from the studio.
+    // The cheapest image model is flagged as the free-trial entry.
+    news: MODEL_NEWS.map((n) => ({
+      key: n.key,
+      title: n.title,
+      tag: n.tag,
+      credits: MODELS[n.key].credits,
+      kind: MODELS[n.key].kind,
+      freeTrial: MODELS[n.key].credits <= config.freeCredits,
     })),
   };
 }
@@ -264,6 +297,26 @@ function isHttpsUrl(v: unknown): v is string {
   return typeof v === "string" && v.length < 2048 && /^https:\/\//.test(v);
 }
 
+/** id → English fragment for the video story composer (curated, server-side). */
+const VIDEO_FRAGMENTS = new Map(VIDEO_STORY.flatMap((s) => s.options.map((o) => [o.id, o.fragment])));
+
+/**
+ * Append the video composer's selections onto a base motion prompt: validated
+ * story-fragment ids + a sanitized personalization field (hobby / pet / loved
+ * things). Returns null on an unknown option id.
+ */
+function composeVideoStory(base: string, body: Record<string, unknown> | null): string | null {
+  let out = base;
+  for (const raw of Array.isArray(body?.options) ? (body.options as unknown[]) : []) {
+    const frag = VIDEO_FRAGMENTS.get(String(raw));
+    if (!frag) return null;
+    out += ` ${frag}`;
+  }
+  const custom = sanitizePrompt(typeof body?.custom === "string" ? body.custom : "").slice(0, 200);
+  if (custom) out += ` Personal touches to weave in subtly: ${custom}.`;
+  return out;
+}
+
 /**
  * POST /api/generate — the in-app studio's engine. The client sends a source
  * reference (validated against the server-side catalog) — never a raw curated
@@ -288,7 +341,7 @@ export async function generateResponse(
   if (imageUrl && /\.(mp4|webm|mov)(\?|$)/i.test(imageUrl)) {
     return { status: 400, body: { error: "bad_source" } };
   }
-  let model, prompt: string, crafted;
+  let model: ModelSpec, prompt: string, crafted;
 
   if (source === "preset") {
     const p = PRESETS.find((x) => x.id === body?.id);
@@ -314,31 +367,47 @@ export async function generateResponse(
   } else if (source === "campaign_video") {
     const c = campaignById(String(body?.id ?? ""));
     if (!c || !imageUrl) return { status: 400, body: { error: "bad_request" } };
-    [model, prompt, crafted] = [c.animateModel, c.animatePrompt, true];
+    // Curated campaign motion + optional video-composer story/personalization.
+    const composed = composeVideoStory(c.animatePrompt, body);
+    if (composed === null) return { status: 400, body: { error: "bad_option" } };
+    [model, prompt, crafted] = [c.animateModel, composed, true];
   } else if (source === "model") {
     const m = modelByKey(String(body?.model ?? ""));
     const allowed = new Set<string>([...IMAGE_MODEL_PICKER, ...VIDEO_MODEL_PICKER, "photo_edit", "premium_edit"]);
     if (!m || !allowed.has(m.key)) return { status: 400, body: { error: "bad_request" } };
     if (m.kind !== "text_to_image" && !imageUrl) return { status: 400, body: { error: "bad_request" } };
-    const raw = typeof body?.prompt === "string" ? body.prompt : "";
+    let raw = typeof body?.prompt === "string" ? body.prompt : "";
+    // Video: fold in the composer story/personalization before craft mapping.
+    if (m.kind === "image_to_video") {
+      const composed = composeVideoStory(raw, body);
+      if (composed === null) return { status: 400, body: { error: "bad_option" } };
+      raw = composed;
+    }
     [model, prompt, crafted] = [m, raw, false];
   } else {
     return { status: 400, body: { error: "bad_request" } };
   }
 
-  const r = await startWebGeneration(userId, model, prompt, imageUrl, crafted);
+  // Composer options (duration/aspect ratio) — validated against the model.
+  const opts = normalizeOpts(model, {
+    duration: body?.duration != null ? Number(body.duration) : undefined,
+    aspectRatio: typeof body?.aspect_ratio === "string" ? body.aspect_ratio : undefined,
+  } as GenOpts);
+  if (opts === null) return { status: 400, body: { error: "bad_opts" } };
+
+  const r = await startWebGeneration(userId, model, prompt, imageUrl, crafted, opts);
   if (!r.ok) {
     if (r.error === "insufficient") {
       const balance = (await getUser(userId))?.credits ?? 0;
       return {
         status: 402,
-        body: { error: "insufficient", need: model.credits, balance, packs: packsPayload() },
+        body: { error: "insufficient", need: priceFor(model, opts), balance, packs: packsPayload() },
       };
     }
     return { status: 400, body: { error: r.error } };
   }
   const balance = (await getUser(userId))?.credits ?? 0;
-  return { status: 200, body: { id: r.id, credits: model.credits, balance } };
+  return { status: 200, body: { id: r.id, credits: r.credits, balance } };
 }
 
 /**

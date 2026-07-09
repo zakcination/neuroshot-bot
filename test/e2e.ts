@@ -544,7 +544,7 @@ await step("top models: video picker routes photo→video to the chosen model (S
   await pressButton(dave, "act:seedance");
   await sendText(dave, "slow dolly in");
   const call = falCalls.at(-1)!;
-  assert.equal(call.endpoint, "fal-ai/bytedance/seedance-2.0/image-to-video"); // verified fal endpoint
+  assert.equal(call.endpoint, "bytedance/seedance-2.0/image-to-video"); // verified fal endpoint
   assert.ok((call.input.image_url as string).startsWith("https://api.telegram.org/file/bot"));
   assert.equal(call.input.duration, "5");
   assert.equal(call.input.resolution, "720p");
@@ -673,7 +673,7 @@ await step("мини-фильм campaign: NB2 film still → Seedance 2.0 Fast m
 
   await pressButton(actor, "camv:minifilm");
   const clip = falCalls.at(-1)!;
-  assert.equal(clip.endpoint, "fal-ai/bytedance/seedance-2.0/fast/image-to-video"); // story model
+  assert.equal(clip.endpoint, "bytedance/seedance-2.0/fast/image-to-video"); // story model
   assert.equal(clip.input.image_url, stillUrl); // animates the generated still
   assert.match(clip.input.prompt as string, /multi-shot/i);
   assert.equal(await credits(actor.id), 147); // 208 − 61

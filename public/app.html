@@ -203,6 +203,28 @@
     .choice .price { margin-top: auto; font-size: 12px; color: var(--amber); font-weight: 700; }
     .choice .desc { font-size: 11.5px; color: var(--muted); }
 
+    /* news banner — sliding model headlines */
+    .news { margin: 16px 0 4px; }
+    .newsrail { display: grid; grid-auto-flow: column; grid-auto-columns: 86%; gap: 11px; overflow-x: auto; scroll-snap-type: x mandatory; margin: 0 -16px; padding: 0 16px 6px; scrollbar-width: none; }
+    .newsrail::-webkit-scrollbar { display: none; }
+    .newscard {
+      scroll-snap-align: center; position: relative; overflow: hidden; cursor: pointer;
+      border-radius: var(--radius); padding: 16px 16px 15px; border: 1px solid rgba(124,92,255,.35);
+      background: radial-gradient(130% 140% at 100% 0%, rgba(255,77,141,.22), transparent 55%), var(--surface);
+      display: flex; flex-direction: column; gap: 8px; min-height: 96px; color: var(--ink); font: inherit; text-align: left;
+    }
+    .newscard .chiprow { display: flex; align-items: center; gap: 7px; }
+    .newscard .ntag { font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; background: var(--aurora); color: #fff; padding: 3px 8px; border-radius: 999px; }
+    .newscard .free { font-size: 10px; font-weight: 800; letter-spacing: .06em; color: #08070c; background: var(--amber); padding: 3px 8px; border-radius: 999px; }
+    .newscard b { font-size: 15px; line-height: 1.3; }
+    .newscard .go { margin-top: auto; font-size: 12.5px; color: var(--violet); font-weight: 700; }
+    .newsdots { display: flex; justify-content: center; gap: 6px; margin-top: 4px; }
+    .newsdots i { width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,.2); transition: background .2s, width .2s; }
+    .newsdots i.on { width: 16px; border-radius: 3px; background: var(--violet); }
+
+    /* live price badge in the composer */
+    .priceBadge { display: inline-flex; align-items: center; gap: 6px; font-weight: 800; color: var(--amber); font-size: 15px; font-variant-numeric: tabular-nums; }
+
     /* quiz chips (story builder) */
     .quiz-q { font-size: 13px; font-weight: 700; color: var(--muted); margin: 14px 0 8px; }
     .chips { display: flex; flex-wrap: wrap; gap: 7px; }
@@ -417,10 +439,9 @@
           `<button class="choice" data-camp="${k.id}"><b>${esc(k.label)}</b><span class="desc">+ видео за ${k.videoCredits} 🔫</span><span class="price">${k.imageCredits} 🔫</span></button>`).join("")}</div>`;
       } else if (st.tab === "video") {
         inner = `
-          <div class="sub">Фото оживёт в 5-секундное видео. Опишите движение — или оставьте как есть.</div>
-          <textarea class="prompt" id="vprompt" placeholder="Опишите движение…">плавное живое движение, лёгкий наезд камеры</textarea>
-          <div class="choices" style="margin-top:10px">${c.videoModels.map((m) =>
-            `<button class="choice" data-vmodel="${m.key}"><b>${esc(m.label)}</b><span class="price">${m.credits} 🔫</span></button>`).join("")}</div>`;
+          <div class="sub">Оживите фото в видео. Выберите модель — дальше настроите формат, длительность и сюжет.</div>
+          <div class="choices">${c.videoModels.map((m) =>
+            `<button class="choice" data-vmodel="${m.key}"><b>${esc(m.label)}</b><span class="price">от ${m.credits} 🔫</span></button>`).join("")}</div>`;
       } else {
         inner = `
           <div class="sub">Опишите, что нарисовать — и выберите модель.</div>
@@ -438,8 +459,8 @@
       sheetBody.querySelectorAll("[data-camp]").forEach((b) => (b.onclick = () => viewCampaign(b.dataset.camp)));
       sheetBody.querySelectorAll("[data-vmodel]").forEach((b) => (b.onclick = () => {
         const m = c.videoModels.find((x) => x.key === b.dataset.vmodel);
-        st.pick = { source: "model", model: m.key, credits: m.credits, needPhoto: true, prompt: sheetBody.querySelector("#vprompt").value };
-        viewPhoto();
+        st.pick = { source: "model", model: m.key, credits: m.credits, needPhoto: true, options: [], custom: "", prompt: "" };
+        viewVideoComposer(m);
       }));
       sheetBody.querySelectorAll("[data-tmodel]").forEach((b) => (b.onclick = () => {
         const m = c.imageModels.find((x) => x.key === b.dataset.tmodel);
@@ -584,6 +605,8 @@
         generation_id: pick.generation_id || undefined,
         options: pick.options && pick.options.length ? pick.options : undefined,
         custom: pick.custom || undefined,
+        duration: pick.duration || undefined,
+        aspect_ratio: pick.aspect_ratio && pick.aspect_ratio !== "auto" ? pick.aspect_ratio : undefined,
       };
       st.retry = { body, campaignId: pick.campaignId || null };
       const { status, data } = await api("/api/generate", { method: "POST", body: JSON.stringify(body) });
@@ -671,14 +694,15 @@
       // so chains survive app restarts and never depend on client state.
       const animBtn = sheetBody.querySelector("#animBtn");
       if (animBtn) animBtn.onclick = () => {
-        st.pick = { source: "campaign_video", id: camp.id, campaignId: camp.id, credits: camp.videoCredits, needPhoto: false, generation_id: g.id };
-        run();
+        const m = ME.catalog.videoModels.find((x) => x.key === camp.videoModelKey) || ME.catalog.videoModels[0];
+        st.pick = { source: "campaign_video", id: camp.id, campaignId: camp.id, credits: camp.videoCredits, needPhoto: false, generation_id: g.id, options: [], custom: "" };
+        viewVideoComposer(m);
       };
       const animBtn2 = sheetBody.querySelector("#animBtn2");
       if (animBtn2) animBtn2.onclick = () => {
         const m = ME.catalog.videoModels[0]; // default: Kling 3.0
-        st.pick = { source: "model", model: m.key, credits: m.credits, needPhoto: false, generation_id: g.id, prompt: "плавное живое движение, лёгкий наезд камеры" };
-        run();
+        st.pick = { source: "model", model: m.key, credits: m.credits, needPhoto: false, generation_id: g.id, options: [], custom: "", prompt: "" };
+        viewVideoComposer(m);
       };
       sheetBody.querySelector("#saveBtn").onclick = () => saveMedia(g.output_url, g.id);
       sheetBody.querySelector("#chatBtn").onclick = () => sendToChat(g.id);
@@ -731,22 +755,158 @@
       sheetBody.querySelector("#vMore").onclick = () => { st.pick = null; viewPick(); };
     }
 
-    /** Animate a previous work: model + motion, source = the generation id. */
+    /** Animate a previous work: pick a video model → composer, source = gen id. */
     function viewAnimateFrom(item) {
       sheetBody.innerHTML = `
         <h3>Оживить работу</h3>
         <div class="result-media" style="max-height:26dvh;overflow:hidden"><img src="${esc(item.output_url)}" alt="" /></div>
-        <div class="quiz-q">Движение</div>
-        <textarea class="prompt" id="vprompt">плавное живое движение, лёгкий наезд камеры</textarea>
-        <div class="choices" style="margin-top:10px">${ME.catalog.videoModels.map((m) =>
-          `<button class="choice" data-vm="${m.key}"><b>${esc(m.label)}</b><span class="price">${m.credits} 🔫</span></button>`).join("")}</div>
+        <div class="quiz-q">Выберите модель видео</div>
+        <div class="choices">${ME.catalog.videoModels.map((m) =>
+          `<button class="choice" data-vm="${m.key}"><b>${esc(m.label)}</b><span class="price">от ${m.credits} 🔫</span></button>`).join("")}</div>
         <div class="row"><button class="btn ghost" id="backBtn">← Назад</button></div>`;
       sheetBody.querySelector("#backBtn").onclick = () => openViewer(item);
       sheetBody.querySelectorAll("[data-vm]").forEach((b) => (b.onclick = () => {
         const m = ME.catalog.videoModels.find((x) => x.key === b.dataset.vm);
-        st.pick = { source: "model", model: m.key, credits: m.credits, needPhoto: false, generation_id: item.id, prompt: sheetBody.querySelector("#vprompt").value };
-        run();
+        st.pick = { source: "model", model: m.key, credits: m.credits, needPhoto: false, generation_id: item.id, options: [], custom: "", prompt: "" };
+        viewVideoComposer(m);
       }));
+    }
+
+    const RATIO_LABEL = { auto: "Как фото", "9:16": "9:16 ↕", "16:9": "16:9 ↔", "1:1": "1:1 ◻" };
+
+    /**
+     * Video composer: aspect ratio + duration (live price) + story quiz
+     * (action / genre / emotion / camera) + personalization (hobby, pet, loved
+     * things) + optional motion text. Server composes fragments onto the prompt.
+     */
+    function viewVideoComposer(m) {
+      const pick = st.pick;
+      const durs = m.video ? m.video.durations : [{ seconds: 5, credits: m.credits }];
+      const ratios = m.video ? m.video.aspectRatios : ["auto"];
+      const story = ME.catalog.videoStory || [];
+      pick.aspect_ratio = pick.aspect_ratio || ratios[0];
+      pick.duration = pick.duration || durs[0].seconds;
+      pick.options = pick.options || [];
+      const isCurated = pick.source === "campaign_video"; // motion prompt is curated
+      const priceOf = (sec) => (durs.find((d) => d.seconds === sec) || durs[0]).credits;
+
+      sheetBody.innerHTML = `
+        <h3>Настройки видео</h3>
+        <div class="quiz-q">Формат кадра</div>
+        <div class="chips" id="arRow">${ratios.map((r) =>
+          `<button class="chip ${r === pick.aspect_ratio ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>
+        <div class="quiz-q">Длительность</div>
+        <div class="chips" id="durRow">${durs.map((d) =>
+          `<button class="chip ${d.seconds === pick.duration ? "on" : ""}" data-dur="${d.seconds}">${d.seconds}с · ${d.credits} 🔫</button>`).join("")}</div>
+        ${story.map((s) => `
+          <div class="quiz-q">${esc(s.question)}</div>
+          <div class="chips" data-step="${s.id}">${s.options.map((o) =>
+            `<button class="chip ${pick.options.includes(o.id) ? "on" : ""}" data-opt="${o.id}">${esc(o.label)}</button>`).join("")}</div>`).join("")}
+        <div class="quiz-q">Детали: хобби, питомец, что любит (необязательно)</div>
+        <input class="words" id="cw" maxlength="200" value="${esc(pick.custom || "")}" placeholder="напр.: обожает футбол и собаку Рекса" />
+        ${isCurated ? "" : `<div class="quiz-q">Движение (необязательно)</div>
+          <textarea class="prompt" id="mp" placeholder="напр.: медленный наезд, волосы на ветру">${esc(pick.prompt || "")}</textarea>`}
+        <div class="stack">
+          <button class="btn primary" id="goBtn"><span class="priceBadge">Создать · <span id="prN">${priceOf(pick.duration)}</span> 🔫</span></button>
+          <button class="btn ghost" id="backBtn">← Назад</button>
+        </div>`;
+
+      // aspect ratio + duration are single-select (no unselect).
+      sheetBody.querySelectorAll("#arRow .chip").forEach((c) => (c.onclick = () => {
+        sheetBody.querySelectorAll("#arRow .chip").forEach((x) => x.classList.remove("on"));
+        c.classList.add("on"); pick.aspect_ratio = c.dataset.ar;
+      }));
+      sheetBody.querySelectorAll("#durRow .chip").forEach((c) => (c.onclick = () => {
+        sheetBody.querySelectorAll("#durRow .chip").forEach((x) => x.classList.remove("on"));
+        c.classList.add("on"); pick.duration = Number(c.dataset.dur);
+        sheetBody.querySelector("#prN").textContent = priceOf(pick.duration);
+      }));
+      // story chips: one per step, tap again to clear.
+      const sel = {};
+      story.forEach((s) => { if (pick.options.length) { /* preserve */ } });
+      sheetBody.querySelectorAll(".chips[data-step]").forEach((row) => {
+        row.querySelectorAll(".chip").forEach((chip) => {
+          if (chip.classList.contains("on")) sel[row.dataset.step] = chip.dataset.opt;
+          chip.onclick = () => {
+            const on = chip.classList.contains("on");
+            row.querySelectorAll(".chip").forEach((x) => x.classList.remove("on"));
+            if (!on) { chip.classList.add("on"); sel[row.dataset.step] = chip.dataset.opt; }
+            else delete sel[row.dataset.step];
+          };
+        });
+      });
+      sheetBody.querySelector("#backBtn").onclick = () => viewPick();
+      sheetBody.querySelector("#goBtn").onclick = () => {
+        pick.options = Object.values(sel);
+        pick.custom = sheetBody.querySelector("#cw").value.trim();
+        const mp = sheetBody.querySelector("#mp");
+        if (mp) pick.prompt = mp.value.trim();
+        if (pick.needPhoto && !pick.generation_id) viewPhoto(); else run();
+      };
+    }
+
+    /** Focused text-to-image with one chosen model (from the news banner). */
+    function viewTextModel(n) {
+      openSheet();
+      sheetBody.innerHTML = `
+        <h3>${esc(n.title)}</h3>
+        <div class="sub">Опишите, что нарисовать — модель ${esc(n.label)}.</div>
+        <textarea class="prompt" id="tp" placeholder="напр.: флакон духов на мокром чёрном мраморе"></textarea>
+        <div class="stack"><button class="btn primary" id="goBtn">Создать за ${n.credits} 🔫</button></div>`;
+      sheetBody.querySelector("#goBtn").onclick = () => {
+        const prompt = sheetBody.querySelector("#tp").value.trim();
+        if (!prompt) { toast("Опишите, что нарисовать 🙂"); return; }
+        st.pick = { source: "model", model: n.key, credits: n.credits, needPhoto: false, prompt };
+        run();
+      };
+    }
+
+    /** Try a model from the news banner — routes to the right composer by kind. */
+    function tryModel(n) {
+      if (n.kind === "text_to_image") { viewTextModel(n); return; }
+      if (n.kind === "image_to_video") {
+        openSheet();
+        const m = ME.catalog.videoModels.find((x) => x.key === n.key) || { key: n.key, credits: n.credits, video: null, label: n.title };
+        st.pick = { source: "model", model: n.key, credits: n.credits, needPhoto: true, options: [], custom: "", prompt: "" };
+        viewVideoComposer(m);
+        return;
+      }
+      studio("shoot"); // image_edit / fallback
+    }
+
+    /** Sliding model-news banner: cards + auto-advance + dots. */
+    function renderNews() {
+      const rail = document.getElementById("newsrail"), dots = document.getElementById("newsdots");
+      const news = (ME.catalog && ME.catalog.news) || [];
+      if (!rail || !news.length) { if (rail) rail.closest(".news").style.display = "none"; return; }
+      rail.innerHTML = ""; dots.innerHTML = "";
+      news.forEach((n, i) => {
+        const card = $(`
+          <button class="newscard" data-i="${i}">
+            <div class="chiprow"><span class="ntag">${esc(n.tag)}</span>${n.freeTrial ? '<span class="free">🎁 БЕСПЛАТНО</span>' : ""}</div>
+            <b>${esc(n.title)}</b>
+            <span class="go">Попробовать · ${n.credits} 🔫 →</span>
+          </button>`);
+        card.onclick = () => tryModel(n);
+        rail.appendChild(card);
+        const dot = $(`<i class="${i === 0 ? "on" : ""}"></i>`);
+        dots.appendChild(dot);
+      });
+      // reflect scroll position in dots; gentle auto-advance every 4s.
+      const cards = [...rail.children];
+      const setDot = () => {
+        const i = Math.round(rail.scrollLeft / (rail.scrollWidth / cards.length));
+        [...dots.children].forEach((d, k) => d.classList.toggle("on", k === Math.min(i, cards.length - 1)));
+      };
+      rail.addEventListener("scroll", setDot, { passive: true });
+      if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        let i = 0;
+        setInterval(() => {
+          if (!document.body.contains(rail)) return;
+          i = (i + 1) % cards.length;
+          rail.scrollTo({ left: cards[i].offsetLeft - rail.offsetLeft, behavior: "smooth" });
+        }, 4000);
+      }
     }
 
     // ————— paywall: buy Stars packs WITHOUT leaving the app —————
@@ -867,6 +1027,12 @@
           </div>
         </div></div>
 
+        <div class="news reveal">
+          <div class="sec-h"><h2>🆕 Новые модели</h2></div>
+          <div class="newsrail" id="newsrail"></div>
+          <div class="newsdots" id="newsdots"></div>
+        </div>
+
         <section class="reveal">
           <div class="sec-h"><h2>Что создаём</h2></div>
           <div class="rail">
@@ -917,6 +1083,7 @@
 
       countUp(document.getElementById("balN"), dash.credits);
       renderGallery();
+      renderNews();
 
       const p = document.getElementById("p");
       for (const pack of d.packs || []) {
