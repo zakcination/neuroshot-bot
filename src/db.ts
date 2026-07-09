@@ -49,6 +49,9 @@ const SCHEMA: string[] = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS ref_milestones INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS partner_code TEXT`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS free_result_used BOOLEAN NOT NULL DEFAULT false`,
+  // Acquisition source (first-touch, immutable): 'ref' | 'c_<code>' | a deep-link
+  // slug per creative/channel (t.me/<bot>?start=src_tiktok1) | NULL = organic.
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT`,
   // Creator/partner codes: negotiated deals with bloggers & course authors.
   // Deep link: t.me/<bot>?start=c_<code>. Each code carries its own revenue
   // share and join bonus (per-deal terms) — see docs/creator-program.md.
@@ -161,6 +164,7 @@ export async function getOrCreateUser(
   freeCredits: number,
   joinBonus = 0,
   partner: PartnerCodeRow | null = null,
+  source: string | null = null,
 ): Promise<UserRow> {
   const ref = referrerId && referrerId !== id ? referrerId : null;
   // Attribution is first-touch and exclusive: friend referral OR creator code.
@@ -170,10 +174,13 @@ export async function getOrCreateUser(
     : via
       ? Math.max(0, Math.floor(via.join_bonus))
       : 0;
+  // Acquisition source, first-touch (set only on the INSERT): referral link →
+  // 'ref', creator code → 'c_<code>', ad/channel deep link → its slug.
+  const src = ref ? "ref" : via ? `c_${via.code}` : source;
   const inserted = await q(
-    `INSERT INTO users (id, username, credits, referrer_id, partner_code) VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO users (id, username, credits, referrer_id, partner_code, source) VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (id) DO NOTHING RETURNING *`,
-    [id, username ?? null, freeCredits + bonus, ref, via?.code ?? null],
+    [id, username ?? null, freeCredits + bonus, ref, via?.code ?? null, src],
   );
   if (inserted.length) {
     await q("INSERT INTO ledger (user_id, delta, reason) VALUES ($1, $2, 'signup')", [id, freeCredits]);

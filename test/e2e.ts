@@ -19,7 +19,8 @@ process.env.ADMIN_IDS = "9999";
 
 const { fal } = await import("@fal-ai/client");
 const { createBot } = await import("../src/bot.js");
-const { funnel, query, getUser } = await import("../src/db.js");
+const { funnel, query, getUser, logGeneration } = await import("../src/db.js");
+const { buildDigest, checkAlerts } = await import("../src/monitor.js");
 const { nUnits, nResults } = await import("../src/text.js");
 
 // ---------- Telegram API stub (transformer: intercepts every outgoing call) ----------
@@ -543,7 +544,7 @@ await step("top models: video picker routes photo→video to the chosen model (S
   await pressButton(dave, "act:seedance");
   await sendText(dave, "slow dolly in");
   const call = falCalls.at(-1)!;
-  assert.equal(call.endpoint, "fal-ai/bytedance/seedance-2.0/image-to-video"); // verified fal endpoint
+  assert.equal(call.endpoint, "bytedance/seedance-2.0/image-to-video"); // verified fal endpoint
   assert.ok((call.input.image_url as string).startsWith("https://api.telegram.org/file/bot"));
   assert.equal(call.input.duration, "5");
   assert.equal(call.input.resolution, "720p");
@@ -672,7 +673,7 @@ await step("мини-фильм campaign: NB2 film still → Seedance 2.0 Fast m
 
   await pressButton(actor, "camv:minifilm");
   const clip = falCalls.at(-1)!;
-  assert.equal(clip.endpoint, "fal-ai/bytedance/seedance-2.0/fast/image-to-video"); // story model
+  assert.equal(clip.endpoint, "bytedance/seedance-2.0/fast/image-to-video"); // story model
   assert.equal(clip.input.image_url, stillUrl); // animates the generated still
   assert.match(clip.input.prompt as string, /multi-shot/i);
   assert.equal(await credits(actor.id), 147); // 208 − 61
@@ -789,6 +790,58 @@ await step("admin /grant: target + self shorthand + negative; non-admin silent; 
   assert.match(lastText(), /не найден/);
   assert.equal(await credits(alice.id), aliceBefore + 100);
   assert.equal(await ledgerCount("admin_grant"), grantsBefore + 3);
+});
+
+await step("source tracking: deep-link slugs, referral и partner become first-touch sources", async () => {
+  const ad: From = { id: 7001, is_bot: false, first_name: "Ad", username: "ad" };
+  await sendText(ad, "/start src_TikTok!"); // slug is lowercased and sanitized
+  const src = await query("SELECT source FROM users WHERE id = $1", [ad.id]);
+  assert.equal(src[0].source, "src_tiktok");
+
+  const viaRef = await query("SELECT source FROM users WHERE id = $1", [bob.id]);
+  assert.equal(viaRef[0].source, "ref"); // bob joined via alice's referral link
+  const viaPartner = await query("SELECT source FROM users WHERE id = $1", [4101]);
+  assert.equal(viaPartner[0].source, "c_mentor"); // student joined via creator code
+
+  // First-touch is immutable: a repeat /start with a different slug won't move it.
+  await sendText(ad, "/start src_vk");
+  const still = await query("SELECT source FROM users WHERE id = $1", [ad.id]);
+  assert.equal(still[0].source, "src_tiktok");
+});
+
+await step("/dash: admin gets the 6-number digest split by source; non-admin gets silence", async () => {
+  await sendText(admin, "/dash");
+  const text = lastText();
+  assert.match(text, /сводка за 24 ч/);
+  assert.match(text, /Новых: <b>\d+<\/b>/);
+  assert.match(text, /src_tiktok 1/); // per-source split
+  assert.match(text, /Оплат: <b>\d+<\/b> на <b>⭐\d+<\/b>/);
+  assert.match(text, /c_mentor: \d+/); // payers split by source
+  assert.match(text, /маржа <b>\d+%<\/b>/);
+  assert.match(text, /Обязательства: <b>\d+ 🔫<\/b>/);
+
+  const digest = await buildDigest(24);
+  assert.ok(digest.stars > 0, "test journey produced purchases");
+  assert.ok(digest.marginPct != null && digest.marginPct > 50, `margin ${digest.marginPct}`);
+  assert.ok(digest.creditLiability > 0);
+
+  const before = calls("sendMessage").length;
+  await sendText(alice, "/dash"); // non-admin → silence, like /stats
+  assert.equal(calls("sendMessage").length, before);
+});
+
+await step("alerts: >5% model error rate trips the fal-drift interrupt; healthy checks stay quiet", async () => {
+  const clean = await checkAlerts();
+  assert.ok(!clean.some((a) => a.key === "margin"), "margin healthy in the test journey");
+  assert.ok(!clean.some((a) => a.key === "deadfunnel"), "payments exist in the window");
+
+  // Simulate provider drift: a burst of kling3 failures within the hour.
+  for (let i = 0; i < 6; i++) await logGeneration(9999, "kling3", "drift probe", 42, "error");
+  const alerts = await checkAlerts();
+  const drift = alerts.find((a) => a.key === "err:kling3");
+  assert.ok(drift, "kling3 error-rate alert missing");
+  assert.match(drift!.text, /kling3/);
+  assert.match(drift!.text, /fal\.ai/);
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL || "embedded (pglite)"})`);

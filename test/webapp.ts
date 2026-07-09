@@ -358,7 +358,7 @@ await step("campaign video upsell via API: minifilm renders on Seedance 2.0 Fast
   assert.equal(done.status, "ok");
   assert.match(done.output_url ?? "", /\.mp4$/);
   const call = falCalls.at(-1)!;
-  assert.equal(call.endpoint, "fal-ai/bytedance/seedance-2.0/fast/image-to-video");
+  assert.equal(call.endpoint, "bytedance/seedance-2.0/fast/image-to-video");
   assert.equal(call.input.image_url, "https://fal.test/out/1.png");
 });
 
@@ -574,6 +574,82 @@ await step("POST /api/send delivers a generation into the user's Telegram chat",
   assert.equal(foreign.status, 404);
   assert.equal(sends.length, 1);
   await new Promise<void>((r2) => tgStub.close(() => r2()));
+});
+
+await step("catalog: model news banner + video composer params (durations priced, ratios, story)", async () => {
+  const { body } = await apiMe(signInitData(maker));
+  const c = body.catalog as unknown as {
+    news: Array<{ key: string; title: string; credits: number; kind: string; freeTrial: boolean }>;
+    videoModels: Array<{ key: string; video: { durations: Array<{ seconds: number; credits: number }>; aspectRatios: string[] } | null }>;
+    videoStory: Array<{ id: string; options: Array<Record<string, unknown>> }>;
+  };
+  assert.ok(c.news.length >= 3, "news banner empty");
+  // freeTrial is credits ≤ FREE_CREDITS (3 in this env; NB2 @4🔫 becomes free at prod's 4).
+  for (const n of c.news) assert.equal(n.freeTrial, n.credits <= 3, `${n.key} freeTrial wrong`);
+  assert.ok(c.news.some((n) => n.key === "nb2_image" && n.credits === 4), "NB2 (cheapest entry) missing from news");
+  const kling = c.videoModels.find((m) => m.key === "kling3")!;
+  assert.deepEqual(kling.video!.durations.map((d) => d.seconds), [5, 10]);
+  assert.equal(kling.video!.durations[0].credits, 42); // 5s default
+  assert.equal(kling.video!.durations[1].credits, 84); // 10s = 2× ($0.168/s)
+  assert.ok(kling.video!.aspectRatios.includes("9:16")); // TikTok/Reels vertical
+  assert.ok(c.videoStory.length >= 3);
+  for (const s of c.videoStory) for (const o of s.options) assert.ok(!("fragment" in o), "video-story fragment leaked");
+});
+
+await step("video composer: duration scales the charge, ratio flows to fal, story composes server-side", async () => {
+  await addCredits(maker.id, 300, "admin_grant", "test");
+  const before = (await apiMe(signInitData(maker))).body.dashboard.credits;
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "kling3", generation_id: undefined,
+      image_url: "https://fal.test/storage/u-1.jpg", prompt: "base motion",
+      duration: 10, aspect_ratio: "9:16",
+      options: ["reveal", "cinematic"], custom: "  любит  футбол ",
+    }),
+  });
+  assert.equal(r.status, 200);
+  const d = (await r.json()) as { id: number; credits: number; balance: number };
+  assert.equal(d.credits, 84); // 10s Kling 3.0 = 2× the 5s price
+  assert.equal(d.balance, before - 84);
+  await pollGen(d.id);
+  const call = falCalls.at(-1)!;
+  assert.equal(call.input.duration, "10");
+  assert.equal(call.input.aspect_ratio, "9:16");
+  assert.match(call.input.prompt as string, /cinematic reveal as the subject steps into the light/);
+  assert.match(call.input.prompt as string, /film-grade color/);
+  assert.match(call.input.prompt as string, /любит футбол/); // sanitized personalization
+});
+
+await step("video composer validation: bad duration/ratio → 400 bad_opts, bad story id → bad_option", async () => {
+  const badDur = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "kling3", image_url: "https://x.test/a.jpg", prompt: "m", duration: 7 }),
+  });
+  assert.equal(badDur.status, 400);
+  assert.equal(((await badDur.json()) as { error: string }).error, "bad_opts");
+
+  const badRatio = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "kling3", image_url: "https://x.test/a.jpg", prompt: "m", aspect_ratio: "3:2" }),
+  });
+  assert.equal(badRatio.status, 400);
+  assert.equal(((await badRatio.json()) as { error: string }).error, "bad_opts");
+
+  const badStory = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "kling3", image_url: "https://x.test/a.jpg", prompt: "m", options: ["nope"] }),
+  });
+  assert.equal(badStory.status, 400);
+  assert.equal(((await badStory.json()) as { error: string }).error, "bad_option");
+});
+
+await step("Seedance 2.0 uses the correct bytedance/ endpoint namespace (fal drift fix)", async () => {
+  const { MODELS } = await import("../src/models.js");
+  assert.equal(MODELS.seedance.falEndpoint, "bytedance/seedance-2.0/image-to-video");
+  assert.equal(MODELS.seedance_fast.falEndpoint, "bytedance/seedance-2.0/fast/image-to-video");
+  assert.ok(!MODELS.seedance.falEndpoint.startsWith("fal-ai/"), "stale fal-ai/ prefix");
 });
 
 await step("prompt quality guards: kid-focus + no-duplicates baked into cartoon and star presets", async () => {

@@ -1,11 +1,15 @@
 import { createBot } from "./bot.js";
 import { config } from "./config.js";
 import { initDb } from "./db.js";
+import { startMonitor } from "./monitor.js";
 import { startWebApp } from "./webapp.js";
 
 await initDb(); // create the Postgres schema before serving
 
 const bot = createBot();
+
+// CEO monitoring: daily digest to admins + exception alerts (docs/monitoring.md).
+startMonitor((chatId, text) => bot.api.sendMessage(chatId, text, { parse_mode: "HTML" }));
 
 bot.api.setMyCommands([
   { command: "menu", description: "📋 Меню — что создаём?" },

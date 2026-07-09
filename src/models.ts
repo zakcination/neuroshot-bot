@@ -8,15 +8,30 @@
  */
 export type ModelKind = "image_edit" | "text_to_image" | "image_to_video";
 
+/** Per-generation options the studio composer can set (video mostly). */
+export interface GenOpts {
+  duration?: number; // video length in seconds
+  aspectRatio?: string; // "auto" (omit) | "9:16" | "16:9" | "1:1"
+}
+
+/** Video composer capabilities + per-second pricing (credits scale with length). */
+export interface VideoParams {
+  perSecondUsd: number; // provider cost per second — the credit-scaling basis
+  durations: number[]; // selectable seconds; durations[0] = default (matches `credits`)
+  aspectRatios: string[]; // selectable ratios; "auto" keeps the source frame's ratio
+}
+
 export interface ModelSpec {
   key: string;
   kind: ModelKind;
   falEndpoint: string;
-  credits: number;
+  credits: number; // charge for the DEFAULT settings (5s video / one image)
   approxCostUsd: number;
   label: string;
-  /** Builds the fal input payload. imageUrl is set for edit/video kinds. */
-  input: (prompt: string, imageUrl?: string) => Record<string, unknown>;
+  /** Builds the fal input payload. imageUrl set for edit/video; opts from the composer. */
+  input: (prompt: string, imageUrl?: string, opts?: GenOpts) => Record<string, unknown>;
+  /** Present on image_to_video models the composer can fine-tune. */
+  video?: VideoParams;
 }
 
 export const MODELS = {
@@ -45,7 +60,13 @@ export const MODELS = {
     credits: 25,
     approxCostUsd: 0.5,
     label: "🎬 Оживление фото",
-    input: (prompt, imageUrl) => ({ prompt, image_url: imageUrl, duration: "5" }),
+    input: (prompt, imageUrl, opts) => ({
+      prompt,
+      image_url: imageUrl,
+      duration: String(opts?.duration ?? 5),
+      ...(opts?.aspectRatio && opts.aspectRatio !== "auto" ? { aspect_ratio: opts.aspectRatio } : {}),
+    }),
+    video: { perSecondUsd: 0.1, durations: [5, 10], aspectRatios: ["auto", "9:16", "16:9", "1:1"] },
   },
   premium_image: {
     key: "premium_image",
@@ -118,27 +139,48 @@ export const MODELS = {
     credits: 42,
     approxCostUsd: 0.84,
     label: "🎬 Kling 3.0",
-    input: (prompt, imageUrl) => ({ prompt, start_image_url: imageUrl, duration: "5" }),
+    input: (prompt, imageUrl, opts) => ({
+      prompt,
+      start_image_url: imageUrl,
+      duration: String(opts?.duration ?? 5),
+      ...(opts?.aspectRatio && opts.aspectRatio !== "auto" ? { aspect_ratio: opts.aspectRatio } : {}),
+    }),
+    video: { perSecondUsd: 0.168, durations: [5, 10], aspectRatios: ["auto", "9:16", "16:9", "1:1"] },
   },
   // Seedance 2.0 Fast (ByteDance) — economy premium video, $0.2419/s → 5s ≈ $1.21.
   seedance_fast: {
     key: "seedance_fast",
     kind: "image_to_video",
-    falEndpoint: "fal-ai/bytedance/seedance-2.0/fast/image-to-video",
+    falEndpoint: "bytedance/seedance-2.0/fast/image-to-video",
     credits: 61,
     approxCostUsd: 1.21,
     label: "🎬 Seedance 2.0 Fast",
-    input: (prompt, imageUrl) => ({ prompt, image_url: imageUrl, resolution: "720p", duration: "5" }),
+    input: (prompt, imageUrl, opts) => ({
+      prompt,
+      image_url: imageUrl,
+      resolution: "720p",
+      duration: String(opts?.duration ?? 5),
+      ...(opts?.aspectRatio && opts.aspectRatio !== "auto" ? { aspect_ratio: opts.aspectRatio } : {}),
+    }),
+    video: { perSecondUsd: 0.2419, durations: [5, 10], aspectRatios: ["auto", "9:16", "16:9", "1:1"] },
   },
-  // Seedance 2.0 (ByteDance) — flagship video with audio/physics, $0.3024/s → 5s ≈ $1.51.
+  // Seedance 2.0 (ByteDance) — flagship video with audio/physics, $0.3034/s @720p → 5s ≈ $1.52.
+  // NOTE: Seedance 2.0 lives in the "bytedance/" namespace on fal (NO fal-ai/ prefix).
   seedance: {
     key: "seedance",
     kind: "image_to_video",
-    falEndpoint: "fal-ai/bytedance/seedance-2.0/image-to-video",
+    falEndpoint: "bytedance/seedance-2.0/image-to-video",
     credits: 76,
-    approxCostUsd: 1.51,
+    approxCostUsd: 1.52,
     label: "🎬 Seedance 2.0",
-    input: (prompt, imageUrl) => ({ prompt, image_url: imageUrl, resolution: "720p", duration: "5" }),
+    input: (prompt, imageUrl, opts) => ({
+      prompt,
+      image_url: imageUrl,
+      resolution: "720p",
+      duration: String(opts?.duration ?? 5),
+      ...(opts?.aspectRatio && opts.aspectRatio !== "auto" ? { aspect_ratio: opts.aspectRatio } : {}),
+    }),
+    video: { perSecondUsd: 0.3034, durations: [5, 10], aspectRatios: ["auto", "9:16", "16:9", "1:1"] },
   },
 } satisfies Record<string, ModelSpec>;
 
@@ -153,6 +195,112 @@ export const VIDEO_MODEL_PICKER = ["kling3", "animate", "seedance_fast", "seedan
 
 /** Default image→video model for campaign upsells and one-tap animate flows. */
 export const DEFAULT_VIDEO: ModelSpec = MODELS.kling3;
+
+/**
+ * The cheapest model of a kind — the daily digest surfaces it, and the news
+ * banner marks it as the free-trial entry (free 🔫 must cover at least one
+ * run of it). Recomputed from the registry, so a price update moves it.
+ */
+export function cheapestModel(kind: ModelKind): ModelSpec {
+  return Object.values(MODELS as Record<string, ModelSpec>)
+    .filter((m) => m.kind === kind)
+    .reduce((a, m) => (m.approxCostUsd < a.approxCostUsd ? m : a));
+}
+
+/**
+ * Credit charge for a generation given composer options. Video credits scale
+ * with the chosen duration (cost is per-second); images and default settings
+ * use the fixed `credits`. Kept ≥1 and rounded up so margin never inverts.
+ */
+export function priceFor(model: ModelSpec, opts?: GenOpts): number {
+  if (model.video && opts?.duration && opts.duration !== model.video.durations[0]) {
+    return Math.max(1, Math.ceil((model.video.perSecondUsd * opts.duration) / CREDIT_COST_BASIS));
+  }
+  return model.credits;
+}
+
+/** Validate composer options against a model's declared capabilities. */
+export function normalizeOpts(model: ModelSpec, opts?: GenOpts): GenOpts | null {
+  if (!opts || !model.video) return {};
+  const out: GenOpts = {};
+  if (opts.duration != null) {
+    if (!model.video.durations.includes(opts.duration)) return null;
+    out.duration = opts.duration;
+  }
+  if (opts.aspectRatio != null) {
+    if (!model.video.aspectRatios.includes(opts.aspectRatio)) return null;
+    out.aspectRatio = opts.aspectRatio;
+  }
+  return out;
+}
+
+/**
+ * The video story composer (web studio): fine-tune ANY image→video render with
+ * a few taps. Fragments are appended to the motion prompt SERVER-SIDE (client
+ * sends ids only). Personalization (hobby / pet / loved things) is a sanitized
+ * free-text field handled alongside — see webapp.ts.
+ */
+export const VIDEO_STORY: QuizStep[] = [
+  {
+    id: "action",
+    question: "Что происходит в кадре?",
+    options: [
+      { id: "reveal", label: "✨ Эффектное появление", fragment: "a cinematic reveal as the subject steps into the light" },
+      { id: "approach", label: "🚶 Идёт к камере", fragment: "the subject walks confidently toward the camera" },
+      { id: "turn", label: "🔄 Оборачивается", fragment: "the subject turns to face the camera and smiles" },
+      { id: "celebrate", label: "🎉 Празднует", fragment: "the subject celebrates joyfully with expressive gestures" },
+      { id: "calm", label: "🌊 Спокойное движение", fragment: "subtle lifelike motion — gentle breathing, a soft gaze shift" },
+    ],
+  },
+  {
+    id: "genre",
+    question: "Жанр",
+    options: [
+      { id: "cinematic", label: "🎬 Кино", fragment: "cinematic film-grade color and lighting" },
+      { id: "action", label: "💥 Экшн", fragment: "high-energy action style with dynamic camera moves" },
+      { id: "dreamy", label: "🌙 Мечтательный", fragment: "dreamy soft-focus atmosphere with warm glow" },
+      { id: "fashion", label: "🕶 Fashion", fragment: "sleek high-fashion editorial look" },
+    ],
+  },
+  {
+    id: "emotion",
+    question: "Эмоция",
+    options: [
+      { id: "joy", label: "😊 Радость", fragment: "radiating warmth and happiness" },
+      { id: "epic", label: "⚡ Мощь", fragment: "powerful, confident and heroic mood" },
+      { id: "tender", label: "🤍 Нежность", fragment: "tender, intimate and heartfelt mood" },
+      { id: "mystery", label: "🔮 Загадка", fragment: "mysterious, intriguing atmosphere" },
+    ],
+  },
+  {
+    id: "camera",
+    question: "Камера",
+    options: [
+      { id: "pushin", label: "🎥 Наезд", fragment: "a slow dramatic push-in" },
+      { id: "orbit", label: "🌀 Облёт", fragment: "a smooth orbiting camera move around the subject" },
+      { id: "handheld", label: "📹 Ручная", fragment: "subtle handheld camera with a documentary feel" },
+      { id: "static", label: "🎞 Статичная", fragment: "a locked-off static frame, motion within the scene" },
+    ],
+  },
+];
+
+/**
+ * Model news for the web app's sliding banner: every new/updated model gets a
+ * headline here and becomes instantly triable from the studio. Order = display
+ * order (newest first). Update alongside any MODELS change.
+ */
+export interface ModelNews {
+  key: keyof typeof MODELS;
+  title: string; // RU headline
+  tag: string; // short chip: what's special
+}
+export const MODEL_NEWS: ModelNews[] = [
+  { key: "seedance", title: "Seedance 2.0 — видео со звуком и физикой", tag: "🆕 звук" },
+  { key: "seedance_fast", title: "Seedance 2.0 Fast — мульти-кадровые истории", tag: "🎞 истории" },
+  { key: "kling3", title: "Kling 3.0 — кино-движение и консистентность", tag: "🎬 видео" },
+  { key: "nbpro_image", title: "Nano Banana Pro — детализация уровня 2K", tag: "💎 2K" },
+  { key: "nb2_image", title: "Nano Banana 2 — топ качество за 4 🔫", tag: "⚡ хит" },
+];
 
 /**
  * One-tap style presets (Higgsfield-style): a curated prompt applied to the
