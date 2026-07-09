@@ -16,6 +16,7 @@ import { config } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
 import { getGeneration, getOrCreateUser, getUser, recentGenerations, userDashboard } from "./db.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
+import { sanitizePrompt } from "./promptcraft.js";
 import {
   campaignById,
   CAMPAIGNS,
@@ -177,6 +178,12 @@ function catalogPayload(): Record<string, unknown> {
       imageCredits: PRESET_MODEL.credits,
       animateLabel: c.animateLabel,
       videoCredits: c.animateModel.credits,
+      // Story-builder steps (fragments stay server-side — labels/ids only).
+      quiz: (c.quiz ?? []).map((s) => ({
+        id: s.id,
+        question: s.question,
+        options: s.options.map((o) => ({ id: o.id, label: o.label })),
+      })),
     })),
     imageModels: IMAGE_MODEL_PICKER.map((k) => ({
       key: k,
@@ -267,7 +274,20 @@ export async function generateResponse(
   body: Record<string, unknown> | null,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const source = body?.source;
-  const imageUrl = isHttpsUrl(body?.image_url) ? body.image_url : undefined;
+  // Image source: an uploaded HTTPS URL, or one of the CALLER'S OWN previous
+  // generations by id (reusable works: no re-upload, owner-scoped).
+  let imageUrl = isHttpsUrl(body?.image_url) ? body.image_url : undefined;
+  if (!imageUrl && body?.generation_id != null) {
+    const src = await getGeneration(Number(body.generation_id), userId);
+    if (!src || src.status !== "ok" || !src.output_url) {
+      return { status: 400, body: { error: "bad_source" } };
+    }
+    imageUrl = src.output_url;
+  }
+  // A video file can't be a model's image input (e.g. Seedance needs a frame).
+  if (imageUrl && /\.(mp4|webm|mov)(\?|$)/i.test(imageUrl)) {
+    return { status: 400, body: { error: "bad_source" } };
+  }
   let model, prompt: string, crafted;
 
   if (source === "preset") {
@@ -276,9 +296,21 @@ export async function generateResponse(
     [model, prompt, crafted] = [PRESET_MODEL, p.prompt, true];
   } else if (source === "campaign") {
     const [campId, presetId] = String(body?.id ?? "").split(":");
-    const p = campaignById(campId)?.presets.find((x) => x.id === presetId);
-    if (!p || !imageUrl) return { status: 400, body: { error: "bad_request" } };
-    [model, prompt, crafted] = [PRESET_MODEL, p.prompt, true];
+    const c = campaignById(campId);
+    const p = c?.presets.find((x) => x.id === presetId);
+    if (!c || !p || !imageUrl) return { status: 400, body: { error: "bad_request" } };
+    // Story-builder: append the selected quiz fragments (validated ids — the
+    // client never sends prompt text) + a short sanitized free-words field.
+    let composed = p.prompt;
+    const fragments = new Map((c.quiz ?? []).flatMap((s) => s.options.map((o) => [o.id, o.fragment])));
+    for (const raw of Array.isArray(body?.options) ? (body.options as unknown[]) : []) {
+      const frag = fragments.get(String(raw));
+      if (!frag) return { status: 400, body: { error: "bad_option" } };
+      composed += ` ${frag}`;
+    }
+    const custom = sanitizePrompt(typeof body?.custom === "string" ? body.custom : "").slice(0, 200);
+    if (custom) composed += ` Extra details from the user: ${custom}.`;
+    [model, prompt, crafted] = [PRESET_MODEL, composed, true];
   } else if (source === "campaign_video") {
     const c = campaignById(String(body?.id ?? ""));
     if (!c || !imageUrl) return { status: 400, body: { error: "bad_request" } };
@@ -315,6 +347,33 @@ export async function generateResponse(
  * payment lands in the bot's successful_payment handler (same payload format),
  * so crediting/referrals/partner payouts share one code path.
  */
+/**
+ * POST /api/send — deliver one of the caller's generations into their Telegram
+ * chat with the bot (native save/forward/share from there). Owner-scoped.
+ */
+export async function sendResponse(
+  userId: number,
+  body: Record<string, unknown> | null,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const g = await getGeneration(Number(body?.id ?? NaN), userId);
+  if (!g || g.status !== "ok" || !g.output_url) return { status: 404, body: { error: "not_found" } };
+  const isVideo = /\.(mp4|webm|mov)(\?|$)/i.test(g.output_url);
+  const apiBase = process.env.TELEGRAM_API_BASE ?? "https://api.telegram.org";
+  const method = isVideo ? "sendVideo" : "sendPhoto";
+  const res = await fetch(`${apiBase}/bot${config.botToken}/${method}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: userId,
+      [isVideo ? "video" : "photo"]: g.output_url,
+      caption: "✨ Из вашей студии NeuroShot",
+    }),
+  });
+  const data = (await res.json()) as { ok: boolean };
+  if (!data.ok) return { status: 502, body: { error: "send_failed" } };
+  return { status: 200, body: { ok: true } };
+}
+
 export async function invoiceResponse(
   body: Record<string, unknown> | null,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
@@ -422,6 +481,15 @@ export function createWebApp(): Server {
         const user = resolveUser(req.headers);
         if (!user) return json(res, 401, { error: "unauthorized" });
         const { status, body } = await invoiceResponse(await readJsonBody(req, 4 * 1024));
+        return json(res, status, body);
+      }
+
+      // POST /api/send — deliver a generation into the user's Telegram chat.
+      if (url.pathname === "/api/send") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const { status, body } = await sendResponse(user.id, await readJsonBody(req, 4 * 1024));
         return json(res, status, body);
       }
 

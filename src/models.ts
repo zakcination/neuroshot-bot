@@ -252,6 +252,22 @@ export interface CampaignPreset {
   label: string;
   prompt: string;
 }
+/**
+ * Story-builder quiz (web studio): quick picks that refine a campaign preset.
+ * Each selected option's `fragment` is appended to the curated prompt
+ * SERVER-SIDE (the client only sends option ids), so prompts stay curated.
+ */
+export interface QuizOption {
+  id: string;
+  label: string; // RU chip shown to the user
+  fragment: string; // EN sentence appended to the prompt
+}
+export interface QuizStep {
+  id: string;
+  question: string;
+  options: QuizOption[];
+}
+
 export interface Campaign {
   id: string;
   label: string; // menu button
@@ -263,10 +279,23 @@ export interface Campaign {
   animatePrompt: string;
   /** Video model for the upsell: Kling 3.0 by default; Seedance for story flows. */
   animateModel: ModelSpec;
+  /** Optional story-builder steps (web studio) — see QuizStep. */
+  quiz?: QuizStep[];
 }
 
 const KEEP_ID = "Preserve the person's identity and facial features exactly.";
 const KEEP_KID = "Preserve the child's identity and facial features exactly.";
+/**
+ * Composition guard for kid+character scenes: models love to push the real
+ * child into the background and to duplicate the famous character. Bake the
+ * fix into every curated prompt (curated prompts skip the craft mapping).
+ */
+const KID_FOCUS =
+  "The real child is the MAIN subject: in the foreground, centered, face in sharp focus and well lit. " +
+  "Show exactly ONE instance of the character, standing beside and slightly behind the child — " +
+  "never duplicate the character or the child.";
+/** De-dup guard for scenes with a real-world star (two Messis = ruined shot). */
+const NO_CLONES = "Show each person exactly once — no duplicated figures anywhere in the frame.";
 
 export const CAMPAIGNS: Campaign[] = [
   {
@@ -303,6 +332,37 @@ export const CAMPAIGNS: Campaign[] = [
       "Gentle magical motion: soft camera push-in, fireflies drifting, hair and clothing moving in a light breeze, " +
       "the child smiles with wonder, cinematic storybook atmosphere.",
     animateModel: MODELS.kling3,
+    quiz: [
+      {
+        id: "hero",
+        question: "Кто ваш герой?",
+        options: [
+          { id: "knight", label: "⚔️ Рыцарь", fragment: "Dress the child as a brave young knight in shining storybook armor." },
+          { id: "princess", label: "👸 Принцесса", fragment: "Dress the child as a graceful fairy-tale princess in a flowing gown." },
+          { id: "wizard", label: "🪄 Волшебник", fragment: "Dress the child as a young wizard with a glowing magic staff." },
+          { id: "self", label: "🙂 Как есть", fragment: "Keep the child's own clothing exactly as in the photo." },
+        ],
+      },
+      {
+        id: "friend",
+        question: "Кто рядом?",
+        options: [
+          { id: "dragon", label: "🐉 Дракончик", fragment: "Add exactly one friendly small baby dragon companion beside the child." },
+          { id: "unicorn", label: "🦄 Единорог", fragment: "Add exactly one gentle white unicorn standing beside the child." },
+          { id: "fox", label: "🦊 Лисёнок", fragment: "Add exactly one clever magical fox companion beside the child." },
+          { id: "solo", label: "🌟 Без спутников", fragment: "The child is the sole hero of the scene — no companions." },
+        ],
+      },
+      {
+        id: "mood",
+        question: "Какой финал?",
+        options: [
+          { id: "bright", label: "☀️ Светлый", fragment: "Bright joyful golden light — a triumphant happy ending." },
+          { id: "mystic", label: "🌙 Таинственный", fragment: "Mysterious twilight with fireflies and soft mist." },
+          { id: "epic", label: "⚡ Эпичный", fragment: "Epic dramatic skies with god rays — a heroic climax." },
+        ],
+      },
+    ],
   },
   {
     id: "cartoon",
@@ -314,36 +374,40 @@ export const CAMPAIGNS: Campaign[] = [
         id: "sponge",
         label: "🧽 Губка Боб",
         prompt:
-          "Place this child happily standing next to SpongeBob SquarePants in colorful underwater Bikini Bottom, " +
-          `the cartoon world blended photorealistically around the real child, joyful vibrant scene. ${KEEP_KID}`,
+          "Place this child happily standing with SpongeBob SquarePants in colorful underwater Bikini Bottom, " +
+          `the cartoon world blended photorealistically around the real child, joyful vibrant scene. ${KID_FOCUS} ${KEEP_KID}`,
       },
       {
         id: "gumball",
         label: "😺 Гамбол",
         prompt:
-          "Place this child next to Gumball Watterson from The Amazing World of Gumball in the town of Elmore, " +
-          `playful mixed cartoon-and-photo style, bright cheerful colors, both laughing together. ${KEEP_KID}`,
+          "Place this child with Gumball Watterson from The Amazing World of Gumball in the town of Elmore, " +
+          `playful mixed cartoon-and-photo style, bright cheerful colors, both laughing together. ${KID_FOCUS} ${KEEP_KID}`,
       },
       {
         id: "trikota",
         label: "🐱 Три кота",
         prompt:
-          "Place this child alongside the three cheerful kitten characters of the cartoon «Три кота» (Kid-E-Cats) " +
-          `in their cozy cartoon town, warm family atmosphere, bright friendly colors. ${KEEP_KID}`,
+          "Place this child with the three cheerful kitten characters of the cartoon «Три кота» (Kid-E-Cats) " +
+          "in their cozy cartoon town, warm family atmosphere, bright friendly colors. " +
+          "The real child is the MAIN subject: in the foreground, centered, face in sharp focus and well lit. " +
+          `Show each of the three kittens exactly once, beside and slightly behind the child. ${KEEP_KID}`,
       },
       {
         id: "dbillions",
         label: "🎵 D Billions",
         prompt:
-          "Place this child dancing together with the colorful D Billions characters on a bright festive stage, " +
-          `confetti, joyful kids-show energy, vivid colors. ${KEEP_KID}`,
+          "Place this child dancing with the colorful D Billions characters on a bright festive stage, " +
+          "confetti, joyful kids-show energy, vivid colors. " +
+          "The real child is the MAIN subject: in the foreground, centered, face in sharp focus and well lit. " +
+          `Show each character exactly once, around and slightly behind the child. ${KEEP_KID}`,
       },
       {
         id: "shark",
         label: "🦈 Baby Shark",
         prompt:
-          "Place this child in a cheerful underwater scene swimming alongside Baby Shark and family, bubbles and " +
-          `sunbeams through the water, bright preschool-cartoon joy blended with the real child. ${KEEP_KID}`,
+          "Place this child in a cheerful underwater scene swimming with Baby Shark, bubbles and " +
+          `sunbeams through the water, bright preschool-cartoon joy blended with the real child. ${KID_FOCUS} ${KEEP_KID}`,
       },
     ],
     animateLabel: "🎬 Оживить встречу",
@@ -364,21 +428,21 @@ export const CAMPAIGNS: Campaign[] = [
         prompt:
           "Place this person on the pitch of a packed World Cup final stadium at night, standing shoulder to " +
           "shoulder with Lionel Messi, both in football kits, stadium lights blazing, confetti falling, " +
-          `sports-photography realism. ${KEEP_ID}`,
+          `sports-photography realism. ${NO_CLONES} ${KEEP_ID}`,
       },
       {
         id: "ronaldo",
         label: "🇵🇹 С Роналду",
         prompt:
           "Place this person on the pitch of a packed World Cup final stadium at night, celebrating side by side " +
-          `with Cristiano Ronaldo, both in football kits, dramatic stadium lighting, sports-photography realism. ${KEEP_ID}`,
+          `with Cristiano Ronaldo, both in football kits, dramatic stadium lighting, sports-photography realism. ${NO_CLONES} ${KEEP_ID}`,
       },
       {
         id: "yamal",
         label: "🇪🇸 С Ямалем",
         prompt:
           "Place this person on the pitch of a packed World Cup final stadium celebrating with Lamine Yamal, both " +
-          `in football kits, golden confetti falling, electric atmosphere, sports-photography realism. ${KEEP_ID}`,
+          `in football kits, golden confetti falling, electric atmosphere, sports-photography realism. ${NO_CLONES} ${KEEP_ID}`,
       },
       {
         id: "kit",
@@ -497,6 +561,26 @@ export const CAMPAIGNS: Campaign[] = [
       "camera drift; natural motion, consistent identity and wardrobe across every shot, film-grade color, " +
       "ambient atmosphere audio matching the scene.",
     animateModel: MODELS.seedance_fast,
+    quiz: [
+      {
+        id: "era",
+        question: "Когда происходит действие?",
+        options: [
+          { id: "now", label: "🏙 Наши дни", fragment: "Set the scene in the present day." },
+          { id: "retro", label: "📼 90-е", fragment: "Set the scene in the 1990s with period-correct details." },
+          { id: "future", label: "🚀 Будущее", fragment: "Set the scene in a sleek near-future world." },
+        ],
+      },
+      {
+        id: "tone",
+        question: "Тон фильма?",
+        options: [
+          { id: "warm", label: "🌅 Тёплый", fragment: "Warm heartfelt emotional tone." },
+          { id: "noir", label: "🕶 Триллер", fragment: "Tense noir-thriller atmosphere with moody shadows." },
+          { id: "fun", label: "😄 Комедия", fragment: "Light comedic tone with playful energy." },
+        ],
+      },
+    ],
   },
 ];
 
