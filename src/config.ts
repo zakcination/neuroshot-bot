@@ -23,6 +23,18 @@ export const config = {
   referralFirstPurchaseBonus: Number(process.env.REFERRAL_FIRST_PURCHASE_BONUS ?? 10),
   // Lifetime share of every pack a referred friend buys, paid to the referrer.
   referralPercent: Number(process.env.REFERRAL_PERCENT ?? 0.1),
+  // --- Partner program v2 (self-serve codes, docs/partner-program.md) ---
+  // 15% cashback of every pack bought by a user you invited via your code.
+  partnerPercent: Number(process.env.PARTNER_PERCENT ?? 0.15),
+  // One-time welcome bonus (🔫) granted when a user joins the partner program.
+  // Spend-only (never withdrawable) — ~$20 worth at retail pack rates.
+  partnerWelcome: Number(process.env.PARTNER_WELCOME ?? 180),
+  // Bonus 🔫 the INVITED user gets on top of freeCredits when joining via a code.
+  partnerInviteeBonus: Number(process.env.PARTNER_INVITEE_BONUS ?? 5),
+  // Max active codes one account may hold at a time.
+  partnerMaxCodes: Number(process.env.PARTNER_MAX_CODES ?? 10),
+  // Minimum withdrawable 🔫 to request a cash-out (biweekly).
+  withdrawMin: Number(process.env.WITHDRAW_MIN ?? 500),
   adminIds: (process.env.ADMIN_IDS ?? "")
     .split(",")
     .map((s) => s.trim())

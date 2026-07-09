@@ -16,10 +16,12 @@ process.env.FAL_KEY = "test-fal-key";
 process.env.DATABASE_URL = "";
 process.env.FREE_CREDITS = "12"; // enough headroom for the multi-step journey below
 process.env.ADMIN_IDS = "9999";
+process.env.PARTNER_WELCOME = "180"; // ≈$20 welcome bonus (spend-only)
+process.env.WITHDRAW_MIN = "20"; // low so the withdrawal path is exercisable
 
 const { fal } = await import("@fal-ai/client");
 const { createBot } = await import("../src/bot.js");
-const { funnel, query, getUser, logGeneration } = await import("../src/db.js");
+const { funnel, query, getUser, logGeneration, partnerAccount } = await import("../src/db.js");
 const { buildDigest, checkAlerts } = await import("../src/monitor.js");
 const { nUnits, nResults } = await import("../src/text.js");
 
@@ -790,6 +792,87 @@ await step("admin /grant: target + self shorthand + negative; non-admin silent; 
   assert.match(lastText(), /не найден/);
   assert.equal(await credits(alice.id), aliceBefore + 100);
   assert.equal(await ledgerCount("admin_grant"), grantsBefore + 3);
+});
+
+await step("partner v2: join → welcome (spend-only) + code; invitee pays → 15% withdrawable cashback", async () => {
+  const prt: From = { id: 8001, is_bot: false, first_name: "Prt", username: "prt" };
+  await sendText(prt, "/start"); // 12 free
+  await pressButton(prt, "partner:join");
+  const acct0 = await partnerAccount(prt.id);
+  assert.equal(acct0.joined, true);
+  assert.equal(acct0.activeCodes, 1); // first code minted on join
+  assert.equal(await credits(prt.id), 12 + 180); // free + welcome bonus
+  assert.equal(acct0.withdrawable, 0); // welcome is NOT withdrawable
+
+  // a second join press must NOT double-grant
+  await pressButton(prt, "partner:join");
+  assert.equal(await credits(prt.id), 192);
+  assert.equal((await partnerAccount(prt.id)).activeCodes, 1);
+
+  const code = String(
+    (await query("SELECT code FROM partner_codes WHERE user_id=$1 AND kind='partner' LIMIT 1", [prt.id]))[0].code,
+  );
+  assert.match(code, /^[a-z0-9]{6}$/);
+
+  // invitee joins via p_<code> → gets the invitee bonus, attributed first-touch
+  const inv: From = { id: 8101, is_bot: false, first_name: "Inv", username: "inv" };
+  await sendText(inv, `/start p_${code}`);
+  assert.equal(await credits(inv.id), 12 + 5); // free + partnerInviteeBonus
+  assert.equal(String((await getUser(inv.id))!.partner_code), code);
+
+  // invitee pays → partner earns 15% cashback, added to BOTH balances
+  await payForPack(inv, "popular", 2200); // 200 🔫 → floor(200*0.15)=30
+  const acct1 = await partnerAccount(prt.id);
+  assert.equal(acct1.paying, 1);
+  assert.equal(acct1.withdrawable, 30); // withdrawable cashback
+  assert.equal(await credits(prt.id), 192 + 30); // also spendable
+  const notify = calls("sendMessage").filter((c) => c.payload.chat_id === prt.id).at(-1)!;
+  assert.match(notify.payload.text as string, new RegExp(`кэшбэка.*p_${code}`));
+});
+
+await step("partner v2: withdrawal drains only withdrawable+credits; admin resolves; reject refunds", async () => {
+  const prt = { id: 8001 };
+  await pressButton({ id: 8001, is_bot: false, first_name: "Prt" }, "partner:withdraw"); // withdrawable 30 ≥ 20
+  const acct = await partnerAccount(prt.id);
+  assert.equal(acct.withdrawable, 0); // moved into the request
+  assert.equal(await credits(prt.id), 192); // 222 − 30 drained from spendable too
+
+  const wid = Number(
+    (await query("SELECT id FROM withdrawals WHERE user_id=$1 ORDER BY id DESC LIMIT 1", [prt.id]))[0].id,
+  );
+  await sendText(admin, "/payouts");
+  assert.match(lastText(), /Заявки на вывод/);
+  assert.match(lastText(), new RegExp(`№${wid}`));
+
+  // reject → 🔫 refunded to both balances
+  await sendText(admin, `/payout ${wid} no`);
+  assert.match(lastText(), /отклонена/);
+  assert.equal((await partnerAccount(prt.id)).withdrawable, 30);
+  assert.equal(await credits(prt.id), 222);
+  const st = await query("SELECT status FROM withdrawals WHERE id=$1", [wid]);
+  assert.equal(st[0].status, "rejected");
+
+  // non-admin cannot resolve payouts
+  const before = calls("sendMessage").length;
+  await sendText({ id: 8001, is_bot: false, first_name: "Prt" }, "/payout 999 ok");
+  assert.equal(calls("sendMessage").length, before);
+});
+
+await step("partner v2: 10-code cap enforced; deactivation frees a slot", async () => {
+  const cap: From = { id: 8002, is_bot: false, first_name: "Cap", username: "cap" };
+  await sendText(cap, "/start");
+  await pressButton(cap, "partner:join"); // 1 code
+  for (let i = 0; i < 9; i++) await pressButton(cap, "partner:newcode"); // → 10
+  assert.equal((await partnerAccount(cap.id)).activeCodes, 10);
+  await pressButton(cap, "partner:newcode"); // 11th blocked
+  assert.match(lastText(), /лимит/i);
+  assert.equal((await partnerAccount(cap.id)).activeCodes, 10);
+
+  const some = String(
+    (await query("SELECT code FROM partner_codes WHERE user_id=$1 AND kind='partner' AND active LIMIT 1", [cap.id]))[0].code,
+  );
+  await pressButton(cap, `partner:deact:${some}`);
+  assert.equal((await partnerAccount(cap.id)).activeCodes, 9); // slot freed
 });
 
 await step("source tracking: deep-link slugs, referral и partner become first-touch sources", async () => {

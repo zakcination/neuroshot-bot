@@ -7,14 +7,23 @@ import { Bot, GrammyError, HttpError, InlineKeyboard, InputFile, InputMediaBuild
 import { config } from "./config.js";
 import {
   addCredits,
+  createPartnerCode,
+  deactivatePartnerCode,
   funnel,
   getOrCreateUser,
   getPartnerCode,
   getUser,
+  joinPartnerProgram,
   listPartnerCodes,
   logEvent,
+  myPartnerCodes,
+  myWithdrawals,
+  partnerAccount,
   partnerStats,
+  pendingWithdrawals,
   referralStats,
+  requestWithdrawal,
+  resolveWithdrawal,
   setPending,
   stats,
   upsertPartnerCode,
@@ -234,9 +243,12 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     // code, anything else = an acquisition-source slug (one per creative/channel:
     // t.me/<bot>?start=src_tiktok1) for the per-source funnel in /dash.
     const referrerId = payload && /^\d+$/.test(payload) ? Number(payload) : null;
-    const partner = payload?.startsWith("c_")
-      ? ((await getPartnerCode(payload.slice(2).toLowerCase())) ?? null)
-      : null;
+    // c_<code> = admin creator deal · p_<code> = self-serve partner code — both
+    // live in partner_codes, so one lookup resolves either (first-touch attribution).
+    const partner =
+      payload && /^[cp]_/.test(payload)
+        ? ((await getPartnerCode(payload.slice(2).toLowerCase())) ?? null)
+        : null;
     const source =
       payload && !referrerId && !partner && payload !== "buy"
         ? payload.toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32) || null
@@ -287,30 +299,208 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   bot.command("ref", async (ctx) => sendRefLink(ctx));
 
-  // Creator/partner dashboard: per-code funnel + link for negotiated deals.
-  bot.command("partner", async (ctx) => {
+  // Self-serve partner program (docs/partner-program.md): join → get welcome
+  // bonus + personal codes → 15% cashback → withdraw. Admin creator deals (c_)
+  // still exist via /partner_add and show read-only below.
+  /** Read-only block for admin-negotiated creator (c_) codes, if the user owns any. */
+  async function creatorCodesBlock(ctx: Context, userId: number): Promise<string> {
+    const creator = (await listPartnerCodes(userId)).filter((c) => c.kind === "creator");
+    if (!creator.length) return "";
+    const blocks: string[] = [];
+    for (const c of creator) {
+      const st = await partnerStats(c.code);
+      blocks.push(
+        `🔗 <b>${c.title ?? c.code}</b> · <code>https://t.me/${ctx.me.username}?start=c_${c.code}</code>\n` +
+          `   👥 пришло: <b>${st.joined}</b> · 💳 покупают: <b>${st.paying}</b> · ` +
+          `заработано: <b>${nUnits(st.earned)}</b> · ${Math.round(c.percent * 100)}%`,
+      );
+    }
+    return `🎓 <b>Ваши авторские коды (по договорённости)</b>\n${blocks.join("\n")}\n\n`;
+  }
+
+  async function sendPartnerDash(ctx: Context): Promise<void> {
     const u = await user(ctx);
-    const codes = await listPartnerCodes(u.id);
-    if (!codes.length) {
+    const acct = await partnerAccount(u.id);
+    const pct = Math.round(config.partnerPercent * 100);
+    const creatorBlock = await creatorCodesBlock(ctx, u.id);
+
+    if (!acct.joined) {
+      const kb = new InlineKeyboard().text("🚀 Стать партнёром", "partner:join");
       await ctx.reply(
-        "🤝 Партнёрская программа для авторов, блогеров и школ: персональный код, " +
-          "повышенный процент с покупок вашей аудитории и подарочные 🔫 подписчикам.\n\n" +
-          "Напишите нам — обсудим условия. А пока работает обычная реферальная ссылка: /ref",
+        creatorBlock +
+          `🤝 <b>Партнёрская программа NeuroShot</b>\n\n` +
+          `• Персональная ссылка и приветственный бонус <b>≈$20</b> в токенах 🔫\n` +
+          `• <b>${pct}% кэшбэка</b> с каждой оплаты приглашённых пользователей\n` +
+          `• Кэшбэк — в токенах: тратьте в NeuroShot или <b>выводите деньгами раз в 2 недели</b>\n` +
+          `• Без вложений — просто делитесь ссылкой и растите вместе с проектом\n\n` +
+          `До 10 персональных ссылок на аккаунт.`,
+        { parse_mode: "HTML", reply_markup: kb },
       );
       return;
     }
-    const blocks: string[] = [];
-    for (const c of codes) {
-      const st = await partnerStats(c.code);
-      blocks.push(
-        `🔗 <b>${c.title ?? c.code}</b>\n` +
-          `<code>https://t.me/${ctx.me.username}?start=c_${c.code}</code>\n` +
-          `👥 пришло: <b>${st.joined}</b> · 💳 покупают: <b>${st.paying}</b> · ` +
-          `заработано: <b>${UNIT_EMOJI} ${nUnits(st.earned)}</b>\n` +
-          `условия: ${Math.round(c.percent * 100)}% с покупок · +${c.join_bonus} 🔫 новым`,
-      );
+
+    const codes = await myPartnerCodes(u.id);
+    const codeBlocks = codes.length
+      ? codes
+          .map(
+            (c) =>
+              `🔗 <code>https://t.me/${ctx.me.username}?start=p_${c.code}</code>\n` +
+              `   👥 <b>${c.joined}</b> · 💳 <b>${c.paying}</b> · заработано <b>${nUnits(c.earned)}</b>`,
+          )
+          .join("\n")
+      : "У вас пока нет ссылок — создайте первую 👇";
+
+    const kb = new InlineKeyboard();
+    if (acct.activeCodes < config.partnerMaxCodes) kb.text("➕ Новая ссылка", "partner:newcode");
+    if (acct.withdrawable >= config.withdrawMin) kb.text(`💸 Вывести ${acct.withdrawable} 🔫`, "partner:withdraw");
+    kb.row().text("📜 История выплат", "partner:history");
+    if (codes.length) kb.text("⚙️ Управление ссылками", "partner:manage");
+
+    await ctx.reply(
+      creatorBlock +
+        `🤝 <b>Партнёрский кабинет</b>\n\n` +
+        `👥 Приглашено: <b>${acct.invited}</b> · 💳 покупают: <b>${acct.paying}</b>\n` +
+        `💰 Всего заработано: <b>${UNIT_EMOJI} ${nUnits(acct.earned)}</b>\n` +
+        `💸 Доступно к выводу: <b>${UNIT_EMOJI} ${nUnits(acct.withdrawable)}</b> ` +
+        `(мин. ${config.withdrawMin}, раз в 2 недели)\n\n` +
+        `<b>Ваши ссылки</b> (${acct.activeCodes}/${config.partnerMaxCodes}):\n${codeBlocks}\n\n` +
+        `Условия: <b>${pct}%</b> кэшбэка с покупок · +${config.partnerInviteeBonus} 🔫 новым по вашей ссылке.`,
+      { parse_mode: "HTML", reply_markup: kb },
+    );
+  }
+
+  bot.command("partner", (ctx) => sendPartnerDash(ctx));
+
+  bot.callbackQuery("partner:join", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await user(ctx);
+    const res = await joinPartnerProgram(u.id, config.partnerWelcome);
+    // First code is minted on join so the partner leaves with a shareable link.
+    if (res.justJoined) await createPartnerCode(u.id, config.partnerPercent, config.partnerInviteeBonus, config.partnerMaxCodes);
+    if (res.justJoined && res.welcome > 0) {
+      await ctx.reply(`🎉 Добро пожаловать! Начислен бонус <b>${UNIT_EMOJI} ${nUnits(res.welcome)}</b>.`, {
+        parse_mode: "HTML",
+      });
     }
-    await ctx.reply(`🤝 <b>Ваши партнёрские коды</b>\n\n${blocks.join("\n\n")}`, { parse_mode: "HTML" });
+    await sendPartnerDash(ctx);
+  });
+
+  bot.callbackQuery("partner:newcode", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await user(ctx);
+    if (!(await partnerAccount(u.id)).joined) { await sendPartnerDash(ctx); return; }
+    const res = await createPartnerCode(u.id, config.partnerPercent, config.partnerInviteeBonus, config.partnerMaxCodes);
+    if (!res.ok) {
+      await ctx.reply(`Достигнут лимит в ${config.partnerMaxCodes} активных ссылок. Деактивируйте одну, чтобы создать новую.`);
+      return;
+    }
+    await ctx.reply(
+      `✅ Новая ссылка готова:\n<code>https://t.me/${ctx.me.username}?start=p_${res.code}</code>`,
+      { parse_mode: "HTML" },
+    );
+    await sendPartnerDash(ctx);
+  });
+
+  bot.callbackQuery("partner:withdraw", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await user(ctx);
+    const acct = await partnerAccount(u.id);
+    if (!acct.joined) { await sendPartnerDash(ctx); return; }
+    const res = await requestWithdrawal(u.id, acct.withdrawable, config.withdrawMin);
+    if (!res.ok) {
+      const msg =
+        res.error === "too_small"
+          ? `Минимальная сумма вывода — ${config.withdrawMin} 🔫.`
+          : res.error === "pending"
+            ? "У вас уже есть заявка на вывод в обработке."
+            : "Недостаточно средств к выводу.";
+      await ctx.reply(msg);
+      return;
+    }
+    await ctx.reply(
+      `💸 Заявка на вывод <b>${UNIT_EMOJI} ${nUnits(acct.withdrawable)}</b> создана (№${res.id}). ` +
+        `Выплаты обрабатываются раз в 2 недели — мы свяжемся с вами.`,
+      { parse_mode: "HTML" },
+    );
+    for (const adminId of config.adminIds)
+      await ctx.api.sendMessage(adminId, `💸 Заявка на вывод №${res.id}: ${acct.withdrawable} 🔫 от ${u.id}. /payouts`).catch(() => {});
+  });
+
+  bot.callbackQuery("partner:manage", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await user(ctx);
+    if (!(await partnerAccount(u.id)).joined) { await sendPartnerDash(ctx); return; }
+    const codes = await myPartnerCodes(u.id);
+    const kb = new InlineKeyboard();
+    for (const c of codes) kb.text(`🗑 ${c.code} (${c.paying} 💳)`, `partner:deact:${c.code}`).row();
+    kb.text("← Назад", "partner:back");
+    await ctx.reply(
+      "⚙️ Деактивация освобождает слот для новой ссылки. Уже приглашённые по ней продолжат приносить кэшбэк.",
+      { reply_markup: kb },
+    );
+  });
+
+  bot.callbackQuery(/^partner:deact:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await user(ctx);
+    if (!(await partnerAccount(u.id)).joined) { await sendPartnerDash(ctx); return; }
+    const ok = await deactivatePartnerCode(u.id, ctx.match[1]);
+    await ctx.reply(ok ? "✅ Ссылка деактивирована." : "Ссылка не найдена.");
+    await sendPartnerDash(ctx);
+  });
+
+  bot.callbackQuery("partner:back", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await sendPartnerDash(ctx);
+  });
+
+  bot.callbackQuery("partner:history", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await user(ctx);
+    if (!(await partnerAccount(u.id)).joined) { await sendPartnerDash(ctx); return; }
+    const rows = await myWithdrawals(u.id);
+    if (!rows.length) {
+      await ctx.reply("Заявок на вывод ещё не было.");
+      return;
+    }
+    const label = (s: string) => (s === "paid" ? "✅ выплачено" : s === "rejected" ? "↩️ отклонено" : "⏳ в обработке");
+    await ctx.reply(
+      "📜 <b>История выплат</b>\n" +
+        rows.map((r) => `№${r.id} · ${nUnits(r.amount)} · ${label(r.status)}`).join("\n"),
+      { parse_mode: "HTML" },
+    );
+  });
+
+  // Admin: pending cash-outs + resolve. /payouts | /payout <id> ok|no
+  bot.command("payouts", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const rows = await pendingWithdrawals();
+    if (!rows.length) {
+      await ctx.reply("Заявок на вывод нет.");
+      return;
+    }
+    await ctx.reply(
+      "💸 <b>Заявки на вывод</b>\n" +
+        rows.map((r) => `№${r.id} · пользователь ${r.user_id} · ${nUnits(r.amount)}`).join("\n") +
+        "\n\nОбработать: /payout <id> ok  или  /payout <id> no",
+      { parse_mode: "HTML" },
+    );
+  });
+
+  bot.command("payout", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const [idS, verdict] = (ctx.match ?? "").trim().split(/\s+/);
+    const id = Number(idS);
+    if (!Number.isInteger(id) || (verdict !== "ok" && verdict !== "no")) {
+      await ctx.reply("Формат: /payout <id> ok|no");
+      return;
+    }
+    const ok = await resolveWithdrawal(id, verdict === "ok");
+    if (!ok) {
+      await ctx.reply(`Заявка №${id} не найдена или уже обработана.`);
+      return;
+    }
+    await ctx.reply(verdict === "ok" ? `✅ Заявка №${id} отмечена выплаченной.` : `↩️ Заявка №${id} отклонена, 🔫 возвращены.`);
   });
 
   // Admin: create/update a creator code with per-deal terms.

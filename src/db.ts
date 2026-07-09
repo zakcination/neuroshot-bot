@@ -6,6 +6,7 @@
  *
  * Same SQL on both. All exported functions are async.
  */
+import { randomBytes } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 import { PGlite } from "@electric-sql/pglite";
 
@@ -63,13 +64,36 @@ const SCHEMA: string[] = [
     join_bonus INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
+  // Partner program v2: self-serve codes (kind='partner', flat %) alongside the
+  // admin creator deals (kind='creator', negotiated %). See docs/partner-program.md.
+  `ALTER TABLE partner_codes ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'creator'`,
+  `ALTER TABLE partner_codes ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT true`,
+  `CREATE INDEX IF NOT EXISTS idx_partner_codes_owner ON partner_codes(user_id)`,
+  // Withdrawable = 🔫 earned as real cashback (funded by invitees' actual Stars
+  // spend) — the ONLY balance eligible for cash-out. The welcome bonus and
+  // purchased/free credits are spend-only, so cash-out can't drain the treasury.
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS partner_joined_at TIMESTAMPTZ`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS partner_withdrawable INTEGER NOT NULL DEFAULT 0`,
+  `CREATE TABLE IF NOT EXISTS withdrawals (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    amount INTEGER NOT NULL,        -- 🔫 requested (moved out of withdrawable)
+    status TEXT NOT NULL DEFAULT 'pending', -- pending | paid | rejected
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    processed_at TIMESTAMPTZ
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_withdrawals_user ON withdrawals(user_id)`,
+  // At most ONE pending withdrawal per user — enforced at the DB, not just in
+  // app logic, so concurrent requests can't create two pending rows.
+  `CREATE UNIQUE INDEX IF NOT EXISTS uq_withdrawals_one_pending ON withdrawals(user_id) WHERE status = 'pending'`,
   `CREATE TABLE IF NOT EXISTS ledger (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
     delta INTEGER NOT NULL,
     -- signup | purchase | generation | refund | referral (lifetime share)
     -- | referral_join (invitee bonus) | referral_bonus (1st-purchase) | referral_milestone
-    -- | partner (creator revenue share) | partner_join (creator-code welcome bonus)
+    -- | partner (creator/partner revenue share) | partner_join (creator-code welcome bonus)
+    -- | partner_welcome (self-serve join bonus) | withdrawal | withdrawal_reject
     reason TEXT NOT NULL,
     meta TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -307,6 +331,7 @@ export interface PartnerCodeRow {
   title: string | null;
   percent: number; // 0–1 lifetime share of attributed purchases
   join_bonus: number;
+  kind: "creator" | "partner"; // 'creator' = admin negotiated; 'partner' = self-serve
 }
 
 function mapPartner(r: Row): PartnerCodeRow {
@@ -316,6 +341,7 @@ function mapPartner(r: Row): PartnerCodeRow {
     title: (r.title as string | null) ?? null,
     percent: Number(r.percent),
     join_bonus: Number(r.join_bonus),
+    kind: (r.kind as "creator" | "partner") ?? "creator",
   };
 }
 
@@ -353,18 +379,28 @@ export async function listPartnerCodes(ownerId: number): Promise<PartnerCodeRow[
 export async function rewardPartnerOnPurchase(
   buyerId: number,
   packCredits: number,
-): Promise<{ code: string; ownerId: number; amount: number } | null> {
+): Promise<{ code: string; ownerId: number; amount: number; kind: "creator" | "partner" } | null> {
   const buyer = await getUser(buyerId);
   if (!buyer?.partner_code) return null;
   const pc = await getPartnerCode(buyer.partner_code);
   if (!pc || pc.user_id === buyerId) return null;
   const amount = Math.floor(packCredits * pc.percent);
-  if (amount > 0) await addCredits(pc.user_id, amount, "partner", `${pc.code}:${buyerId}`);
+  if (amount > 0) {
+    await addCredits(pc.user_id, amount, "partner", `${pc.code}:${buyerId}`);
+    // Self-serve partner cashback is WITHDRAWABLE (funded by real Stars spend);
+    // creator-deal payouts are settled off-platform, so they stay spend-only.
+    if (pc.kind === "partner") {
+      await q("UPDATE users SET partner_withdrawable = partner_withdrawable + $1 WHERE id = $2", [
+        amount,
+        pc.user_id,
+      ]);
+    }
+  }
   // Mark the buyer as paying (powers the partner dashboard's conversion stat).
   await q("UPDATE users SET ref_first_purchase_at = now() WHERE id = $1 AND ref_first_purchase_at IS NULL", [
     buyerId,
   ]);
-  return { code: pc.code, ownerId: pc.user_id, amount };
+  return { code: pc.code, ownerId: pc.user_id, amount, kind: pc.kind };
 }
 
 /** Per-code funnel for the creator dashboard: joined → paying → patrons earned. */
@@ -382,6 +418,247 @@ export async function partnerStats(
     [`${code}:%`],
   );
   return { joined: Number(c[0].joined), paying: Number(c[0].paying), earned: Number(e[0].earned) };
+}
+
+// ---- Partner program v2: self-serve codes, cashback, withdrawals ----
+
+/** A short unforgeable code slug: 6 chars from a 32-symbol base32-style
+ *  alphabet (no ambiguous 0/1/l/o) → 32^6 ≈ 1.07e9 space. */
+function genCode(): string {
+  return [...randomBytes(6)].map((b) => "abcdefghijkmnpqrstuvwxyz23456789"[b % 32]).join("");
+}
+
+export interface PartnerJoin {
+  justJoined: boolean;
+  welcome: number; // welcome bonus granted (0 if already a member)
+}
+
+/**
+ * Join the self-serve partner program (idempotent). Grants the one-time welcome
+ * bonus on first join — SPEND-ONLY (not added to partner_withdrawable), so a
+ * farmed account can never cash it out; only real invitee-purchase cashback is
+ * withdrawable. Returns whether this call did the joining + the bonus paid.
+ */
+export async function joinPartnerProgram(userId: number, welcome: number): Promise<PartnerJoin> {
+  const rows = await q(
+    "UPDATE users SET partner_joined_at = now() WHERE id = $1 AND partner_joined_at IS NULL RETURNING id",
+    [userId],
+  );
+  if (!rows.length) return { justJoined: false, welcome: 0 };
+  const bonus = Math.max(0, Math.floor(welcome));
+  if (bonus > 0) await addCredits(userId, bonus, "partner_welcome", "join");
+  return { justJoined: true, welcome: bonus };
+}
+
+/**
+ * Mint a new self-serve partner code for a user (kind='partner', flat percent).
+ * Enforces the per-account active-code cap. Returns the code, or an error tag.
+ */
+export async function createPartnerCode(
+  userId: number,
+  percent: number,
+  inviteeBonus: number,
+  maxActive: number,
+): Promise<{ ok: true; code: string } | { ok: false; error: "limit" }> {
+  const activeCount = async () =>
+    Number(
+      (
+        await q(
+          "SELECT COUNT(*)::int AS c FROM partner_codes WHERE user_id = $1 AND kind = 'partner' AND active = true",
+          [userId],
+        )
+      )[0].c,
+    );
+  if ((await activeCount()) >= maxActive) return { ok: false, error: "limit" };
+  // Insert only if still under the cap — the count is re-evaluated INSIDE the
+  // statement, so two concurrent calls can't both slip past the limit. An empty
+  // result means either the cap was hit in a race or a (rare) slug collision.
+  for (let i = 0; i < 5; i++) {
+    const code = genCode();
+    const ins = await q(
+      `INSERT INTO partner_codes (code, user_id, percent, join_bonus, kind, active)
+       SELECT $1, $2, $3, $4, 'partner', true
+       WHERE (SELECT COUNT(*) FROM partner_codes WHERE user_id = $2 AND kind = 'partner' AND active = true) < $5
+       ON CONFLICT (code) DO NOTHING RETURNING code`,
+      [code, userId, percent, Math.floor(inviteeBonus), maxActive],
+    );
+    if (ins.length) return { ok: true, code };
+    if ((await activeCount()) >= maxActive) return { ok: false, error: "limit" }; // cap, not collision
+  }
+  throw new Error("could not generate a unique partner code");
+}
+
+/** Deactivate a self-serve code (frees a slot; existing attributions keep paying). */
+export async function deactivatePartnerCode(userId: number, code: string): Promise<boolean> {
+  const rows = await q(
+    "UPDATE partner_codes SET active = false WHERE code = $1 AND user_id = $2 AND kind = 'partner' RETURNING code",
+    [code, userId],
+  );
+  return rows.length > 0;
+}
+
+/** A user's active self-serve codes, each with its own funnel stats. */
+export async function myPartnerCodes(
+  userId: number,
+): Promise<Array<PartnerCodeRow & { joined: number; paying: number; earned: number }>> {
+  const rows = await q(
+    "SELECT * FROM partner_codes WHERE user_id = $1 AND kind = 'partner' AND active = true ORDER BY created_at",
+    [userId],
+  );
+  const out = [];
+  for (const r of rows) {
+    const pc = mapPartner(r);
+    out.push({ ...pc, ...(await partnerStats(pc.code)) });
+  }
+  return out;
+}
+
+/** Partner dashboard totals across all of a user's codes. */
+export async function partnerAccount(userId: number): Promise<{
+  joined: boolean;
+  invited: number;
+  paying: number;
+  earned: number; // lifetime cashback + welcome journaled
+  withdrawable: number; // 🔫 eligible for cash-out
+  activeCodes: number;
+}> {
+  const u = await q(
+    "SELECT partner_joined_at IS NOT NULL AS joined, partner_withdrawable FROM users WHERE id = $1",
+    [userId],
+  );
+  const funnel = await q(
+    `SELECT COUNT(*)::int AS invited,
+            COALESCE(SUM(CASE WHEN ref_first_purchase_at IS NOT NULL THEN 1 ELSE 0 END),0)::int AS paying
+     FROM users WHERE partner_code IN (SELECT code FROM partner_codes WHERE user_id = $1 AND kind = 'partner')`,
+    [userId],
+  );
+  const earned = await q(
+    "SELECT COALESCE(SUM(delta),0)::int AS e FROM ledger WHERE user_id = $1 AND reason IN ('partner','partner_welcome')",
+    [userId],
+  );
+  const active = await q(
+    "SELECT COUNT(*)::int AS c FROM partner_codes WHERE user_id = $1 AND kind = 'partner' AND active = true",
+    [userId],
+  );
+  return {
+    joined: Boolean(u[0]?.joined),
+    invited: Number(funnel[0].invited),
+    paying: Number(funnel[0].paying),
+    earned: Number(earned[0].e),
+    withdrawable: u[0] ? Number(u[0].partner_withdrawable) : 0,
+    activeCodes: Number(active[0].c),
+  };
+}
+
+export interface WithdrawalRow {
+  id: number;
+  user_id: number;
+  amount: number;
+  status: string;
+  requested_at: string;
+}
+
+/**
+ * Request a cash-out. Abuse-safe by construction: `amount` is drained from BOTH
+ * the withdrawable balance (earned cashback only) AND the spendable credits, in
+ * one atomic guarded statement — so you can never withdraw the welcome bonus,
+ * purchased, or free 🔫, and never more than once for the same balance. One
+ * pending request at a time. Returns the row or an error tag.
+ */
+export async function requestWithdrawal(
+  userId: number,
+  amount: number,
+  minAmount: number,
+): Promise<{ ok: true; id: number } | { ok: false; error: "too_small" | "insufficient" | "pending" }> {
+  const amt = Math.floor(amount);
+  if (amt < Math.max(1, minAmount)) return { ok: false, error: "too_small" };
+  const pend = await q("SELECT 1 FROM withdrawals WHERE user_id = $1 AND status = 'pending' LIMIT 1", [
+    userId,
+  ]);
+  if (pend.length) return { ok: false, error: "pending" };
+  // One atomic statement: drain both balances, create the request, AND journal
+  // the ledger entry — so a partial failure can never leave balances without a
+  // matching record. The partial-unique index makes the "one pending" invariant
+  // race-proof; a concurrent double fires a unique violation (whole tx rolls back).
+  let rows;
+  try {
+    rows = await q(
+      `WITH upd AS (
+         UPDATE users SET credits = credits - $1, partner_withdrawable = partner_withdrawable - $1
+         WHERE id = $2 AND partner_withdrawable >= $1 AND credits >= $1 RETURNING id
+       ), w AS (
+         INSERT INTO withdrawals (user_id, amount) SELECT $2, $1 FROM upd RETURNING id
+       ), l AS (
+         INSERT INTO ledger (user_id, delta, reason, meta)
+         SELECT $2, -$1, 'withdrawal', w.id::text FROM w RETURNING 1
+       )
+       SELECT id FROM w`,
+      [amt, userId],
+    );
+  } catch (e) {
+    if (String((e as Error).message).match(/unique|duplicate/i)) return { ok: false, error: "pending" };
+    throw e;
+  }
+  if (!rows.length) return { ok: false, error: "insufficient" };
+  return { ok: true, id: Number(rows[0].id) };
+}
+
+/** A user's withdrawal history (newest first). */
+export async function myWithdrawals(userId: number, limit = 10): Promise<WithdrawalRow[]> {
+  const rows = await q(
+    "SELECT id, user_id, amount, status, requested_at FROM withdrawals WHERE user_id = $1 ORDER BY id DESC LIMIT $2",
+    [userId, limit],
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    user_id: Number(r.user_id),
+    amount: Number(r.amount),
+    status: String(r.status),
+    requested_at: String(r.requested_at),
+  }));
+}
+
+/** Admin: all pending cash-out requests to process (biweekly). */
+export async function pendingWithdrawals(): Promise<WithdrawalRow[]> {
+  const rows = await q(
+    "SELECT id, user_id, amount, status, requested_at FROM withdrawals WHERE status = 'pending' ORDER BY id",
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    user_id: Number(r.user_id),
+    amount: Number(r.amount),
+    status: String(r.status),
+    requested_at: String(r.requested_at),
+  }));
+}
+
+/** Admin: mark a withdrawal paid (money sent) or rejected (refund the 🔫). */
+export async function resolveWithdrawal(id: number, paid: boolean): Promise<boolean> {
+  if (paid) {
+    const rows = await q(
+      "UPDATE withdrawals SET status = 'paid', processed_at = now() WHERE id = $1 AND status = 'pending' RETURNING id",
+      [id],
+    );
+    return rows.length > 0;
+  }
+  // Rejected → resolve the row, refund BOTH balances and journal the reversal in
+  // one atomic statement (no divergence between balances and the ledger).
+  const rows = await q(
+    `WITH upd AS (
+       UPDATE withdrawals SET status = 'rejected', processed_at = now()
+       WHERE id = $1 AND status = 'pending' RETURNING user_id, amount
+     ), usr AS (
+       UPDATE users SET credits = credits + (SELECT amount FROM upd),
+                        partner_withdrawable = partner_withdrawable + (SELECT amount FROM upd)
+       WHERE id = (SELECT user_id FROM upd) RETURNING id
+     ), l AS (
+       INSERT INTO ledger (user_id, delta, reason, meta)
+       SELECT user_id, amount, 'withdrawal_reject', $1::text FROM upd RETURNING 1
+     )
+     SELECT user_id FROM upd`,
+    [id],
+  );
+  return rows.length > 0;
 }
 
 /** Add credits and journal the movement atomically (single CTE statement). */

@@ -85,12 +85,12 @@ export function registerPayments(bot: Bot): void {
     // Both payout paths are purchase-gated (abuse-safe by construction).
     const partnerPayout = await rewardPartnerOnPurchase(ctx.from.id, pack.credits);
     if (partnerPayout && partnerPayout.amount > 0) {
-      await ctx.api
-        .sendMessage(
-          partnerPayout.ownerId,
-          `🤝 +${nUnits(partnerPayout.amount)} — покупка по вашему коду c_${partnerPayout.code}!`,
-        )
-        .catch(() => {});
+      const prefix = partnerPayout.kind === "partner" ? "p_" : "c_";
+      const note =
+        partnerPayout.kind === "partner"
+          ? `🤝 +${nUnits(partnerPayout.amount)} кэшбэка — покупка по вашей ссылке ${prefix}${partnerPayout.code}! Доступно к выводу.`
+          : `🤝 +${nUnits(partnerPayout.amount)} — покупка по вашему коду ${prefix}${partnerPayout.code}!`;
+      await ctx.api.sendMessage(partnerPayout.ownerId, note).catch(() => {});
     }
     const payout = partnerPayout
       ? null
