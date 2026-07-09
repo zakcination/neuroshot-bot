@@ -28,6 +28,12 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean)
     .map(Number),
+  // --- CEO monitoring (docs/monitoring.md): digest pushed, alerts interrupt ---
+  // UTC hour when the daily digest is pushed to admins (6 UTC = 09:00 МСК).
+  digestHourUtc: Number(process.env.DIGEST_HOUR_UTC ?? 6),
+  // Conservative USD payout per Telegram Star (mobile-purchase floor) — used
+  // ONLY for the digest's gross-margin estimate, never for pricing.
+  starUsd: Number(process.env.STAR_USD ?? 0.01),
   // Telegram Mini App (web layer). Public HTTPS URL of the deployed app; when
   // set, the bot shows a "🌐 Приложение" button and index.ts starts the server.
   webappUrl: process.env.WEBAPP_URL ?? "",

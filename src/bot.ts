@@ -22,6 +22,7 @@ import {
   type UserRow,
 } from "./db.js";
 import { modelByKey, runGeneration } from "./generate.js";
+import { buildDigest, formatDigest } from "./monitor.js";
 import {
   CAMPAIGNS,
   campaignById,
@@ -42,6 +43,7 @@ async function user(
   ctx: { from?: { id: number; username?: string } },
   referrerId: number | null = null,
   partner: PartnerCodeRow | null = null,
+  source: string | null = null,
 ): Promise<UserRow> {
   if (!ctx.from) throw new Error("no ctx.from");
   return getOrCreateUser(
@@ -51,6 +53,7 @@ async function user(
     config.freeCredits,
     config.referralJoinBonus,
     partner,
+    source,
   );
 }
 
@@ -227,12 +230,18 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   bot.command("start", async (ctx) => {
     const payload = ctx.match?.trim();
-    // Deep-link payloads: numeric = friend referral, c_<code> = creator/partner code.
+    // Deep-link payloads: numeric = friend referral, c_<code> = creator/partner
+    // code, anything else = an acquisition-source slug (one per creative/channel:
+    // t.me/<bot>?start=src_tiktok1) for the per-source funnel in /dash.
     const referrerId = payload && /^\d+$/.test(payload) ? Number(payload) : null;
     const partner = payload?.startsWith("c_")
       ? ((await getPartnerCode(payload.slice(2).toLowerCase())) ?? null)
       : null;
-    const u = await user(ctx, referrerId, partner);
+    const source =
+      payload && !referrerId && !partner && payload !== "buy"
+        ? payload.toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32) || null
+        : null;
+    const u = await user(ctx, referrerId, partner, source);
     let msg = `${WELCOME}\n\n`;
     if (u.justCreated) {
       msg += `🎁 Вам начислено <b>${UNIT_EMOJI} ${nUnits(u.credits)}</b> на старт.`;
@@ -382,6 +391,14 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       `✅ ${amount > 0 ? "Начислено" : "Списано"} ${UNIT_EMOJI} ${nUnits(Math.abs(amount))} → ${targetId}. ` +
         `Баланс: ${UNIT_EMOJI} ${nUnits(balance)}.`,
     );
+  });
+
+  // Admin: the daily digest on demand — /dash [days], default 24h, cap 30d.
+  // Same 6 numbers the scheduler pushes each morning (src/monitor.ts).
+  bot.command("dash", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const days = Math.min(30, Math.max(1, Number((ctx.match ?? "").trim()) || 1));
+    await ctx.reply(formatDigest(await buildDigest(days * 24)), { parse_mode: "HTML" });
   });
 
   // Admin conversion funnel + "why didn't they order" drop-off buckets.
