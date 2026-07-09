@@ -460,14 +460,8 @@ export interface GenerationRow {
   created_at: string;
 }
 
-/** A user's recent generations (newest first) — powers the web-app gallery. */
-export async function recentGenerations(userId: number, limit = 30): Promise<GenerationRow[]> {
-  const rows = await q(
-    `SELECT id, model, prompt, credits, status, output_url, created_at
-     FROM generations WHERE user_id = $1 ORDER BY id DESC LIMIT $2`,
-    [userId, limit],
-  );
-  return rows.map((r) => ({
+function mapGeneration(r: Row): GenerationRow {
+  return {
     id: Number(r.id),
     model: r.model as string,
     prompt: (r.prompt as string | null) ?? null,
@@ -475,7 +469,56 @@ export async function recentGenerations(userId: number, limit = 30): Promise<Gen
     status: r.status as string,
     output_url: (r.output_url as string | null) ?? null,
     created_at: String(r.created_at),
-  }));
+  };
+}
+
+/**
+ * Web-flow generations run async (HTTP returns immediately, the client polls):
+ * insert a 'pending' row up front, complete it when the provider answers.
+ */
+export async function createPendingGeneration(
+  userId: number,
+  model: string,
+  prompt: string,
+  credits: number,
+): Promise<number> {
+  const rows = await q(
+    "INSERT INTO generations (user_id, model, prompt, credits, status) VALUES ($1, $2, $3, $4, 'pending') RETURNING id",
+    [userId, model, prompt, credits],
+  );
+  return Number(rows[0].id);
+}
+
+/** Finish a pending web generation (either outcome). */
+export async function completeGeneration(
+  id: number,
+  status: "ok" | "error",
+  outputUrl?: string,
+): Promise<void> {
+  await q("UPDATE generations SET status = $1, output_url = $2 WHERE id = $3", [
+    status,
+    outputUrl ?? null,
+    id,
+  ]);
+}
+
+/** One generation, scoped to its owner — powers the web app's status polling. */
+export async function getGeneration(id: number, userId: number): Promise<GenerationRow | undefined> {
+  const rows = await q(
+    "SELECT id, model, prompt, credits, status, output_url, created_at FROM generations WHERE id = $1 AND user_id = $2",
+    [id, userId],
+  );
+  return rows[0] ? mapGeneration(rows[0]) : undefined;
+}
+
+/** A user's recent generations (newest first) — powers the web-app gallery. */
+export async function recentGenerations(userId: number, limit = 30): Promise<GenerationRow[]> {
+  const rows = await q(
+    `SELECT id, model, prompt, credits, status, output_url, created_at
+     FROM generations WHERE user_id = $1 ORDER BY id DESC LIMIT $2`,
+    [userId, limit],
+  );
+  return rows.map(mapGeneration);
 }
 
 /**
