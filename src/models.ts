@@ -429,6 +429,13 @@ export interface Campaign {
   animateModel: ModelSpec;
   /** Optional story-builder steps (web studio) — see QuizStep. */
   quiz?: QuizStep[];
+  /**
+   * On-theme viral video scenes for the composer: one-tap trendy motion ideas
+   * specific to THIS scenario (football → score a goal / cheer in the stands /
+   * lift the trophy). Selecting one sets the base motion; the story quiz +
+   * personalization still layer on top. Curated (crafted), so they skip mapping.
+   */
+  videoScenes?: CampaignPreset[];
 }
 
 const KEEP_ID = "Preserve the person's identity and facial features exactly.";
@@ -480,6 +487,29 @@ export const CAMPAIGNS: Campaign[] = [
       "Gentle magical motion: soft camera push-in, fireflies drifting, hair and clothing moving in a light breeze, " +
       "the child smiles with wonder, cinematic storybook atmosphere.",
     animateModel: MODELS.kling3,
+    videoScenes: [
+      {
+        id: "flydragon",
+        label: "🐉 Полёт на драконе",
+        prompt:
+          "The child soars through the sky riding a friendly dragon, wind in their hair, magical glowing clouds and " +
+          "sparkles trailing behind, pure joy on their face, epic storybook adventure, cinematic slow motion.",
+      },
+      {
+        id: "castspell",
+        label: "🪄 Волшебное заклинание",
+        prompt:
+          "The child raises a glowing magic wand and casts a shimmering spell — sparks swirl into ribbons of light, " +
+          "eyes wide with wonder, enchanted particles fill the air, magical cinematic moment.",
+      },
+      {
+        id: "portal",
+        label: "✨ Портал в сказку",
+        prompt:
+          "The child steps through a glowing magical portal into a fairy-tale world, radiant light blooms around " +
+          "them, awe and wonder on their face, dreamy cinematic reveal.",
+      },
+    ],
     quiz: [
       {
         id: "hero",
@@ -563,6 +593,29 @@ export const CAMPAIGNS: Campaign[] = [
       "Playful lively motion: the cartoon character waves and bounces, the child laughs, confetti or bubbles drift, " +
       "gentle camera push-in, joyful kids-show energy.",
     animateModel: MODELS.kling3,
+    videoScenes: [
+      {
+        id: "dance",
+        label: "💃 Танцуют вместе",
+        prompt:
+          "The child and the cartoon character dance together with joyful energy, bright confetti and colors, both " +
+          "laughing, playful viral kids-dance-clip vibe, lively bouncy motion.",
+      },
+      {
+        id: "adventure",
+        label: "🚀 Весёлое приключение",
+        prompt:
+          "The child and the cartoon character run off on a fun adventure together, laughing and high-fiving, " +
+          "bright playful cartoon world rushing by, energetic joyful motion.",
+      },
+      {
+        id: "fly",
+        label: "🦸 Полёт супергероев",
+        prompt:
+          "The child flies through the bright sky as a little superhero alongside the cartoon character, cape " +
+          "fluttering, big happy smile, heroic and joyful, vivid colors.",
+      },
+    ],
   },
   {
     id: "worldcup",
@@ -605,6 +658,36 @@ export const CAMPAIGNS: Campaign[] = [
       "Epic stadium motion: crowd roaring and waving flags, confetti falling, floodlight flares, slow heroic camera " +
       "orbit around the subjects.",
     animateModel: MODELS.kling3,
+    videoScenes: [
+      {
+        id: "score",
+        label: "⚽️ Легендарный гол",
+        prompt:
+          "The person receives a perfect pass from the football superstar and scores a legendary winning goal — the " +
+          "net ripples, the packed stadium erupts, teammates rush in, slow-motion cinematic sports-broadcast celebration.",
+      },
+      {
+        id: "fan",
+        label: "📣 Фанат на трибуне",
+        prompt:
+          "The person is a passionate fan in the packed stands, jumping and chanting with a team scarf raised high, " +
+          "flares smoke and confetti, roaring sea of supporters, energetic viral fan-cam style.",
+      },
+      {
+        id: "trophy",
+        label: "🏆 Победа с командой",
+        prompt:
+          "The person lifts the championship trophy together with the superstar and the whole team, golden confetti " +
+          "raining down, teammates cheering and hugging, triumphant slow-motion celebration.",
+      },
+      {
+        id: "freekick",
+        label: "🎯 Гол со штрафного",
+        prompt:
+          "The person steps up for a dramatic free kick and curls the ball into the top corner past the wall — the " +
+          "crowd explodes, arms raised in triumph, epic slow-motion sports moment.",
+      },
+    ],
   },
   {
     id: "oldphoto",
@@ -634,6 +717,29 @@ export const CAMPAIGNS: Campaign[] = [
       "Subtle lifelike motion, respectful and warm: the people gently blink, breathe and smile softly, a slight " +
       "natural head movement, soft light shift — like a living memory.",
     animateModel: MODELS.kling3,
+    videoScenes: [
+      {
+        id: "alive",
+        label: "🤍 Оживают нежно",
+        prompt:
+          "The people in the old photo gently come to life — they blink, breathe, smile softly and glance warmly at " +
+          "each other, a tender living-memory moment, respectful natural motion, soft nostalgic light.",
+      },
+      {
+        id: "wave",
+        label: "👋 Улыбается и машет",
+        prompt:
+          "The person in the restored photo warmly smiles and waves at the viewer, eyes lighting up, a heartfelt " +
+          "living-memory moment, gentle natural motion.",
+      },
+      {
+        id: "together",
+        label: "🫂 Семья вместе",
+        prompt:
+          "The family in the old photo turns to each other with warm smiles and a gentle embrace, a touching " +
+          "nostalgic moment brought to life, soft natural movement and light.",
+      },
+    ],
   },
   {
     id: "poster",
@@ -668,6 +774,29 @@ export const CAMPAIGNS: Campaign[] = [
       "Cinematic poster comes alive: slow parallax depth, drifting smoke and light flares, hair and clothing move " +
       "in the wind, dramatic trailer-style atmosphere.",
     animateModel: MODELS.kling3,
+    videoScenes: [
+      {
+        id: "explosion",
+        label: "💥 Уход от взрыва",
+        prompt:
+          "The person strides toward camera in slow motion as a huge explosion blooms behind them, sparks and debris " +
+          "flying, unshaken blockbuster action-hero energy, cinematic.",
+      },
+      {
+        id: "turn",
+        label: "🎬 Драматичный разворот",
+        prompt:
+          "The person turns to camera with an intense dramatic gaze, wind and atmospheric haze swirling, epic " +
+          "movie-trailer mood, slow cinematic push-in.",
+      },
+      {
+        id: "heroic",
+        label: "⚡ Геройский облёт",
+        prompt:
+          "The person stands heroically as the camera orbits around them, dramatic god-ray light and lens flares, " +
+          "epic climactic movie-trailer energy.",
+      },
+    ],
   },
   // Story flow: film-still image (mentor's scene formula: era/place → emotion →
   // rim light → 35mm framing → style tag) → Seedance multi-shot narrative clip.

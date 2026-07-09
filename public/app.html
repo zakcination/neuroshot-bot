@@ -607,6 +607,7 @@
         custom: pick.custom || undefined,
         duration: pick.duration || undefined,
         aspect_ratio: pick.aspect_ratio && pick.aspect_ratio !== "auto" ? pick.aspect_ratio : undefined,
+        scene: pick.scene || undefined,
       };
       st.retry = { body, campaignId: pick.campaignId || null };
       const { status, data } = await api("/api/generate", { method: "POST", body: JSON.stringify(body) });
@@ -783,15 +784,25 @@
       const pick = st.pick;
       const durs = m.video ? m.video.durations : [{ seconds: 5, credits: m.credits }];
       const ratios = m.video ? m.video.aspectRatios : ["auto"];
-      const story = ME.catalog.videoStory || [];
-      pick.aspect_ratio = pick.aspect_ratio || ratios[0];
-      pick.duration = pick.duration || durs[0].seconds;
-      pick.options = pick.options || [];
       const isCurated = pick.source === "campaign_video"; // motion prompt is curated
+      const camp = pick.campaignId ? ME.catalog.campaigns.find((x) => x.id === pick.campaignId) : null;
+      const scenes = (isCurated && camp && camp.videoScenes) || [];
+      // Campaigns: on-theme scene chips replace the generic story quiz.
+      const story = isCurated ? [] : (ME.catalog.videoStory || []);
+      pick.model = m.key; // always send the (possibly swapped) model
+      pick.aspect_ratio = pick.aspect_ratio || ratios[0];
+      if (!durs.some((d) => d.seconds === pick.duration)) pick.duration = durs[0].seconds;
+      pick.options = pick.options || [];
       const priceOf = (sec) => (durs.find((d) => d.seconds === sec) || durs[0]).credits;
 
       sheetBody.innerHTML = `
         <h3>Настройки видео</h3>
+        ${isCurated ? `<div class="quiz-q">Модель</div>
+          <div class="chips" id="modRow">${ME.catalog.videoModels.map((v) =>
+            `<button class="chip ${v.key === m.key ? "on" : ""}" data-mod="${v.key}">${esc(v.label.replace("🎬 ", ""))} · ${v.credits}+ 🔫</button>`).join("")}</div>` : ""}
+        ${scenes.length ? `<div class="quiz-q">Сюжет — что происходит?</div>
+          <div class="chips" id="sceneRow">${scenes.map((s) =>
+            `<button class="chip ${pick.scene === s.id ? "on" : ""}" data-scene="${s.id}">${esc(s.label)}</button>`).join("")}</div>` : ""}
         <div class="quiz-q">Формат кадра</div>
         <div class="chips" id="arRow">${ratios.map((r) =>
           `<button class="chip ${r === pick.aspect_ratio ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>
@@ -811,6 +822,19 @@
           <button class="btn ghost" id="backBtn">← Назад</button>
         </div>`;
 
+      // Model swap (campaigns): re-render with the chosen model's price/durations.
+      sheetBody.querySelectorAll("#modRow .chip").forEach((c) => (c.onclick = () => {
+        pick.custom = sheetBody.querySelector("#cw").value.trim(); // preserve typed detail
+        const nm = ME.catalog.videoModels.find((v) => v.key === c.dataset.mod);
+        pick.credits = nm.credits;
+        viewVideoComposer(nm);
+      }));
+      // Scene (campaigns): single-select, tap again to clear (→ default motion).
+      sheetBody.querySelectorAll("#sceneRow .chip").forEach((c) => (c.onclick = () => {
+        const on = c.classList.contains("on");
+        sheetBody.querySelectorAll("#sceneRow .chip").forEach((x) => x.classList.remove("on"));
+        if (!on) { c.classList.add("on"); pick.scene = c.dataset.scene; } else pick.scene = null;
+      }));
       // aspect ratio + duration are single-select (no unselect).
       sheetBody.querySelectorAll("#arRow .chip").forEach((c) => (c.onclick = () => {
         sheetBody.querySelectorAll("#arRow .chip").forEach((x) => x.classList.remove("on"));
@@ -823,7 +847,6 @@
       }));
       // story chips: one per step, tap again to clear.
       const sel = {};
-      story.forEach((s) => { if (pick.options.length) { /* preserve */ } });
       sheetBody.querySelectorAll(".chips[data-step]").forEach((row) => {
         row.querySelectorAll(".chip").forEach((chip) => {
           if (chip.classList.contains("on")) sel[row.dataset.step] = chip.dataset.opt;

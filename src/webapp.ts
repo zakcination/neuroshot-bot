@@ -185,6 +185,8 @@ function catalogPayload(): Record<string, unknown> {
       animateLabel: c.animateLabel,
       videoCredits: c.animateModel.credits,
       videoModelKey: c.animateModel.key, // composer reads its duration/ratio params
+      // On-theme viral video scenes (prompts stay server-side — labels/ids only).
+      videoScenes: (c.videoScenes ?? []).map((s) => ({ id: s.id, label: s.label })),
       // Story-builder steps (fragments stay server-side — labels/ids only).
       quiz: (c.quiz ?? []).map((s) => ({
         id: s.id,
@@ -367,10 +369,27 @@ export async function generateResponse(
   } else if (source === "campaign_video") {
     const c = campaignById(String(body?.id ?? ""));
     if (!c || !imageUrl) return { status: 400, body: { error: "bad_request" } };
-    // Curated campaign motion + optional video-composer story/personalization.
-    const composed = composeVideoStory(c.animatePrompt, body);
+    // Model: the campaign default, or a video model the user swapped to (Seedance
+    // for audio/physics, etc.) — price adjusts via priceFor below.
+    let vmodel = c.animateModel;
+    if (body?.model != null) {
+      const m = modelByKey(String(body.model));
+      if (!m || !(VIDEO_MODEL_PICKER as readonly string[]).includes(m.key)) {
+        return { status: 400, body: { error: "bad_request" } };
+      }
+      vmodel = m;
+    }
+    // On-theme scene (viral topical suggestion) as the base motion, else default.
+    let base = c.animatePrompt;
+    if (body?.scene != null) {
+      const sc = (c.videoScenes ?? []).find((s) => s.id === String(body.scene));
+      if (!sc) return { status: 400, body: { error: "bad_scene" } };
+      base = sc.prompt;
+    }
+    // Base motion + optional video-composer story/personalization.
+    const composed = composeVideoStory(base, body);
     if (composed === null) return { status: 400, body: { error: "bad_option" } };
-    [model, prompt, crafted] = [c.animateModel, composed, true];
+    [model, prompt, crafted] = [vmodel, composed, true];
   } else if (source === "model") {
     const m = modelByKey(String(body?.model ?? ""));
     const allowed = new Set<string>([...IMAGE_MODEL_PICKER, ...VIDEO_MODEL_PICKER, "photo_edit", "premium_edit"]);

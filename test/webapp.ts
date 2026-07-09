@@ -645,6 +645,47 @@ await step("video composer validation: bad duration/ratio → 400 bad_opts, bad 
   assert.equal(((await badStory.json()) as { error: string }).error, "bad_option");
 });
 
+await step("scenario video scenes: on-theme scene sets the motion; model swap adjusts price", async () => {
+  const { body } = await apiMe(signInitData(maker));
+  const wc = body.catalog.campaigns.find((k) => k.id === "worldcup") as unknown as {
+    videoScenes: Array<{ id: string; label: string }>;
+  };
+  assert.ok(wc.videoScenes.some((s) => s.id === "score"), "football scene missing");
+  for (const s of wc.videoScenes) assert.ok(!("prompt" in s), "scene prompt leaked to client");
+
+  await addCredits(maker.id, 200, "admin_grant", "test");
+  // Scene "score" (legendary goal) + model swapped to Seedance 2.0 Fast (61 🔫).
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "campaign_video", id: "worldcup", image_url: "https://fal.test/storage/u-1.jpg",
+      scene: "score", model: "seedance_fast",
+    }),
+  });
+  assert.equal(r.status, 200);
+  const d = (await r.json()) as { id: number; credits: number };
+  assert.equal(d.credits, 61); // Seedance Fast, not the campaign default Kling (42)
+  await pollGen(d.id);
+  const call = falCalls.at(-1)!;
+  assert.equal(call.endpoint, "bytedance/seedance-2.0/fast/image-to-video");
+  assert.match(call.input.prompt as string, /scores a legendary winning goal/); // the scene
+
+  // Unknown scene id / off-picker model → 400 (nothing charged).
+  const badScene = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://x.test/a.jpg", scene: "nope" }),
+  });
+  assert.equal(badScene.status, 400);
+  assert.equal(((await badScene.json()) as { error: string }).error, "bad_scene");
+
+  const badModel = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://x.test/a.jpg", model: "nb2_image" }),
+  });
+  assert.equal(badModel.status, 400);
+});
+
 await step("Seedance 2.0 uses the correct bytedance/ endpoint namespace (fal drift fix)", async () => {
   const { MODELS } = await import("../src/models.js");
   assert.equal(MODELS.seedance.falEndpoint, "bytedance/seedance-2.0/image-to-video");
