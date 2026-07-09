@@ -826,6 +826,7 @@
       sheetBody.querySelectorAll("#modRow .chip").forEach((c) => (c.onclick = () => {
         pick.custom = sheetBody.querySelector("#cw").value.trim(); // preserve typed detail
         const nm = ME.catalog.videoModels.find((v) => v.key === c.dataset.mod);
+        if (!nm) return;
         pick.credits = nm.credits;
         viewVideoComposer(nm);
       }));

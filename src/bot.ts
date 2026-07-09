@@ -388,6 +388,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   bot.callbackQuery("partner:newcode", async (ctx) => {
     await ctx.answerCallbackQuery();
     const u = await user(ctx);
+    if (!(await partnerAccount(u.id)).joined) { await sendPartnerDash(ctx); return; }
     const res = await createPartnerCode(u.id, config.partnerPercent, config.partnerInviteeBonus, config.partnerMaxCodes);
     if (!res.ok) {
       await ctx.reply(`Достигнут лимит в ${config.partnerMaxCodes} активных ссылок. Деактивируйте одну, чтобы создать новую.`);
@@ -404,6 +405,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     await ctx.answerCallbackQuery();
     const u = await user(ctx);
     const acct = await partnerAccount(u.id);
+    if (!acct.joined) { await sendPartnerDash(ctx); return; }
     const res = await requestWithdrawal(u.id, acct.withdrawable, config.withdrawMin);
     if (!res.ok) {
       const msg =
@@ -427,6 +429,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   bot.callbackQuery("partner:manage", async (ctx) => {
     await ctx.answerCallbackQuery();
     const u = await user(ctx);
+    if (!(await partnerAccount(u.id)).joined) { await sendPartnerDash(ctx); return; }
     const codes = await myPartnerCodes(u.id);
     const kb = new InlineKeyboard();
     for (const c of codes) kb.text(`🗑 ${c.code} (${c.paying} 💳)`, `partner:deact:${c.code}`).row();
@@ -440,6 +443,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   bot.callbackQuery(/^partner:deact:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const u = await user(ctx);
+    if (!(await partnerAccount(u.id)).joined) { await sendPartnerDash(ctx); return; }
     const ok = await deactivatePartnerCode(u.id, ctx.match[1]);
     await ctx.reply(ok ? "✅ Ссылка деактивирована." : "Ссылка не найдена.");
     await sendPartnerDash(ctx);
@@ -453,6 +457,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   bot.callbackQuery("partner:history", async (ctx) => {
     await ctx.answerCallbackQuery();
     const u = await user(ctx);
+    if (!(await partnerAccount(u.id)).joined) { await sendPartnerDash(ctx); return; }
     const rows = await myWithdrawals(u.id);
     if (!rows.length) {
       await ctx.reply("Заявок на вывод ещё не было.");

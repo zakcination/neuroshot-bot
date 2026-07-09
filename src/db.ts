@@ -83,6 +83,9 @@ const SCHEMA: string[] = [
     processed_at TIMESTAMPTZ
   )`,
   `CREATE INDEX IF NOT EXISTS idx_withdrawals_user ON withdrawals(user_id)`,
+  // At most ONE pending withdrawal per user — enforced at the DB, not just in
+  // app logic, so concurrent requests can't create two pending rows.
+  `CREATE UNIQUE INDEX IF NOT EXISTS uq_withdrawals_one_pending ON withdrawals(user_id) WHERE status = 'pending'`,
   `CREATE TABLE IF NOT EXISTS ledger (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
@@ -419,7 +422,8 @@ export async function partnerStats(
 
 // ---- Partner program v2: self-serve codes, cashback, withdrawals ----
 
-/** A short unforgeable code slug (base36, no ambiguous chars). */
+/** A short unforgeable code slug: 6 chars from a 32-symbol base32-style
+ *  alphabet (no ambiguous 0/1/l/o) → 32^6 ≈ 1.07e9 space. */
 function genCode(): string {
   return [...randomBytes(6)].map((b) => "abcdefghijkmnpqrstuvwxyz23456789"[b % 32]).join("");
 }
@@ -456,20 +460,30 @@ export async function createPartnerCode(
   inviteeBonus: number,
   maxActive: number,
 ): Promise<{ ok: true; code: string } | { ok: false; error: "limit" }> {
-  const cnt = await q(
-    "SELECT COUNT(*)::int AS c FROM partner_codes WHERE user_id = $1 AND kind = 'partner' AND active = true",
-    [userId],
-  );
-  if (Number(cnt[0].c) >= maxActive) return { ok: false, error: "limit" };
-  // Retry on the astronomically rare slug collision.
+  const activeCount = async () =>
+    Number(
+      (
+        await q(
+          "SELECT COUNT(*)::int AS c FROM partner_codes WHERE user_id = $1 AND kind = 'partner' AND active = true",
+          [userId],
+        )
+      )[0].c,
+    );
+  if ((await activeCount()) >= maxActive) return { ok: false, error: "limit" };
+  // Insert only if still under the cap — the count is re-evaluated INSIDE the
+  // statement, so two concurrent calls can't both slip past the limit. An empty
+  // result means either the cap was hit in a race or a (rare) slug collision.
   for (let i = 0; i < 5; i++) {
     const code = genCode();
     const ins = await q(
       `INSERT INTO partner_codes (code, user_id, percent, join_bonus, kind, active)
-       VALUES ($1, $2, $3, $4, 'partner', true) ON CONFLICT (code) DO NOTHING RETURNING code`,
-      [code, userId, percent, Math.floor(inviteeBonus)],
+       SELECT $1, $2, $3, $4, 'partner', true
+       WHERE (SELECT COUNT(*) FROM partner_codes WHERE user_id = $2 AND kind = 'partner' AND active = true) < $5
+       ON CONFLICT (code) DO NOTHING RETURNING code`,
+      [code, userId, percent, Math.floor(inviteeBonus), maxActive],
     );
     if (ins.length) return { ok: true, code };
+    if ((await activeCount()) >= maxActive) return { ok: false, error: "limit" }; // cap, not collision
   }
   throw new Error("could not generate a unique partner code");
 }
@@ -562,20 +576,30 @@ export async function requestWithdrawal(
     userId,
   ]);
   if (pend.length) return { ok: false, error: "pending" };
-  const rows = await q(
-    `WITH upd AS (
-       UPDATE users SET credits = credits - $1, partner_withdrawable = partner_withdrawable - $1
-       WHERE id = $2 AND partner_withdrawable >= $1 AND credits >= $1 RETURNING id
-     )
-     INSERT INTO withdrawals (user_id, amount) SELECT $2, $1 FROM upd RETURNING id`,
-    [amt, userId],
-  );
+  // One atomic statement: drain both balances, create the request, AND journal
+  // the ledger entry — so a partial failure can never leave balances without a
+  // matching record. The partial-unique index makes the "one pending" invariant
+  // race-proof; a concurrent double fires a unique violation (whole tx rolls back).
+  let rows;
+  try {
+    rows = await q(
+      `WITH upd AS (
+         UPDATE users SET credits = credits - $1, partner_withdrawable = partner_withdrawable - $1
+         WHERE id = $2 AND partner_withdrawable >= $1 AND credits >= $1 RETURNING id
+       ), w AS (
+         INSERT INTO withdrawals (user_id, amount) SELECT $2, $1 FROM upd RETURNING id
+       ), l AS (
+         INSERT INTO ledger (user_id, delta, reason, meta)
+         SELECT $2, -$1, 'withdrawal', w.id::text FROM w RETURNING 1
+       )
+       SELECT id FROM w`,
+      [amt, userId],
+    );
+  } catch (e) {
+    if (String((e as Error).message).match(/unique|duplicate/i)) return { ok: false, error: "pending" };
+    throw e;
+  }
   if (!rows.length) return { ok: false, error: "insufficient" };
-  await q("INSERT INTO ledger (user_id, delta, reason, meta) VALUES ($1, $2, 'withdrawal', $3)", [
-    userId,
-    -amt,
-    String(rows[0].id),
-  ]);
   return { ok: true, id: Number(rows[0].id) };
 }
 
@@ -610,19 +634,31 @@ export async function pendingWithdrawals(): Promise<WithdrawalRow[]> {
 
 /** Admin: mark a withdrawal paid (money sent) or rejected (refund the 🔫). */
 export async function resolveWithdrawal(id: number, paid: boolean): Promise<boolean> {
-  const rows = await q(
-    "UPDATE withdrawals SET status = $1, processed_at = now() WHERE id = $2 AND status = 'pending' RETURNING user_id, amount",
-    [paid ? "paid" : "rejected", id],
-  );
-  if (!rows.length) return false;
-  if (!paid) {
-    // Rejected → return the 🔫 to both balances and journal the reversal.
-    const uid = Number(rows[0].user_id);
-    const amt = Number(rows[0].amount);
-    await addCredits(uid, amt, "withdrawal_reject", String(id)); // restores spendable + journals +amt
-    await q("UPDATE users SET partner_withdrawable = partner_withdrawable + $1 WHERE id = $2", [amt, uid]);
+  if (paid) {
+    const rows = await q(
+      "UPDATE withdrawals SET status = 'paid', processed_at = now() WHERE id = $1 AND status = 'pending' RETURNING id",
+      [id],
+    );
+    return rows.length > 0;
   }
-  return true;
+  // Rejected → resolve the row, refund BOTH balances and journal the reversal in
+  // one atomic statement (no divergence between balances and the ledger).
+  const rows = await q(
+    `WITH upd AS (
+       UPDATE withdrawals SET status = 'rejected', processed_at = now()
+       WHERE id = $1 AND status = 'pending' RETURNING user_id, amount
+     ), usr AS (
+       UPDATE users SET credits = credits + (SELECT amount FROM upd),
+                        partner_withdrawable = partner_withdrawable + (SELECT amount FROM upd)
+       WHERE id = (SELECT user_id FROM upd) RETURNING id
+     ), l AS (
+       INSERT INTO ledger (user_id, delta, reason, meta)
+       SELECT user_id, amount, 'withdrawal_reject', $1::text FROM upd RETURNING 1
+     )
+     SELECT user_id FROM upd`,
+    [id],
+  );
+  return rows.length > 0;
 }
 
 /** Add credits and journal the movement atomically (single CTE statement). */
