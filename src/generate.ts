@@ -19,7 +19,7 @@ import {
 import { MODELS, priceFor, type FreeScenario, type GenOpts, type ModelSpec } from "./models.js";
 import { paywallKeyboard, paywallText } from "./payments.js";
 import { craftPrompt } from "./promptcraft.js";
-import { watermarkVideo } from "./watermark.js";
+import { watermarkImage, watermarkVideo } from "./watermark.js";
 
 fal.config({ credentials: config.falKey });
 
@@ -162,10 +162,15 @@ export async function runGeneration(
       : undefined;
     const url = await falRun(model, prompt, imageUrl);
 
+    // Brand every deliverable by default (user can turn the watermark off).
     if (model.kind === "image_to_video") {
-      await ctx.replyWithVideo(new InputFile({ url }), { reply_markup: after });
+      const branded = user.watermark_enabled ? await watermarkVideo(url) : null;
+      const media = branded ? new InputFile(branded, "neuroshot.mp4") : new InputFile({ url });
+      await ctx.replyWithVideo(media, { reply_markup: after });
     } else {
-      await ctx.replyWithPhoto(new InputFile({ url }), { reply_markup: after });
+      const branded = user.watermark_enabled ? await watermarkImage(url) : null;
+      const media = branded ? new InputFile(branded, "neuroshot.png") : new InputFile({ url });
+      await ctx.replyWithPhoto(media, { reply_markup: after });
     }
     // Charge-free first result: claim it now (won by exactly one call) and celebrate.
     if (free && (await consumeFreeResult(user.id))) {

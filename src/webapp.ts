@@ -14,9 +14,10 @@ import { fileURLToPath } from "node:url";
 import { fal } from "@fal-ai/client";
 import { config } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { createOrder, galleryPage, getGeneration, getOrCreateUser, getUser, recentGenerations, userDashboard } from "./db.js";
+import { createOrder, galleryPage, getGeneration, getOrCreateUser, getUser, recentGenerations, setWatermark, userDashboard } from "./db.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { sanitizePrompt } from "./promptcraft.js";
+import { watermarkImage, watermarkVideo } from "./watermark.js";
 import {
   campaignById,
   CAMPAIGNS,
@@ -460,18 +461,45 @@ export async function sendResponse(
   const isVideo = /\.(mp4|webm|mov)(\?|$)/i.test(g.output_url);
   const apiBase = process.env.TELEGRAM_API_BASE ?? "https://api.telegram.org";
   const method = isVideo ? "sendVideo" : "sendPhoto";
-  const res = await fetch(`${apiBase}/bot${config.botToken}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: userId,
-      [isVideo ? "video" : "photo"]: g.output_url,
-      caption: "✨ Из вашей студии NeuroShot",
-    }),
-  });
+  const field = isVideo ? "video" : "photo";
+  const caption = "✨ Из вашей студии NeuroShot";
+
+  // Brand the shared file unless the user turned the watermark off. When branded,
+  // upload the bytes (multipart); otherwise pass the source URL to Telegram.
+  const u = await getUser(userId);
+  const branded = u?.watermark_enabled
+    ? isVideo
+      ? await watermarkVideo(g.output_url)
+      : await watermarkImage(g.output_url)
+    : null;
+
+  let res: Response;
+  if (branded) {
+    const form = new FormData();
+    form.set("chat_id", String(userId));
+    form.set("caption", caption);
+    form.set(field, new Blob([new Uint8Array(branded)]), isVideo ? "neuroshot.mp4" : "neuroshot.png");
+    res = await fetch(`${apiBase}/bot${config.botToken}/${method}`, { method: "POST", body: form });
+  } else {
+    res = await fetch(`${apiBase}/bot${config.botToken}/${method}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: userId, [field]: g.output_url, caption }),
+    });
+  }
   const data = (await res.json()) as { ok: boolean };
   if (!data.ok) return { status: 502, body: { error: "send_failed" } };
   return { status: 200, body: { ok: true } };
+}
+
+/** POST /api/settings — toggle the caller's watermark preference. */
+export async function settingsResponse(
+  userId: number,
+  body: Record<string, unknown> | null,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  if (typeof body?.watermark !== "boolean") return { status: 400, body: { error: "bad_request" } };
+  const enabled = await setWatermark(userId, body.watermark);
+  return { status: 200, body: { watermark: enabled } };
 }
 
 /**
@@ -602,6 +630,16 @@ export function createWebApp(): Server {
         const user = resolveUser(req.headers);
         if (!user) return json(res, 401, { error: "unauthorized" });
         const { status, body } = await sendResponse(user.id, await readJsonBody(req, 4 * 1024));
+        return json(res, status, body);
+      }
+
+      // POST /api/settings — toggle the watermark preference.
+      if (url.pathname === "/api/settings") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        await getOrCreateUser(user.id, user.username, null, config.freeCredits);
+        const { status, body } = await settingsResponse(user.id, await readJsonBody(req, 1024));
         return json(res, status, body);
       }
 

@@ -1,10 +1,21 @@
-# Free-scenario watermark (CTA badge)
+# Watermark (CTA badge)
 
-Every **free** scenario video (the princess/football onboarding gift) is branded
-with a pre-designed **CTA badge** — `Хочешь так же? Бесплатно: ✈️ @neuroshot_ai_bot`
-— overlaid at the bottom. Each shared clip is both an ad and a conversion path: a
-viewer sees exactly where to make their own, for free. This is the viral loop
-behind the free-hook funnel (see `docs/pricing.md`).
+A pre-designed **CTA badge** — `Хочешь так же? Бесплатно: ✈️ @neuroshot_ai_bot`
+— is overlaid at the bottom of deliverables. Each shared clip/photo is both an ad
+and a conversion path: a viewer sees exactly where to make their own, for free.
+
+## Scope
+
+- **Every generation** (bot images + videos via `runGeneration`, and web
+  share-to-Telegram via `/api/send`) is branded **by default**.
+- **Per-user toggle:** `users.watermark_enabled` (default `true`), flipped from
+  the app's «Настройки» via `POST /api/settings` (`watermarkVideo`/`watermarkImage`
+  are simply skipped when off).
+- **Free scenarios are always branded** (the princess/football onboarding gift) —
+  the badge is the price of "free", so the toggle doesn't apply there.
+
+Both `watermarkVideo` and `watermarkImage` are safe no-ops (return null → the
+source URL is sent) when ffmpeg or the badge file is missing.
 
 ## How it works
 

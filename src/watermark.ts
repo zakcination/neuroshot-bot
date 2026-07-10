@@ -117,3 +117,39 @@ export async function watermarkVideo(url: string): Promise<Buffer | null> {
     if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
 }
+
+/**
+ * Same badge overlay for a still image — download, composite the CTA badge at
+ * bottom-centre, return the branded PNG bytes (or null if unavailable/failed, so
+ * the caller falls back to the source URL). Used to brand image deliverables.
+ */
+export async function watermarkImage(url: string): Promise<Buffer | null> {
+  if (!(await watermarkEnabled())) return null;
+  let dir: string | null = null;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const src = Buffer.from(await res.arrayBuffer());
+    dir = await mkdtemp(join(tmpdir(), "nswm-"));
+    const inPath = join(dir, "in");
+    const outPath = join(dir, "out.png");
+    await writeFile(inPath, src);
+    const ok = await runFfmpeg([
+      "-y",
+      "-i", inPath,
+      "-i", BADGE_PATH,
+      "-filter_complex",
+      `[1:v]scale=${MARK_WIDTH}:-1,format=rgba,colorchannelmixer=aa=${MARK_OPACITY}[wm];` +
+        `[0:v][wm]overlay=x=(W-w)/2:y=H-h-${BOTTOM_PADDING}`,
+      "-frames:v", "1",
+      outPath,
+    ]);
+    if (!ok) return null;
+    return await readFile(outPath);
+  } catch (err) {
+    console.error("watermarkImage failed:", err);
+    return null;
+  } finally {
+    if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
