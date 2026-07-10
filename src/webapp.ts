@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { fal } from "@fal-ai/client";
 import { config } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { getGeneration, getOrCreateUser, getUser, recentGenerations, userDashboard } from "./db.js";
+import { galleryPage, getGeneration, getOrCreateUser, getUser, recentGenerations, userDashboard } from "./db.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { sanitizePrompt } from "./promptcraft.js";
 import {
@@ -561,6 +561,18 @@ export function createWebApp(): Server {
         await getOrCreateUser(user.id, user.username, null, config.freeCredits);
         const { status, body } = await generateResponse(user.id, await readJsonBody(req, 64 * 1024));
         return json(res, status, body);
+      }
+
+      // GET /api/generations — one page of the caller's finished works (gallery).
+      if (url.pathname === "/api/generations") {
+        if (!methodIs(res, req.method, "GET")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const size = Math.min(30, Math.max(1, Math.floor(Number(url.searchParams.get("size")) || 12)));
+        const reqPage = Math.max(1, Math.floor(Number(url.searchParams.get("page")) || 1));
+        const { items, total } = await galleryPage(user.id, size, (reqPage - 1) * size);
+        const pages = Math.max(1, Math.ceil(total / size));
+        return json(res, 200, { items, total, page: Math.min(reqPage, pages), pageSize: size, pages });
       }
 
       // GET /api/generations/:id — poll a render's status (owner-scoped).

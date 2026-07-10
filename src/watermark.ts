@@ -1,13 +1,14 @@
 /**
- * Brand watermark for FREE deliverables — every free scenario video carries the
- * NeuroShot logo + wordmark so each share markets us (the viral loop). Overlays
- * `public/watermark.png` (a transparent logo+"NeuroShot.ai" lockup) at the
- * bottom-center of the video via ffmpeg.
+ * Brand + CTA watermark for FREE deliverables. Every free scenario video gets a
+ * pre-designed CTA badge overlaid at the bottom — "Хочешь так же? Бесплатно:
+ * ✈️ @neuroshot_ai_bot" (the artwork lives in `public/watermark.png`) — so each
+ * shared clip is both an ad and a conversion path: a viewer sees exactly where
+ * to make their own, for free. The copy + handle + Telegram glyph are baked into
+ * the image, so there's no text rendering (and no font dependency) here.
  *
- * Zero hard dependency: if ffmpeg OR the logo file is missing, `watermarkVideo`
- * returns null and the caller simply sends the un-watermarked source URL. So the
- * whole free flow keeps working before the logo asset is committed / ffmpeg is
- * added to the image — the watermark switches on automatically once both exist.
+ * Zero hard dependency: if ffmpeg OR the badge file is missing, `watermarkVideo`
+ * returns null and the caller sends the un-watermarked source URL — the free
+ * flow never breaks and paid renders are never touched.
  */
 import { spawn } from "node:child_process";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -15,21 +16,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** The logo+wordmark lockup. Commit it here to enable branding. The source may
- * be fully opaque (own background is fine) — opacity is applied at overlay time. */
-const LOGO_PATH = fileURLToPath(new URL("../public/watermark.png", import.meta.url));
-/** Padding from the bottom edge, in px (spec: 40–50). */
-const BOTTOM_PADDING = 45;
-/** Rendered watermark width in px (scaled from the source PNG, ratio preserved). */
-const MARK_WIDTH = 320;
-/** Overlay opacity (0–1). 0.8 = a solid-reading brand badge with a soft edge —
- * strong enough for recognition on shared clips, applied to the logo as-is so
- * the source asset stays pristine. Tune here without touching the PNG. */
-const MARK_OPACITY = 0.8;
+/** The CTA badge artwork (RGBA PNG). Replace this file to change the watermark. */
+const BADGE_PATH = fileURLToPath(new URL("../public/watermark.png", import.meta.url));
+/** Padding from the bottom edge, in px. */
+const BOTTOM_PADDING = 32;
+/** Rendered badge width in px (scaled from the source, ratio preserved). Wide,
+ * since the badge is a readable bottom banner rather than a small corner mark. */
+const MARK_WIDTH = 640;
+/** Overlay opacity (0–1). 0.95 keeps the CTA crisp and readable on any clip. */
+const MARK_OPACITY = 0.95;
 /** Hard cap so a stuck ffmpeg can't wedge the request. */
 const FFMPEG_TIMEOUT_MS = 60_000;
 
-let logoReady: boolean | null = null;
+let badgeReady: boolean | null = null;
 let ffmpegReady: boolean | null = null;
 
 async function fileExists(p: string): Promise<boolean> {
@@ -51,14 +50,14 @@ function hasFfmpeg(): Promise<boolean> {
   });
 }
 
-async function hasLogo(): Promise<boolean> {
-  if (logoReady == null) logoReady = await fileExists(LOGO_PATH);
-  return logoReady;
+async function hasBadge(): Promise<boolean> {
+  if (badgeReady == null) badgeReady = await fileExists(BADGE_PATH);
+  return badgeReady;
 }
 
 /** True when a call to watermarkVideo could actually brand the file. */
 export async function watermarkEnabled(): Promise<boolean> {
-  return (await hasLogo()) && (await hasFfmpeg());
+  return (await hasBadge()) && (await hasFfmpeg());
 }
 
 function runFfmpeg(args: string[]): Promise<boolean> {
@@ -80,10 +79,10 @@ function runFfmpeg(args: string[]): Promise<boolean> {
 }
 
 /**
- * Download `url`, overlay the brand mark at bottom-center (BOTTOM_PADDING px up),
- * and return the branded MP4 bytes — or null if branding is unavailable or fails
- * (caller then sends the source URL unchanged, so a watermark hiccup never blocks
- * a free result). Audio is copied through untouched.
+ * Download `url`, overlay the CTA badge at the bottom-centre, and return the
+ * branded MP4 bytes — or null if branding is unavailable or fails (caller then
+ * sends the source URL unchanged, so a watermark hiccup never blocks a free
+ * result). Audio is copied through untouched.
  */
 export async function watermarkVideo(url: string): Promise<Buffer | null> {
   if (!(await watermarkEnabled())) return null;
@@ -99,11 +98,10 @@ export async function watermarkVideo(url: string): Promise<Buffer | null> {
     const ok = await runFfmpeg([
       "-y",
       "-i", inPath,
-      "-i", LOGO_PATH,
+      "-i", BADGE_PATH,
       "-filter_complex",
-      // Scale the logo, give it an alpha channel, dial opacity, then overlay
-      // bottom-centre. format=rgba lets colorchannelmixer set uniform alpha even
-      // when the source PNG has no alpha (a solid-background lockup is fine).
+      // Scale the badge, apply opacity (RGBA-safe — transparent corners stay
+      // clear), overlay bottom-centre.
       `[1:v]scale=${MARK_WIDTH}:-1,format=rgba,colorchannelmixer=aa=${MARK_OPACITY}[wm];` +
         `[0:v][wm]overlay=x=(W-w)/2:y=H-h-${BOTTOM_PADDING}`,
       "-c:a", "copy",

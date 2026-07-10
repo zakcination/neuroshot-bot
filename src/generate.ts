@@ -218,7 +218,7 @@ export async function runFreeScenario(
     // Claim the freebie now (exactly one winner); if it was already claimed in a
     // race, fall back to charging is not needed — just deliver this once.
     await consumeFreeScenario(user.id);
-    // Brand the video if the watermark is available; else send the source URL.
+    // Brand the video with the CTA badge if available; else send the source URL.
     const branded = await watermarkVideo(videoUrl);
     const video = branded ? new InputFile(branded, "neuroshot.mp4") : new InputFile({ url: videoUrl });
     await setPending(user.id, "await_action", sceneImg); // keep the scene for follow-ups

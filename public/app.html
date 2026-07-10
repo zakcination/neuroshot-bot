@@ -114,8 +114,14 @@
     .stat .l { color: var(--muted); font-size: 10.5px; margin-top: 3px; letter-spacing: .04em; }
     @media (max-width: 400px) { .stats { grid-template-columns: repeat(2, 1fr); } }
 
-    .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
-    @media (min-width: 560px) { .gallery { grid-template-columns: repeat(4, 1fr); } }
+    /* Fixed region: 3×4 thumbnails, so the gallery keeps its footprint across
+       pages and the page doesn't jump when a page has fewer items. */
+    .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; align-content: start; min-height: 46vh; }
+    @media (min-width: 560px) { .gallery { grid-template-columns: repeat(4, 1fr); min-height: 40vh; } }
+    .pager { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 12px; }
+    .pager button { min-width: 44px; height: 40px; border-radius: var(--radius-s); border: 1px solid var(--line); background: var(--surface); color: var(--text); font-size: 18px; cursor: pointer; }
+    .pager button:disabled { opacity: .35; cursor: default; }
+    .pager .pinfo { font-size: 14px; opacity: .7; min-width: 74px; text-align: center; }
     .shot { position: relative; aspect-ratio: 1; border-radius: var(--radius-s); overflow: hidden; background: var(--surface); border: 1px solid var(--line); display: block; transition: transform .15s ease; }
     .shot:hover { transform: scale(1.03); }
     .shot img, .shot video { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -646,7 +652,7 @@
         if (!jobs.has(job.id)) return; // already finished elsewhere
         const { status, data } = await api("/api/generations/" + job.id);
         if (status === 200 && data.status === "ok") {
-          jobs.delete(job.id); updateJobsPill(); refreshMe(); haptic("success");
+          jobs.delete(job.id); updateJobsPill(); refreshMe(); renderGallery(1); haptic("success");
           if (viewedJob === job.id && sheet.classList.contains("on")) viewResult(data, job);
           else toast("✨ Готово! Работа уже в «Мои работы»");
           return;
@@ -986,7 +992,6 @@
       if (status !== 200) return;
       ME = data;
       setBalance(data.dashboard.credits);
-      renderGallery();
       const s = document.getElementById("statsRow");
       if (s) s.innerHTML = statsHtml(data.dashboard);
     }
@@ -997,15 +1002,25 @@
         <div class="stat"><div class="n">${dash.referralEarned}</div><div class="l">заработано</div></div>
         <div class="stat"><div class="n">${dash.referralCount}</div><div class="l">друзей</div></div>`;
     }
-    function renderGallery() {
+    // Paginated «Мои работы»: a fixed grid region + a pager. Each page is fetched
+    // from /api/generations so the section stays put and long histories stay light.
+    var GAL_PAGE = 1, GAL_PAGES = 1;
+    const GAL_SIZE = 12; // 3×4 — matches the fixed region height
+    async function renderGallery(page) {
       const g = document.getElementById("g");
       if (!g) return;
-      const gens = (ME.generations || []).filter((x) => x.status === "ok" && x.output_url);
+      const want = Math.max(1, page || GAL_PAGE);
+      let items = [], total = 0, cur = want;
+      try {
+        const { status, data } = await api("/api/generations?page=" + want + "&size=" + GAL_SIZE);
+        if (status === 200) { items = data.items || []; total = data.total || 0; cur = data.page || want; GAL_PAGES = data.pages || 1; }
+      } catch (e) { /* keep the last rendered page on a transient error */ }
+      GAL_PAGE = cur;
       g.innerHTML = "";
-      if (!gens.length) {
+      if (!items.length) {
         g.appendChild($(`<div class="empty">Пока пусто.<br>Создайте первую работу — она появится здесь ✨</div>`));
       }
-      for (const item of gens) {
+      for (const item of items) {
         const isVideo = /\.(mp4|webm|mov)(\?|$)/i.test(item.output_url);
         const media = isVideo
           ? `<video src="${esc(item.output_url)}" muted loop playsinline autoplay preload="metadata"></video><span class="tag">видео</span>`
@@ -1014,6 +1029,21 @@
         el.onclick = (e) => { e.preventDefault(); openViewer(item); }; // viewer: save / chat / animate
         g.appendChild(el);
       }
+      renderPager();
+    }
+    function renderPager() {
+      const p = document.getElementById("pager");
+      if (!p) return;
+      p.innerHTML = "";
+      if (GAL_PAGES <= 1) return; // single page → no controls
+      const prev = $(`<button aria-label="Назад">‹</button>`);
+      prev.disabled = GAL_PAGE <= 1;
+      prev.onclick = () => { if (GAL_PAGE > 1) renderGallery(GAL_PAGE - 1); };
+      const info = $(`<span class="pinfo">${GAL_PAGE} / ${GAL_PAGES}</span>`);
+      const next = $(`<button aria-label="Вперёд">›</button>`);
+      next.disabled = GAL_PAGE >= GAL_PAGES;
+      next.onclick = () => { if (GAL_PAGE < GAL_PAGES) renderGallery(GAL_PAGE + 1); };
+      p.append(prev, info, next);
     }
 
     async function load() {
@@ -1094,6 +1124,7 @@
         <section class="reveal">
           <div class="sec-h"><h2>Мои работы</h2></div>
           <div class="gallery" id="g"></div>
+          <div class="pager" id="pager"></div>
         </section>
 
         <section class="reveal">

@@ -249,8 +249,13 @@ await step("signup: /start creates user with 12 free 🔫 and shows the use-case
     inline_keyboard: Array<Array<{ callback_data: string }>>;
   };
   const buttons = kb.inline_keyboard.flat().map((b) => b.callback_data);
-  for (const expected of ["menu:photoshoot", "menu:product", "menu:animate", "menu:text", "menu:balance", "menu:ref"]) {
+  // Lean funnel: only the free hook + two core create anchors (studio is a
+  // web_app button, no callback_data). Secondary surfaces are gone from the menu.
+  for (const expected of ["menu:free", "menu:photoshoot", "menu:campaigns"]) {
     assert.ok(buttons.includes(expected), `menu misses ${expected}`);
+  }
+  for (const removed of ["menu:product", "menu:animate", "menu:text", "menu:models", "menu:balance", "menu:ref"]) {
+    assert.ok(!buttons.includes(removed), `menu should not surface ${removed} anymore`);
   }
 });
 
@@ -783,17 +788,14 @@ await step("free scenario: princess renders the WHOLE chain free (Seedream → H
   assert.equal(falCalls.length, falAfter);
 });
 
-await step("recurring reason: a returning /start surfaces the weekly новинка + continue-with-photo", async () => {
-  const { featuredCampaign } = await import("../src/models.js");
-  const feat = featuredCampaign(new Date());
+await step("returning /start: lean menu keeps the continue-with-photo shortcut", async () => {
   // Nora is a returning user who still has a photo on file from the preset flow above.
   await sendText({ id: 6001, is_bot: false, first_name: "Nora", username: "nora" }, "/start");
   const hero = calls("sendPhoto").at(-1)!; // the returning menu ships on the hero photo
-  assert.match(hero.payload.caption as string, /Новинка недели/);
   const kb = hero.payload.reply_markup as { inline_keyboard: Array<Array<{ callback_data: string }>> };
   const buttons = kb.inline_keyboard.flat().map((b) => b.callback_data);
-  assert.ok(buttons.includes(`camp:${feat.id}`), "featured campaign button missing");
   assert.ok(buttons.includes("menu:styles"), "continue-with-photo shortcut missing");
+  assert.ok(buttons.includes("menu:photoshoot"), "core create anchor missing");
 });
 
 await step("admin /grant: target + self shorthand + negative; non-admin silent; unknown rejected", async () => {

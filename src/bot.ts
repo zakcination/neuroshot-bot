@@ -36,7 +36,6 @@ import { buildDigest, formatDigest } from "./monitor.js";
 import {
   CAMPAIGNS,
   campaignById,
-  featuredCampaign,
   FREE_SCENARIOS,
   freeScenarioById,
   IMAGE_MODEL_PICKER,
@@ -82,26 +81,21 @@ async function user(
 export function mainMenu(
   opts: { featured?: Campaign; hasPhoto?: boolean; freeScenario?: boolean } = {},
 ): InlineKeyboard {
+  // Deliberately minimal: only the anchors that get a newcomer to a result
+  // fast (upload → wow). Secondary surfaces (product, text→image, top-models,
+  // balance, invite) live behind commands (/buy, /ref) and inside the studio,
+  // so the chat stays a clean, high-converting funnel — not a control panel.
   const kb = new InlineKeyboard();
-  // The app is the flagship surface (in-app studio: create, pay, gallery) — top slot.
-  if (config.webappUrl) kb.webApp("🌐 Студия NeuroShot — создавать в приложении", config.webappUrl).row();
-  // The onboarding hook: one whole scenario video, free (shown until claimed).
-  if (opts.freeScenario) kb.text("🎁 Бесплатный сценарий-видео (принцесса / футбол)", "menu:free").row();
+  // 1) The hook: one free video from a single photo (shown until claimed).
+  if (opts.freeScenario) kb.text("🎁 Бесплатное видео за 1 фото — без оплаты", "menu:free").row();
+  // 2) Contextual fast path: keep going with the photo already on file.
   if (opts.hasPhoto) kb.text("📸 Продолжить с вашим фото", "menu:styles").row();
-  if (opts.featured) kb.text(`🆕 Новинка недели: ${opts.featured.label}`, `camp:${opts.featured.id}`).row();
-  kb.text("📸 AI-фотосессия", "menu:photoshoot")
-    .row()
-    .text("🛍 Фото товара для маркетплейса", "menu:product")
-    .row()
-    .text(`🎬 Оживить фото в видео (от ${MODELS.animate.credits} 🔫)`, "menu:animate")
-    .row()
-    .text("🎉 Кампании: сказки, кумиры, старые фото", "menu:campaigns")
-    .row()
-    .text("✨ Картинка из текста", "menu:text")
-    .row()
-    .text("⚡ Топ AI-модели", "menu:models")
-    .row();
-  return kb.text("💰 Баланс и пакеты", "menu:balance").text("🎁 Пригласить друга", "menu:ref");
+  // 3) The two core create anchors that showcase product quality.
+  kb.text("📸 AI-фотосессия по вашему фото", "menu:photoshoot").row();
+  kb.text("🎬 Сценарии: сказки • кумиры • кино", "menu:campaigns").row();
+  // 4) The studio (create, gallery, pricing) — the full surface, one tap away.
+  if (config.webappUrl) kb.webApp("🌐 Открыть студию NeuroShot", config.webappUrl).row();
+  return kb;
 }
 
 /** Picker of the top text-to-image models (famous names, priced). */
@@ -273,14 +267,13 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     } else {
       msg += `💰 На балансе: <b>${UNIT_EMOJI} ${nUnits(u.credits)}</b>.`;
     }
-    // Returning users get a fresh reason to come back: the weekly rotating
-    // "новинка недели" + a one-tap continue-with-your-last-photo shortcut.
+    // Lean funnel: the free gift is the headline, plus a one-tap continue-with-
+    // your-last-photo shortcut for returning users. No secondary noise.
     const freeScenario = await hasFreeScenario(u.id);
     const menuOpts = u.justCreated
       ? { freeScenario }
-      : { featured: featuredCampaign(new Date()), hasPhoto: !!u.pending_file_id, freeScenario };
-    if (menuOpts.featured) msg += `\n\n🆕 Новинка недели: <b>${menuOpts.featured.label}</b> — попробуйте!`;
-    if (freeScenario) msg += `\n\n🎁 <b>Подарок:</b> снимите один сценарий-видео (принцесса или футбол) — бесплатно!`;
+      : { hasPhoto: !!u.pending_file_id, freeScenario };
+    if (freeScenario) msg += `\n\n🎁 <b>Подарок:</b> одно фото → видео (принцесса или футбол) — бесплатно, без оплаты!`;
     await sendMainMenu(ctx, msg, menuOpts);
     // Deep link from the Mini App's "Пополнить" button.
     if (payload === "buy") await sendBalance(ctx, u.credits);
@@ -289,8 +282,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   bot.command("menu", async (ctx) => {
     const u = await user(ctx);
     await setPending(u.id, null, u.pending_file_id); // escape any mode/prompt-await, keep the photo
-    await sendMainMenu(ctx, "Что создаём?", {
-      featured: featuredCampaign(new Date()),
+    await sendMainMenu(ctx, "Что создаём? Одно фото — и готово 👇", {
       hasPhoto: !!u.pending_file_id,
       freeScenario: await hasFreeScenario(u.id),
     });

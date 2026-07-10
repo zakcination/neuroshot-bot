@@ -823,6 +823,31 @@ export async function recentGenerations(userId: number, limit = 30): Promise<Gen
 }
 
 /**
+ * One page of a user's finished works (status='ok' with an output), newest
+ * first, plus the total count — powers the paginated «Мои работы» gallery.
+ * Only completed works are counted so page numbers stay stable/accurate.
+ */
+export async function galleryPage(
+  userId: number,
+  limit: number,
+  offset: number,
+): Promise<{ items: GenerationRow[]; total: number }> {
+  const items = await q(
+    `SELECT id, model, prompt, credits, status, output_url, created_at
+     FROM generations
+     WHERE user_id = $1 AND status = 'ok' AND output_url IS NOT NULL
+     ORDER BY id DESC LIMIT $2 OFFSET $3`,
+    [userId, limit, offset],
+  );
+  const cnt = await q(
+    `SELECT COUNT(*)::int AS c FROM generations
+     WHERE user_id = $1 AND status = 'ok' AND output_url IS NOT NULL`,
+    [userId],
+  );
+  return { items: items.map(mapGeneration), total: Number(cnt[0]?.c ?? 0) };
+}
+
+/**
  * Records a behavioural event, opening a new visit (session_start) when the
  * previous event is older than SESSION_GAP_MIN (or on the first event).
  */
