@@ -172,6 +172,18 @@
     .reveal { opacity: 0; transform: translateY(14px); transition: opacity .5s ease, transform .5s ease; }
     .reveal.on { opacity: 1; transform: none; }
 
+    /* Multipage: 4 pages toggled by the bottom tab bar. */
+    .wrap { padding-bottom: 88px; }
+    .page { display: none; }
+    .page.on { display: block; animation: pagein .22s ease; }
+    @keyframes pagein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    .tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; display: flex; max-width: 640px; margin: 0 auto; background: rgba(8,7,12,.94); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-top: 1px solid var(--line); padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px)); }
+    .tabbtn { flex: 1; background: none; border: 0; color: var(--muted); font: inherit; font-size: 11px; font-weight: 600; display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; padding: 5px 0; border-radius: 10px; transition: color .15s; }
+    .tabbtn span { font-size: 21px; line-height: 1; filter: grayscale(.4); transition: filter .15s; }
+    .tabbtn.on { color: var(--text); }
+    .tabbtn.on span { filter: none; }
+    .buyhint { color: var(--muted); font-size: 12px; margin: 12px 2px 0; line-height: 1.5; }
+
     .skel { border-radius: var(--radius); height: 170px; background: linear-gradient(100deg, var(--surface) 40%, var(--surface-2) 50%, var(--surface) 60%); background-size: 200% 100%; animation: shimmer 1.3s infinite; }
     @keyframes shimmer { to { background-position: -200% 0; } }
     .gate { text-align: center; padding: 12vh 20px 0; }
@@ -1080,77 +1092,101 @@
           </span>
         </div>
 
-        <div class="wallet reveal"><div class="in">
-          <div class="eyebrow">Студия · Баланс</div>
-          <div class="balance"><span class="n" id="balN">0</span><span class="u">🔫</span></div>
-          <div class="balance"><span class="l">${esc(plural(dash.credits, "патрон", "патрона", "патронов"))} · привет, ${esc(d.user.first_name || "друг")} 👋</span></div>
-          <div class="cta-row">
-            <button class="btn primary" id="createTop">✨ Создать</button>
-            <button class="btn ghost" id="buyTop">💳 Пополнить</button>
-          </div>
-        </div></div>
+        <!-- ===== СТУДИЯ (create) ===== -->
+        <div class="page on" data-page="studio">
+          <div class="wallet reveal"><div class="in">
+            <div class="eyebrow">Студия · Баланс</div>
+            <div class="balance"><span class="n" id="balN">0</span><span class="u">🔫</span></div>
+            <div class="balance"><span class="l">${esc(plural(dash.credits, "патрон", "патрона", "патронов"))} · привет, ${esc(d.user.first_name || "друг")} 👋</span></div>
+            <div class="cta-row">
+              <button class="btn primary" id="createTop">✨ Создать</button>
+              <button class="btn ghost" id="buyTop">💳 Пополнить</button>
+            </div>
+          </div></div>
 
-        <div class="news reveal">
-          <div class="sec-h"><h2>🆕 Новые модели</h2></div>
-          <div class="newsrail" id="newsrail"></div>
-          <div class="newsdots" id="newsdots"></div>
+          <div class="news reveal">
+            <div class="sec-h"><h2>🆕 Новые модели</h2></div>
+            <div class="newsrail" id="newsrail"></div>
+            <div class="newsdots" id="newsdots"></div>
+          </div>
+
+          <section class="reveal">
+            <div class="sec-h"><h2>Что создаём</h2></div>
+            <div class="rail">
+              <a class="act a1" data-studio="shoot"><span class="em">📸</span><b>AI-фотосессия</b><span>от ${d.catalog.presetCredits} 🔫 · прямо здесь</span></a>
+              <a class="act a2" data-studio="product"><span class="em">🛍</span><b>Карточка товара</b><span>для маркетплейса</span></a>
+              <a class="act a3" data-studio="video"><span class="em">🎬</span><b>Оживить фото</b><span>видео от ${d.catalog.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} 🔫</span></a>
+              <a class="act a4" data-studio="text"><span class="em">✨</span><b>Из текста</b><span>от ${d.catalog.imageModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} 🔫</span></a>
+            </div>
+          </section>
+
+          <section class="reveal">
+            <div class="sec-h"><h2>Сценарии</h2></div>
+            <div class="rail">
+              ${d.catalog.campaigns.map((k, i) => `
+                <a class="act a${(i % 4) + 1}" data-camp-open="${k.id}"><span class="em">${esc(k.label.split(" ")[0])}</span>
+                  <b>${esc(k.label.slice(k.label.indexOf(" ") + 1))}</b><span>${k.imageCredits} 🔫 + видео ${k.videoCredits} 🔫</span></a>`).join("")}
+            </div>
+          </section>
         </div>
 
-        <section class="reveal">
-          <div class="sec-h"><h2>Что создаём</h2></div>
-          <div class="rail">
-            <a class="act a1" data-studio="shoot"><span class="em">📸</span><b>AI-фотосессия</b><span>от ${d.catalog.presetCredits} 🔫 · прямо здесь</span></a>
-            <a class="act a2" data-studio="product"><span class="em">🛍</span><b>Карточка товара</b><span>для маркетплейса</span></a>
-            <a class="act a3" data-studio="video"><span class="em">🎬</span><b>Оживить фото</b><span>видео от ${d.catalog.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} 🔫</span></a>
-            <a class="act a4" data-studio="text"><span class="em">✨</span><b>Из текста</b><span>от ${d.catalog.imageModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} 🔫</span></a>
-          </div>
-        </section>
+        <!-- ===== ПРОФИЛЬ (stats · history · settings) ===== -->
+        <div class="page" data-page="profile">
+          <section class="reveal">
+            <div class="sec-h"><h2>Профиль · ${esc(d.user.first_name || "друг")}</h2></div>
+            <div class="stats" id="statsRow">${statsHtml(dash)}</div>
+          </section>
 
-        <section class="reveal">
-          <div class="sec-h"><h2>Сценарии</h2></div>
-          <div class="rail">
-            ${d.catalog.campaigns.map((k, i) => `
-              <a class="act a${(i % 4) + 1}" data-camp-open="${k.id}"><span class="em">${esc(k.label.split(" ")[0])}</span>
-                <b>${esc(k.label.slice(k.label.indexOf(" ") + 1))}</b><span>${k.imageCredits} 🔫 + видео ${k.videoCredits} 🔫</span></a>`).join("")}
-          </div>
-        </section>
+          <section class="reveal">
+            <div class="sec-h"><h2>Мои работы</h2></div>
+            <div class="gallery" id="g"></div>
+            <div class="pager" id="pager"></div>
+          </section>
 
-        <section class="reveal">
-          <div class="sec-h"><h2>Статистика</h2></div>
-          <div class="stats" id="statsRow">${statsHtml(dash)}</div>
-        </section>
+          <section class="reveal">
+            <div class="sec-h"><h2>Настройки</h2></div>
+            <label class="setrow">
+              <span><b>🏷 Водяной знак</b><small>на ваших фото и видео</small></span>
+              <input type="checkbox" id="wmToggle" ${dash.watermarkEnabled ? "checked" : ""} />
+            </label>
+          </section>
+        </div>
 
-        <section class="reveal">
-          <div class="sec-h"><h2>Настройки</h2></div>
-          <label class="setrow">
-            <span><b>🏷 Водяной знак</b><small>на ваших фото и видео</small></span>
-            <input type="checkbox" id="wmToggle" ${dash.watermarkEnabled ? "checked" : ""} />
-          </label>
-        </section>
-
-        <section class="reveal">
-          <div class="sec-h"><h2>Мои работы</h2></div>
-          <div class="gallery" id="g"></div>
-          <div class="pager" id="pager"></div>
-        </section>
-
-        <section class="reveal">
-          <div class="sec-h"><h2>Пакеты патронов</h2></div>
-          <div class="packs" id="p"></div>
-        </section>
-
-        <section class="reveal">
-          <div class="refcard">
-            <h3>🎁 Приглашай — зарабатывай</h3>
-            <p>Друг получает бонусные 🔫 при входе, вы — награду за его первую покупку и 10% со всех его пакетов. Навсегда.</p>
-            <div class="linkrow">
-              <div class="linkbox" id="refL">${esc(refLink)}</div>
-              <button class="btn primary copy" id="refC">Копировать</button>
+        <!-- ===== ДРУЗЬЯ (referrals) ===== -->
+        <div class="page" data-page="friends">
+          <section class="reveal">
+            <div class="sec-h"><h2>Приглашай друзей</h2></div>
+            <div class="refcard">
+              <h3>🎁 Приглашай — зарабатывай</h3>
+              <p>Друг получает бонусные 🔫 при входе, вы — награду за его первую покупку и 10% со всех его пакетов. Навсегда.</p>
+              <div class="linkrow">
+                <div class="linkbox" id="refL">${esc(refLink)}</div>
+                <button class="btn primary copy" id="refC">Копировать</button>
+              </div>
             </div>
-          </div>
-        </section>
+            <div class="stats" style="margin-top:12px">
+              <div class="stat"><div class="n">${dash.referralCount}</div><div class="l">друзей</div></div>
+              <div class="stat"><div class="n">${dash.referralPaying}</div><div class="l">покупают</div></div>
+              <div class="stat"><div class="n">${dash.referralEarned}</div><div class="l">🔫 заработано</div></div>
+            </div>
+          </section>
+        </div>
 
-        <footer>NEUROSHOT STUDIO — AI ФОТО И ВИДЕО</footer>
+        <!-- ===== ПАТРОНЫ (buy) ===== -->
+        <div class="page" data-page="buy">
+          <section class="reveal">
+            <div class="sec-h"><h2>Пакеты патронов</h2></div>
+            <div class="packs" id="p"></div>
+            <p class="buyhint">Оплата картой Kaspi. После оплаты подтвердите в боте — патроны зачислятся.</p>
+          </section>
+        </div>
+
+        <nav class="tabbar">
+          <button class="tabbtn on" data-page="studio"><span>🎨</span>Студия</button>
+          <button class="tabbtn" data-page="profile"><span>🖼</span>Профиль</button>
+          <button class="tabbtn" data-page="friends"><span>🎁</span>Друзья</button>
+          <button class="tabbtn" data-page="buy"><span>🔫</span>Патроны</button>
+        </nav>
       </div>`));
 
       countUp(document.getElementById("balN"), dash.credits);
@@ -1175,7 +1211,7 @@
         if (job) { viewedJob = job.id; viewProgress(job.isVideo, job.id); }
       };
       document.getElementById("createTop").onclick = () => studio(feat ? "scenes" : "shoot");
-      document.getElementById("buyTop").onclick = () => buyPack(bestPack || (d.packs || [])[0]?.id, false);
+      document.getElementById("buyTop").onclick = () => showPage("buy");
       document.querySelectorAll("[data-buy]").forEach((b) => (b.onclick = () => buyPack(b.dataset.buy, false)));
       document.querySelectorAll("[data-studio]").forEach((a) => (a.onclick = () => studio(a.dataset.studio)));
       document.querySelectorAll("[data-camp-open]").forEach((a) => (a.onclick = () => { st.tab = "scenes"; openSheet(); viewCampaign(a.dataset.campOpen); }));
@@ -1191,6 +1227,17 @@
         if (status === 200) { haptic("light"); toast(data.watermark ? "🏷 Водяной знак включён" : "Водяной знак выключен"); }
         else { wm.checked = !on; toast("Не удалось сохранить"); }
       };
+
+      // Bottom-tab router. Hidden pages aren't observed by reveal(), so force
+      // their sections visible on show; scroll back to the top on each switch.
+      window.showPage = (id) => {
+        document.querySelectorAll(".page").forEach((p) => p.classList.toggle("on", p.dataset.page === id));
+        document.querySelectorAll(".tabbtn").forEach((b) => b.classList.toggle("on", b.dataset.page === id));
+        document.querySelectorAll(`.page[data-page="${id}"] .reveal`).forEach((e) => e.classList.add("on"));
+        window.scrollTo({ top: 0, behavior: "instant" });
+        haptic("light");
+      };
+      document.querySelectorAll(".tabbtn").forEach((b) => (b.onclick = () => showPage(b.dataset.page)));
 
       reveal();
     }
