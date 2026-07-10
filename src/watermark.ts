@@ -15,12 +15,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** The logo+wordmark lockup (transparent PNG). Commit it here to enable branding. */
+/** The logo+wordmark lockup. Commit it here to enable branding. The source may
+ * be fully opaque (own background is fine) — opacity is applied at overlay time. */
 const LOGO_PATH = fileURLToPath(new URL("../public/watermark.png", import.meta.url));
 /** Padding from the bottom edge, in px (spec: 40–50). */
 const BOTTOM_PADDING = 45;
 /** Rendered watermark width in px (scaled from the source PNG, ratio preserved). */
 const MARK_WIDTH = 320;
+/** Overlay opacity (0–1). 0.8 = a solid-reading brand badge with a soft edge —
+ * strong enough for recognition on shared clips, applied to the logo as-is so
+ * the source asset stays pristine. Tune here without touching the PNG. */
+const MARK_OPACITY = 0.8;
 /** Hard cap so a stuck ffmpeg can't wedge the request. */
 const FFMPEG_TIMEOUT_MS = 60_000;
 
@@ -96,7 +101,11 @@ export async function watermarkVideo(url: string): Promise<Buffer | null> {
       "-i", inPath,
       "-i", LOGO_PATH,
       "-filter_complex",
-      `[1:v]scale=${MARK_WIDTH}:-1[wm];[0:v][wm]overlay=x=(W-w)/2:y=H-h-${BOTTOM_PADDING}`,
+      // Scale the logo, give it an alpha channel, dial opacity, then overlay
+      // bottom-centre. format=rgba lets colorchannelmixer set uniform alpha even
+      // when the source PNG has no alpha (a solid-background lockup is fine).
+      `[1:v]scale=${MARK_WIDTH}:-1,format=rgba,colorchannelmixer=aa=${MARK_OPACITY}[wm];` +
+        `[0:v][wm]overlay=x=(W-w)/2:y=H-h-${BOTTOM_PADDING}`,
       "-c:a", "copy",
       "-movflags", "+faststart",
       outPath,
