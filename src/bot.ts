@@ -20,6 +20,8 @@ import {
   myPartnerCodes,
   myWithdrawals,
   partnerAccount,
+  pendingOrders,
+  resolveOrder,
   partnerStats,
   pendingWithdrawals,
   referralStats,
@@ -40,6 +42,7 @@ import {
   freeScenarioById,
   IMAGE_MODEL_PICKER,
   MODELS,
+  packById,
   PRESET_MODEL,
   PRESETS,
   REFERRAL_MILESTONES,
@@ -47,7 +50,7 @@ import {
   type Campaign,
   type Preset,
 } from "./models.js";
-import { registerPayments, sendBalance } from "./payments.js";
+import { grantPurchase, registerPayments, sendBalance } from "./payments.js";
 import { nUnits, UNIT_EMOJI } from "./text.js";
 
 async function user(
@@ -508,6 +511,48 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     await ctx.reply(verdict === "ok" ? `✅ Заявка №${id} отмечена выплаченной.` : `↩️ Заявка №${id} отклонена, 🔫 возвращены.`);
   });
 
+  // Admin: pending Kaspi purchase orders + confirm. /orders | /order <id> ok|no
+  bot.command("orders", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const rows = await pendingOrders();
+    if (!rows.length) {
+      await ctx.reply("Заявок на оплату нет.");
+      return;
+    }
+    await ctx.reply(
+      "🧾 <b>Заявки на оплату (Kaspi)</b>\n" +
+        rows.map((r) => `№${r.id} · пользователь ${r.user_id} · ${r.pack_id} · ${r.amount_kzt} ₸`).join("\n") +
+        "\n\nПодтвердить: /order <id> ok  или  /order <id> no",
+      { parse_mode: "HTML" },
+    );
+  });
+
+  bot.command("order", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const [idS, verdict] = (ctx.match ?? "").trim().split(/\s+/);
+    const id = Number(idS);
+    if (!Number.isInteger(id) || (verdict !== "ok" && verdict !== "no")) {
+      await ctx.reply("Формат: /order <id> ok|no");
+      return;
+    }
+    const order = await resolveOrder(id, verdict === "ok");
+    if (!order) {
+      await ctx.reply(`Заявка №${id} не найдена или уже обработана.`);
+      return;
+    }
+    if (verdict === "ok") {
+      const pack = packById(order.pack_id);
+      if (!pack) {
+        await ctx.reply(`Заявка №${id}: пакет «${order.pack_id}» больше не существует.`);
+        return;
+      }
+      await grantPurchase(ctx.api, order.user_id, pack); // credits + referral/partner payouts + notify
+      await ctx.reply(`✅ Заявка №${id} подтверждена — начислено ${pack.credits} 🔫 пользователю ${order.user_id}.`);
+    } else {
+      await ctx.reply(`↩️ Заявка №${id} отклонена.`);
+    }
+  });
+
   // Admin: create/update a creator code with per-deal terms.
   // /partner_add <code> <tg_id> <percent 1–50> <join_bonus> [display title]
   bot.command("partner_add", async (ctx) => {
@@ -551,7 +596,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
     const s = await stats();
     await ctx.reply(
-      `👥 Users: ${s.users}\n💳 Paying: ${s.paid}\n🎨 Generations: ${s.generations}\n⭐ Stars revenue: ${s.starsRevenue}`,
+      `👥 Users: ${s.users}\n💳 Paying: ${s.paid}\n🎨 Generations: ${s.generations}\n💰 Выручка: ${s.kztRevenue} ₸`,
     );
   });
 

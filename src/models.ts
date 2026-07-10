@@ -998,24 +998,35 @@ export function featuredCampaign(date: Date): Campaign {
 export const CREDIT_COST_BASIS = 0.02; // USD of provider cost per credit
 
 /**
- * Credit packs sold via Telegram Stars (XTR). Price ladder in ⭐/credit:
- * 12 → 11 → 10 → 9 (bigger pack = better rate). At the conservative ~$0.010
- * Stars payout, even the cheapest 9⭐/credit clears ≥3.5× on every model after
- * the referral share; smaller packs run 4.5–6×. See docs/pricing.md.
+ * Credit packs sold in Kazakhstani tenge (₸), paid via Kaspi. Ladder in ₸/patron
+ * (bigger pack = better rate): 62 → 55 → 50 → 47. Anchored so every pack clears a
+ * healthy margin over the ≤$0.02/patron provider cost after the referral share.
+ * See docs/pricing.md.
  */
 export interface Pack {
   id: string;
-  stars: number;
+  kzt: number; // price in Kazakhstani tenge (paid via Kaspi)
   credits: number;
   title: string;
+  /** A limited-time promo (shown with a sale countdown) — priced below the ladder. */
+  offer?: boolean;
 }
 
 export const PACKS: Pack[] = [
-  { id: "start", stars: 720, credits: 60, title: "Старт — 60 🔫" }, // 12 ⭐/cr
-  { id: "popular", stars: 2200, credits: 200, title: "Популярный — 200 🔫" }, // 11 ⭐/cr
-  { id: "pro", stars: 5000, credits: 500, title: "Про — 500 🔫" }, // 10 ⭐/cr
-  { id: "studio", stars: 8100, credits: 900, title: "Студия — 900 🔫" }, // 9 ⭐/cr
+  { id: "start", kzt: 3700, credits: 60, title: "Старт — 60 🔫" }, // ~62 ₸/🔫
+  { id: "popular", kzt: 11000, credits: 200, title: "Популярный — 200 🔫" }, // 55 ₸/🔫
+  { id: "pro", kzt: 25000, credits: 500, title: "Про — 500 🔫" }, // 50 ₸/🔫
+  { id: "studio", kzt: 42000, credits: 900, title: "Студия — 900 🔫" }, // 47 ₸/🔫
+  // Launch special — the acquisition hook: 3 scenario-videos (Seedream + Hailuo,
+  // 12 🔫 each) for 1000 ₸ = 36 🔫. Deliberately BELOW the ladder (28 ₸/🔫), so it
+  // is flagged `offer` and shown only with a countdown — a limited-time tripwire,
+  // not a permanent tier (which would break the ladder).
+  { id: "combo", kzt: 1000, credits: 36, title: "🔥 Комбо-сет: 3 видео", offer: true },
 ];
+
+export function packById(id: string): Pack | undefined {
+  return PACKS.find((p) => p.id === id);
+}
 
 /**
  * Referral rewards (scalars are env-tunable via config). Structure is abuse-safe: the

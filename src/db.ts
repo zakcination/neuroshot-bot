@@ -88,6 +88,18 @@ const SCHEMA: string[] = [
   // At most ONE pending withdrawal per user — enforced at the DB, not just in
   // app logic, so concurrent requests can't create two pending rows.
   `CREATE UNIQUE INDEX IF NOT EXISTS uq_withdrawals_one_pending ON withdrawals(user_id) WHERE status = 'pending'`,
+  // Kaspi purchase orders: a buyer taps buy → pending order → pays via the Kaspi
+  // link → admin (or, later, a Kaspi webhook) approves → credits granted.
+  `CREATE TABLE IF NOT EXISTS orders (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    pack_id TEXT NOT NULL,
+    amount_kzt INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending', -- pending | paid | rejected
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    processed_at TIMESTAMPTZ
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_orders_pending ON orders(status) WHERE status = 'pending'`,
   `CREATE TABLE IF NOT EXISTS ledger (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
@@ -663,6 +675,65 @@ export async function resolveWithdrawal(id: number, paid: boolean): Promise<bool
   return rows.length > 0;
 }
 
+// ---- Kaspi orders ----
+
+export interface OrderRow {
+  id: number;
+  user_id: number;
+  pack_id: string;
+  amount_kzt: number;
+  status: string;
+  created_at: string;
+}
+
+function mapOrder(r: Row): OrderRow {
+  return {
+    id: Number(r.id),
+    user_id: Number(r.user_id),
+    pack_id: String(r.pack_id),
+    amount_kzt: Number(r.amount_kzt),
+    status: String(r.status),
+    created_at: String(r.created_at),
+  };
+}
+
+const ORDER_COLS = "id, user_id, pack_id, amount_kzt, status, created_at";
+
+/** Record a pending Kaspi purchase; returns the new order id. */
+export async function createOrder(userId: number, packId: string, amountKzt: number): Promise<number> {
+  const rows = await q(
+    "INSERT INTO orders (user_id, pack_id, amount_kzt) VALUES ($1, $2, $3) RETURNING id",
+    [userId, packId, amountKzt],
+  );
+  return Number(rows[0].id);
+}
+
+/** Admin: all pending orders awaiting payment confirmation. */
+export async function pendingOrders(): Promise<OrderRow[]> {
+  const rows = await q(`SELECT ${ORDER_COLS} FROM orders WHERE status = 'pending' ORDER BY id`);
+  return rows.map(mapOrder);
+}
+
+export async function getOrder(id: number): Promise<OrderRow | undefined> {
+  const rows = await q(`SELECT ${ORDER_COLS} FROM orders WHERE id = $1`, [id]);
+  return rows[0] ? mapOrder(rows[0]) : undefined;
+}
+
+/**
+ * Atomically approve (paid) or reject a pending order — returns the order for the
+ * one call that won the transition (so credits are granted exactly once), or null
+ * if it was already resolved. Approval does NOT grant credits itself; the caller
+ * runs grantPurchase so the referral/partner payouts fire too.
+ */
+export async function resolveOrder(id: number, approve: boolean): Promise<OrderRow | null> {
+  const rows = await q(
+    `UPDATE orders SET status = $2, processed_at = now()
+     WHERE id = $1 AND status = 'pending' RETURNING ${ORDER_COLS}`,
+    [id, approve ? "paid" : "rejected"],
+  );
+  return rows[0] ? mapOrder(rows[0]) : null;
+}
+
 /** Add credits and journal the movement atomically (single CTE statement). */
 export async function addCredits(
   userId: number,
@@ -987,19 +1058,19 @@ export async function stats(): Promise<{
   users: number;
   paid: number;
   generations: number;
-  starsRevenue: number;
+  kztRevenue: number;
 }> {
   const users = Number((await q("SELECT COUNT(*)::int AS c FROM users"))[0].c);
   const paid = Number(
     (await q("SELECT COUNT(DISTINCT user_id)::int AS c FROM ledger WHERE reason = 'purchase'"))[0].c,
   );
   const generations = Number((await q("SELECT COUNT(*)::int AS c FROM generations"))[0].c);
-  const starsRevenue = Number(
+  const kztRevenue = Number(
     (
       await q(
         "SELECT COALESCE(SUM(CAST(meta AS INTEGER)),0)::int AS s FROM ledger WHERE reason = 'purchase'",
       )
     )[0].s,
   );
-  return { users, paid, generations, starsRevenue };
+  return { users, paid, generations, kztRevenue };
 }

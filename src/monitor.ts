@@ -16,18 +16,18 @@ const MODEL_COST = new Map(Object.values(MODELS).map((m) => [m.key, m.approxCost
 export interface Digest {
   hours: number;
   newBySource: Array<{ source: string; users: number }>;
-  paysBySource: Array<{ source: string; payments: number; stars: number }>;
+  paysBySource: Array<{ source: string; payments: number; kzt: number }>;
   newUsers: number;
   newActivated: number; // of the new users, how many started a generation
   paywallViews: number;
   paywallUsers: number;
   payments: number;
-  stars: number;
+  kzt: number; // gross revenue in tenge (Kaspi)
   genOk: number;
   genError: number;
   refunds: number;
   costUsd: number; // provider cost of delivered generations (approx)
-  revenueUsd: number; // stars × conservative payout
+  revenueUsd: number; // kzt ÷ KZT_PER_USD
   marginPct: number | null; // null when no revenue in the window
   creditLiability: number; // sold-but-unspent 🔫 across all users
 }
@@ -46,7 +46,7 @@ export async function buildDigest(hours = 24): Promise<Digest> {
   );
   const payRows = await query(
     `SELECT COALESCE(u.source, 'organic') AS source, COUNT(*)::int AS payments,
-            COALESCE(SUM(CAST(l.meta AS INTEGER)), 0)::int AS stars
+            COALESCE(SUM(CAST(l.meta AS INTEGER)), 0)::int AS kzt
      FROM ledger l JOIN users u ON u.id = l.user_id
      WHERE l.reason = 'purchase' AND l.created_at > now() - $1::interval
      GROUP BY 1 ORDER BY 3 DESC`,
@@ -91,8 +91,8 @@ export async function buildDigest(hours = 24): Promise<Digest> {
   }
 
   const payments = payRows.reduce((a, r) => a + num(r.payments), 0);
-  const stars = payRows.reduce((a, r) => a + num(r.stars), 0);
-  const revenueUsd = stars * config.starUsd;
+  const kzt = payRows.reduce((a, r) => a + num(r.kzt), 0);
+  const revenueUsd = kzt / config.kztPerUsd;
 
   return {
     hours,
@@ -100,14 +100,14 @@ export async function buildDigest(hours = 24): Promise<Digest> {
     paysBySource: payRows.map((r) => ({
       source: String(r.source),
       payments: num(r.payments),
-      stars: num(r.stars),
+      kzt: num(r.kzt),
     })),
     newUsers: newRows.reduce((a, r) => a + num(r.users), 0),
     newActivated: num(activated[0]?.c),
     paywallViews: num(paywall[0]?.views),
     paywallUsers: num(paywall[0]?.users),
     payments,
-    stars,
+    kzt,
     genOk,
     genError,
     refunds: num(refunds[0]?.c),
@@ -124,7 +124,7 @@ export function formatDigest(d: Digest): string {
     ? d.newBySource.map((s) => `${s.source} ${s.users}`).join(" · ")
     : "—";
   const paySrc = d.paysBySource.length
-    ? d.paysBySource.map((s) => `${s.source}: ${s.payments} (⭐${s.stars})`).join(" · ")
+    ? d.paysBySource.map((s) => `${s.source}: ${s.payments} (${s.kzt} ₸)`).join(" · ")
     : "—";
   const errRate = d.genOk + d.genError > 0
     ? Math.round((d.genError / (d.genOk + d.genError)) * 100)
@@ -134,7 +134,7 @@ export function formatDigest(d: Digest): string {
     `👥 Новых: <b>${d.newUsers}</b> (${bySrc})`,
     `⚡ Активация (первая генерация): <b>${d.newActivated}/${d.newUsers}</b>`,
     `🧱 Пейволл: <b>${d.paywallViews}</b> показов · ${d.paywallUsers} чел.`,
-    `💳 Оплат: <b>${d.payments}</b> на <b>⭐${d.stars}</b> — ${paySrc}`,
+    `💳 Оплат: <b>${d.payments}</b> на <b>${d.kzt} ₸</b> — ${paySrc}`,
     `📈 Выручка ≈ $${d.revenueUsd.toFixed(2)} · себестоимость ≈ $${d.costUsd.toFixed(2)} · ` +
       (d.marginPct == null ? "маржа: — (нет оплат)" : `маржа <b>${d.marginPct}%</b>`),
     `🎨 Генераций: ${d.genOk} ok / ${d.genError} err (${errRate}%) · возвратов: ${d.refunds}`,

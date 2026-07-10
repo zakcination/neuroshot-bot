@@ -1,21 +1,18 @@
 # Pricing & margin model
 
 The whole economy is anchored to two real numbers: **what a generation costs on
-fal.ai**, and **what a Telegram Star actually pays out**. Everything else is
-derived so that every sale clears a **≥3.5× margin** — even in the worst case.
+fal.ai**, and **what a buyer pays in tenge via Kaspi**. Everything else is
+derived so that every sale clears a healthy margin — even in the worst case.
 
-## What a Telegram Star is worth to us
+## Payments: Kaspi (KZT)
 
-Stars are **not** worth what the buyer pays. After Telegram's cut (and Apple/
-Google's 30% on in-app purchases), the creator withdrawal payout is:
-
-| Buyer bought Stars on… | You receive per Star |
-|---|---|
-| Desktop / web / Fragment | ~$0.013 |
-| iOS / Android in-app | ~$0.009 |
-
-We plan on a conservative **~$0.010/Star** (mobile-heavy RU/KZ audience) and
-verify the model still clears target at the $0.009 floor.
+Payments run through **Kaspi** in Kazakhstani tenge (₸) — Telegram Stars are
+removed. The flow is: buy → a **pending order** is recorded → the user pays via
+the Kaspi link (`KASPI_PAY_URL`) → an admin (or, later, a Kaspi payment webhook)
+confirms → `grantPurchase` credits the patrons and fires the referral/partner
+payouts. While `KASPI_PAY_URL` is blank the order machinery is ready but the buy
+screen shows "оплата скоро". Margin math uses `KZT_PER_USD` (default 480) for the
+digest only, never for pricing.
 
 ## The rule: 1 patron = $0.02 of AI cost
 
@@ -25,9 +22,19 @@ verify the model still clears target at the $0.009 floor.
 credits = ceil(approxCostUsd / 0.02)
 ```
 
-so **cost-per-patron is always ≤ $0.02**. Patrons are then sold at **9–12 ⭐**
-each. At $0.010/Star that's $0.09–0.12 revenue per patron → **4.5×–6× base
-margin**, and still **≥3.5×** at the $0.009 floor after the 10% referral share.
+so **cost-per-patron is always ≤ $0.02**. Patrons are then sold at **47–62 ₸**
+each (≈ $0.10–0.13) → comfortably **≥4× margin** on the ladder after the referral
+share.
+
+## The combo offer (acquisition tripwire)
+
+The launch hook is a **limited-time** offer: **3 scenario-videos (Seedream +
+Hailuo, 12 🔫 each) for 1 000 ₸ = 36 🔫** — deliberately **below** the ladder
+(28 ₸/🔫, ~3.1× margin). It's flagged `offer: true` and shown with a "🔥 Акция ·
+1 мес" badge so it reads as a sale, not a permanent tier (which would break the
+ladder). It's ~2.2× cheaper per video than buying patrons — a genuine first-hit
+discount to pull an audience in. Window: `COMBO_OFFER_DAYS` from
+`COMBO_OFFER_START` (defaults to ~1 month from deploy).
 
 ### Per-model patron prices
 
@@ -65,19 +72,21 @@ The whole scenario stack was re-based onto the two cheapest capable engines so a
   multi-shot) are gated to **Seedance** and priced accordingly — a simple model
   is never asked to carry a hard action. The composer swaps + reprices on select.
 
-## Packs
+## Packs (KZT / Kaspi)
 
-Ladder in ⭐/patron (bigger pack = better rate). The cheapest rate (9⭐) is the
-margin floor; smaller packs run richer.
+Ladder in ₸/patron (bigger pack = better rate). Prices are data in
+`PACKS` (`src/models.ts`) — tweak freely.
 
-| Pack | Patrons | Stars | ⭐/patron | You net (~$0.010) | Margin |
+| Pack | Patrons | Price | ₸/patron | ≈ USD | Margin* |
 |---|---|---|---|---|---|
-| Старт | 60 | 720 | 12 | $7.20 | 6.0× |
-| Популярный | 200 | 2 200 | 11 | $22 | 5.5× |
-| Про | 500 | 5 000 | 10 | $50 | 5.0× |
-| Студия | 900 | 8 100 | 9 | $81 | 4.5× |
+| 🔥 Комбо-сет (offer) | 36 | 1 000 ₸ | 28 | $2.08 | ~3.1× |
+| Старт | 60 | 3 700 ₸ | 62 | $7.7 | ~6× |
+| Популярный | 200 | 11 000 ₸ | 55 | $23 | ~5.5× |
+| Про | 500 | 25 000 ₸ | 50 | $52 | ~5× |
+| Студия | 900 | 42 000 ₸ | 47 | $87 | ~4.7× |
 
-Play with the assumptions in the interactive calculator before changing these.
+\* vs the ≤$0.02/patron provider cost, at `KZT_PER_USD=480`, before Kaspi fees.
+The combo is intentionally below the ladder — a limited-time tripwire, not a tier.
 
 The cheaper scenario stack also *reprices the value story*: a «Старт — 60 🔫»
 pack now buys **~5 whole Hailuo scenarios** (12 🔫 each) instead of ~1 Kling
