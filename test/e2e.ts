@@ -257,7 +257,7 @@ await step("signup: /start creates user with 12 free 🔫 and shows the use-case
 await step("text→image: prompt charges 2 🔫, calls Seedream, delivers photo (menu-only keyboard)", async () => {
   await sendText(alice, "a red fox in the snow");
   assert.equal(falCalls.length, 1);
-  assert.equal(falCalls[0].endpoint, "fal-ai/bytedance/seedream/v4/text-to-image");
+  assert.equal(falCalls[0].endpoint, "fal-ai/bytedance/seedream/v4.5/text-to-image");
   assert.ok((falCalls[0].input.prompt as string).startsWith("a red fox in the snow. "), "craft mapping missing");
   assert.match(falCalls[0].input.prompt as string, /Avoid garbled text/);
   assert.equal(resultPhotos().length, 1);
@@ -389,7 +389,7 @@ await step("balance: /balance reflects the ledger", async () => {
   assert.match(lastText(), /Баланс: 🔫 212 патронов/);
 });
 
-await step("photoshoot preset: photo → menu:photoshoot → one tap renders via Nano Banana 2 edit (4 🔫)", async () => {
+await step("photoshoot preset: photo → menu:photoshoot → one tap renders via Seedream 4 edit (2 🔫)", async () => {
   await sendPhoto(alice, "photo-3");
   const albumsBefore = calls("sendMediaGroup").length;
   await pressButton(alice, "menu:photoshoot");
@@ -403,10 +403,10 @@ await step("photoshoot preset: photo → menu:photoshoot → one tap renders via
   assert.ok(!buttons.includes("preset:product_white"), "product presets leak into photo menu");
   await pressButton(alice, "preset:headshot");
   const call = falCalls.at(-1)!;
-  assert.equal(call.endpoint, "fal-ai/nano-banana-2/edit"); // best price/quality preset engine
+  assert.equal(call.endpoint, "fal-ai/bytedance/seedream/v4/edit"); // cheap, strong-identity preset engine
   assert.match(call.input.prompt as string, /corporate headshot/);
   assert.ok(Array.isArray(call.input.image_urls));
-  assert.equal(await credits(alice.id), 208); // 212 - 4
+  assert.equal(await credits(alice.id), 210); // 212 - 2
 
   // Every delivered result carries the next-step keyboard.
   const delivered = resultPhotos().at(-1)!.payload.reply_markup as {
@@ -427,17 +427,17 @@ await step("«ещё стиль»: the photo is remembered after a generation", 
 await step("/premium: premium text-to-image charges 11 🔫 via GPT Image 2", async () => {
   await sendText(alice, "/premium");
   assert.match(lastText(), /напишите запрос сразу после команды/);
-  assert.equal(await credits(alice.id), 208); // bare command charges nothing
+  assert.equal(await credits(alice.id), 210); // bare command charges nothing
 
   await sendText(alice, "/premium a perfume bottle on wet black marble");
   const call = falCalls.at(-1)!;
   assert.equal(call.endpoint, "fal-ai/gpt-image-2");
   assert.equal(call.input.quality, "high");
   assert.ok((call.input.prompt as string).startsWith("a perfume bottle on wet black marble. "));
-  assert.equal(await credits(alice.id), 197); // 208 - 11
+  assert.equal(await credits(alice.id), 199); // 210 - 11
 });
 
-await step("product flow: menu:product → photo → product preset renders (4 🔫)", async () => {
+await step("product flow: menu:product → photo → product preset renders (2 🔫)", async () => {
   await pressButton(alice, "menu:product");
   assert.match(lastText(), /Пришлите фото товара/);
   await sendPhoto(alice, "product-1");
@@ -449,9 +449,9 @@ await step("product flow: menu:product → photo → product preset renders (4 �
   assert.ok(!buttons.includes("preset:headshot"), "photo presets leak into product menu");
   await pressButton(alice, "preset:product_white");
   const call = falCalls.at(-1)!;
-  assert.equal(call.endpoint, "fal-ai/nano-banana-2/edit");
+  assert.equal(call.endpoint, "fal-ai/bytedance/seedream/v4/edit");
   assert.match(call.input.prompt as string, /white studio background/);
-  assert.equal(await credits(alice.id), 193); // 197 - 4
+  assert.equal(await credits(alice.id), 197); // 199 - 2
 });
 
 await step("mode escape: menu:main clears a photo mode so text→image works again", async () => {
@@ -465,7 +465,7 @@ await step("mode escape: menu:main clears a photo mode so text→image works aga
   await pressButton(carol, "menu:main"); // escape the mode (Copilot fix)
   await sendText(carol, "a blue cat"); // now a normal text-to-image prompt
   assert.equal(falCalls.length, falBefore + 1);
-  assert.equal(falCalls.at(-1)!.endpoint, "fal-ai/bytedance/seedream/v4/text-to-image");
+  assert.equal(falCalls.at(-1)!.endpoint, "fal-ai/bytedance/seedream/v4.5/text-to-image");
   assert.ok((falCalls.at(-1)!.input.prompt as string).startsWith("a blue cat. "));
 });
 
@@ -645,21 +645,21 @@ await step("campaigns: one-tap fairy-tale image → one-tap «Оживить» a
 
   await pressButton(parent, "cpre:skazka:forest");
   const gen = falCalls.at(-1)!;
-  assert.equal(gen.endpoint, "fal-ai/nano-banana-2/edit"); // default preset engine
+  assert.equal(gen.endpoint, "fal-ai/bytedance/seedream/v4/edit"); // default scenario image engine
   assert.match(gen.input.prompt as string, /fairy tale/i);
-  assert.equal(await credits(parent.id), 68); // 72 − 4
+  assert.equal(await credits(parent.id), 70); // 72 − 2
   const resultUrl = `https://fal.test/out/${falCalls.length}.png`;
   assert.match(lastText(), /оживить результат/i); // upsell offered
 
   await pressButton(parent, "camv:skazka");
   const anim = falCalls.at(-1)!;
-  assert.equal(anim.endpoint, "fal-ai/kling-video/v3/pro/image-to-video"); // Kling 3.0 default video
-  assert.equal(anim.input.start_image_url, resultUrl); // animates the RESULT, not the original photo
+  assert.equal(anim.endpoint, "fal-ai/minimax/hailuo-2.3-fast/standard/image-to-video"); // Hailuo 2.3 Fast default video
+  assert.equal(anim.input.image_url, resultUrl); // animates the RESULT, not the original photo
   assert.match(anim.input.prompt as string, /fireflies/i); // canned campaign motion prompt
-  assert.equal(await credits(parent.id), 26); // 68 − 42
+  assert.equal(await credits(parent.id), 60); // 70 − 10
 });
 
-await step("мини-фильм campaign: NB2 film still → Seedance 2.0 Fast multi-shot upsell (65 🔫 flow)", async () => {
+await step("мини-фильм campaign: Seedream film still → Seedance 2.0 Fast multi-shot upsell (63 🔫 flow)", async () => {
   const actor: From = { id: 5502, is_bot: false, first_name: "Actor", username: "actor" };
   await sendText(actor, "/start"); // 12 free
   await payForPack(actor, "popular", 2200); // +200 → 212
@@ -668,9 +668,9 @@ await step("мини-фильм campaign: NB2 film still → Seedance 2.0 Fast m
   await sendPhoto(actor, "actor-1");
   await pressButton(actor, "cpre:minifilm:drama");
   const still = falCalls.at(-1)!;
-  assert.equal(still.endpoint, "fal-ai/nano-banana-2/edit");
+  assert.equal(still.endpoint, "fal-ai/bytedance/seedream/v4/edit");
   assert.match(still.input.prompt as string, /film still/i);
-  assert.equal(await credits(actor.id), 208); // 212 − 4
+  assert.equal(await credits(actor.id), 210); // 212 − 2
   const stillUrl = `https://fal.test/out/${falCalls.length}.png`;
 
   await pressButton(actor, "camv:minifilm");
@@ -678,7 +678,7 @@ await step("мини-фильм campaign: NB2 film still → Seedance 2.0 Fast m
   assert.equal(clip.endpoint, "bytedance/seedance-2.0/fast/image-to-video"); // story model
   assert.equal(clip.input.image_url, stillUrl); // animates the generated still
   assert.match(clip.input.prompt as string, /multi-shot/i);
-  assert.equal(await credits(actor.id), 147); // 208 − 61
+  assert.equal(await credits(actor.id), 149); // 210 − 61
 });
 
 await step("partner attribution is exclusive: no friend-referral double payout", async () => {
@@ -719,16 +719,16 @@ await step("promptcraft: every generation is filtered; raw text mapped, curated 
 await step("first result on us: a stuck newcomer's first preset renders free, second one paywalls", async () => {
   const nora: From = { id: 6001, is_bot: false, first_name: "Nora", username: "nora" };
   await sendText(nora, "/start"); // 12 free
-  // Spend below a preset's 4 🔫 via text→image (which never uses the free-first path).
-  for (const p of ["a cat", "a dog", "a fox", "a bee", "an owl"]) await sendText(nora, p); // 5×−2
-  assert.equal(await credits(nora.id), 2);
+  // Drain below a preset's 2 🔫 via text→image (which never uses the free-first path).
+  for (const p of ["a cat", "a dog", "a fox", "a bee", "an owl", "a ram"]) await sendText(nora, p); // 6×−2 → 0
+  assert.equal(await credits(nora.id), 0);
 
   await sendPhoto(nora, "nora-1");
   await pressButton(nora, "menu:photoshoot");
   const falBefore = falCalls.length;
-  await pressButton(nora, "preset:headshot"); // 4 > 2 → the first result is on us
+  await pressButton(nora, "preset:headshot"); // 2 > 0 → the first result is on us
   assert.equal(falCalls.length, falBefore + 1); // it DID render (no wall before the wow)
-  assert.equal(await credits(nora.id), 2); // …and charged nothing
+  assert.equal(await credits(nora.id), 0); // …and charged nothing
   assert.match(lastText(), /Первый результат — бесплатно/);
   assert.equal(await ledgerCount("refund"), 1); // free render ≠ a refund (still just alice's)
 
@@ -737,7 +737,50 @@ await step("first result on us: a stuck newcomer's first preset renders free, se
   await pressButton(nora, "preset:cinematic");
   assert.equal(falCalls.length, falBefore2); // no render
   assert.match(lastText(), /Ещё один шаг до результата/);
-  assert.equal(await credits(nora.id), 2); // still nothing charged
+  assert.equal(await credits(nora.id), 0); // still nothing charged
+});
+
+await step("free scenario: princess renders the WHOLE chain free (Seedream → Hailuo), once", async () => {
+  const zoe: From = { id: 6100, is_bot: false, first_name: "Zoe", username: "zoe" };
+  await sendText(zoe, "/start"); // 12 free + the free-scenario gift
+  const startPhoto = calls("sendPhoto").at(-1)!; // the menu ships on the hero photo
+  assert.match(startPhoto.payload.caption as string, /Бесплатн/i); // the gift is announced
+  // The onboarding button is present until claimed.
+  const startKb = startPhoto.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data: string }>>;
+  };
+  const startButtons = startKb.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(startButtons.includes("menu:free"), "free-scenario button missing on /start");
+
+  await pressButton(zoe, "menu:free");
+  const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data: string }>>;
+  };
+  const picks = kb.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(picks.includes("free:princess") && picks.includes("free:football"), "free picks missing");
+
+  await pressButton(zoe, "free:princess");
+  assert.match(lastText(), /Пришлите фото ребёнка/);
+
+  const falBefore = falCalls.length;
+  const videosBefore = calls("sendVideo").length;
+  await sendPhoto(zoe, "zoe-kid");
+  // Two provider calls: photo → Seedream scene image, then scene → Hailuo video.
+  assert.equal(falCalls.length, falBefore + 2);
+  assert.equal(falCalls.at(-2)!.endpoint, "fal-ai/bytedance/seedream/v4/edit");
+  assert.equal(falCalls.at(-1)!.endpoint, "fal-ai/minimax/hailuo-2.3-fast/standard/image-to-video");
+  assert.equal(falCalls.at(-1)!.input.image_url, `https://fal.test/out/${falBefore + 1}.png`); // animates the scene
+  assert.equal(calls("sendVideo").length, videosBefore + 1);
+  assert.equal(await credits(zoe.id), 12); // whole scenario cost the user nothing
+  const flag = await query("SELECT free_scenario_used FROM users WHERE id = $1", [zoe.id]);
+  assert.equal(flag[0].free_scenario_used, true);
+
+  // One-time: a second attempt is refused, no provider call.
+  await pressButton(zoe, "menu:free");
+  assert.match(lastText(), /уже использован/i);
+  const falAfter = falCalls.length;
+  await pressButton(zoe, "free:football");
+  assert.equal(falCalls.length, falAfter);
 });
 
 await step("recurring reason: a returning /start surfaces the weekly новинка + continue-with-photo", async () => {

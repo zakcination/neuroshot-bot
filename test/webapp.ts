@@ -294,13 +294,13 @@ await step("catalog rides on /api/me: presets, campaigns with video prices, mode
   const c = body.catalog;
   assert.ok(c.presets.some((p) => p.id === "headshot" && p.category === "photo"));
   assert.ok(c.presets.some((p) => p.id === "product_white" && p.category === "product"));
-  assert.equal(c.presetCredits, 4); // Nano Banana 2 preset engine
+  assert.equal(c.presetCredits, 2); // Seedream 4 edit preset/scenario engine
   const mini = c.campaigns.find((k) => k.id === "minifilm");
   assert.ok(mini, "minifilm campaign missing from catalog");
   assert.equal(mini!.videoCredits, 61); // Seedance 2.0 Fast story upsell
   assert.ok(mini!.presets.length >= 3);
   assert.ok(c.imageModels.some((m) => m.key === "nbpro_image"));
-  assert.equal(c.videoModels[0].key, "kling3"); // default video first
+  assert.equal(c.videoModels[0].key, "hailuo_fast"); // cheap default video first
 });
 
 await step("POST /api/upload: base64 image → storage URL; bad mime and no auth rejected", async () => {
@@ -334,13 +334,13 @@ await step("POST /api/generate: preset charges, renders async, poll reaches ok",
   });
   assert.equal(r.status, 200);
   const d = (await r.json()) as { id: number; credits: number; balance: number };
-  assert.equal(d.credits, 4);
-  assert.equal(d.balance, 99); // 103 − 4
+  assert.equal(d.credits, 2);
+  assert.equal(d.balance, 101); // 103 − 2
   const done = await pollGen(d.id);
   assert.equal(done.status, "ok");
   assert.match(done.output_url ?? "", /^https:\/\/fal\.test\/out\/.*\.png$/);
   const call = falCalls.at(-1)!;
-  assert.equal(call.endpoint, "fal-ai/nano-banana-2/edit");
+  assert.equal(call.endpoint, "fal-ai/bytedance/seedream/v4/edit");
   assert.match(call.input.prompt as string, /corporate headshot/);
 });
 
@@ -353,7 +353,7 @@ await step("campaign video upsell via API: minifilm renders on Seedance 2.0 Fast
   assert.equal(r.status, 200);
   const d = (await r.json()) as { id: number; credits: number; balance: number };
   assert.equal(d.credits, 61);
-  assert.equal(d.balance, 38); // 99 − 61
+  assert.equal(d.balance, 40); // 101 − 61
   const done = await pollGen(d.id);
   assert.equal(done.status, "ok");
   assert.match(done.output_url ?? "", /\.mp4$/);
@@ -363,16 +363,16 @@ await step("campaign video upsell via API: minifilm renders on Seedance 2.0 Fast
 });
 
 await step("insufficient 🔫 → 402 with the pack catalog (in-app paywall)", async () => {
-  const broke = { id: 701, username: "broke" }; // fresh: 3 free < preset's 4
+  const broke = { id: 701, username: "broke" }; // fresh: 3 free < a scenario video's 10 🔫
   const r = await fetch(`${base}/api/generate`, {
     method: "POST",
     headers: { Authorization: `tma ${signInitData(broke)}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "preset", id: "headshot", image_url: "https://fal.test/storage/u-1.jpg" }),
+    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://fal.test/storage/u-1.jpg" }),
   });
   assert.equal(r.status, 402);
   const d = (await r.json()) as { error: string; need: number; balance: number; packs: unknown[] };
   assert.equal(d.error, "insufficient");
-  assert.equal(d.need, 4);
+  assert.equal(d.need, 10); // Hailuo 2.3 Fast default (6s)
   assert.equal(d.balance, 3);
   assert.equal(d.packs.length, 4);
 });
@@ -584,9 +584,9 @@ await step("catalog: model news banner + video composer params (durations priced
     videoStory: Array<{ id: string; options: Array<Record<string, unknown>> }>;
   };
   assert.ok(c.news.length >= 3, "news banner empty");
-  // freeTrial is credits ≤ FREE_CREDITS (3 in this env; NB2 @4🔫 becomes free at prod's 4).
+  // freeTrial is credits ≤ FREE_CREDITS (3 in this env; Seedream @2🔫 is the free-trial anchor).
   for (const n of c.news) assert.equal(n.freeTrial, n.credits <= 3, `${n.key} freeTrial wrong`);
-  assert.ok(c.news.some((n) => n.key === "nb2_image" && n.credits === 4), "NB2 (cheapest entry) missing from news");
+  assert.ok(c.news.some((n) => n.key === "text_to_image" && n.credits === 2 && n.freeTrial), "Seedream free-trial entry missing from news");
   const kling = c.videoModels.find((m) => m.key === "kling3")!;
   assert.deepEqual(kling.video!.durations.map((d) => d.seconds), [5, 10]);
   assert.equal(kling.video!.durations[0].credits, 42); // 5s default
@@ -665,7 +665,7 @@ await step("scenario video scenes: on-theme scene sets the motion; model swap ad
   });
   assert.equal(r.status, 200);
   const d = (await r.json()) as { id: number; credits: number };
-  assert.equal(d.credits, 61); // Seedance Fast, not the campaign default Kling (42)
+  assert.equal(d.credits, 61); // Seedance Fast (epic scene), not the Hailuo default (10)
   await pollGen(d.id);
   const call = falCalls.at(-1)!;
   assert.equal(call.endpoint, "bytedance/seedance-2.0/fast/image-to-video");
@@ -684,6 +684,37 @@ await step("scenario video scenes: on-theme scene sets the motion; model swap ad
     body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://x.test/a.jpg", model: "nb2_image" }),
   });
   assert.equal(badModel.status, 400);
+});
+
+await step("scene tiering: epic scene auto-upgrades to Seedance; simple stays on the Hailuo default", async () => {
+  const { body } = await apiMe(signInitData(maker));
+  const wc = body.catalog.campaigns.find((k) => k.id === "worldcup") as unknown as {
+    videoScenes: Array<{ id: string; tier: string; videoModelKey: string; videoCredits: number }>;
+  };
+  const score = wc.videoScenes.find((s) => s.id === "score")!;
+  const fan = wc.videoScenes.find((s) => s.id === "fan")!;
+  assert.equal(score.tier, "epic"); // legendary goal needs physics/multi-actor
+  assert.equal(score.videoModelKey, "seedance_fast");
+  assert.equal(score.videoCredits, 61);
+  assert.equal(fan.tier, "simple");
+  assert.equal(fan.videoCredits, 10); // Hailuo default
+
+  await addCredits(maker.id, 200, "admin_grant", "test");
+  // Epic scene WITHOUT an explicit model → server upgrades to Seedance (61), not Hailuo (10).
+  const epic = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://fal.test/storage/u-1.jpg", scene: "score" }),
+  });
+  assert.equal(epic.status, 200);
+  assert.equal(((await epic.json()) as { credits: number }).credits, 61);
+
+  // Simple scene WITHOUT a model → the cheap Hailuo default (10).
+  const simple = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://fal.test/storage/u-1.jpg", scene: "fan" }),
+  });
+  assert.equal(simple.status, 200);
+  assert.equal(((await simple.json()) as { credits: number }).credits, 10);
 });
 
 await step("Seedance 2.0 uses the correct bytedance/ endpoint namespace (fal drift fix)", async () => {

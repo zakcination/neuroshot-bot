@@ -6,17 +6,20 @@ import {
   addCredits,
   completeGeneration,
   consumeFreeResult,
+  consumeFreeScenario,
   createPendingGeneration,
   hasFreeResult,
+  hasFreeScenario,
   logEvent,
   logGeneration,
   setPending,
   spendCredits,
   type UserRow,
 } from "./db.js";
-import { MODELS, priceFor, type GenOpts, type ModelSpec } from "./models.js";
+import { MODELS, priceFor, type FreeScenario, type GenOpts, type ModelSpec } from "./models.js";
 import { paywallKeyboard, paywallText } from "./payments.js";
 import { craftPrompt } from "./promptcraft.js";
+import { watermarkVideo } from "./watermark.js";
 
 fal.config({ credentials: config.falKey });
 
@@ -185,4 +188,55 @@ export async function runGeneration(
 
 export function modelByKey(key: string): ModelSpec | undefined {
   return (MODELS as Record<string, ModelSpec | undefined>)[key];
+}
+
+/**
+ * The one-time FREE scenario (princess/football): render the WHOLE chain — photo
+ * → Seedream styled scene → Hailuo video — at zero credits, then brand the video
+ * with the NeuroShot watermark and deliver it. The free grant is claimed only on
+ * a fully successful video (a provider failure leaves it intact so they retry).
+ * `fileId` is the user's source photo (Telegram file_id). Returns true on deliver.
+ */
+export async function runFreeScenario(
+  ctx: Context,
+  user: UserRow,
+  scenario: FreeScenario,
+  fileId: string,
+): Promise<boolean> {
+  // Peek only — consume after success so a failed render doesn't burn the freebie.
+  if (!(await hasFreeScenario(user.id))) {
+    await ctx.reply("🎁 Бесплатный сценарий уже использован. Дальше — за 🔫 (их хватает надолго).");
+    return false;
+  }
+  await logEvent(user.id, "gen_start", `free_${scenario.id}`);
+  const progress = await ctx.reply("🎬 Снимаем ваш бесплатный сценарий (1–3 мин)… патроны не тратятся.");
+  try {
+    const photoUrl = await telegramFileUrl(ctx, fileId);
+    // 1) Photo → styled scene image (Seedream edit). 2) Scene → short video (Hailuo).
+    const sceneImg = await falRun(scenario.imageModel, scenario.imagePrompt, photoUrl);
+    const videoUrl = await falRun(scenario.videoModel, scenario.videoPrompt, sceneImg);
+    // Claim the freebie now (exactly one winner); if it was already claimed in a
+    // race, fall back to charging is not needed — just deliver this once.
+    await consumeFreeScenario(user.id);
+    // Brand the video if the watermark is available; else send the source URL.
+    const branded = await watermarkVideo(videoUrl);
+    const video = branded ? new InputFile(branded, "neuroshot.mp4") : new InputFile({ url: videoUrl });
+    await setPending(user.id, "await_action", sceneImg); // keep the scene for follow-ups
+    await ctx.replyWithVideo(video, {
+      caption: "🎁 Ваш бесплатный сценарий готов! Понравилось? Создайте свой — /menu",
+      reply_markup: afterKeyboard(true),
+    });
+    await logGeneration(user.id, scenario.imageModel.key, scenario.imagePrompt, 0, "ok", sceneImg);
+    await logGeneration(user.id, scenario.videoModel.key, scenario.videoPrompt, 0, "ok", videoUrl);
+    await logEvent(user.id, "gen_ok", `free_${scenario.id}`);
+    return true;
+  } catch (err) {
+    console.error(`free scenario failed (${scenario.id}):`, err);
+    await logGeneration(user.id, scenario.videoModel.key, scenario.videoPrompt, 0, "error");
+    await logEvent(user.id, "gen_error", `free_${scenario.id}`);
+    await ctx.reply("⚠️ Не получилось снять сценарий — попробуйте ещё раз, бесплатная попытка сохранена.");
+    return false;
+  } finally {
+    await ctx.api.deleteMessage(progress.chat.id, progress.message_id).catch(() => {});
+  }
 }

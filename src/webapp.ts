@@ -20,6 +20,7 @@ import { sanitizePrompt } from "./promptcraft.js";
 import {
   campaignById,
   CAMPAIGNS,
+  EPIC_VIDEO,
   IMAGE_MODEL_PICKER,
   MODEL_NEWS,
   MODELS,
@@ -28,6 +29,7 @@ import {
   PRESET_MODEL,
   PRESETS,
   priceFor,
+  sceneModel,
   VIDEO_MODEL_PICKER,
   VIDEO_STORY,
   type GenOpts,
@@ -186,7 +188,18 @@ function catalogPayload(): Record<string, unknown> {
       videoCredits: c.animateModel.credits,
       videoModelKey: c.animateModel.key, // composer reads its duration/ratio params
       // On-theme viral video scenes (prompts stay server-side — labels/ids only).
-      videoScenes: (c.videoScenes ?? []).map((s) => ({ id: s.id, label: s.label })),
+      // Epic scenes carry the Seedance engine they're gated to + its price so the
+      // app can badge them and show the right cost before the user commits.
+      videoScenes: (c.videoScenes ?? []).map((s) => {
+        const m = sceneModel(s, c.animateModel);
+        return {
+          id: s.id,
+          label: s.label,
+          tier: s.tier ?? "simple",
+          videoModelKey: m.key,
+          videoCredits: m.credits,
+        };
+      }),
       // Story-builder steps (fragments stay server-side — labels/ids only).
       quiz: (c.quiz ?? []).map((s) => ({
         id: s.id,
@@ -385,6 +398,10 @@ export async function generateResponse(
       const sc = (c.videoScenes ?? []).find((s) => s.id === String(body.scene));
       if (!sc) return { status: 400, body: { error: "bad_scene" } };
       base = sc.prompt;
+      // Epic scenes (physics / multi-actor / audio) need a Seedance engine — the
+      // cheap Hailuo default can't carry them. Upgrade unless the user already
+      // swapped to a Seedance model (their explicit choice wins if it's higher).
+      if (sc.tier === "epic" && !vmodel.key.startsWith("seedance")) vmodel = EPIC_VIDEO;
     }
     // Base motion + optional video-composer story/personalization.
     const composed = composeVideoStory(base, body);

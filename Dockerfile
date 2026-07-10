@@ -3,8 +3,10 @@
 # State is in Postgres (set DATABASE_URL) — no native modules, no local volume.
 FROM node:22-bookworm-slim
 
+# ffmpeg powers the free-scenario watermark (src/watermark.ts overlays the brand
+# logo on free videos). Optional at runtime — the flow no-ops gracefully without it.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates wget \
+  && apt-get install -y --no-install-recommends ca-certificates wget ffmpeg \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

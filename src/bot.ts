@@ -13,6 +13,7 @@ import {
   getOrCreateUser,
   getPartnerCode,
   getUser,
+  hasFreeScenario,
   joinPartnerProgram,
   listPartnerCodes,
   logEvent,
@@ -30,12 +31,14 @@ import {
   type PartnerCodeRow,
   type UserRow,
 } from "./db.js";
-import { modelByKey, runGeneration } from "./generate.js";
+import { modelByKey, runFreeScenario, runGeneration } from "./generate.js";
 import { buildDigest, formatDigest } from "./monitor.js";
 import {
   CAMPAIGNS,
   campaignById,
   featuredCampaign,
+  FREE_SCENARIOS,
+  freeScenarioById,
   IMAGE_MODEL_PICKER,
   MODELS,
   PRESET_MODEL,
@@ -76,10 +79,14 @@ async function user(
  * @param opts.featured  prepend a one-tap "🆕 Новинка недели" row (recurring reason)
  * @param opts.hasPhoto  prepend "продолжить с вашим фото" (try-on-your-last-photo hook)
  */
-export function mainMenu(opts: { featured?: Campaign; hasPhoto?: boolean } = {}): InlineKeyboard {
+export function mainMenu(
+  opts: { featured?: Campaign; hasPhoto?: boolean; freeScenario?: boolean } = {},
+): InlineKeyboard {
   const kb = new InlineKeyboard();
   // The app is the flagship surface (in-app studio: create, pay, gallery) — top slot.
   if (config.webappUrl) kb.webApp("🌐 Студия NeuroShot — создавать в приложении", config.webappUrl).row();
+  // The onboarding hook: one whole scenario video, free (shown until claimed).
+  if (opts.freeScenario) kb.text("🎁 Бесплатный сценарий-видео (принцесса / футбол)", "menu:free").row();
   if (opts.hasPhoto) kb.text("📸 Продолжить с вашим фото", "menu:styles").row();
   if (opts.featured) kb.text(`🆕 Новинка недели: ${opts.featured.label}`, `camp:${opts.featured.id}`).row();
   kb.text("📸 AI-фотосессия", "menu:photoshoot")
@@ -160,7 +167,7 @@ const MENU_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "assets", "
 async function sendMainMenu(
   ctx: Context,
   caption: string,
-  menuOpts: { featured?: Campaign; hasPhoto?: boolean } = {},
+  menuOpts: { featured?: Campaign; hasPhoto?: boolean; freeScenario?: boolean } = {},
 ): Promise<void> {
   const hero = join(MENU_DIR, "hero.jpg");
   if (existsSync(hero)) {
@@ -268,10 +275,12 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     }
     // Returning users get a fresh reason to come back: the weekly rotating
     // "новинка недели" + a one-tap continue-with-your-last-photo shortcut.
+    const freeScenario = await hasFreeScenario(u.id);
     const menuOpts = u.justCreated
-      ? {}
-      : { featured: featuredCampaign(new Date()), hasPhoto: !!u.pending_file_id };
+      ? { freeScenario }
+      : { featured: featuredCampaign(new Date()), hasPhoto: !!u.pending_file_id, freeScenario };
     if (menuOpts.featured) msg += `\n\n🆕 Новинка недели: <b>${menuOpts.featured.label}</b> — попробуйте!`;
+    if (freeScenario) msg += `\n\n🎁 <b>Подарок:</b> снимите один сценарий-видео (принцесса или футбол) — бесплатно!`;
     await sendMainMenu(ctx, msg, menuOpts);
     // Deep link from the Mini App's "Пополнить" button.
     if (payload === "buy") await sendBalance(ctx, u.credits);
@@ -280,7 +289,11 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   bot.command("menu", async (ctx) => {
     const u = await user(ctx);
     await setPending(u.id, null, u.pending_file_id); // escape any mode/prompt-await, keep the photo
-    await sendMainMenu(ctx, "Что создаём?");
+    await sendMainMenu(ctx, "Что создаём?", {
+      featured: featuredCampaign(new Date()),
+      hasPhoto: !!u.pending_file_id,
+      freeScenario: await hasFreeScenario(u.id),
+    });
   });
 
   bot.command("app", async (ctx) => {
@@ -652,6 +665,39 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     await ctx.reply("Вот примеры 👆 Пришлите фото товара 🛍 (можно прямо со стола — фон мы заменим).");
   });
 
+  // ---- Free one-time scenario (onboarding hook): princess or football ----
+  // Whole chain (Seedream scene → Hailuo video) at zero credits, watermarked.
+
+  bot.callbackQuery("menu:free", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await user(ctx);
+    if (!(await hasFreeScenario(u.id))) {
+      await ctx.reply("🎁 Бесплатный сценарий уже использован. Создайте свой в /menu 🙂");
+      return;
+    }
+    const kb = new InlineKeyboard();
+    for (const s of FREE_SCENARIOS) kb.text(s.label, `free:${s.id}`).row();
+    kb.text("📋 Меню", "menu:main");
+    await ctx.reply(
+      "🎁 Один сценарий-видео — бесплатно и без списания патронов! Что снимаем?",
+      { reply_markup: kb },
+    );
+  });
+
+  bot.callbackQuery(/^free:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const s = freeScenarioById(ctx.match[1]);
+    if (!s) return;
+    const u = await user(ctx);
+    if (!(await hasFreeScenario(u.id))) {
+      await ctx.reply("🎁 Бесплатный сценарий уже использован 🙂");
+      return;
+    }
+    // Always ask for the right photo (child vs self) — don't reuse a stale one.
+    await setPending(u.id, `mode_free_${s.id}`, null);
+    await ctx.reply(s.ask);
+  });
+
   // ---- Campaigns: one-click viral scenarios (image → optional video upsell) ----
 
   function campaignPresetKeyboard(c: Campaign): InlineKeyboard {
@@ -842,6 +888,14 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       await setPending(u.id, "await_action", fileId);
       await ctx.reply("🎬 Выберите видео-модель:", { reply_markup: videoModelsKeyboard() });
       return;
+    }
+    if (mode?.startsWith("mode_free_")) {
+      const s = freeScenarioById(mode.slice("mode_free_".length));
+      if (s) {
+        // runFreeScenario manages pending state (and keeps the freebie on failure).
+        await runFreeScenario(ctx, u, s, fileId);
+        return;
+      }
     }
     if (mode?.startsWith("mode_camp_")) {
       const c = campaignById(mode.slice("mode_camp_".length));

@@ -802,7 +802,8 @@
             `<button class="chip ${v.key === m.key ? "on" : ""}" data-mod="${v.key}">${esc(v.label.replace("🎬 ", ""))} · ${v.credits}+ 🔫</button>`).join("")}</div>` : ""}
         ${scenes.length ? `<div class="quiz-q">Сюжет — что происходит?</div>
           <div class="chips" id="sceneRow">${scenes.map((s) =>
-            `<button class="chip ${pick.scene === s.id ? "on" : ""}" data-scene="${s.id}">${esc(s.label)}</button>`).join("")}</div>` : ""}
+            `<button class="chip ${pick.scene === s.id ? "on" : ""}" data-scene="${s.id}" data-sctier="${s.tier || "simple"}" data-scmodel="${s.videoModelKey}">${esc(s.label)}${s.tier === "epic" ? ` · ⚡${s.videoCredits} 🔫` : ""}</button>`).join("")}</div>
+          ${scenes.some((s) => s.tier === "epic") ? `<div class="hint">⚡ — эпичная сцена на движке Seedance (звук и физика)</div>` : ""}` : ""}
         <div class="quiz-q">Формат кадра</div>
         <div class="chips" id="arRow">${ratios.map((r) =>
           `<button class="chip ${r === pick.aspect_ratio ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>
@@ -831,10 +832,19 @@
         viewVideoComposer(nm);
       }));
       // Scene (campaigns): single-select, tap again to clear (→ default motion).
+      // An epic scene needs a Seedance engine, so selecting one swaps the model
+      // and reprices (mirrors the server's upgrade) — unless we're already on one.
       sheetBody.querySelectorAll("#sceneRow .chip").forEach((c) => (c.onclick = () => {
         const on = c.classList.contains("on");
         sheetBody.querySelectorAll("#sceneRow .chip").forEach((x) => x.classList.remove("on"));
-        if (!on) { c.classList.add("on"); pick.scene = c.dataset.scene; } else pick.scene = null;
+        if (on) { pick.scene = null; return; }
+        c.classList.add("on");
+        pick.scene = c.dataset.scene;
+        if (c.dataset.sctier === "epic" && !pick.model.startsWith("seedance")) {
+          pick.custom = sheetBody.querySelector("#cw").value.trim(); // preserve typed detail
+          const nm = ME.catalog.videoModels.find((v) => v.key === c.dataset.scmodel);
+          if (nm) { pick.credits = nm.credits; viewVideoComposer(nm); }
+        }
       }));
       // aspect ratio + duration are single-select (no unselect).
       sheetBody.querySelectorAll("#arRow .chip").forEach((c) => (c.onclick = () => {
