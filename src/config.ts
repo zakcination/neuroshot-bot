@@ -40,12 +40,21 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean)
     .map(Number),
+  // --- Kaspi payments (KZT) — replaces Telegram Stars ---
+  // Kaspi payment link shown to buyers. Blank until the merchant link is live;
+  // while blank the buy flow records the order but tells the user payment isn't
+  // open yet. Set KASPI_PAY_URL to go live.
+  kaspiPayUrl: process.env.KASPI_PAY_URL ?? "",
+  // ₸ per USD — used ONLY for the digest's gross-margin estimate, never pricing.
+  kztPerUsd: Number(process.env.KZT_PER_USD ?? 480),
+  // Launch combo offer window: the "🔥 Комбо-сет" sale ends this many days after
+  // COMBO_OFFER_START (ISO). Default start = the server's boot time, so the
+  // countdown is ~1 month from deploy; pin COMBO_OFFER_START to fix the date.
+  comboOfferDays: Number(process.env.COMBO_OFFER_DAYS ?? 30),
+  comboOfferStart: process.env.COMBO_OFFER_START ?? "",
   // --- CEO monitoring (docs/monitoring.md): digest pushed, alerts interrupt ---
   // UTC hour when the daily digest is pushed to admins (6 UTC = 09:00 МСК).
   digestHourUtc: Number(process.env.DIGEST_HOUR_UTC ?? 6),
-  // Conservative USD payout per Telegram Star (mobile-purchase floor) — used
-  // ONLY for the digest's gross-margin estimate, never for pricing.
-  starUsd: Number(process.env.STAR_USD ?? 0.01),
   // Telegram Mini App (web layer). Public HTTPS URL of the deployed app; when
   // set, the bot shows a "🌐 Приложение" button and index.ts starts the server.
   webappUrl: process.env.WEBAPP_URL ?? "",

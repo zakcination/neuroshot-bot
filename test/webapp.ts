@@ -16,6 +16,7 @@ process.env.DATABASE_URL = "";
 process.env.FREE_CREDITS = "3";
 process.env.WEBAPP_URL = "https://app.test"; // enable app-config paths
 process.env.BOT_USERNAME = "neuroshot_test_bot";
+process.env.KASPI_PAY_URL = "https://pay.test/neuroshot"; // enable the Kaspi order flow
 
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp } = await import("../src/webapp.js");
@@ -119,7 +120,7 @@ interface MeResponse {
   dashboard: { credits: number; okGenerations: number; creditsSpent: number; referralEarned: number };
   generations: Array<{ output_url: string | null; status: string }>;
   bot_username: string;
-  packs: Array<{ id: string; title: string; credits: number; stars: number }>;
+  packs: Array<{ id: string; title: string; credits: number; kzt: number; offer: boolean }>;
   catalog: {
     presetCredits: number;
     presets: Array<{ id: string; label: string; category: string }>;
@@ -157,8 +158,9 @@ await step("GET /api/me onboards a new user with free credits (shared with bot)"
   assert.equal(body.bot_username, "neuroshot_test_bot"); // from BOT_USERNAME env
   assert.deepEqual(body.generations, []);
   // Pack catalog rides along — one source of truth with the bot's /buy.
-  assert.equal(body.packs.length, 4);
-  assert.ok(body.packs.every((p) => p.stars > 0 && p.credits > 0 && p.id));
+  assert.equal(body.packs.length, 5); // 4 ladder + the combo offer
+  assert.ok(body.packs.every((p) => p.kzt > 0 && p.credits > 0 && p.id));
+  assert.ok(body.packs.some((p) => p.id === "combo" && p.offer), "combo offer missing");
 });
 
 await step("app reflects the SAME state the bot writes: spend + gallery", async () => {
@@ -374,7 +376,7 @@ await step("insufficient 🔫 → 402 with the pack catalog (in-app paywall)", a
   assert.equal(d.error, "insufficient");
   assert.equal(d.need, 10); // Hailuo 2.3 Fast default (6s)
   assert.equal(d.balance, 3);
-  assert.equal(d.packs.length, 4);
+  assert.equal(d.packs.length, 5); // 4 ladder + combo offer
 });
 
 await step("generate validation: unknown ids, missing photo, off-catalog models, empty prompt → 400", async () => {
@@ -403,44 +405,29 @@ await step("polling is owner-scoped: someone else's generation id → 404", asyn
   assert.equal(r.status, 404);
 });
 
-await step("POST /api/invoice: creates a Stars invoice link via the Telegram API", async () => {
-  // Stub Telegram Bot API: assert the payload and return an invoice link.
-  const { createServer } = await import("node:http");
-  let seen: Record<string, unknown> | null = null;
-  const tgStub = createServer((req, res) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (c: Buffer) => chunks.push(c));
-    req.on("end", () => {
-      seen = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true, result: "https://t.me/invoice/test123" }));
-    });
-  });
-  await new Promise<void>((r) => tgStub.listen(0, r));
-  process.env.TELEGRAM_API_BASE = `http://127.0.0.1:${(tgStub.address() as AddressInfo).port}`;
-
-  const r = await fetch(`${base}/api/invoice`, {
+await step("POST /api/order: records a pending Kaspi order and returns the pay link", async () => {
+  const r = await fetch(`${base}/api/order`, {
     method: "POST",
     headers: { ...makerHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({ pack: "start" }),
   });
   assert.equal(r.status, 200);
-  assert.equal(((await r.json()) as { link: string }).link, "https://t.me/invoice/test123");
-  assert.equal(seen!.currency, "XTR");
-  assert.equal(seen!.payload, "pack:start"); // same payload the bot's payment handler expects
-  assert.deepEqual(seen!.prices, [{ label: "Старт — 60 🔫", amount: 720 }]);
+  const d = (await r.json()) as { available: boolean; orderId: number; link: string; amount: number; title: string };
+  assert.equal(d.available, true);
+  assert.equal(d.link, "https://pay.test/neuroshot"); // the configured Kaspi link
+  assert.equal(d.amount, 3700); // Старт — 60 🔫 in KZT
+  assert.ok(Number.isInteger(d.orderId) && d.orderId > 0, "no order id");
 
-  const bad = await fetch(`${base}/api/invoice`, {
+  const bad = await fetch(`${base}/api/order`, {
     method: "POST",
     headers: { ...makerHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({ pack: "nope" }),
   });
   assert.equal(bad.status, 400);
-  await new Promise<void>((r2) => tgStub.close(() => r2()));
 });
 
 await step("method gating on studio endpoints: GET /api/generate and /api/upload → 405", async () => {
-  for (const path of ["/api/generate", "/api/upload", "/api/invoice", "/api/send"]) {
+  for (const path of ["/api/generate", "/api/upload", "/api/order", "/api/send"]) {
     const r = await fetch(`${base}${path}`, { headers: makerHeaders() });
     assert.equal(r.status, 405, path);
     assert.equal(r.headers.get("allow"), "POST", path);

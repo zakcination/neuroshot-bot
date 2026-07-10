@@ -16,6 +16,7 @@ process.env.FAL_KEY = "test-fal-key";
 process.env.DATABASE_URL = "";
 process.env.FREE_CREDITS = "12"; // enough headroom for the multi-step journey below
 process.env.ADMIN_IDS = "9999";
+process.env.KASPI_PAY_URL = "https://pay.test/neuroshot"; // enable the Kaspi buy flow
 process.env.PARTNER_WELCOME = "180"; // ≈$20 welcome bonus (spend-only)
 process.env.WITHDRAW_MIN = "20"; // low so the withdrawal path is exercisable
 
@@ -186,30 +187,17 @@ async function pressButton(from: From, data: string): Promise<void> {
   });
 }
 
-async function payForPack(from: From, packId: string, stars: number): Promise<void> {
-  await bot.handleUpdate({
-    update_id: nextUpdateId++,
-    pre_checkout_query: {
-      id: `pcq-${nextUpdateId}`,
-      from,
-      currency: "XTR",
-      total_amount: stars,
-      invoice_payload: `pack:${packId}`,
-    },
-  });
-  await bot.handleUpdate({
-    update_id: nextUpdateId++,
-    message: {
-      ...baseMessage(from),
-      successful_payment: {
-        currency: "XTR",
-        total_amount: stars,
-        invoice_payload: `pack:${packId}`,
-        telegram_payment_charge_id: `tpc-${nextUpdateId}`,
-        provider_payment_charge_id: `ppc-${nextUpdateId}`,
-      },
-    },
-  });
+/**
+ * Drive a full Kaspi purchase: the buyer taps buy → a pending order is created,
+ * then the admin confirms the payment (/order N ok) → grantPurchase credits the
+ * pack and fires the referral/partner payouts. (The 3rd arg is the legacy Stars
+ * amount, now ignored — pricing comes from the pack.)
+ */
+async function payForPack(from: From, packId: string, _stars?: number): Promise<void> {
+  await pressButton(from, `buy:${packId}`); // creates the pending order + shows the pay link
+  const m = /Заявка №(\d+)/.exec(lastText());
+  if (!m) throw new Error(`no order created for ${packId}: ${lastText()}`);
+  await sendText(admin, `/order ${m[1]} ok`); // admin verifies Kaspi payment → credits granted
 }
 
 // ---------- db helpers ----------
@@ -301,30 +289,29 @@ await step("insufficient 🔫: animate (25) with 7 shows the sales-page paywall,
   const wall = calls("sendMessage").at(-1)!;
   assert.match(wall.payload.text as string, /Ещё один шаг до результата/);
   assert.match(wall.payload.text as string, /🎬 Оживление фото/);
-  assert.match(wall.payload.text as string, /Старт/); // entry pack anchored
+  assert.match(wall.payload.text as string, /Комбо/); // combo offer anchored as the entry
   const kb = wall.payload.reply_markup as { inline_keyboard: Array<Array<{ callback_data: string }>> };
   const buttons = kb.inline_keyboard.flat().map((b) => b.callback_data);
-  assert.ok(buttons.includes("buy:start"), "entry-pack CTA missing"); // one dominant CTA
+  assert.ok(buttons.includes("buy:combo"), "entry-pack CTA missing"); // one dominant CTA
   assert.ok(buttons.includes("show_packs"), "all-packs fallback missing");
   assert.equal(await credits(alice.id), 7);
 });
 
-await step("purchase: /buy → invoice → pre-checkout → payment credits the pack", async () => {
+await step("purchase: /buy → Kaspi order → admin confirm credits the pack", async () => {
   await sendText(alice, "/buy");
   const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
     inline_keyboard: Array<Array<{ callback_data: string }>>;
   };
   const packButtons = kb.inline_keyboard.flat().map((b) => b.callback_data);
-  assert.deepEqual(packButtons, ["buy:start", "buy:popular", "buy:pro", "buy:studio"]);
+  // The limited-time combo offer leads, then the KZT ladder.
+  assert.deepEqual(packButtons, ["buy:combo", "buy:start", "buy:popular", "buy:pro", "buy:studio"]);
 
-  await pressButton(alice, "buy:popular");
-  const invoice = calls("sendInvoice").at(-1)!.payload;
-  assert.equal(invoice.currency, "XTR");
-  assert.deepEqual(invoice.prices, [{ label: "Популярный — 200 🔫", amount: 2200 }]);
+  await pressButton(alice, "buy:popular"); // creates a pending Kaspi order
+  assert.match(lastText(), /11000 ₸/); // KZT price shown
+  const orderId = /Заявка №(\d+)/.exec(lastText())![1];
+  assert.match(lastText(), /Kaspi/);
 
-  await payForPack(alice, "popular", 2200);
-  assert.equal(calls("answerPreCheckoutQuery").at(-1)!.payload.ok, true);
-  assert.match(lastText(), /Начислено 🔫 200 патронов/);
+  await sendText(admin, `/order ${orderId} ok`); // admin verifies the payment → credits
   assert.equal(await credits(alice.id), 207); // 7 + 200
   assert.equal(await ledgerCount("purchase"), 1);
 });
@@ -382,7 +369,7 @@ await step("/stats: admin sees totals, non-admin gets silence", async () => {
   assert.match(text, /Users: 2/); // alice, bob (/stats does not register its caller)
   assert.match(text, /Paying: 2/);
   assert.match(text, /Generations: 4/); // 3 ok + 1 error
-  assert.match(text, /Stars revenue: 4400/); // alice popular 2200 + bob popular 2200
+  assert.match(text, /Выручка: 22000 ₸/); // alice popular 11000 + bob popular 11000
 
   const before = calls("sendMessage").length;
   await sendText(alice, "/stats");
@@ -943,13 +930,13 @@ await step("/dash: admin gets the 6-number digest split by source; non-admin get
   assert.match(text, /сводка за 24 ч/);
   assert.match(text, /Новых: <b>\d+<\/b>/);
   assert.match(text, /src_tiktok 1/); // per-source split
-  assert.match(text, /Оплат: <b>\d+<\/b> на <b>⭐\d+<\/b>/);
+  assert.match(text, /Оплат: <b>\d+<\/b> на <b>\d+ ₸<\/b>/);
   assert.match(text, /c_mentor: \d+/); // payers split by source
   assert.match(text, /маржа <b>\d+%<\/b>/);
   assert.match(text, /Обязательства: <b>\d+ 🔫<\/b>/);
 
   const digest = await buildDigest(24);
-  assert.ok(digest.stars > 0, "test journey produced purchases");
+  assert.ok(digest.kzt > 0, "test journey produced purchases");
   assert.ok(digest.marginPct != null && digest.marginPct > 50, `margin ${digest.marginPct}`);
   assert.ok(digest.creditLiability > 0);
 

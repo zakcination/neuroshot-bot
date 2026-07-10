@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { fal } from "@fal-ai/client";
 import { config } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { galleryPage, getGeneration, getOrCreateUser, getUser, recentGenerations, userDashboard } from "./db.js";
+import { createOrder, galleryPage, getGeneration, getOrCreateUser, getUser, recentGenerations, userDashboard } from "./db.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { sanitizePrompt } from "./promptcraft.js";
 import {
@@ -25,6 +25,7 @@ import {
   MODEL_NEWS,
   MODELS,
   normalizeOpts,
+  packById,
   PACKS,
   PRESET_MODEL,
   PRESETS,
@@ -164,7 +165,7 @@ export function authResponse(headers: Headers): { status: number; body: Record<s
 
 /** Pack catalog payload — one source of truth with the bot's /buy. */
 function packsPayload(): Array<Record<string, unknown>> {
-  return PACKS.map((p) => ({ id: p.id, title: p.title, credits: p.credits, stars: p.stars }));
+  return PACKS.map((p) => ({ id: p.id, title: p.title, credits: p.credits, kzt: p.kzt, offer: p.offer ?? false }));
 }
 
 /**
@@ -447,12 +448,6 @@ export async function generateResponse(
 }
 
 /**
- * POST /api/invoice — a Telegram Stars invoice link for a pack, opened with
- * WebApp.openInvoice so the purchase completes WITHOUT leaving the app. The
- * payment lands in the bot's successful_payment handler (same payload format),
- * so crediting/referrals/partner payouts share one code path.
- */
-/**
  * POST /api/send — deliver one of the caller's generations into their Telegram
  * chat with the bot (native save/forward/share from there). Owner-scoped.
  */
@@ -479,26 +474,25 @@ export async function sendResponse(
   return { status: 200, body: { ok: true } };
 }
 
-export async function invoiceResponse(
+/**
+ * POST /api/order — start a Kaspi purchase: record a pending order and hand back
+ * the Kaspi pay link + the order id. The app opens the link, the user pays, and
+ * an admin (or, later, a Kaspi webhook) confirms via grantPurchase — so crediting
+ * and referral/partner payouts share one code path with the bot. While the link
+ * is blank (KASPI_PAY_URL unset), returns { available: false }.
+ */
+export async function orderResponse(
+  userId: number,
   body: Record<string, unknown> | null,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
-  const pack = PACKS.find((p) => p.id === body?.pack);
+  const pack = packById(String(body?.pack ?? ""));
   if (!pack) return { status: 400, body: { error: "bad_request" } };
-  const apiBase = process.env.TELEGRAM_API_BASE ?? "https://api.telegram.org";
-  const res = await fetch(`${apiBase}/bot${config.botToken}/createInvoiceLink`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      title: pack.title,
-      description: `${pack.credits} патронов на генерации`,
-      payload: `pack:${pack.id}`,
-      currency: "XTR",
-      prices: [{ label: pack.title, amount: pack.stars }],
-    }),
-  });
-  const data = (await res.json()) as { ok: boolean; result?: string };
-  if (!data.ok || !data.result) return { status: 502, body: { error: "invoice_failed" } };
-  return { status: 200, body: { link: data.result } };
+  if (!config.kaspiPayUrl) return { status: 200, body: { available: false } };
+  const orderId = await createOrder(userId, pack.id, pack.kzt);
+  return {
+    status: 200,
+    body: { available: true, orderId, link: config.kaspiPayUrl, amount: pack.kzt, title: pack.title },
+  };
 }
 
 /** Static PWA assets (installable web app / iOS home-screen). Served at root so
@@ -592,12 +586,13 @@ export function createWebApp(): Server {
         });
       }
 
-      // POST /api/invoice — Stars invoice link for in-app pack purchase.
-      if (url.pathname === "/api/invoice") {
+      // POST /api/order — start a Kaspi purchase (pending order + pay link).
+      if (url.pathname === "/api/order") {
         if (!methodIs(res, req.method, "POST")) return;
         const user = resolveUser(req.headers);
         if (!user) return json(res, 401, { error: "unauthorized" });
-        const { status, body } = await invoiceResponse(await readJsonBody(req, 4 * 1024));
+        await getOrCreateUser(user.id, user.username, null, config.freeCredits);
+        const { status, body } = await orderResponse(user.id, await readJsonBody(req, 4 * 1024));
         return json(res, status, body);
       }
 
