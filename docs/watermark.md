@@ -10,7 +10,8 @@ the free-hook funnel (see `docs/pricing.md`).
 
 1. downloads the fal video,
 2. overlays `public/watermark.png` at the **bottom-centre**, `45px` from the
-   bottom edge (the 40–50px spec), scaled to ~320px wide,
+   bottom edge (the 40–50px spec), scaled to ~320px wide, at **80% opacity**
+   (`MARK_OPACITY`) applied in the filtergraph — so the source PNG stays pristine,
 3. sends the branded MP4 to the user.
 
 It uses **ffmpeg** (added to the Docker image). The whole thing is a **safe
@@ -28,15 +29,16 @@ public/watermark.png
 
 Requirements:
 
-- **Transparent PNG** (alpha channel) — it's composited straight over the video.
-- It should already contain the **logo + the "NeuroShot.ai" wordmark** as a
-  single lockup (we overlay one image; no separate text rendering). Put the
-  wordmark under/beside the logo with a bit of internal padding.
-- Keep it wide-ish and low (a footer lockup), e.g. ~1000×250px — it's scaled to
-  320px wide on the video, ratio preserved.
+- **A solid background is fine** — opacity is applied at overlay time
+  (`MARK_OPACITY`), so the asset does not need an alpha channel. Transparent PNGs
+  work too. The current asset is the pill-shaped `NeuroShot.ai` lockup.
+- It should contain the **logo + the "NeuroShot.ai" wordmark** as a single
+  lockup (we overlay one image; no separate text rendering).
+- Keep it wide-ish and low (a footer lockup) — it's scaled to 320px wide on the
+  video, ratio preserved.
 
 That's it. Once `public/watermark.png` exists and the container has ffmpeg, free
 videos are branded automatically — no code or env change needed.
 
 Tunables (constants in `src/watermark.ts`): `BOTTOM_PADDING` (45px), `MARK_WIDTH`
-(320px), `FFMPEG_TIMEOUT_MS`.
+(320px), `MARK_OPACITY` (0.8), `FFMPEG_TIMEOUT_MS`.
