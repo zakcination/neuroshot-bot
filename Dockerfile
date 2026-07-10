@@ -4,9 +4,11 @@
 FROM node:22-bookworm-slim
 
 # ffmpeg powers the free-scenario watermark (src/watermark.ts overlays the brand
-# logo on free videos). Optional at runtime — the flow no-ops gracefully without it.
+# logo + a Telegram-handle CTA on free videos); fonts-dejavu-core gives drawtext a
+# Cyrillic-capable font for the CTA. Both optional at runtime — the flow degrades
+# gracefully (logo-only, or un-watermarked) without them.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates wget ffmpeg \
+  && apt-get install -y --no-install-recommends ca-certificates wget ffmpeg fonts-dejavu-core \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

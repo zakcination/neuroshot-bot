@@ -1,13 +1,15 @@
 /**
- * Brand watermark for FREE deliverables — every free scenario video carries the
- * NeuroShot logo + wordmark so each share markets us (the viral loop). Overlays
- * `public/watermark.png` (a transparent logo+"NeuroShot.ai" lockup) at the
- * bottom-center of the video via ffmpeg.
+ * Brand + CTA watermark for FREE deliverables. Every free scenario video carries
+ * two things so each share becomes an ad AND a conversion path:
+ *   1) the NeuroShot logo (brand recognition), overlaid small near the top;
+ *   2) a call-to-action bar at the bottom — "Сделай такое же бесплатно → @<bot>"
+ *      — pointing at the actual Telegram bot handle, so a viewer who sees a
+ *      shared clip knows exactly where to make their own, for free.
  *
  * Zero hard dependency: if ffmpeg OR the logo file is missing, `watermarkVideo`
- * returns null and the caller simply sends the un-watermarked source URL. So the
- * whole free flow keeps working before the logo asset is committed / ffmpeg is
- * added to the image — the watermark switches on automatically once both exist.
+ * returns null and the caller sends the un-watermarked source URL — the free
+ * flow never breaks. If the CTA font is missing it degrades to logo-only, so a
+ * partial toolchain still brands the clip.
  */
 import { spawn } from "node:child_process";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -15,22 +17,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** The logo+wordmark lockup. Commit it here to enable branding. The source may
- * be fully opaque (own background is fine) — opacity is applied at overlay time. */
+/** The NeuroShot logo lockup. Commit it here to enable branding. */
 const LOGO_PATH = fileURLToPath(new URL("../public/watermark.png", import.meta.url));
-/** Padding from the bottom edge, in px (spec: 40–50). */
-const BOTTOM_PADDING = 45;
-/** Rendered watermark width in px (scaled from the source PNG, ratio preserved). */
-const MARK_WIDTH = 320;
-/** Overlay opacity (0–1). 0.8 = a solid-reading brand badge with a soft edge —
- * strong enough for recognition on shared clips, applied to the logo as-is so
- * the source asset stays pristine. Tune here without touching the PNG. */
-const MARK_OPACITY = 0.8;
+/** Cyrillic-capable font for the CTA text (shipped via fonts-dejavu-core). */
+const FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+/** Padding from each edge, in px. */
+const EDGE_PADDING = 40;
+/** Rendered logo width in px (scaled from the source PNG, ratio preserved). */
+const MARK_WIDTH = 300;
+/** Logo overlay opacity (0–1): 0.85 reads as a solid brand badge with a soft edge. */
+const MARK_OPACITY = 0.85;
+/** CTA font size in px (tuned for 720–768p output; box keeps it readable). */
+const CTA_FONTSIZE = 30;
 /** Hard cap so a stuck ffmpeg can't wedge the request. */
 const FFMPEG_TIMEOUT_MS = 60_000;
 
 let logoReady: boolean | null = null;
 let ffmpegReady: boolean | null = null;
+let fontReady: boolean | null = null;
 
 async function fileExists(p: string): Promise<boolean> {
   try {
@@ -56,6 +60,11 @@ async function hasLogo(): Promise<boolean> {
   return logoReady;
 }
 
+async function hasFont(): Promise<boolean> {
+  if (fontReady == null) fontReady = await fileExists(FONT_PATH);
+  return fontReady;
+}
+
 /** True when a call to watermarkVideo could actually brand the file. */
 export async function watermarkEnabled(): Promise<boolean> {
   return (await hasLogo()) && (await hasFfmpeg());
@@ -79,13 +88,22 @@ function runFfmpeg(args: string[]): Promise<boolean> {
   });
 }
 
+/** The conversion line shown at the bottom of every free clip. */
+function ctaText(botUsername?: string): string {
+  const handle = botUsername ? `@${botUsername}` : "NeuroShot.ai";
+  return `Сделай такое же бесплатно → ${handle}`;
+}
+
 /**
- * Download `url`, overlay the brand mark at bottom-center (BOTTOM_PADDING px up),
- * and return the branded MP4 bytes — or null if branding is unavailable or fails
- * (caller then sends the source URL unchanged, so a watermark hiccup never blocks
- * a free result). Audio is copied through untouched.
+ * Download `url`, overlay the NeuroShot logo (top) and the bot-handle CTA
+ * (bottom bar), and return the branded MP4 bytes — or null if branding is
+ * unavailable or fails (caller then sends the source URL unchanged, so a
+ * watermark hiccup never blocks a free result). Audio is copied through.
+ *
+ * `botUsername` (from config.webappBotUsername) drives the CTA so it always
+ * points at the real bot — no hardcoded handle.
  */
-export async function watermarkVideo(url: string): Promise<Buffer | null> {
+export async function watermarkVideo(url: string, botUsername?: string): Promise<Buffer | null> {
   if (!(await watermarkEnabled())) return null;
   let dir: string | null = null;
   try {
@@ -96,16 +114,31 @@ export async function watermarkVideo(url: string): Promise<Buffer | null> {
     const inPath = join(dir, "in.mp4");
     const outPath = join(dir, "out.mp4");
     await writeFile(inPath, src);
+
+    // Logo overlay: scale, apply opacity (RGBA-safe), place top-centre.
+    const logo =
+      `[1:v]scale=${MARK_WIDTH}:-1,format=rgba,colorchannelmixer=aa=${MARK_OPACITY}[wm];` +
+      `[0:v][wm]overlay=x=(W-w)/2:y=${EDGE_PADDING}`;
+
+    // CTA bar: white text on a translucent box, bottom-centre. Loaded from a
+    // textfile so Cyrillic + punctuation need no filtergraph escaping. Degrades
+    // to logo-only when the font is missing (drawtext would otherwise fail hard).
+    let filter = logo;
+    if (await hasFont()) {
+      const ctaPath = join(dir, "cta.txt");
+      await writeFile(ctaPath, ctaText(botUsername), "utf8");
+      filter =
+        `${logo}[bg];` +
+        `[bg]drawtext=fontfile=${FONT_PATH}:textfile=${ctaPath}:fontcolor=white:` +
+        `fontsize=${CTA_FONTSIZE}:box=1:boxcolor=black@0.5:boxborderw=16:` +
+        `x=(w-tw)/2:y=h-th-${EDGE_PADDING}`;
+    }
+
     const ok = await runFfmpeg([
       "-y",
       "-i", inPath,
       "-i", LOGO_PATH,
-      "-filter_complex",
-      // Scale the logo, give it an alpha channel, dial opacity, then overlay
-      // bottom-centre. format=rgba lets colorchannelmixer set uniform alpha even
-      // when the source PNG has no alpha (a solid-background lockup is fine).
-      `[1:v]scale=${MARK_WIDTH}:-1,format=rgba,colorchannelmixer=aa=${MARK_OPACITY}[wm];` +
-        `[0:v][wm]overlay=x=(W-w)/2:y=H-h-${BOTTOM_PADDING}`,
+      "-filter_complex", filter,
       "-c:a", "copy",
       "-movflags", "+faststart",
       outPath,
