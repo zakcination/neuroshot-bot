@@ -3,12 +3,11 @@
 # State is in Postgres (set DATABASE_URL) — no native modules, no local volume.
 FROM node:22-bookworm-slim
 
-# ffmpeg powers the free-scenario watermark (src/watermark.ts overlays the brand
-# logo + a Telegram-handle CTA on free videos); fonts-dejavu-core gives drawtext a
-# Cyrillic-capable font for the CTA. Both optional at runtime — the flow degrades
-# gracefully (logo-only, or un-watermarked) without them.
+# ffmpeg powers the free-scenario watermark (src/watermark.ts overlays the
+# pre-designed CTA badge on free videos). Optional at runtime — the flow no-ops
+# gracefully (un-watermarked) without it.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates wget ffmpeg fonts-dejavu-core \
+  && apt-get install -y --no-install-recommends ca-certificates wget ffmpeg \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
