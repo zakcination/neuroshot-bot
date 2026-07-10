@@ -31,17 +31,39 @@ margin**, and still **≥3.5×** at the $0.009 floor after the 10% referral shar
 
 ### Per-model patron prices
 
-| Model | AI cost | Patrons |
-|---|---|---|
-| Text → image (Seedream) | $0.03 | 2 |
-| Photo edit (Nano Banana) | $0.06 | 3 |
-| Nano Banana 2 | $0.08 | 4 |
-| Nano Banana Pro (2K) | $0.15 | 8 |
-| Premium (GPT-Image, hi-q) | $0.21–0.22 | 11 |
-| Animate (Kling 2.5, 5s) | $0.50 | 25 |
-| Kling 3.0 (5s) | $0.84 | 42 |
-| Seedance Fast (5s) | $1.21 | 61 |
-| Seedance flagship (5s) | $1.51 | 76 |
+| Model | Role | AI cost | Patrons |
+|---|---|---|---|
+| **Seedream 4 edit** | **scenario image (default)** | **$0.03** | **2** |
+| Seedream 4.5 (text→image) | cheap image + free-trial anchor | $0.04 | 2 |
+| Photo edit (Nano Banana) | «свой промпт» edit | $0.06 | 3 |
+| Nano Banana 2 | image picker | $0.08 | 4 |
+| Nano Banana Pro (2K) | image picker | $0.15 | 8 |
+| Premium (GPT-Image, hi-q) | typography/detail | $0.21–0.22 | 11 |
+| **Hailuo 2.3 Fast (6s)** | **scenario video (default)** | **$0.19** | **10** |
+| Hailuo 2.3 Fast (10s) | — | $0.32 | 16 |
+| Animate (Kling 2.5, 5s) | budget video | $0.50 | 25 |
+| Kling 3.0 (5s) | cinematic swap-up | $0.84 | 42 |
+| Seedance Fast (5s) | **epic scenes** (physics/audio) | $1.21 | 61 |
+| Seedance flagship (5s) | max quality swap-up | $1.51 | 76 |
+
+### Scenario economics — the free-hook lever
+
+The whole scenario stack was re-based onto the two cheapest capable engines so a
+*whole* scenario can be given away as the acquisition hook:
+
+- **Default scenario = Seedream edit (2 🔫) + Hailuo 6s (10 🔫) = 12 🔫 ≈ $0.24**
+  of provider cost — down from 46 🔫 (Nano Banana 2 + Kling 3.0). That 4× drop is
+  what makes the free offer sustainable.
+- **The free onboarding gift:** every newcomer keeps the 4 free 🔫 **and** gets
+  ONE whole scenario (princess **or** football) rendered free — Seedream scene →
+  Hailuo video — **watermarked** with the NeuroShot logo (`src/watermark.ts`).
+  Marketing cost ≈ **$0.22/new user**, and each shared clip is a branded ad, so
+  the loop is CAC-negative at any reasonable share rate. Claimed once
+  (`users.free_scenario_used`); a failed render keeps the freebie.
+- **Complexity ↔ engine matching:** simple one-action scenes run on the cheap
+  Hailuo default; "epic" scenes (multi-actor goals, trophy lifts, flight,
+  multi-shot) are gated to **Seedance** and priced accordingly — a simple model
+  is never asked to carry a hard action. The composer swaps + reprices on select.
 
 ## Packs
 
@@ -56,6 +78,31 @@ margin floor; smaller packs run richer.
 | Студия | 900 | 8 100 | 9 | $81 | 4.5× |
 
 Play with the assumptions in the interactive calculator before changing these.
+
+The cheaper scenario stack also *reprices the value story*: a «Старт — 60 🔫»
+pack now buys **~5 whole Hailuo scenarios** (12 🔫 each) instead of ~1 Kling
+scenario. Same margin per patron, far better perceived value — the anchor a paid
+social campaign needs.
+
+## Marketing progression (the campaign funnel)
+
+Built to be poured into a social-media push, each stage feeding the next:
+
+1. **Hook — free watermarked scenario.** New user picks princess/football, gets
+   a branded video for ~$0.22. They share it → the watermark drives the next
+   install. This is the top of the funnel and the CAC engine.
+2. **Activate — 4 free 🔫.** Enough for a Seedream image or a second cheap render,
+   so they feel the studio before paying.
+3. **First purchase — «Старт» anchor.** Framed as "~5 full scenarios", the
+   cheapest pack clears 6× margin; the free scenario already proved the value.
+4. **Upsell ladder in the composer.** Hailuo Fast (10 🔫) → Kling 3.0 cinematic
+   (42 🔫) → Seedance epic scenes with audio/physics (61–76 🔫). Every swap shows
+   its price; epic scenes force the Seedance rung.
+5. **Loops — referral + partner.** 10% lifetime referral share and the 15%
+   partner cashback (docs/partner-program.md) turn payers into distributors.
+
+Track it with `/dash` (docs/monitoring.md): new-by-source, activation, and the
+per-source payer split tell you which creative to pour tomorrow's budget into.
 
 ## Referral economics (abuse-safe)
 

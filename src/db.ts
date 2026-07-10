@@ -43,6 +43,7 @@ const SCHEMA: string[] = [
     ref_first_purchase_at TIMESTAMPTZ,  -- set on the invitee at their 1st purchase
     ref_milestones INTEGER NOT NULL DEFAULT 0, -- referral milestone tiers already paid
     free_result_used BOOLEAN NOT NULL DEFAULT false, -- one-time "first result on us" claimed
+    free_scenario_used BOOLEAN NOT NULL DEFAULT false, -- one-time free princess/football scenario claimed
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
   // Forward migrations for existing databases (columns added after launch).
@@ -50,6 +51,7 @@ const SCHEMA: string[] = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS ref_milestones INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS partner_code TEXT`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS free_result_used BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS free_scenario_used BOOLEAN NOT NULL DEFAULT false`,
   // Acquisition source (first-touch, immutable): 'ref' | 'c_<code>' | a deep-link
   // slug per creative/channel (t.me/<bot>?start=src_tiktok1) | NULL = organic.
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT`,
@@ -703,6 +705,21 @@ export async function hasFreeResult(userId: number): Promise<boolean> {
 export async function consumeFreeResult(userId: number): Promise<boolean> {
   const rows = await q(
     "UPDATE users SET free_result_used = true WHERE id = $1 AND free_result_used = false RETURNING id",
+    [userId],
+  );
+  return rows.length > 0;
+}
+
+/** True while the user still has their one-time free scenario (princess/football). */
+export async function hasFreeScenario(userId: number): Promise<boolean> {
+  const rows = await q("SELECT free_scenario_used FROM users WHERE id = $1", [userId]);
+  return rows.length > 0 && rows[0].free_scenario_used === false;
+}
+
+/** Atomically claim the free scenario; true only for the call that won it. */
+export async function consumeFreeScenario(userId: number): Promise<boolean> {
+  const rows = await q(
+    "UPDATE users SET free_scenario_used = true WHERE id = $1 AND free_scenario_used = false RETURNING id",
     [userId],
   );
   return rows.length > 0;

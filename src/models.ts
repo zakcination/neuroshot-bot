@@ -47,11 +47,23 @@ export const MODELS = {
   text_to_image: {
     key: "text_to_image",
     kind: "text_to_image",
-    falEndpoint: "fal-ai/bytedance/seedream/v4/text-to-image",
+    falEndpoint: "fal-ai/bytedance/seedream/v4.5/text-to-image",
     credits: 2,
-    approxCostUsd: 0.03,
+    approxCostUsd: 0.04,
     label: "✨ Картинка из текста",
     input: (prompt) => ({ prompt }),
+  },
+  // Seedream 4 edit — the default scenario image engine (photo → styled scene).
+  // Strong identity fidelity at $0.03; NOTE: fal ships no v4.5 *edit* endpoint
+  // yet, so scenario edits use v4 (the 1¢ v4→v4.5 gap is text-to-image only).
+  seedream_edit: {
+    key: "seedream_edit",
+    kind: "image_edit",
+    falEndpoint: "fal-ai/bytedance/seedream/v4/edit",
+    credits: 2,
+    approxCostUsd: 0.03,
+    label: "🖼 Seedream 4 — сцена по фото",
+    input: (prompt, imageUrl) => ({ prompt, image_urls: [imageUrl] }),
   },
   animate: {
     key: "animate",
@@ -182,6 +194,24 @@ export const MODELS = {
     }),
     video: { perSecondUsd: 0.3034, durations: [5, 10], aspectRatios: ["auto", "9:16", "16:9", "1:1"] },
   },
+  // MiniMax Hailuo 2.3 Fast [Standard] — the DEFAULT scenario video engine:
+  // fast, cheap, great for simple one-action motion. $0.19/6s → 10 🔫, $0.32/10s.
+  // 768p, keeps the source frame's ratio (no aspect_ratio param). Durations 6/10.
+  // perSecondUsd = 0.032 makes the 10s charge resolve to 16 🔫 (ceil(0.32/0.02)).
+  hailuo_fast: {
+    key: "hailuo_fast",
+    kind: "image_to_video",
+    falEndpoint: "fal-ai/minimax/hailuo-2.3-fast/standard/image-to-video",
+    credits: 10,
+    approxCostUsd: 0.19,
+    label: "🎬 Hailuo 2.3 Fast",
+    input: (prompt, imageUrl, opts) => ({
+      prompt,
+      image_url: imageUrl,
+      duration: String(opts?.duration ?? 6),
+    }),
+    video: { perSecondUsd: 0.032, durations: [6, 10], aspectRatios: ["auto"] },
+  },
 } satisfies Record<string, ModelSpec>;
 
 /**
@@ -191,10 +221,15 @@ export const MODELS = {
  * Kling 3.0 for video, Kling 2.5 kept as the budget («эконом») video entry.
  */
 export const IMAGE_MODEL_PICKER = ["text_to_image", "nb2_image", "nbpro_image", "premium_image"] as const;
-export const VIDEO_MODEL_PICKER = ["kling3", "animate", "seedance_fast", "seedance"] as const;
+// Hailuo 2.3 Fast leads: the cheap default users keep until they swap up to a
+// cinematic (Kling) or physics/audio (Seedance) engine in the composer.
+export const VIDEO_MODEL_PICKER = ["hailuo_fast", "kling3", "animate", "seedance_fast", "seedance"] as const;
 
 /** Default image→video model for campaign upsells and one-tap animate flows. */
-export const DEFAULT_VIDEO: ModelSpec = MODELS.kling3;
+export const DEFAULT_VIDEO: ModelSpec = MODELS.hailuo_fast;
+
+/** The engine epic (physics/multi-actor/audio) scenario scenes are gated to. */
+export const EPIC_VIDEO: ModelSpec = MODELS.seedance_fast;
 
 /**
  * The cheapest model of a kind — the daily digest surfaces it, and the news
@@ -295,11 +330,12 @@ export interface ModelNews {
   tag: string; // short chip: what's special
 }
 export const MODEL_NEWS: ModelNews[] = [
+  { key: "hailuo_fast", title: "Hailuo 2.3 Fast — видео-сценарий за 10 🔫", tag: "⚡ дёшево" },
   { key: "seedance", title: "Seedance 2.0 — видео со звуком и физикой", tag: "🆕 звук" },
-  { key: "seedance_fast", title: "Seedance 2.0 Fast — мульти-кадровые истории", tag: "🎞 истории" },
+  { key: "seedance_fast", title: "Seedance 2.0 Fast — эпичные сцены", tag: "🎞 эпик" },
   { key: "kling3", title: "Kling 3.0 — кино-движение и консистентность", tag: "🎬 видео" },
   { key: "nbpro_image", title: "Nano Banana Pro — детализация уровня 2K", tag: "💎 2K" },
-  { key: "nb2_image", title: "Nano Banana 2 — топ качество за 4 🔫", tag: "⚡ хит" },
+  { key: "text_to_image", title: "Seedream 4.5 — картинка из текста за 2 🔫", tag: "🎁 бесплатно" },
 ];
 
 /**
@@ -315,12 +351,13 @@ export interface Preset {
 }
 
 /**
- * Model used to render presets — a checked reference, so a key drift fails
- * typecheck. Nano Banana 2 edit: 9/10 identity fidelity at $0.08 — the best
- * price/quality in the catalog (GPT-Image-2 stays available via «Свой промпт»
- * and the top-models picker for typography-heavy instructions).
+ * Model used to render presets AND every campaign scenario image — a checked
+ * reference, so a key drift fails typecheck. Seedream 4 edit: strong identity
+ * fidelity at $0.03 (2 🔫), half the cost of Nano Banana 2 — this is the lever
+ * that makes a whole free scenario affordable. GPT-Image-2 stays available via
+ * «Свой промпт» and the top-models picker for typography-heavy instructions.
  */
-export const PRESET_MODEL: ModelSpec = MODELS.nb2_edit;
+export const PRESET_MODEL: ModelSpec = MODELS.seedream_edit;
 
 export const PRESETS: Preset[] = [
   {
@@ -399,6 +436,18 @@ export interface CampaignPreset {
   id: string;
   label: string;
   prompt: string;
+  /**
+   * Difficulty tier for video scenes only (unset ⇒ "simple"). "simple" motion
+   * (one clean action) runs on the cheap Hailuo default; "epic" scenes with
+   * physics / multiple actors / audio are gated to Seedance (EPIC_VIDEO) — the
+   * composer swaps the model and reprices automatically. Image presets ignore it.
+   */
+  tier?: "simple" | "epic";
+}
+
+/** The video model a scene runs on: epic ⇒ Seedance, else the campaign default. */
+export function sceneModel(scene: CampaignPreset, fallback: ModelSpec): ModelSpec {
+  return scene.tier === "epic" ? EPIC_VIDEO : fallback;
 }
 /**
  * Story-builder quiz (web studio): quick picks that refine a campaign preset.
@@ -486,11 +535,12 @@ export const CAMPAIGNS: Campaign[] = [
     animatePrompt:
       "Gentle magical motion: soft camera push-in, fireflies drifting, hair and clothing moving in a light breeze, " +
       "the child smiles with wonder, cinematic storybook atmosphere.",
-    animateModel: MODELS.kling3,
+    animateModel: MODELS.hailuo_fast,
     videoScenes: [
       {
         id: "flydragon",
         label: "🐉 Полёт на драконе",
+        tier: "epic",
         prompt:
           "The child soars through the sky riding a friendly dragon, wind in their hair, magical glowing clouds and " +
           "sparkles trailing behind, pure joy on their face, epic storybook adventure, cinematic slow motion.",
@@ -592,7 +642,7 @@ export const CAMPAIGNS: Campaign[] = [
     animatePrompt:
       "Playful lively motion: the cartoon character waves and bounces, the child laughs, confetti or bubbles drift, " +
       "gentle camera push-in, joyful kids-show energy.",
-    animateModel: MODELS.kling3,
+    animateModel: MODELS.hailuo_fast,
     videoScenes: [
       {
         id: "dance",
@@ -611,6 +661,7 @@ export const CAMPAIGNS: Campaign[] = [
       {
         id: "fly",
         label: "🦸 Полёт супергероев",
+        tier: "epic",
         prompt:
           "The child flies through the bright sky as a little superhero alongside the cartoon character, cape " +
           "fluttering, big happy smile, heroic and joyful, vivid colors.",
@@ -657,11 +708,12 @@ export const CAMPAIGNS: Campaign[] = [
     animatePrompt:
       "Epic stadium motion: crowd roaring and waving flags, confetti falling, floodlight flares, slow heroic camera " +
       "orbit around the subjects.",
-    animateModel: MODELS.kling3,
+    animateModel: MODELS.hailuo_fast,
     videoScenes: [
       {
         id: "score",
         label: "⚽️ Легендарный гол",
+        tier: "epic",
         prompt:
           "The person receives a perfect pass from the football superstar and scores a legendary winning goal — the " +
           "net ripples, the packed stadium erupts, teammates rush in, slow-motion cinematic sports-broadcast celebration.",
@@ -676,6 +728,7 @@ export const CAMPAIGNS: Campaign[] = [
       {
         id: "trophy",
         label: "🏆 Победа с командой",
+        tier: "epic",
         prompt:
           "The person lifts the championship trophy together with the superstar and the whole team, golden confetti " +
           "raining down, teammates cheering and hugging, triumphant slow-motion celebration.",
@@ -683,6 +736,7 @@ export const CAMPAIGNS: Campaign[] = [
       {
         id: "freekick",
         label: "🎯 Гол со штрафного",
+        tier: "epic",
         prompt:
           "The person steps up for a dramatic free kick and curls the ball into the top corner past the wall — the " +
           "crowd explodes, arms raised in triumph, epic slow-motion sports moment.",
@@ -716,7 +770,7 @@ export const CAMPAIGNS: Campaign[] = [
     animatePrompt:
       "Subtle lifelike motion, respectful and warm: the people gently blink, breathe and smile softly, a slight " +
       "natural head movement, soft light shift — like a living memory.",
-    animateModel: MODELS.kling3,
+    animateModel: MODELS.hailuo_fast,
     videoScenes: [
       {
         id: "alive",
@@ -773,11 +827,12 @@ export const CAMPAIGNS: Campaign[] = [
     animatePrompt:
       "Cinematic poster comes alive: slow parallax depth, drifting smoke and light flares, hair and clothing move " +
       "in the wind, dramatic trailer-style atmosphere.",
-    animateModel: MODELS.kling3,
+    animateModel: MODELS.hailuo_fast,
     videoScenes: [
       {
         id: "explosion",
         label: "💥 Уход от взрыва",
+        tier: "epic",
         prompt:
           "The person strides toward camera in slow motion as a huge explosion blooms behind them, sparks and debris " +
           "flying, unshaken blockbuster action-hero energy, cinematic.",
@@ -792,6 +847,7 @@ export const CAMPAIGNS: Campaign[] = [
       {
         id: "heroic",
         label: "⚡ Геройский облёт",
+        tier: "epic",
         prompt:
           "The person stands heroically as the camera orbits around them, dramatic god-ray light and lens flares, " +
           "epic climactic movie-trailer energy.",
@@ -863,6 +919,56 @@ export const CAMPAIGNS: Campaign[] = [
 
 export function campaignById(id: string): Campaign | undefined {
   return CAMPAIGNS.find((c) => c.id === id);
+}
+
+/**
+ * The one-time FREE scenario offer (the onboarding hook): a newcomer picks ONE
+ * — princess or footballer — and gets the WHOLE scenario (Seedream photo→scene
+ * image, then a Hailuo video) rendered free, watermarked with the NeuroShot
+ * logo so every share markets us. Deliberately single-subject / simple motion:
+ * no celebrities, no multi-actor physics — the cheapest, most reliable wow.
+ * Claimed once per user (users.free_scenario_used); the 4 free 🔫 are untouched.
+ */
+export interface FreeScenario {
+  id: "princess" | "football";
+  label: string;
+  ask: string;
+  imageModel: ModelSpec; // photo → styled scene
+  videoModel: ModelSpec; // scene → short clip
+  imagePrompt: string;
+  videoPrompt: string;
+}
+export const FREE_SCENARIOS: FreeScenario[] = [
+  {
+    id: "princess",
+    label: "👸 Принцесса",
+    ask: "Пришлите фото ребёнка 👶 — и мы бесплатно снимем сказку про принцессу.",
+    imageModel: PRESET_MODEL,
+    videoModel: DEFAULT_VIDEO,
+    imagePrompt:
+      "Dress this child as a graceful fairy-tale princess in a flowing sparkling gown inside a grand castle " +
+      `ballroom: crown, glittering chandeliers, warm magical light, storybook grandeur. ${KEEP_KID}`,
+    videoPrompt:
+      "The princess gently turns toward the camera and smiles with wonder, her gown and hair softly flowing, " +
+      "magical sparkles drifting through the air, a slow gentle push-in — one calm, graceful movement.",
+  },
+  {
+    id: "football",
+    label: "⚽️ Футболист",
+    ask: "Пришлите своё фото ⚽️ — и мы бесплатно снимем ваш гол на стадионе.",
+    imageModel: PRESET_MODEL,
+    videoModel: DEFAULT_VIDEO,
+    imagePrompt:
+      "Transform this person into a professional footballer on the pitch of a packed stadium at night: " +
+      `national-team kit, bright floodlights, roaring crowd behind, epic sports-photography look. ${KEEP_ID}`,
+    videoPrompt:
+      "The footballer raises both arms and celebrates a goal, golden confetti raining down, the floodlit crowd " +
+      "roars behind — one clear triumphant celebration, natural sports-broadcast motion.",
+  },
+];
+
+export function freeScenarioById(id: string): FreeScenario | undefined {
+  return FREE_SCENARIOS.find((s) => s.id === id);
 }
 
 /**
