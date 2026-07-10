@@ -737,5 +737,37 @@ await step("prompt quality guards: kid-focus + no-duplicates baked into cartoon 
   }
 });
 
+await step("gallery pagination: /api/generations pages finished works, excludes errors/no-output", async () => {
+  const gal = { id: 909, username: "gal" };
+  await getOrCreateUser(gal.id, gal.username, null, 3);
+  for (let i = 0; i < 15; i++) {
+    await logGeneration(gal.id, "seedream_edit", `p${i}`, 2, "ok", `https://fal.test/out/g${i}.png`);
+  }
+  await logGeneration(gal.id, "seedream_edit", "err", 2, "error"); // excluded (not ok)
+  await logGeneration(gal.id, "seedream_edit", "nourl", 2, "ok"); // excluded (no output_url)
+  const hdr = { Authorization: `tma ${signInitData(gal)}` };
+
+  const p1 = (await (await fetch(`${base}/api/generations?page=1&size=12`, { headers: hdr })).json()) as {
+    items: Array<{ output_url: string }>; total: number; pages: number; page: number; pageSize: number;
+  };
+  assert.equal(p1.total, 15); // only the 15 finished works with an output
+  assert.equal(p1.pages, 2);
+  assert.equal(p1.page, 1);
+  assert.equal(p1.pageSize, 12);
+  assert.equal(p1.items.length, 12);
+  assert.ok(p1.items[0].output_url.endsWith("g14.png"), "gallery not newest-first");
+
+  const p2 = (await (await fetch(`${base}/api/generations?page=2&size=12`, { headers: hdr })).json()) as {
+    items: unknown[]; page: number;
+  };
+  assert.equal(p2.items.length, 3); // remainder on the last page
+  assert.equal(p2.page, 2);
+
+  // Out-of-range page clamps to the last page; unauth is rejected.
+  const p9 = (await (await fetch(`${base}/api/generations?page=9&size=12`, { headers: hdr })).json()) as { page: number };
+  assert.equal(p9.page, 2);
+  assert.equal((await fetch(`${base}/api/generations`)).status, 401);
+});
+
 await new Promise<void>((r) => server.close(() => r()));
 console.log(`\nAll ${passed} web-app checks passed. ✨`);

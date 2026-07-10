@@ -88,10 +88,15 @@ function runFfmpeg(args: string[]): Promise<boolean> {
   });
 }
 
-/** The conversion line shown at the bottom of every free clip. */
+/**
+ * The conversion line shown at the bottom of every free clip. Override the copy
+ * with the WATERMARK_CTA env var (use `{bot}` where the handle should go) — so
+ * the CTA can be A/B-tested without a code change. Default is the punchy option.
+ */
 function ctaText(botUsername?: string): string {
   const handle = botUsername ? `@${botUsername}` : "NeuroShot.ai";
-  return `Сделай такое же бесплатно → ${handle}`;
+  const template = process.env.WATERMARK_CTA || "Сделай такое же бесплатно → {bot}";
+  return template.replace(/\{bot\}/g, handle);
 }
 
 /**
