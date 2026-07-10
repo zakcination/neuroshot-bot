@@ -756,5 +756,22 @@ await step("gallery pagination: /api/generations pages finished works, excludes 
   assert.equal((await fetch(`${base}/api/generations`)).status, 401);
 });
 
+await step("watermark setting: default on, /api/settings toggles it, /me reflects it", async () => {
+  const wu = { id: 808, username: "wm" };
+  const hdr = { Authorization: `tma ${signInitData(wu)}`, "Content-Type": "application/json" };
+  const read = async () =>
+    ((await apiMe(signInitData(wu))).body as unknown as { dashboard: { watermarkEnabled: boolean } }).dashboard.watermarkEnabled;
+
+  assert.equal(await read(), true); // default on
+
+  const off = await fetch(`${base}/api/settings`, { method: "POST", headers: hdr, body: JSON.stringify({ watermark: false }) });
+  assert.equal(off.status, 200);
+  assert.equal(((await off.json()) as { watermark: boolean }).watermark, false);
+  assert.equal(await read(), false); // persisted + shared with the bot
+
+  const bad = await fetch(`${base}/api/settings`, { method: "POST", headers: hdr, body: JSON.stringify({ watermark: "nope" }) });
+  assert.equal(bad.status, 400);
+});
+
 await new Promise<void>((r) => server.close(() => r()));
 console.log(`\nAll ${passed} web-app checks passed. ✨`);

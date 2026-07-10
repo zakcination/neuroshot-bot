@@ -152,6 +152,13 @@
     .refcard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 19px; }
     .refcard h3 { margin: 0 0 5px; font-size: 16px; }
     .refcard p { margin: 0 0 14px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .setrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 14px 16px; }
+    .setrow span { display: flex; flex-direction: column; gap: 2px; }
+    .setrow small { color: var(--muted); font-size: 12px; }
+    .setrow input[type=checkbox] { flex: none; width: 46px; height: 28px; appearance: none; -webkit-appearance: none; background: var(--line); border-radius: 999px; position: relative; cursor: pointer; transition: background .2s; }
+    .setrow input[type=checkbox]:checked { background: var(--amber); }
+    .setrow input[type=checkbox]::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; transition: transform .2s; }
+    .setrow input[type=checkbox]:checked::after { transform: translateX(18px); }
     .linkrow { display: flex; gap: 9px; }
     .linkbox {
       flex: 1; min-width: 0; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-s);
@@ -1114,6 +1121,14 @@
         </section>
 
         <section class="reveal">
+          <div class="sec-h"><h2>Настройки</h2></div>
+          <label class="setrow">
+            <span><b>🏷 Водяной знак</b><small>на ваших фото и видео</small></span>
+            <input type="checkbox" id="wmToggle" ${dash.watermarkEnabled ? "checked" : ""} />
+          </label>
+        </section>
+
+        <section class="reveal">
           <div class="sec-h"><h2>Мои работы</h2></div>
           <div class="gallery" id="g"></div>
           <div class="pager" id="pager"></div>
@@ -1168,6 +1183,13 @@
         try { await navigator.clipboard.writeText(refLink); } catch (e) { /* ignore */ }
         document.getElementById("refC").textContent = "Скопировано ✓";
         setTimeout(() => (document.getElementById("refC").textContent = "Копировать"), 1600);
+      };
+      const wm = document.getElementById("wmToggle");
+      if (wm) wm.onchange = async () => {
+        const on = wm.checked;
+        const { status, data } = await api("/api/settings", { method: "POST", body: JSON.stringify({ watermark: on }) });
+        if (status === 200) { haptic("light"); toast(data.watermark ? "🏷 Водяной знак включён" : "Водяной знак выключен"); }
+        else { wm.checked = !on; toast("Не удалось сохранить"); }
       };
 
       reveal();

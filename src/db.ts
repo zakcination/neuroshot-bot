@@ -44,6 +44,7 @@ const SCHEMA: string[] = [
     ref_milestones INTEGER NOT NULL DEFAULT 0, -- referral milestone tiers already paid
     free_result_used BOOLEAN NOT NULL DEFAULT false, -- one-time "first result on us" claimed
     free_scenario_used BOOLEAN NOT NULL DEFAULT false, -- one-time free princess/football scenario claimed
+    watermark_enabled BOOLEAN NOT NULL DEFAULT true, -- brand all deliverables (user can turn off)
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
   // Forward migrations for existing databases (columns added after launch).
@@ -52,6 +53,7 @@ const SCHEMA: string[] = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS partner_code TEXT`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS free_result_used BOOLEAN NOT NULL DEFAULT false`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS free_scenario_used BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS watermark_enabled BOOLEAN NOT NULL DEFAULT true`,
   // Acquisition source (first-touch, immutable): 'ref' | 'c_<code>' | a deep-link
   // slug per creative/channel (t.me/<bot>?start=src_tiktok1) | NULL = organic.
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT`,
@@ -174,6 +176,8 @@ export interface UserRow {
   pending_file_id: string | null;
   /** Creator code this user was acquired through (first-touch, immutable). */
   partner_code: string | null;
+  /** Brand this user's deliverables with the watermark (default true; user-toggleable). */
+  watermark_enabled: boolean;
   /** Set only by getOrCreateUser on the call that actually inserted the row. */
   justCreated?: boolean;
   /** Welcome bonus granted at creation (0 unless joined via a link/code). */
@@ -192,7 +196,14 @@ function mapUser(r: Row): UserRow {
     pending_action: (r.pending_action as string | null) ?? null,
     pending_file_id: (r.pending_file_id as string | null) ?? null,
     partner_code: (r.partner_code as string | null) ?? null,
+    watermark_enabled: r.watermark_enabled !== false, // default true for legacy rows
   };
+}
+
+/** Toggle whether the user's deliverables are watermarked. Returns the new value. */
+export async function setWatermark(userId: number, enabled: boolean): Promise<boolean> {
+  await q("UPDATE users SET watermark_enabled = $2 WHERE id = $1", [userId, enabled]);
+  return enabled;
 }
 
 export async function getOrCreateUser(
@@ -957,8 +968,9 @@ export async function userDashboard(userId: number): Promise<{
   referralEarned: number;
   referralCount: number; // friends invited (distinct users)
   referralPaying: number; // of them, friends who have purchased
+  watermarkEnabled: boolean; // brand deliverables (user setting)
 }> {
-  const u = await q("SELECT credits FROM users WHERE id = $1", [userId]);
+  const u = await q("SELECT credits, watermark_enabled FROM users WHERE id = $1", [userId]);
   const gen = await q(
     `SELECT COUNT(*)::int AS total,
             COALESCE(SUM(CASE WHEN status='ok' THEN 1 ELSE 0 END),0)::int AS ok
@@ -993,6 +1005,7 @@ export async function userDashboard(userId: number): Promise<{
     referralEarned: Number(earned[0].earned),
     referralCount: Number(friends[0].invited),
     referralPaying: Number(friends[0].paying),
+    watermarkEnabled: u[0] ? u[0].watermark_enabled !== false : true,
   };
 }
 
