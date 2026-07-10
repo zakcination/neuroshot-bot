@@ -1013,6 +1013,29 @@
         <div class="stat"><div class="n">${dash.referralEarned}</div><div class="l">заработано</div></div>
         <div class="stat"><div class="n">${dash.referralCount}</div><div class="l">друзей</div></div>`;
     }
+
+    // Live combo-offer countdown: ticks the 🔥 badge each second; when the
+    // deadline passes the offer pack removes itself from the list.
+    function fmtLeft(ms) {
+      const s = Math.max(0, Math.floor(ms / 1000));
+      const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+      if (d > 0) return `${d}д ${h}ч ${m}м`;
+      if (h > 0) return `${h}ч ${m}м ${ss}с`;
+      return `${m}м ${ss}с`;
+    }
+    let cdTimer = null;
+    function tickCountdowns() {
+      document.querySelectorAll("[data-countdown]").forEach((el) => {
+        const left = Number(el.dataset.countdown) - Date.now();
+        if (left <= 0) { const pk = el.closest(".pack"); if (pk) pk.remove(); }
+        else el.textContent = "🔥 Акция · " + fmtLeft(left);
+      });
+    }
+    function startCountdown() {
+      tickCountdowns();
+      if (cdTimer) clearInterval(cdTimer);
+      cdTimer = setInterval(tickCountdowns, 1000);
+    }
     // Paginated «Мои работы»: a fixed grid region + a pager. Each page is fetched
     // from /api/generations so the section stays put and long histories stay light.
     var GAL_PAGE = 1, GAL_PAGES = 1;
@@ -1194,17 +1217,25 @@
       renderNews();
 
       const p = document.getElementById("p");
-      // Offer packs (the limited-time combo) lead the list with a 🔥 badge.
-      const packsOrdered = [...(d.packs || [])].sort((a, b) => Number(b.offer) - Number(a.offer));
+      // Offer packs (the limited-time combo) lead with a live countdown badge;
+      // once the deadline passes the offer drops out of the list entirely.
+      const comboEndsAt = d.comboOffer?.endsAt || 0;
+      const packsOrdered = [...(d.packs || [])]
+        .filter((pack) => !(pack.offer && comboEndsAt && comboEndsAt <= Date.now()))
+        .sort((a, b) => Number(b.offer) - Number(a.offer));
       for (const pack of packsOrdered) {
         const per = (pack.kzt / pack.credits).toFixed(0);
+        const badge = pack.offer
+          ? `<span class="hot" data-countdown="${comboEndsAt}">🔥 Акция</span>`
+          : pack.id === bestPack ? '<span class="hot">Популярный</span>' : "";
         p.appendChild($(`
-          <button class="pack ${pack.offer ? "best" : pack.id === bestPack ? "best" : ""}" data-buy="${pack.id}">
-            ${pack.offer ? '<span class="hot">🔥 Акция · 1 мес</span>' : pack.id === bestPack ? '<span class="hot">Популярный</span>' : ""}
+          <button class="pack ${pack.offer || pack.id === bestPack ? "best" : ""}" data-buy="${pack.id}">
+            ${badge}
             <span><span class="amount">🔫 ${pack.credits}</span><div class="per">≈ ${per} ₸ за патрон</div></span>
             <span class="stars">${pack.kzt.toLocaleString("ru-RU")} ₸</span>
           </button>`));
       }
+      startCountdown();
 
       document.getElementById("jobsPill").onclick = () => {
         const job = [...jobs.values()].at(-1);

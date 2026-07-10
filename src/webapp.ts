@@ -164,6 +164,17 @@ export function authResponse(headers: Headers): { status: number; body: Record<s
   };
 }
 
+// Server boot time — the default anchor for the combo-offer countdown, so the
+// sale runs ~COMBO_OFFER_DAYS from deploy unless COMBO_OFFER_START pins a date.
+const BOOT_MS = Date.now();
+
+/** The combo offer's end timestamp (ms epoch) for the app's live countdown. */
+function comboOfferEndsAt(): number {
+  const start = config.comboOfferStart ? Date.parse(config.comboOfferStart) : NaN;
+  const base = Number.isNaN(start) ? BOOT_MS : start;
+  return base + config.comboOfferDays * 86_400_000;
+}
+
 /** Pack catalog payload — one source of truth with the bot's /buy. */
 function packsPayload(): Array<Record<string, unknown>> {
   return PACKS.map((p) => ({ id: p.id, title: p.title, credits: p.credits, kzt: p.kzt, offer: p.offer ?? false }));
@@ -263,6 +274,8 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     // Pack catalog for the app's pricing section — same source as the bot.
     packs: packsPayload(),
     catalog: catalogPayload(),
+    // Combo offer deadline (ms epoch) for the live countdown.
+    comboOffer: { endsAt: comboOfferEndsAt() },
   };
 }
 
