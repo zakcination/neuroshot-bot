@@ -45,6 +45,30 @@ export function inFlightRenders(): number {
   return inFlight.size;
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Durably record a DELIVERED render's terminal 'ok' state — retry through
+ * transient DB blips so a render the user already received is never left
+ * 'pending' (which the reaper would otherwise mark 'error' and refund). A
+ * sustained DB outage still degrades to the reaper's customer-favourable refund;
+ * the retry closes the realistic transient window.
+ */
+async function markOk(genId: number, url: string): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    try {
+      await completeGeneration(genId, "ok", url);
+      return;
+    } catch (e) {
+      if (i === 2) {
+        console.error("completeGeneration(ok) failed after retries:", e);
+        return;
+      }
+      await sleep(150 * (i + 1));
+    }
+  }
+}
+
 /**
  * Detect a user-uploaded source (Telegram file_id) vs a generated output (https
  * URL). The core invariant of the fresh-photo fix: pending_file_id is only ever a
@@ -244,7 +268,7 @@ export async function runGeneration(
         // Terminal transition first (the pending row IS the generation record —
         // no separate logGeneration, or the render would double-count). Post-
         // delivery bookkeeping below must never be able to trigger compensation.
-        await completeGeneration(genId, "ok", url);
+        await markOk(genId, url);
         if (free) {
           await ctx.api
             .sendMessage(chatId, "🎁 Первый результат — бесплатно, патроны не списаны! Дальше — за 🔫.")
@@ -320,7 +344,7 @@ export async function runFreeScenario(
           reply_markup: afterKeyboard(true),
         });
         delivered = true;
-        await completeGeneration(genId, "ok", videoUrl); // the pending row IS the record
+        await markOk(genId, videoUrl); // durable terminal write (retry through blips)
         await logEvent(user.id, "gen_ok", `free_${scenario.id}`).catch(() => {});
       } catch (err) {
         console.error(`free scenario failed (${scenario.id}):`, err);

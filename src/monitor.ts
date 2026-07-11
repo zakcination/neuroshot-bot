@@ -293,9 +293,14 @@ export async function runReengagement(send: SendFn): Promise<number> {
 export function startMonitor(send: SendFn): NodeJS.Timeout {
   let lastDigestDay = "";
   let lastNudgeDay = "";
+  let ticking = false; // re-entrancy guard: ticks fire on a timer and aren't awaited
   const lastAlertAt = new Map<string, number>();
 
   const tick = async () => {
+    // A slow tick (e.g. a large reaper batch under Telegram rate limits) must not
+    // overlap the next timer fire and double-run the reaper/sweep.
+    if (ticking) return;
+    ticking = true;
     try {
       const now = new Date();
       const day = now.toISOString().slice(0, 10);
@@ -330,6 +335,8 @@ export function startMonitor(send: SendFn): NodeJS.Timeout {
       }
     } catch (e) {
       console.error("monitor tick failed:", e);
+    } finally {
+      ticking = false;
     }
   };
   const timer = setInterval(() => void tick(), 60 * 1000);

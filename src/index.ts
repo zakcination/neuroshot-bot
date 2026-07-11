@@ -45,7 +45,10 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`${signal} received — stopping bot and draining renders…`);
   try {
     await bot.stop();
-    await drainRenders();
+    // Renders take 1–3 min, so wait comfortably past that for in-flight tails to
+    // deliver/refund (the platform's kill_timeout must be ≥ this — see fly.toml —
+    // and the reaper is the backstop if a hard kill still cuts it short).
+    await drainRenders(180_000);
   } finally {
     process.exit(0);
   }
