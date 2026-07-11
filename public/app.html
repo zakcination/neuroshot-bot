@@ -205,6 +205,11 @@
     }
     .sheet.on { transform: none; visibility: visible; transition: transform .3s cubic-bezier(.2,.9,.3,1); }
     .grip { width: 42px; height: 4px; border-radius: 4px; background: rgba(255,255,255,.18); margin: 4px auto 14px; }
+    /* Sticky sheet header so the close (✕) is always reachable, even in a long/scrolled sheet. */
+    .sheet-top { position: sticky; top: 0; z-index: 4; margin: -10px -16px 6px; padding: 8px 16px 2px; background: var(--bg-2); }
+    .sheet-top .grip { margin: 4px auto 6px; }
+    .sheet-x { position: absolute; top: 6px; right: 10px; width: 32px; height: 32px; border-radius: 999px; border: 0; background: rgba(255,255,255,.1); color: #fff; font-size: 15px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    .sheet-x:active { background: rgba(255,255,255,.2); }
     .sheet h3 { margin: 2px 0 14px; font-size: 18px; letter-spacing: -.01em; }
     .sheet .sub { color: var(--muted); font-size: 13px; margin: -8px 0 16px; line-height: 1.5; }
 
@@ -325,7 +330,7 @@
     <div class="skel"></div>
   </div>
   <div class="sheet-bg" id="sheetBg"></div>
-  <div class="sheet" id="sheet" role="dialog" aria-modal="true"><div class="grip"></div><div id="sheetBody"></div></div>
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true"><div class="sheet-top"><div class="grip"></div><button class="sheet-x" id="sheetX" type="button" aria-label="Закрыть">✕</button></div><div id="sheetBody"></div></div>
   <div class="toast" id="toast"></div>
 
   <script>
@@ -426,6 +431,7 @@
     function openSheet() { sheet.classList.add("on"); sheetBg.classList.add("on"); }
     function closeSheet() { sheet.classList.remove("on"); sheetBg.classList.remove("on"); viewedJob = null; }
     sheetBg.onclick = closeSheet;
+    document.getElementById("sheetX").onclick = closeSheet; // persistent exit for the viewer + every sub-view
 
     function updateJobsPill() {
       const p = document.getElementById("jobsPill");
