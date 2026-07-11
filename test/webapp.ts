@@ -303,10 +303,10 @@ await step("catalog rides on /api/me: presets, campaigns with video prices, mode
   const c = body.catalog;
   assert.ok(c.presets.some((p) => p.id === "headshot" && p.category === "photo"));
   assert.ok(c.presets.some((p) => p.id === "product_white" && p.category === "product"));
-  assert.equal(c.presetCredits, 2); // Seedream 4 edit preset/scenario engine
+  assert.equal(c.presetCredits, 2); // Seedream 4.5 edit preset/scenario engine
   const mini = c.campaigns.find((k) => k.id === "minifilm");
   assert.ok(mini, "minifilm campaign missing from catalog");
-  assert.equal(mini!.videoCredits, 61); // Seedance 2.0 Fast story upsell
+  assert.equal(mini!.videoCredits, 76); // flagship Seedance 2.0 (audio) story upsell
   assert.ok(mini!.presets.length >= 3);
   assert.ok(c.imageModels.some((m) => m.key === "nbpro_image"));
   assert.equal(c.videoModels[0].key, "hailuo_fast"); // cheap default video first
@@ -349,11 +349,11 @@ await step("POST /api/generate: preset charges, renders async, poll reaches ok",
   assert.equal(done.status, "ok");
   assert.match(done.output_url ?? "", /^https:\/\/fal\.test\/out\/.*\.png$/);
   const call = falCalls.at(-1)!;
-  assert.equal(call.endpoint, "fal-ai/bytedance/seedream/v4/edit");
+  assert.equal(call.endpoint, "fal-ai/bytedance/seedream/v4.5/edit");
   assert.match(call.input.prompt as string, /corporate headshot/);
 });
 
-await step("campaign video upsell via API: minifilm renders on Seedance 2.0 Fast (61 🔫)", async () => {
+await step("campaign video upsell via API: minifilm renders on flagship Seedance 2.0 with audio (76 🔫)", async () => {
   const r = await fetch(`${base}/api/generate`, {
     method: "POST",
     headers: { ...makerHeaders(), "Content-Type": "application/json" },
@@ -361,13 +361,14 @@ await step("campaign video upsell via API: minifilm renders on Seedance 2.0 Fast
   });
   assert.equal(r.status, 200);
   const d = (await r.json()) as { id: number; credits: number; balance: number };
-  assert.equal(d.credits, 61);
-  assert.equal(d.balance, 40); // 101 − 61
+  assert.equal(d.credits, 76);
+  assert.equal(d.balance, 25); // 101 − 76
   const done = await pollGen(d.id);
   assert.equal(done.status, "ok");
   assert.match(done.output_url ?? "", /\.mp4$/);
   const call = falCalls.at(-1)!;
-  assert.equal(call.endpoint, "bytedance/seedance-2.0/fast/image-to-video");
+  assert.equal(call.endpoint, "bytedance/seedance-2.0/image-to-video");
+  assert.equal(call.input.generate_audio, true); // «со звуком»
   assert.equal(call.input.image_url, "https://fal.test/out/1.png");
 });
 

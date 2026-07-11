@@ -53,16 +53,16 @@ export const MODELS = {
     label: "✨ Картинка из текста",
     input: (prompt) => ({ prompt }),
   },
-  // Seedream 4 edit — the default scenario image engine (photo → styled scene).
-  // Strong identity fidelity at $0.03; NOTE: fal ships no v4.5 *edit* endpoint
-  // yet, so scenario edits use v4 (the 1¢ v4→v4.5 gap is text-to-image only).
+  // Seedream 4.5 edit — the default scenario image engine (photo → styled scene).
+  // Stronger face-anchored scene edits than v4 at the same 2 🔫 tier ($0.04/img);
+  // same input contract (prompt + image_urls), so it's a drop-in over v4.
   seedream_edit: {
     key: "seedream_edit",
     kind: "image_edit",
-    falEndpoint: "fal-ai/bytedance/seedream/v4/edit",
+    falEndpoint: "fal-ai/bytedance/seedream/v4.5/edit",
     credits: 2,
-    approxCostUsd: 0.03,
-    label: "🖼 Seedream 4 — сцена по фото",
+    approxCostUsd: 0.04,
+    label: "🖼 Seedream 4.5 — сцена по фото",
     input: (prompt, imageUrl) => ({ prompt, image_urls: [imageUrl] }),
   },
   animate: {
@@ -189,6 +189,7 @@ export const MODELS = {
       prompt,
       image_url: imageUrl,
       resolution: "720p",
+      generate_audio: true, // the flagship's whole point — real synced sound
       duration: String(opts?.duration ?? 5),
       ...(opts?.aspectRatio && opts.aspectRatio !== "auto" ? { aspect_ratio: opts.aspectRatio } : {}),
     }),
@@ -352,8 +353,8 @@ export interface Preset {
 
 /**
  * Model used to render presets AND every campaign scenario image — a checked
- * reference, so a key drift fails typecheck. Seedream 4 edit: strong identity
- * fidelity at $0.03 (2 🔫), half the cost of Nano Banana 2 — this is the lever
+ * reference, so a key drift fails typecheck. Seedream 4.5 edit: strong identity
+ * fidelity at $0.04 (2 🔫), half the cost of Nano Banana 2 — this is the lever
  * that makes a whole free scenario affordable. GPT-Image-2 stays available via
  * «Свой промпт» and the top-models picker for typography-heavy instructions.
  */
@@ -896,7 +897,9 @@ export const CAMPAIGNS: Campaign[] = [
       "medium shot as the subject turns and reacts with genuine emotion, finish on a close-up with a subtle " +
       "camera drift; natural motion, consistent identity and wardrobe across every shot, film-grade color, " +
       "ambient atmosphere audio matching the scene.",
-    animateModel: MODELS.seedance_fast,
+    // Flagship Seedance 2.0 (audio + physics) — the mini-film's «со звуком»
+    // promise runs on the real thing, not the mute economy Fast variant.
+    animateModel: MODELS.seedance,
     quiz: [
       {
         id: "era",
