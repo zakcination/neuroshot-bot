@@ -22,8 +22,9 @@ process.env.WITHDRAW_MIN = "20"; // low so the withdrawal path is exercisable
 
 const { fal } = await import("@fal-ai/client");
 const { createBot } = await import("../src/bot.js");
-const { funnel, query, getUser, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay } = await import("../src/db.js");
-const { buildDigest, checkAlerts, nudgeText, runReengagement } = await import("../src/monitor.js");
+const { drainRenders, inFlightRenders } = await import("../src/generate.js");
+const { funnel, query, getUser, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay, createPendingGeneration, completeGeneration, claimFreePhone, phoneClaimedFree, setUserPhone } = await import("../src/db.js");
+const { buildDigest, checkAlerts, nudgeText, runReengagement, runReaper } = await import("../src/monitor.js");
 const { nUnits, nResults } = await import("../src/text.js");
 
 // ---------- Telegram API stub (transformer: intercepts every outgoing call) ----------
@@ -108,6 +109,7 @@ interface FalCall {
 }
 const falCalls: FalCall[] = [];
 let falShouldFail = false;
+let falDelayMs = 0; // >0 keeps a detached render tail in-flight long enough to observe
 
 // The fal singleton is a plain object; generate.ts looks up `fal.subscribe` per call.
 (fal as { subscribe: unknown }).subscribe = async (
@@ -115,6 +117,7 @@ let falShouldFail = false;
   opts: { input: Record<string, unknown> },
 ) => {
   falCalls.push({ endpoint, input: opts.input });
+  if (falDelayMs > 0) await new Promise((r) => setTimeout(r, falDelayMs));
   if (falShouldFail) throw new Error("simulated provider outage");
   const data = endpoint.includes("video")
     ? { video: { url: `https://fal.test/out/${falCalls.length}.mp4` } }
@@ -151,6 +154,9 @@ function baseMessage(from: From) {
   };
 }
 
+// Generation now runs in a DETACHED tail (the handler returns fast). The harness
+// settles those tails after each action so assertions see the delivered result —
+// this is the same drainRenders() the graceful-shutdown path uses.
 async function sendText(from: From, text: string): Promise<void> {
   const entities = text.startsWith("/")
     ? [{ offset: 0, length: text.split(/[\s@]/)[0].length, type: "bot_command" as const }]
@@ -159,6 +165,7 @@ async function sendText(from: From, text: string): Promise<void> {
     update_id: nextUpdateId++,
     message: { ...baseMessage(from), text, ...(entities ? { entities } : {}) },
   });
+  await drainRenders();
 }
 
 async function sendPhoto(from: From, fileId: string): Promise<void> {
@@ -172,6 +179,7 @@ async function sendPhoto(from: From, fileId: string): Promise<void> {
       ],
     },
   });
+  await drainRenders();
 }
 
 async function pressButton(from: From, data: string): Promise<void> {
@@ -185,6 +193,7 @@ async function pressButton(from: From, data: string): Promise<void> {
       data,
     },
   });
+  await drainRenders();
 }
 
 /**
@@ -385,7 +394,7 @@ await step("balance: /balance reflects the ledger", async () => {
 await step("photoshoot preset: photo → menu:photoshoot → one tap renders via Seedream 4 edit (2 🔫)", async () => {
   await sendPhoto(alice, "photo-3");
   const albumsBefore = calls("sendMediaGroup").length;
-  await pressButton(alice, "menu:photoshoot");
+  await pressButton(alice, "pick:photo");
   // Preview album (expected results) is shown above the keyboard when assets ship.
   assert.ok(calls("sendMediaGroup").length > albumsBefore, "no preview album sent");
   const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
@@ -642,9 +651,15 @@ await step("campaigns: one-tap fairy-tale image → one-tap «Оживить» a
   assert.match(gen.input.prompt as string, /fairy tale/i);
   assert.equal(await credits(parent.id), 70); // 72 − 2
   const resultUrl = `https://fal.test/out/${falCalls.length}.png`;
-  assert.match(lastText(), /оживить результат/i); // upsell offered
+  // The "оживить" upsell rides the RESULT's keyboard (camv:<camp>:<genId>), so it
+  // references the result by id — pending_file_id stays the user's uploaded photo.
+  const resultKb = resultPhotos().at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data?: string }>>;
+  };
+  const camvBtn = resultKb.inline_keyboard.flat().map((b) => b.callback_data).find((d) => d?.startsWith("camv:skazka:"));
+  assert.ok(camvBtn, "оживить upsell button missing on the delivered result");
 
-  await pressButton(parent, "camv:skazka");
+  await pressButton(parent, camvBtn!);
   const anim = falCalls.at(-1)!;
   assert.equal(anim.endpoint, "fal-ai/minimax/hailuo-2.3-fast/standard/image-to-video"); // Hailuo 2.3 Fast default video
   assert.equal(anim.input.image_url, resultUrl); // animates the RESULT, not the original photo
@@ -665,8 +680,13 @@ await step("мини-фильм campaign: Seedream film still → Seedance 2.0 F
   assert.match(still.input.prompt as string, /film still/i);
   assert.equal(await credits(actor.id), 210); // 212 − 2
   const stillUrl = `https://fal.test/out/${falCalls.length}.png`;
+  const mfKb = resultPhotos().at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data?: string }>>;
+  };
+  const mfCamv = mfKb.inline_keyboard.flat().map((b) => b.callback_data).find((d) => d?.startsWith("camv:minifilm:"));
+  assert.ok(mfCamv, "оживить upsell button missing on the film still");
 
-  await pressButton(actor, "camv:minifilm");
+  await pressButton(actor, mfCamv!);
   const clip = falCalls.at(-1)!;
   assert.equal(clip.endpoint, "bytedance/seedance-2.0/fast/image-to-video"); // story model
   assert.equal(clip.input.image_url, stillUrl); // animates the generated still
@@ -717,7 +737,7 @@ await step("first result on us: a stuck newcomer's first preset renders free, se
   assert.equal(await credits(nora.id), 0);
 
   await sendPhoto(nora, "nora-1");
-  await pressButton(nora, "menu:photoshoot");
+  await pressButton(nora, "pick:photo");
   const falBefore = falCalls.length;
   await pressButton(nora, "preset:headshot"); // 2 > 0 → the first result is on us
   assert.equal(falCalls.length, falBefore + 1); // it DID render (no wall before the wow)
@@ -1025,6 +1045,90 @@ await step("re-engagement nudge: sweeps dormant-but-recent users once, with a ta
   assert.equal(String(t1), String(t0), "markNudged overwrote an existing nudge timestamp");
   // Restart-safe daily guard: the DB reflects that a nudge happened today (UTC).
   assert.equal(await nudgedOnUtcDay(new Date().toISOString().slice(0, 10)), true, "daily guard misses today's nudge");
+});
+
+// ---- Async generation + concurrency correctness (workflow-verified design) ----
+
+await step("async: the render runs detached — the handler returns before it completes (bug #2)", async () => {
+  const ada: From = { id: 5601, is_bot: false, first_name: "Ada", username: "ada" };
+  await sendText(ada, "/start");
+  // Hold the provider call open so the detach is observable (in prod it's 1–3 min).
+  falDelayMs = 50;
+  // Fire a render WITHOUT draining: the handler must return while the tail is still in flight.
+  await bot.handleUpdate({ update_id: nextUpdateId++, message: { ...baseMessage(ada), text: "a blue whale" } });
+  assert.ok(inFlightRenders() >= 1, "render did not detach — the handler blocked on the provider");
+  await drainRenders();
+  falDelayMs = 0;
+  assert.equal(inFlightRenders(), 0);
+});
+
+await step("fresh photo: a generated output is never left in pending_file_id; a new request asks fresh (bug #1)", async () => {
+  const ben: From = { id: 5602, is_bot: false, first_name: "Ben", username: "ben" };
+  await sendText(ben, "/start");
+  await payForPack(ben, "start", 720);
+  await pressButton(ben, "camp:worldcup");
+  await sendPhoto(ben, "ben-1");
+  await pressButton(ben, "cpre:worldcup:kit"); // renders the campaign image
+  // Invariant: pending_file_id is the UPLOAD (ben-1), never the generated URL.
+  const pend = (await query("SELECT pending_file_id FROM users WHERE id = $1", [ben.id]))[0].pending_file_id as string;
+  assert.ok(pend && !/^https?:\/\//.test(pend), `pending_file_id holds a generated URL: ${pend}`);
+  // A new top-level request asks for a fresh photo — it does NOT reuse silently.
+  await pressButton(ben, "menu:photoshoot");
+  assert.match(lastText(), /Пришлите своё фото/);
+});
+
+await step("exactly-once free: a FAILED free render restores the freebie for a retry (critique 2)", async () => {
+  const cid: From = { id: 5603, is_bot: false, first_name: "Cid", username: "cid" };
+  await sendText(cid, "/start");
+  for (const p of ["a", "b", "c", "d", "e", "f"]) await sendText(cid, p); // drain 12 → 0 via text→image
+  assert.equal(await credits(cid.id), 0);
+  await sendPhoto(cid, "cid-1");
+  await pressButton(cid, "pick:photo");
+  falShouldFail = true;
+  await pressButton(cid, "preset:headshot"); // free claimed, then the provider fails
+  falShouldFail = false;
+  assert.equal(await credits(cid.id), 0); // nothing was charged
+  const flag = (await query("SELECT free_result_used FROM users WHERE id = $1", [cid.id]))[0].free_result_used;
+  assert.equal(flag, false, "a failed free render burned the freebie");
+  await pressButton(cid, "preset:headshot"); // retry now succeeds on the restored freebie
+  assert.match(lastText(), /Первый результат — бесплатно/);
+});
+
+await step("reaper: a render stuck 'pending' is failed and refunded, idempotently (critique 3)", async () => {
+  const dan = 5604;
+  await query("INSERT INTO users (id, credits) VALUES ($1, 0)", [dan]);
+  // Simulate a detached render whose process died: a charged, stale 'pending' row.
+  await query(
+    `INSERT INTO generations (user_id, model, prompt, credits, status, created_at)
+     VALUES ($1, 'hailuo_fast', 'x', 10, 'pending', now() - interval '30 minutes')`,
+    [dan],
+  );
+  const reaped = await runReaper(() => Promise.resolve());
+  assert.ok(reaped >= 1, "reaper did not sweep the stale render");
+  assert.equal((await query("SELECT credits FROM users WHERE id = $1", [dan]))[0].credits, 10); // refunded
+  assert.equal((await query("SELECT status FROM generations WHERE user_id = $1", [dan]))[0].status, "error");
+  // Idempotent: a second sweep does not double-refund (the row is already terminal).
+  await runReaper(() => Promise.resolve());
+  assert.equal((await query("SELECT credits FROM users WHERE id = $1", [dan]))[0].credits, 10);
+
+  // completeGeneration is an atomic CAS: a second completion of a terminal row loses.
+  const gid = await createPendingGeneration(dan, "hailuo_fast", "p", 5);
+  assert.equal(await completeGeneration(gid, "ok", "u"), true);
+  assert.equal(await completeGeneration(gid, "error"), false);
+});
+
+await step("identity gate: one free gift per PHONE — cross-account farming blocked, owner may retry", async () => {
+  const phone = "+77010000001";
+  assert.equal(await phoneClaimedFree(phone), false);
+  assert.equal(await claimFreePhone(phone, 8811), true); // fresh claim wins
+  assert.equal(await phoneClaimedFree(phone), true);
+  assert.equal(await claimFreePhone(phone, 8811), true); // SAME account may retry (failed render)
+  assert.equal(await claimFreePhone(phone, 8812), false); // DIFFERENT account with the same number → blocked
+
+  // setUserPhone records a verified number on the user row.
+  await query("INSERT INTO users (id, credits) VALUES (8813, 0)");
+  await setUserPhone(8813, "+77010000002");
+  assert.equal((await query("SELECT phone FROM users WHERE id = 8813"))[0].phone, "+77010000002");
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL || "embedded (pglite)"})`);

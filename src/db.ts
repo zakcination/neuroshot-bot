@@ -56,6 +56,15 @@ const SCHEMA: string[] = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS watermark_enabled BOOLEAN NOT NULL DEFAULT true`,
   // 48-hour re-engagement nudge: when a dormant user was DM'd (once-only guard).
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS nudged_at TIMESTAMPTZ`,
+  // Identity-gate the free hook: the user's verified phone (Telegram contact).
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT`,
+  // One free scenario per PHONE (not per Telegram account) — multi-account farming
+  // then needs multiple real numbers. PK dedups the claim across accounts.
+  `CREATE TABLE IF NOT EXISTS free_claims (
+    phone TEXT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
   // Acquisition source (first-touch, immutable): 'ref' | 'c_<code>' | a deep-link
   // slug per creative/channel (t.me/<bot>?start=src_tiktok1) | NULL = organic.
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT`,
@@ -180,6 +189,8 @@ export interface UserRow {
   partner_code: string | null;
   /** Brand this user's deliverables with the watermark (default true; user-toggleable). */
   watermark_enabled: boolean;
+  /** Verified phone (Telegram contact) — set when identity-gating the free hook. */
+  phone: string | null;
   /** Set only by getOrCreateUser on the call that actually inserted the row. */
   justCreated?: boolean;
   /** Welcome bonus granted at creation (0 unless joined via a link/code). */
@@ -199,6 +210,7 @@ function mapUser(r: Row): UserRow {
     pending_file_id: (r.pending_file_id as string | null) ?? null,
     partner_code: (r.partner_code as string | null) ?? null,
     watermark_enabled: r.watermark_enabled !== false, // default true for legacy rows
+    phone: (r.phone as string | null) ?? null,
   };
 }
 
@@ -206,6 +218,34 @@ function mapUser(r: Row): UserRow {
 export async function setWatermark(userId: number, enabled: boolean): Promise<boolean> {
   await q("UPDATE users SET watermark_enabled = $2 WHERE id = $1", [userId, enabled]);
   return enabled;
+}
+
+/** Store a user's verified phone (from a shared Telegram contact). */
+export async function setUserPhone(userId: number, phone: string): Promise<void> {
+  await q("UPDATE users SET phone = $2 WHERE id = $1", [userId, phone]);
+}
+
+/**
+ * Claim the one free scenario for a phone number. Returns true if this phone may
+ * proceed — i.e. it's a fresh claim OR the existing claim already belongs to this
+ * same user (so the owner can retry after a failed render). Returns false only
+ * when a DIFFERENT account already claimed the gift with this number — the
+ * cross-account anti-farm guard.
+ */
+export async function claimFreePhone(phone: string, userId: number): Promise<boolean> {
+  const won = await q(
+    "INSERT INTO free_claims (phone, user_id) VALUES ($1, $2) ON CONFLICT (phone) DO NOTHING RETURNING user_id",
+    [phone, userId],
+  );
+  if (won.length > 0) return true; // fresh claim
+  const existing = await q("SELECT user_id FROM free_claims WHERE phone = $1", [phone]);
+  return existing.length > 0 && Number(existing[0].user_id) === userId; // same owner may retry
+}
+
+/** Peek whether a phone already claimed the free gift (UX pre-check; not the guard). */
+export async function phoneClaimedFree(phone: string): Promise<boolean> {
+  const rows = await q("SELECT 1 FROM free_claims WHERE phone = $1", [phone]);
+  return rows.length > 0;
 }
 
 export async function getOrCreateUser(
@@ -936,17 +976,65 @@ export async function createPendingGeneration(
   return Number(rows[0].id);
 }
 
-/** Finish a pending web generation (either outcome). */
+/**
+ * Finish a pending generation — an atomic compare-and-set on status='pending'.
+ * Returns true only for the call that won the pending→terminal transition, so
+ * compensation (refund / free-restore) can be gated on it: a detached render
+ * tail, its own late retry, and the stale-generation reaper can never all
+ * compensate the same row. Callers that don't care (web poll) ignore the bool.
+ */
 export async function completeGeneration(
   id: number,
   status: "ok" | "error",
   outputUrl?: string,
-): Promise<void> {
-  await q("UPDATE generations SET status = $1, output_url = $2 WHERE id = $3", [
-    status,
-    outputUrl ?? null,
-    id,
-  ]);
+): Promise<boolean> {
+  const rows = await q(
+    "UPDATE generations SET status = $1, output_url = $2 WHERE id = $3 AND status = 'pending' RETURNING id",
+    [status, outputUrl ?? null, id],
+  );
+  return rows.length > 0;
+}
+
+/** Return a burned "first result" freebie (idempotent) — used when a free render fails. */
+export async function restoreFreeResult(userId: number): Promise<void> {
+  await q("UPDATE users SET free_result_used = false WHERE id = $1 AND free_result_used = true", [userId]);
+}
+
+/** Return a burned free scenario (idempotent) — used when the free chain fails. */
+export async function restoreFreeScenario(userId: number): Promise<void> {
+  await q("UPDATE users SET free_scenario_used = false WHERE id = $1 AND free_scenario_used = true", [userId]);
+}
+
+/** A generation the reaper failed for being stuck 'pending' too long. */
+export interface StaleGeneration {
+  id: number;
+  user_id: number;
+  model: string;
+  credits: number;
+}
+
+/**
+ * Reaper: atomically fail generations left in 'pending' beyond `minutes` (a
+ * detached render whose process died mid-flight — the early-ack means Telegram
+ * won't redeliver, so nothing else recovers them) and return them so the caller
+ * refunds. The status flip is a single guarded UPDATE, so a late-recovering tail
+ * (which also uses completeGeneration's CAS) and the reaper can never both
+ * compensate the same row. `credits` is what was charged (0 for a free render →
+ * nothing to refund).
+ */
+export async function reapStalePending(minutes: number): Promise<StaleGeneration[]> {
+  const rows = await q(
+    `UPDATE generations SET status = 'error'
+     WHERE status = 'pending' AND created_at < now() - ($1 || ' minutes')::interval
+     RETURNING id, user_id, model, credits`,
+    [String(Math.max(1, Math.floor(minutes)))],
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    user_id: Number(r.user_id),
+    model: String(r.model),
+    credits: Number(r.credits),
+  }));
 }
 
 /** One generation, scoped to its owner — powers the web app's status polling. */

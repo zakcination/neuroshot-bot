@@ -8,7 +8,16 @@
  * tomorrow's budget", so everything splits by acquisition source and payers.
  */
 import { config } from "./config.js";
-import { logEvent, markNudged, nudgedOnUtcDay, query, usersToNudge, type NudgeTarget } from "./db.js";
+import {
+  addCredits,
+  logEvent,
+  markNudged,
+  nudgedOnUtcDay,
+  query,
+  reapStalePending,
+  usersToNudge,
+  type NudgeTarget,
+} from "./db.js";
 import { cheapestModel, CREDIT_COST_BASIS, MODELS } from "./models.js";
 
 const MODEL_COST = new Map(Object.values(MODELS).map((m) => [m.key, m.approxCostUsd]));
@@ -237,6 +246,23 @@ export function nudgeText(u: NudgeTarget): string {
 }
 
 /**
+ * Reaper: refund generations stuck in 'pending' beyond genStaleMinutes — a
+ * detached render whose process died mid-flight (the early-ack means Telegram
+ * won't redeliver, so nothing else recovers them). reapStalePending flips each
+ * row pending→error atomically and returns it, so this and a late-recovering tail
+ * can never double-refund. Free renders (credits=0) have nothing to refund.
+ * Exported for tests. Returns how many rows were reaped.
+ */
+export async function runReaper(send: SendFn): Promise<number> {
+  const stale = await reapStalePending(config.genStaleMinutes);
+  for (const g of stale) {
+    if (g.credits > 0) await addCredits(g.user_id, g.credits, "refund", g.model);
+    await send(g.user_id, "⚠️ Рендер не завершился — 🔫 патроны возвращены. Попробуйте ещё раз.").catch(() => {});
+  }
+  return stale.length;
+}
+
+/**
  * One daily sweep that DMs a capped batch of dormant-but-recent users exactly
  * once each. Marks BEFORE sending so a crash mid-batch or a blocked user (send
  * throws) can never turn into a repeat nudge — a missed nudge is fine, a spammed
@@ -267,9 +293,14 @@ export async function runReengagement(send: SendFn): Promise<number> {
 export function startMonitor(send: SendFn): NodeJS.Timeout {
   let lastDigestDay = "";
   let lastNudgeDay = "";
+  let ticking = false; // re-entrancy guard: ticks fire on a timer and aren't awaited
   const lastAlertAt = new Map<string, number>();
 
   const tick = async () => {
+    // A slow tick (e.g. a large reaper batch under Telegram rate limits) must not
+    // overlap the next timer fire and double-run the reaper/sweep.
+    if (ticking) return;
+    ticking = true;
     try {
       const now = new Date();
       const day = now.toISOString().slice(0, 10);
@@ -288,6 +319,11 @@ export function startMonitor(send: SendFn): NodeJS.Timeout {
           if (n > 0) console.log(`re-engagement: nudged ${n} dormant user(s)`);
         }
       }
+      // Reaper: every 5 minutes, refund renders stuck 'pending' too long.
+      if (now.getUTCMinutes() % 5 === 0) {
+        const reaped = await runReaper(send);
+        if (reaped > 0) console.log(`reaper: refunded ${reaped} stuck generation(s)`);
+      }
       // Alerts: every 10 minutes (tick runs each minute).
       if (now.getUTCMinutes() % 10 === 0) {
         for (const a of await checkAlerts()) {
@@ -299,6 +335,8 @@ export function startMonitor(send: SendFn): NodeJS.Timeout {
       }
     } catch (e) {
       console.error("monitor tick failed:", e);
+    } finally {
+      ticking = false;
     }
   };
   const timer = setInterval(() => void tick(), 60 * 1000);
