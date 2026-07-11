@@ -1,6 +1,7 @@
 import { createBot } from "./bot.js";
 import { config } from "./config.js";
 import { initDb } from "./db.js";
+import { drainRenders } from "./generate.js";
 import { startMonitor } from "./monitor.js";
 import { startWebApp } from "./webapp.js";
 
@@ -33,6 +34,24 @@ if (config.webappUrl) {
 
 // Shared web layer (Telegram Mini App) — only runs if WEBAPP_URL is set.
 startWebApp();
+
+// Graceful shutdown: stop polling, then let detached render tails finish (deliver
+// or refund) before exit, so a routine deploy/recycle doesn't strand in-flight
+// renders. The reaper is the backstop for anything a hard kill still drops.
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${signal} received — stopping bot and draining renders…`);
+  try {
+    await bot.stop();
+    await drainRenders();
+  } finally {
+    process.exit(0);
+  }
+}
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
+process.once("SIGINT", () => void shutdown("SIGINT"));
 
 console.log("NeuroShot bot starting (long polling)…");
 bot.start();

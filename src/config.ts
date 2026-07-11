@@ -78,6 +78,9 @@ export const config = {
   reengageHourUtc: Number(process.env.REENGAGE_HOUR_UTC ?? 7),
   // Max users nudged per daily sweep (keeps the send gentle + rate-limit-safe).
   reengageBatch: Number(process.env.REENGAGE_BATCH ?? 50),
+  // Reaper: a generation still 'pending' beyond this many minutes is treated as a
+  // render whose process died (renders take 1–3 min); it's failed and refunded.
+  genStaleMinutes: Number(process.env.GEN_STALE_MINUTES ?? 15),
   // Telegram Mini App (web layer). Public HTTPS URL of the deployed app; when
   // set, the bot shows a "🌐 Приложение" button and index.ts starts the server.
   webappUrl: process.env.WEBAPP_URL ?? "",

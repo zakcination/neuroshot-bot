@@ -10,6 +10,7 @@ import {
   createPartnerCode,
   deactivatePartnerCode,
   funnel,
+  getGeneration,
   getOrCreateUser,
   getPartnerCode,
   getUser,
@@ -33,7 +34,7 @@ import {
   type PartnerCodeRow,
   type UserRow,
 } from "./db.js";
-import { modelByKey, runFreeScenario, runGeneration } from "./generate.js";
+import { isUploadedSource as isReusableUpload, modelByKey, runFreeScenario, runGeneration } from "./generate.js";
 import { buildDigest, formatDigest } from "./monitor.js";
 import {
   CAMPAIGNS,
@@ -733,13 +734,12 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     await ctx.reply("Что создаём?", { reply_markup: mainMenu() });
   });
 
+  // Top-level entry: always ask for a FRESH photo (a new request must never
+  // silently reuse a previous photo). The "just-uploaded" convenience lives in
+  // the pick:* handlers below; deliberate reuse lives in menu:styles.
   bot.callbackQuery("menu:photoshoot", async (ctx) => {
     await ctx.answerCallbackQuery();
     const u = await user(ctx);
-    if (u.pending_file_id) {
-      await showPresets(ctx, "photo", "Выберите стиль — один тап, без промптов:");
-      return;
-    }
     await setPending(u.id, "mode_photo", null);
     await sendPreviewAlbum(ctx, "photo");
     await ctx.reply(
@@ -750,13 +750,31 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   bot.callbackQuery("menu:product", async (ctx) => {
     await ctx.answerCallbackQuery();
     const u = await user(ctx);
-    if (u.pending_file_id) {
-      await showPresets(ctx, "product", "Выберите подачу товара:");
-      return;
-    }
     await setPending(u.id, "mode_product", null);
     await sendPreviewAlbum(ctx, "product");
     await ctx.reply("Вот примеры 👆 Пришлите фото товара 🛍 (можно прямо со стола — фон мы заменим).");
+  });
+
+  // "What to do with this photo" shortcuts: use the photo the user JUST uploaded
+  // (pending_file_id is a fresh upload here) — reuse only within the upload flow.
+  bot.callbackQuery("pick:photo", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await user(ctx);
+    if (!isReusableUpload(u.pending_file_id)) {
+      await ctx.reply("Пришлите фото 📸 — и выберите стиль.");
+      return;
+    }
+    await showPresets(ctx, "photo", "Выберите стиль — один тап, без промптов:");
+  });
+
+  bot.callbackQuery("pick:product", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await user(ctx);
+    if (!isReusableUpload(u.pending_file_id)) {
+      await ctx.reply("Пришлите фото товара 🛍.");
+      return;
+    }
+    await showPresets(ctx, "product", "Выберите подачу товара:");
   });
 
   // ---- Free one-time scenario (onboarding hook): princess or football ----
@@ -815,16 +833,14 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     const c = campaignById(ctx.match[1]);
     if (!c) return;
     const u = await user(ctx);
-    if (u.pending_file_id) {
-      await ctx.reply(c.header, { reply_markup: campaignPresetKeyboard(c) });
-      return;
-    }
+    // Always ask for a fresh photo — each scenario wants its own (a kid's photo
+    // for a fairy tale, your own for football) — never reuse a leftover photo.
     await setPending(u.id, `mode_camp_${c.id}`, null);
     await ctx.reply(withPhotoTip(c.ask));
   });
 
   // One-tap campaign render; on success, offer the one-tap animate upsell that
-  // runs on the GENERATED image (the pending photo is swapped to the result).
+  // runs on the GENERATED image (referenced by generation id on the result kb).
   bot.callbackQuery(/^cpre:([^:]+):(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const c = campaignById(ctx.match[1]);
@@ -838,40 +854,36 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       await ctx.reply(withPhotoTip(c.ask));
       return;
     }
-    const url = await runGeneration(ctx, u, PRESET_MODEL, preset.prompt, u.pending_file_id, {
+    // The delivered result carries the "оживить" upsell (camv:<camp>:<genId>) on
+    // its keyboard — referencing the result by id, not by stashing its URL in
+    // pending_file_id (which must stay the user's upload).
+    await runGeneration(ctx, u, PRESET_MODEL, preset.prompt, u.pending_file_id, {
       crafted: true,
       allowFreeFirst: true,
+      animate: c.id,
     });
-    if (url) {
-      await setPending(u.id, "await_action", url);
-      await ctx.reply("Хотите оживить результат в видео? 👇", {
-        reply_markup: new InlineKeyboard().text(
-          `${c.animateLabel} (${c.animateModel.credits} 🔫)`,
-          `camv:${c.id}`,
-        ),
-      });
-    }
   });
 
-  bot.callbackQuery(/^camv:(.+)$/, async (ctx) => {
+  // Animate a specific campaign RESULT (referenced by generation id, resolved
+  // from the gallery) — never reuses a stale pending photo.
+  bot.callbackQuery(/^camv:([^:]+):(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const c = campaignById(ctx.match[1]);
     const u = await user(ctx);
-    if (!c || !u.pending_file_id) {
+    const gen = await getGeneration(Number(ctx.match[2]), u.id);
+    if (!c || !gen || !gen.output_url) {
       await ctx.reply("Сначала создайте картинку в кампании 🙂");
       return;
     }
-    await runGeneration(ctx, u, c.animateModel, c.animatePrompt, u.pending_file_id, { crafted: true });
+    await runGeneration(ctx, u, c.animateModel, c.animatePrompt, gen.output_url, { crafted: true });
   });
 
   bot.callbackQuery("menu:animate", async (ctx) => {
     await ctx.answerCallbackQuery();
     const u = await user(ctx);
     await sendMenuVideo(ctx, "animate"); // example of the expected result
-    if (u.pending_file_id) {
-      await ctx.reply("🎬 Выберите видео-модель:", { reply_markup: videoModelsKeyboard() });
-      return;
-    }
+    // Top-level entry → always ask for a fresh photo (menu:videopick keeps the
+    // just-uploaded photo for the in-flow "pick a video model" step).
     await setPending(u.id, "mode_animate", null);
     await ctx.reply("Вот пример 👆 Пришлите фото 🎬 — и выберите модель (Kling / Seedance).");
   });
@@ -1002,9 +1014,9 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
     await setPending(u.id, "await_action", fileId);
     const kb = new InlineKeyboard()
-      .text("📸 AI-фотосессия — стили", "menu:photoshoot")
+      .text("📸 AI-фотосессия — стили", "pick:photo")
       .row()
-      .text("🛍 Продающее фото товара", "menu:product")
+      .text("🛍 Продающее фото товара", "pick:product")
       .row()
       .text(`🖼 Редактировать по описанию (${MODELS.photo_edit.credits} 🔫)`, "act:photo_edit")
       .row()

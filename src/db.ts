@@ -936,17 +936,65 @@ export async function createPendingGeneration(
   return Number(rows[0].id);
 }
 
-/** Finish a pending web generation (either outcome). */
+/**
+ * Finish a pending generation — an atomic compare-and-set on status='pending'.
+ * Returns true only for the call that won the pending→terminal transition, so
+ * compensation (refund / free-restore) can be gated on it: a detached render
+ * tail, its own late retry, and the stale-generation reaper can never all
+ * compensate the same row. Callers that don't care (web poll) ignore the bool.
+ */
 export async function completeGeneration(
   id: number,
   status: "ok" | "error",
   outputUrl?: string,
-): Promise<void> {
-  await q("UPDATE generations SET status = $1, output_url = $2 WHERE id = $3", [
-    status,
-    outputUrl ?? null,
-    id,
-  ]);
+): Promise<boolean> {
+  const rows = await q(
+    "UPDATE generations SET status = $1, output_url = $2 WHERE id = $3 AND status = 'pending' RETURNING id",
+    [status, outputUrl ?? null, id],
+  );
+  return rows.length > 0;
+}
+
+/** Return a burned "first result" freebie (idempotent) — used when a free render fails. */
+export async function restoreFreeResult(userId: number): Promise<void> {
+  await q("UPDATE users SET free_result_used = false WHERE id = $1 AND free_result_used = true", [userId]);
+}
+
+/** Return a burned free scenario (idempotent) — used when the free chain fails. */
+export async function restoreFreeScenario(userId: number): Promise<void> {
+  await q("UPDATE users SET free_scenario_used = false WHERE id = $1 AND free_scenario_used = true", [userId]);
+}
+
+/** A generation the reaper failed for being stuck 'pending' too long. */
+export interface StaleGeneration {
+  id: number;
+  user_id: number;
+  model: string;
+  credits: number;
+}
+
+/**
+ * Reaper: atomically fail generations left in 'pending' beyond `minutes` (a
+ * detached render whose process died mid-flight — the early-ack means Telegram
+ * won't redeliver, so nothing else recovers them) and return them so the caller
+ * refunds. The status flip is a single guarded UPDATE, so a late-recovering tail
+ * (which also uses completeGeneration's CAS) and the reaper can never both
+ * compensate the same row. `credits` is what was charged (0 for a free render →
+ * nothing to refund).
+ */
+export async function reapStalePending(minutes: number): Promise<StaleGeneration[]> {
+  const rows = await q(
+    `UPDATE generations SET status = 'error'
+     WHERE status = 'pending' AND created_at < now() - ($1 || ' minutes')::interval
+     RETURNING id, user_id, model, credits`,
+    [String(Math.max(1, Math.floor(minutes)))],
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    user_id: Number(r.user_id),
+    model: String(r.model),
+    credits: Number(r.credits),
+  }));
 }
 
 /** One generation, scoped to its owner — powers the web app's status polling. */
