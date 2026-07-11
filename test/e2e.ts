@@ -784,6 +784,9 @@ await step("persona entry link: /start src_football routes straight to the footb
   assert.match(routed, /гол на стадионе/i); // football headline
   assert.match(routed, /Пришлите своё фото/); // the football scenario ask
   assert.match(routed, /Совет/); // photo-quality tip
+  // Lands STRAIGHT on the scenario: no generic main menu is sent for the deep link.
+  const routedMsg = calls("sendMessage").at(-1)!;
+  assert.ok(!routedMsg.payload.reply_markup, "routed deep link must not show the generic menu");
   // Source is still recorded for first-touch attribution.
   const src = await query("SELECT source FROM users WHERE id = $1", [finn.id]);
   assert.equal(src[0].source, "src_football");

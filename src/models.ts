@@ -972,7 +972,7 @@ export function freeScenarioById(id: string): FreeScenario | undefined {
 }
 
 /**
- * Persona-routed entry links (docs/strategy §04). An acquisition-source slug
+ * Persona-routed entry links (docs/growth-product.md). An acquisition-source slug
  * (t.me/<bot>?start=src_football) can pre-select the FIRST action that hits that
  * persona's priority gap — so a football-ad click lands straight on the football
  * scenario, an "оживи фото" click on the restore flow, a Kaspi-seller click on

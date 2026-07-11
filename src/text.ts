@@ -12,7 +12,7 @@ export const UNIT_ONE = "патрон";
 /**
  * One-line photo-quality nudge shown when we ask for a photo. Blurry / dark /
  * tiny-face source photos are the silent churn driver for non-technical users
- * (a bad result reads as "продукт плохой", not "плохое фото") — see docs/strategy.
+ * (a bad result reads as "продукт плохой", not "плохое фото") — see docs/growth-product.md.
  * Kept short so it never buries the ask.
  */
 export const PHOTO_TIP =
