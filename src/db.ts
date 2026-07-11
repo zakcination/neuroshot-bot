@@ -54,6 +54,8 @@ const SCHEMA: string[] = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS free_result_used BOOLEAN NOT NULL DEFAULT false`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS free_scenario_used BOOLEAN NOT NULL DEFAULT false`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS watermark_enabled BOOLEAN NOT NULL DEFAULT true`,
+  // 48-hour re-engagement nudge: when a dormant user was DM'd (once-only guard).
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS nudged_at TIMESTAMPTZ`,
   // Acquisition source (first-touch, immutable): 'ref' | 'c_<code>' | a deep-link
   // slug per creative/channel (t.me/<bot>?start=src_tiktok1) | NULL = organic.
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT`,
@@ -803,6 +805,68 @@ export async function consumeFreeScenario(userId: number): Promise<boolean> {
   const rows = await q(
     "UPDATE users SET free_scenario_used = true WHERE id = $1 AND free_scenario_used = false RETURNING id",
     [userId],
+  );
+  return rows.length > 0;
+}
+
+/** A user eligible for the re-engagement nudge (with the fields that pick the copy). */
+export interface NudgeTarget {
+  id: number;
+  free_scenario_used: boolean;
+  credits: number;
+}
+
+/**
+ * Users to re-engage: dormant (no event for >48h) but recently active (within
+ * 14d, so a long-gone user is never blasted), and never nudged before. Batch-
+ * capped by the caller; markNudged makes it one-shot per user. Last activity =
+ * their most recent event, falling back to signup time when they have none.
+ */
+export async function usersToNudge(limit: number): Promise<NudgeTarget[]> {
+  const rows = await q(
+    `SELECT u.id, u.free_scenario_used, u.credits
+     FROM users u
+     LEFT JOIN (SELECT user_id, MAX(created_at) AS last_at FROM events GROUP BY user_id) e
+       ON e.user_id = u.id
+     WHERE u.nudged_at IS NULL
+       -- half-open window: dormant strictly >48h, but active within the last 14d
+       -- (avoids the boundary off-by-one an inclusive BETWEEN would allow).
+       AND COALESCE(e.last_at, u.created_at) > now() - interval '14 days'
+       AND COALESCE(e.last_at, u.created_at) < now() - interval '48 hours'
+     ORDER BY u.id
+     LIMIT $1`,
+    [Math.max(0, Math.floor(limit))],
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    free_scenario_used: r.free_scenario_used === true,
+    credits: Number(r.credits),
+  }));
+}
+
+/**
+ * Stamp nudged_at so the sweep never messages the same user twice. Idempotent:
+ * only sets it when NULL, so a re-run never overwrites the original nudge time
+ * (which analytics/audits rely on).
+ */
+export async function markNudged(ids: number[]): Promise<void> {
+  if (!ids.length) return;
+  const ph = ids.map((_, i) => `$${i + 1}`).join(",");
+  await q(`UPDATE users SET nudged_at = now() WHERE id IN (${ph}) AND nudged_at IS NULL`, ids);
+}
+
+/**
+ * Whether the re-engagement sweep already ran on this UTC day — derived from the
+ * DB (nudged_at), so a process restart during/after the nudge hour can't run an
+ * extra batch the same day and blow past the daily cap. `day` is 'YYYY-MM-DD' UTC.
+ */
+export async function nudgedOnUtcDay(day: string): Promise<boolean> {
+  const rows = await q(
+    `SELECT 1 FROM users
+     WHERE nudged_at IS NOT NULL
+       AND to_char(nudged_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') = $1
+     LIMIT 1`,
+    [day],
   );
   return rows.length > 0;
 }
