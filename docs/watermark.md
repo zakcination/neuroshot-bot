@@ -1,8 +1,24 @@
-# Watermark (CTA badge)
+# Watermark (CTA badge + corner mark)
 
 A pre-designed **CTA badge** — `Хочешь так же? Бесплатно: ✈️ @neuroshot_ai_bot`
 — is overlaid at the bottom of deliverables. Each shared clip/photo is both an ad
 and a conversion path: a viewer sees exactly where to make their own, for free.
+
+## Two styles (`WatermarkStyle`)
+
+`watermarkVideo` / `watermarkImage` take a `style` argument (`"cta"` default):
+
+- **`cta`** — the full-width bottom banner above, 640px, 95% opacity. Loud on
+  purpose: the free-scenario gift is where an explicit call-to-action belongs.
+  Always used for free deliverables and the default per-user toggle.
+- **`corner`** — a small (150px), low-opacity (70%) mark in the bottom-right, from
+  `public/corner_watermark.png` — logo/@handle only, no CTA sentence. For content
+  a creator posts to their **own** feed (the UGC bounty): attributable without
+  reading like a third-party ad, which would suppress the organic reach the bounty
+  pays for. **Note:** a *visible* mark is croppable, so it's for attribution — the
+  actual bounty payout proof is the generation-id, not the badge (see the strategy
+  doc). Until `public/corner_watermark.png` is added, the corner style is a safe
+  no-op (returns null → source sent unbranded).
 
 ## Scope
 

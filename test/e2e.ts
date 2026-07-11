@@ -290,6 +290,7 @@ await step("insufficient 🔫: animate (25) with 7 shows the sales-page paywall,
   assert.match(wall.payload.text as string, /Ещё один шаг до результата/);
   assert.match(wall.payload.text as string, /🎬 Оживление фото/);
   assert.match(wall.payload.text as string, /Комбо/); // combo offer anchored as the entry
+  assert.match(wall.payload.text as string, /Осталось/); // live countdown snapshot in the paywall
   const kb = wall.payload.reply_markup as { inline_keyboard: Array<Array<{ callback_data: string }>> };
   const buttons = kb.inline_keyboard.flat().map((b) => b.callback_data);
   assert.ok(buttons.includes("buy:combo"), "entry-pack CTA missing"); // one dominant CTA

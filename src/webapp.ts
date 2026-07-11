@@ -12,10 +12,13 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fal } from "@fal-ai/client";
-import { config } from "./config.js";
+import { Api } from "grammy";
+import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { createOrder, galleryPage, getGeneration, getOrCreateUser, getUser, recentGenerations, setWatermark, userDashboard } from "./db.js";
+import { createOrder, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, recentGenerations, resolveOrder, setWatermark, userDashboard } from "./db.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
+import { grantPurchase } from "./payments.js";
+import { comboEndsAt } from "./offer.js";
 import { sanitizePrompt } from "./promptcraft.js";
 import { watermarkImage, watermarkVideo } from "./watermark.js";
 import {
@@ -164,17 +167,6 @@ export function authResponse(headers: Headers): { status: number; body: Record<s
   };
 }
 
-// Server boot time — the default anchor for the combo-offer countdown, so the
-// sale runs ~COMBO_OFFER_DAYS from deploy unless COMBO_OFFER_START pins a date.
-const BOOT_MS = Date.now();
-
-/** The combo offer's end timestamp (ms epoch) for the app's live countdown. */
-function comboOfferEndsAt(): number {
-  const start = config.comboOfferStart ? Date.parse(config.comboOfferStart) : NaN;
-  const base = Number.isNaN(start) ? BOOT_MS : start;
-  return base + config.comboOfferDays * 86_400_000;
-}
-
 /** Pack catalog payload — one source of truth with the bot's /buy. */
 function packsPayload(): Array<Record<string, unknown>> {
   return PACKS.map((p) => ({ id: p.id, title: p.title, credits: p.credits, kzt: p.kzt, offer: p.offer ?? false }));
@@ -275,7 +267,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     packs: packsPayload(),
     catalog: catalogPayload(),
     // Combo offer deadline (ms epoch) for the live countdown.
-    comboOffer: { endsAt: comboOfferEndsAt() },
+    comboOffer: { endsAt: comboEndsAt() },
   };
 }
 
@@ -300,6 +292,25 @@ function readJsonBody(req: IncomingMessage, limit: number): Promise<Record<strin
         resolve(null);
       }
     });
+    req.on("error", () => resolve(null));
+  });
+}
+
+/** Read the raw request body bytes (for signature verification), size-capped. */
+function readRawBody(req: IncomingMessage, limit: number): Promise<Buffer | null> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (c: Buffer) => {
+      size += c.length;
+      if (size > limit) {
+        resolve(null);
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", () => resolve(null));
   });
 }
@@ -528,12 +539,74 @@ export async function orderResponse(
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const pack = packById(String(body?.pack ?? ""));
   if (!pack) return { status: 400, body: { error: "bad_request" } };
-  if (!config.kaspiPayUrl) return { status: 200, body: { available: false } };
+  // Per-pack fixed-amount link if configured (KASPI_PAY_URL_<PACK>), else the
+  // single fallback link. Blank → payment not open yet.
+  const link = kaspiLinkFor(pack.id);
+  if (!link) return { status: 200, body: { available: false } };
   const orderId = await createOrder(userId, pack.id, pack.kzt);
   return {
     status: 200,
-    body: { available: true, orderId, link: config.kaspiPayUrl, amount: pack.kzt, title: pack.title },
+    body: { available: true, orderId, link, amount: pack.kzt, title: pack.title },
   };
+}
+
+/** Success statuses in a Kaspi callback (case-insensitive). Confirm on integration. */
+const KASPI_PAID_STATUSES = new Set(["paid", "success", "completed", "approved", "processed", "captured"]);
+
+/**
+ * POST /api/kaspi/callback — auto-approval endpoint for a real Kaspi Pay merchant
+ * integration. DISABLED unless KASPI_API_SECRET is set (returns 404), so it never
+ * exposes an unauthenticated grant path. When enabled it verifies the callback's
+ * HMAC-SHA256 signature over the raw body, matches the order + amount, then grants
+ * patrons via the SAME grantPurchase path as the admin `/order N ok` flow — so a
+ * webhook-confirmed purchase credits identically (including referral/partner
+ * payouts). Idempotent: resolveOrder transitions pending→paid exactly once, so a
+ * duplicate callback is a safe no-op.
+ *
+ * ⚠️ Kaspi's exact field names + signature scheme must be confirmed against the
+ * live merchant docs before flipping this on (see docs/kaspi.md). `grant` is
+ * injected for testing.
+ */
+export async function kaspiCallbackResponse(
+  rawBody: Buffer,
+  signature: string,
+  grant: (userId: number, pack: import("./models.js").Pack) => Promise<void>,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  if (!config.kaspiApiSecret) return { status: 404, body: { error: "not_found" } };
+  if (!signature) return { status: 401, body: { error: "unsigned" } };
+
+  const expected = createHmac("sha256", config.kaspiApiSecret).update(rawBody).digest("hex");
+  const a = Buffer.from(expected, "hex");
+  const b = Buffer.from(signature.trim().toLowerCase(), "hex");
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return { status: 401, body: { error: "bad_signature" } };
+
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(rawBody.toString("utf8")) as Record<string, unknown>;
+  } catch {
+    return { status: 400, body: { error: "bad_json" } };
+  }
+
+  const orderId = Number(payload.orderId ?? payload.order_id ?? payload.invoiceId ?? payload.invoice_id);
+  const status = String(payload.status ?? payload.state ?? "").toLowerCase();
+  if (!Number.isInteger(orderId) || orderId <= 0) return { status: 400, body: { error: "no_order" } };
+  // Non-final statuses: acknowledge so Kaspi stops retrying, but don't grant.
+  if (!KASPI_PAID_STATUSES.has(status)) return { status: 200, body: { ok: true, ignored: status || "empty" } };
+
+  const order = await getOrder(orderId);
+  if (!order) return { status: 404, body: { error: "unknown_order" } };
+  if (order.status !== "pending") return { status: 200, body: { ok: true, already: order.status } };
+
+  const pack = packById(order.pack_id);
+  if (!pack) return { status: 400, body: { error: "unknown_pack" } };
+  // Amount guard: if the callback carries an amount, it must match the order.
+  const amount = payload.amount != null ? Number(payload.amount) : order.amount_kzt;
+  if (!Number.isFinite(amount) || amount !== order.amount_kzt) return { status: 400, body: { error: "amount_mismatch" } };
+
+  const won = await resolveOrder(orderId, true);
+  if (!won) return { status: 200, body: { ok: true, already: "resolved" } };
+  await grant(order.user_id, pack);
+  return { status: 200, body: { ok: true, granted: pack.credits } };
 }
 
 /** Static PWA assets (installable web app / iOS home-screen). Served at root so
@@ -634,6 +707,19 @@ export function createWebApp(): Server {
         if (!user) return json(res, 401, { error: "unauthorized" });
         await getOrCreateUser(user.id, user.username, null, config.freeCredits);
         const { status, body } = await orderResponse(user.id, await readJsonBody(req, 4 * 1024));
+        return json(res, status, body);
+      }
+
+      // POST /api/kaspi/callback — merchant-API auto-approval (no user auth; the
+      // HMAC signature IS the auth). Disabled unless KASPI_API_SECRET is set.
+      if (url.pathname === "/api/kaspi/callback") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const raw = await readRawBody(req, 8 * 1024);
+        if (!raw) return json(res, 413, { error: "too_large" });
+        const signature = header(req.headers, config.kaspiSignatureHeader);
+        const { status, body } = await kaspiCallbackResponse(raw, signature, (uid, pack) =>
+          grantPurchase(new Api(config.botToken), uid, pack),
+        );
         return json(res, status, body);
       }
 

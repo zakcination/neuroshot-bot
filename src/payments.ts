@@ -1,58 +1,85 @@
 import type { Api, Bot, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import { config } from "./config.js";
+import { config, kaspiLinkFor } from "./config.js";
 import {
   addCredits,
   createOrder,
+  getOrder,
   logEvent,
+  resolveOrder,
   rewardPartnerOnPurchase,
   rewardReferralOnPurchase,
 } from "./db.js";
+import { kaspiVerifyOrder } from "./kaspi.js";
 import { PACKS, packById, REFERRAL_MILESTONES, type ModelSpec, type Pack } from "./models.js";
+import { comboActive, comboLeftText } from "./offer.js";
 import { nResults, nUnits, UNIT_EMOJI } from "./text.js";
 
-/** Pack list for the buy menu — Kaspi/KZT priced; the combo offer leads. */
+/**
+ * Pack list for the buy menu — Kaspi/KZT priced; the limited-time combo offer
+ * leads (with its live "осталось Nд Nч" snapshot) while active, and drops off the
+ * list once the sale ends — mirroring the Mini App's self-removing offer, so the
+ * ladder is never "broken" by a permanent below-ladder price.
+ */
 export function packsKeyboard(): InlineKeyboard {
   const kb = new InlineKeyboard();
-  // Show the limited-time combo offer first, then the ladder.
-  const ordered = [...PACKS].sort((a, b) => Number(b.offer ?? false) - Number(a.offer ?? false));
+  const active = comboActive();
+  const visible = PACKS.filter((p) => !p.offer || active);
+  const ordered = [...visible].sort((a, b) => Number(b.offer ?? false) - Number(a.offer ?? false));
   for (const pack of ordered) {
-    kb.text(`${pack.title} — ${pack.kzt} ₸`, `buy:${pack.id}`).row();
+    const left = pack.offer && active ? ` · ⏳ ${comboLeftText()}` : "";
+    kb.text(`${pack.title} — ${pack.kzt} ₸${left}`, `buy:${pack.id}`).row();
   }
   return kb;
 }
 
-/** The entry-price pack, framed as the anchor CTA on the paywall (the combo offer). */
-const ENTRY_PACK = PACKS.find((p) => p.offer) ?? PACKS[0];
+/**
+ * The pack anchored on the paywall: the combo offer while it's live (the tripwire),
+ * else the cheapest ladder pack once the sale ends — so an expired offer never
+ * anchors the paywall.
+ */
+function entryPack(): Pack {
+  if (comboActive()) {
+    const offer = PACKS.find((p) => p.offer);
+    if (offer) return offer;
+  }
+  return PACKS.find((p) => !p.offer) ?? PACKS[0];
+}
 
-/** How many of `model`'s results the entry pack buys (≥1, for the "N результатов" framing). */
-function resultsPerEntryPack(model: ModelSpec): number {
-  return Math.max(1, Math.floor(ENTRY_PACK.credits / model.credits));
+/** How many of `model`'s results a pack buys (≥1, for the "N результатов" framing). */
+function resultsPerPack(pack: Pack, model: ModelSpec): number {
+  return Math.max(1, Math.floor(pack.credits / model.credits));
+}
+
+/** Short pack name for the CTA (strip the 🔥 and the ": …" tail). */
+function packShort(pack: Pack): string {
+  return pack.title.replace(/^🔥\s*/, "").split(/[—:]/)[0].trim();
 }
 
 /**
  * Paywall as a sales page (not a naked "недостаточно"): outcome-first headline,
  * the entry pack anchored and framed as "≈ N таких результатов", one dominant
  * CTA (buy the entry pack) + a secondary "все пакеты". Contextual to the exact
- * result the user just tried.
+ * result the user just tried. While the combo sale is live it carries the same
+ * countdown the Mini App shows, so urgency lands at the paywall moment.
  */
 export function paywallText(model: ModelSpec, credits: number): string {
-  const n = resultsPerEntryPack(model);
+  const pack = entryPack();
+  const n = resultsPerPack(pack, model);
+  const left = pack.offer && comboActive() ? `\n⏳ <b>Осталось: ${comboLeftText()}</b> — успейте по акции!` : "";
   return (
     `✨ <b>Ещё один шаг до результата!</b>\n\n` +
     `«${model.label}» — ${nUnits(model.credits)}. У вас ${nUnits(credits)}.\n\n` +
-    `🔥 «${ENTRY_PACK.title}»: <b>${nResults(n)}</b> за ${ENTRY_PACK.kzt} ₸ — оплата картой Kaspi.`
+    `🔥 «${pack.title}»: <b>${nResults(n)}</b> за ${pack.kzt} ₸ — оплата картой Kaspi.${left}`
   );
 }
 
-/** Short pack name for the CTA. */
-const ENTRY_SHORT = ENTRY_PACK.title.replace(/^🔥\s*/, "").split(/[—:]/)[0].trim();
-
 /** Primary CTA = the entry pack (framed by results); secondary = all packs. */
 export function paywallKeyboard(model: ModelSpec): InlineKeyboard {
-  const n = resultsPerEntryPack(model);
+  const pack = entryPack();
+  const n = resultsPerPack(pack, model);
   return new InlineKeyboard()
-    .text(`${ENTRY_PACK.kzt} ₸ · ${ENTRY_SHORT}: ${nResults(n)}`, `buy:${ENTRY_PACK.id}`)
+    .text(`${pack.kzt} ₸ · ${packShort(pack)}: ${nResults(n)}`, `buy:${pack.id}`)
     .row()
     .text("💎 Все пакеты", "show_packs");
 }
@@ -104,6 +131,22 @@ function paidKeyboard(orderId: number): InlineKeyboard {
   return new InlineKeyboard().text("✅ Я оплатил", `paid:${orderId}`).row().text("💎 Все пакеты", "show_packs");
 }
 
+/**
+ * Approve a pending order and grant the pack — the single settle path shared by
+ * the admin `/order N ok` command, the signed Kaspi webhook, and the server-side
+ * «Я оплатил» verification. resolveOrder flips pending→paid atomically (exactly
+ * one winner), so a double-confirm can never double-credit. Returns the granted
+ * pack, or null if the order was already resolved / unknown.
+ */
+export async function settleApprovedOrder(api: Api, orderId: number): Promise<Pack | null> {
+  const won = await resolveOrder(orderId, true);
+  if (!won) return null;
+  const pack = packById(won.pack_id);
+  if (!pack) return null;
+  await grantPurchase(api, won.user_id, pack);
+  return pack;
+}
+
 export function registerPayments(bot: Bot): void {
   bot.callbackQuery("show_packs", async (ctx) => {
     await ctx.answerCallbackQuery();
@@ -116,7 +159,8 @@ export function registerPayments(bot: Bot): void {
     await ctx.answerCallbackQuery();
     const pack = packById(ctx.match[1]);
     if (!pack || !ctx.from) return;
-    if (!config.kaspiPayUrl) {
+    const link = kaspiLinkFor(pack.id);
+    if (!link) {
       await ctx.reply(
         "💳 Оплата картой Kaspi скоро откроется — всё уже готово, мы сообщим! " +
           "А пока попробуйте бесплатный сценарий 🎁",
@@ -126,17 +170,49 @@ export function registerPayments(bot: Bot): void {
     const orderId = await createOrder(ctx.from.id, pack.id, pack.kzt);
     await ctx.reply(
       `🧾 <b>${pack.title}</b> — <b>${pack.kzt} ₸</b>\n\n` +
-        `1️⃣ Оплатите по ссылке Kaspi:\n${config.kaspiPayUrl}\n\n` +
+        `1️⃣ Оплатите по ссылке Kaspi:\n${link}\n\n` +
         `2️⃣ После оплаты нажмите «✅ Я оплатил» — мы проверим платёж и начислим ${UNIT_EMOJI} патроны.\n\n` +
         `Заявка №${orderId}`,
       { parse_mode: "HTML", reply_markup: paidKeyboard(orderId) },
     );
   });
 
-  // "I paid" → ping the admins to verify the payment against Kaspi and approve.
+  // "I paid" → verify server-side against Kaspi when the merchant API is wired,
+  // and grant automatically if paid — no admin in the loop. When the API isn't
+  // configured (or can't reach Kaspi), fall back to pinging an admin (interim).
   bot.callbackQuery(/^paid:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const orderId = Number(ctx.match[1]);
+    const order = await getOrder(orderId);
+    if (!order) {
+      await ctx.reply("Заявка не найдена. Откройте /buy и попробуйте снова.");
+      return;
+    }
+    if (order.status === "paid") {
+      await ctx.reply(`✅ Эта оплата уже подтверждена — ${UNIT_EMOJI} патроны начислены.`);
+      return;
+    }
+    // Server-side check: query Kaspi for the real status of this order.
+    const status = await kaspiVerifyOrder(order);
+    if (status === "paid") {
+      const pack = await settleApprovedOrder(ctx.api, orderId);
+      await ctx.reply(
+        pack
+          ? `✅ Оплата подтверждена автоматически! Начислено ${UNIT_EMOJI} ${nUnits(pack.credits)}.`
+          : `✅ Оплата подтверждена — ${UNIT_EMOJI} патроны начислены.`,
+      );
+      return;
+    }
+    if (config.kaspiApiBase) {
+      // API is live but hasn't seen the payment yet → let the user retry shortly.
+      await ctx.reply(
+        status === "failed"
+          ? "❌ Оплата не найдена или отклонена. Проверьте платёж в Kaspi и попробуйте ещё раз."
+          : "⏳ Пока не видим оплату. Если вы только что оплатили — подождите минуту и нажмите «✅ Я оплатил» снова.",
+      );
+      return;
+    }
+    // No merchant API configured → interim admin approval.
     await ctx.reply("Спасибо! Проверяем оплату — начислим патроны в ближайшее время ⏳");
     const who = ctx.from ? `${ctx.from.first_name} (@${ctx.from.username ?? ctx.from.id})` : "?";
     for (const adminId of config.adminIds)

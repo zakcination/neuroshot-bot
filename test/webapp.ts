@@ -17,11 +17,15 @@ process.env.FREE_CREDITS = "3";
 process.env.WEBAPP_URL = "https://app.test"; // enable app-config paths
 process.env.BOT_USERNAME = "neuroshot_test_bot";
 process.env.KASPI_PAY_URL = "https://pay.test/neuroshot"; // enable the Kaspi order flow
+process.env.KASPI_PAY_URL_COMBO = "https://pay.test/combo"; // per-pack fixed-amount link
+process.env.KASPI_API_SECRET = "test-kaspi-secret"; // enable the auto-approval callback
 
 const { fal } = await import("@fal-ai/client");
-const { verifyInitData, createWebApp } = await import("../src/webapp.js");
+const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, getOrCreateUser, logGeneration, spendCredits } = await import("../src/db.js");
+const { addCredits, createOrder, getOrCreateUser, getOrder, logGeneration, spendCredits } = await import("../src/db.js");
+const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
+const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 
 // ---- fal stubs (network edge): model runs + storage uploads ----
 interface FalCall {
@@ -424,6 +428,85 @@ await step("POST /api/order: records a pending Kaspi order and returns the pay l
     body: JSON.stringify({ pack: "nope" }),
   });
   assert.equal(bad.status, 400);
+});
+
+await step("POST /api/order: a per-pack fixed-amount link overrides the fallback", async () => {
+  const r = await fetch(`${base}/api/order`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ pack: "combo" }),
+  });
+  assert.equal(r.status, 200);
+  const d = (await r.json()) as { available: boolean; link: string; amount: number };
+  assert.equal(d.link, "https://pay.test/combo"); // KASPI_PAY_URL_COMBO, not the fallback
+  assert.equal(d.amount, 1000); // combo = 1000 ₸
+});
+
+await step("Kaspi callback: valid signature auto-approves the order and grants patrons exactly once", async () => {
+  // A pending order to approve.
+  const buyer = 99001;
+  await getOrCreateUser(buyer, "kaspi_buyer", null, 3);
+  const orderId = await createOrder(buyer, "start", 3700);
+
+  const granted: Array<{ userId: number; credits: number }> = [];
+  const grant = async (userId: number, pack: { credits: number }) => {
+    granted.push({ userId, credits: pack.credits });
+  };
+  const sign = (raw: Buffer) => createHmac("sha256", "test-kaspi-secret").update(raw).digest("hex");
+
+  const raw = Buffer.from(JSON.stringify({ orderId, status: "paid", amount: 3700 }));
+  const ok = await kaspiCallbackResponse(raw, sign(raw), grant);
+  assert.equal(ok.status, 200);
+  assert.equal((ok.body as { granted?: number }).granted, 60); // Старт = 60 🔫
+  assert.equal(granted.length, 1);
+  assert.equal(granted[0]?.userId, buyer);
+  assert.equal((await getOrder(orderId))?.status, "paid");
+
+  // Idempotent: a duplicate callback must NOT grant again.
+  const dup = await kaspiCallbackResponse(raw, sign(raw), grant);
+  assert.equal(dup.status, 200);
+  assert.equal(granted.length, 1, "duplicate callback double-granted");
+});
+
+await step("Kaspi callback: rejects a bad signature, amount mismatch, and unknown order", async () => {
+  const buyer = 99002;
+  await getOrCreateUser(buyer, "kaspi_buyer2", null, 3);
+  const orderId = await createOrder(buyer, "start", 3700);
+  const grant = async () => assert.fail("must not grant on a rejected callback");
+  const sign = (raw: Buffer) => createHmac("sha256", "test-kaspi-secret").update(raw).digest("hex");
+
+  const raw = Buffer.from(JSON.stringify({ orderId, status: "paid", amount: 3700 }));
+  // Wrong signature → 401.
+  assert.equal((await kaspiCallbackResponse(raw, "deadbeef", grant)).status, 401);
+  // Correct signature but wrong amount → 400, order stays pending.
+  const wrongAmt = Buffer.from(JSON.stringify({ orderId, status: "paid", amount: 1 }));
+  assert.equal((await kaspiCallbackResponse(wrongAmt, sign(wrongAmt), grant)).status, 400);
+  assert.equal((await getOrder(orderId))?.status, "pending");
+  // Unknown order id → 404.
+  const unknown = Buffer.from(JSON.stringify({ orderId: 987654, status: "paid" }));
+  assert.equal((await kaspiCallbackResponse(unknown, sign(unknown), grant)).status, 404);
+  // Non-final status → acknowledged (200) but not granted.
+  const pendingCb = Buffer.from(JSON.stringify({ orderId, status: "wait" }));
+  assert.equal((await kaspiCallbackResponse(pendingCb, sign(pendingCb), grant)).status, 200);
+  assert.equal((await getOrder(orderId))?.status, "pending");
+});
+
+await step("Kaspi verify: no merchant API configured → 'unknown' (button falls back to admin)", async () => {
+  const buyer = 99003;
+  await getOrCreateUser(buyer, "kaspi_verify", null, 3);
+  const id = await createOrder(buyer, "start", 3700);
+  const order = await getOrder(id);
+  assert.ok(order);
+  assert.equal(await kaspiVerifyOrder(order!), "unknown"); // KASPI_API_BASE unset
+});
+
+await step("share-to-WhatsApp: afterKeyboard carries a wa.me link with the bot deep link", async () => {
+  const wa = whatsappShareUrl();
+  assert.ok(wa && wa.startsWith("https://wa.me/?text="), "no wa.me share url");
+  assert.match(decodeURIComponent(wa!), /t\.me\/neuroshot_test_bot\?start=src_wa/);
+  const kb = afterKeyboard(true) as unknown as { inline_keyboard: Array<Array<{ url?: string; text: string }>> };
+  const urls = kb.inline_keyboard.flat().filter((b) => b.url);
+  assert.ok(urls.some((b) => b.url?.startsWith("https://wa.me/")), "WhatsApp button missing from result keyboard");
 });
 
 await step("method gating on studio endpoints: GET /api/generate and /api/upload → 405", async () => {
