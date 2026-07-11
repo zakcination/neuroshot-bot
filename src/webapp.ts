@@ -227,6 +227,7 @@ function catalogPayload(): Record<string, unknown> {
               resolutions: (spec.image.resolutions ?? []).map((t) => ({
                 id: t.id,
                 label: t.label,
+                mult: t.mult,
                 credits: priceFor(spec, { resolution: t.id }),
               })),
             }
@@ -251,6 +252,7 @@ function catalogPayload(): Record<string, unknown> {
               resolutions: (spec.video.resolutions ?? []).map((t) => ({
                 id: t.id,
                 label: t.label,
+                mult: t.mult,
                 credits: priceFor(spec, { resolution: t.id }),
               })),
             }
@@ -476,12 +478,20 @@ export async function generateResponse(
   }
 
   // Video END frame (morph target): an uploaded HTTPS image, or one of the
-  // caller's OWN previous image results by id — same rules as the source image.
-  let endImageUrl = isHttpsUrl(body?.end_image_url) ? (body.end_image_url as string) : undefined;
-  if (!endImageUrl && body?.end_generation_id != null) {
-    const src = await getGeneration(Number(body.end_generation_id), userId);
-    if (src?.status === "ok" && src.output_url && !/\.(mp4|webm|mov)(\?|$)/i.test(src.output_url)) {
-      endImageUrl = src.output_url;
+  // caller's OWN previous image results by id — validated as strictly as the
+  // source image. If the user supplied an end frame at all, it MUST resolve to a
+  // real, owner-scoped, non-video image — otherwise fail loudly (no silent drop,
+  // which would render without the frame the user picked).
+  let endImageUrl: string | undefined;
+  if (body?.end_image_url != null || body?.end_generation_id != null) {
+    if (isHttpsUrl(body?.end_image_url)) {
+      endImageUrl = body.end_image_url as string;
+    } else if (body?.end_generation_id != null) {
+      const src = await getGeneration(Number(body.end_generation_id), userId);
+      if (src?.status === "ok" && src.output_url) endImageUrl = src.output_url;
+    }
+    if (!endImageUrl || /\.(mp4|webm|mov)(\?|$)/i.test(endImageUrl)) {
+      return { status: 400, body: { error: "bad_end_frame" } };
     }
   }
   // Composer options (duration / aspect ratio / quality / end frame) — validated.

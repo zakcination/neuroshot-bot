@@ -801,6 +801,30 @@ await step("input params: image aspect ratio → image_size, quality tier prices
   assert.equal(scall.input.resolution, "1080p");
 });
 
+await step("end frame is validated as strictly as the source: video url or foreign id → 400", async () => {
+  // A .mp4 end frame is rejected (end frames must be images).
+  const vid = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "kling3", image_url: "https://fal.test/storage/u-1.jpg",
+      prompt: "m", end_image_url: "https://fal.test/out/9.mp4",
+    }),
+  });
+  assert.equal(vid.status, 400);
+  assert.equal(((await vid.json()) as { error: string }).error, "bad_end_frame");
+
+  // A foreign/non-existent end_generation_id fails loudly instead of silently dropping.
+  const foreign = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "kling3", image_url: "https://fal.test/storage/u-1.jpg",
+      prompt: "m", end_generation_id: 999999,
+    }),
+  });
+  assert.equal(foreign.status, 400);
+  assert.equal(((await foreign.json()) as { error: string }).error, "bad_end_frame");
+});
+
 await step("scenario video scenes: on-theme scene sets the motion; model swap adjusts price", async () => {
   const { body } = await apiMe(signInitData(maker));
   const wc = body.catalog.campaigns.find((k) => k.id === "worldcup") as unknown as {

@@ -890,11 +890,12 @@
       if (!resList.length) pick.resolution = undefined;
       if (!hasEnd) { pick.end_photo = null; pick.end_generation_id = null; } // drop a stale end frame on models without it
       pick.options = pick.options || [];
-      // Live price = duration price × the chosen quality multiplier (res tier / base).
+      // Live price = ceil(duration price × the tier's exact multiplier) — mirrors
+      // the server's priceFor precisely (using the raw mult, not rounded credits,
+      // so the chip price always equals the amount actually charged).
       const resMult = () => {
         if (!pick.resolution || !resList.length) return 1;
-        const t = resList.find((r) => r.id === pick.resolution) || resList[0];
-        return t.credits / resList[0].credits;
+        return (resList.find((r) => r.id === pick.resolution) || resList[0]).mult;
       };
       const priceOf = (sec) => Math.ceil((durs.find((d) => d.seconds === sec) || durs[0]).credits * resMult());
 
