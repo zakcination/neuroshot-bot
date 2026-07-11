@@ -760,7 +760,7 @@ await step("scenario video scenes: on-theme scene sets the motion; model swap ad
   await pollGen(d.id);
   const call = falCalls.at(-1)!;
   assert.equal(call.endpoint, "bytedance/seedance-2.0/fast/image-to-video");
-  assert.match(call.input.prompt as string, /scores a legendary winning goal/); // the scene
+  assert.match(call.input.prompt as string, /fires it into the net/); // the scene
 
   // Unknown scene id / off-picker model → 400 (nothing charged).
   const badScene = await fetch(`${base}/api/generate`, {
@@ -819,12 +819,12 @@ await step("prompt quality guards: kid-focus + no-duplicates baked into cartoon 
   const { CAMPAIGNS } = await import("../src/models.js");
   const cartoon = CAMPAIGNS.find((c) => c.id === "cartoon")!;
   for (const p of cartoon.presets) {
-    assert.match(p.prompt, /MAIN subject/i, `${p.id} missing kid-focus`);
-    assert.match(p.prompt, /exactly (ONE|once)/i, `${p.id} missing de-dup guard`);
+    assert.match(p.prompt, /clear hero/i, `${p.id} missing kid-focus`);
+    assert.match(p.prompt, /one single instance|shown once/i, `${p.id} missing de-dup guard`);
   }
   const wc = CAMPAIGNS.find((c) => c.id === "worldcup")!;
   for (const p of wc.presets.filter((x) => x.id !== "kit")) {
-    assert.match(p.prompt, /no duplicated figures/, `${p.id} missing NO_CLONES`);
+    assert.match(p.prompt, /exactly once in the frame/, `${p.id} missing NO_CLONES`);
   }
 });
 

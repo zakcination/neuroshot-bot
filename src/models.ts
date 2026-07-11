@@ -359,39 +359,54 @@ export interface Preset {
  */
 export const PRESET_MODEL: ModelSpec = MODELS.seedream_edit;
 
+// --- Curated-prompt guards (shared by presets, campaigns and free scenarios) ---
+// Positive phrasing per Higgsfield's prompt guide — "keep exactly", "one single
+// instance" and "exactly once" land better than "don't"/"never" negatives.
+const KEEP_ID = "Keep the person's face and identity exactly as in the photo.";
+const KEEP_KID = "Keep the child's face and identity exactly as in the photo.";
+/**
+ * Composition guard for kid+character scenes: models love to push the real
+ * child into the background and to duplicate the famous character. Bake the
+ * fix into every curated prompt (curated prompts skip the craft mapping).
+ */
+const KID_FOCUS =
+  "Keep the real child as the clear hero — foreground, centered, face sharp and well lit. " +
+  "Include one single instance of the character, just beside and slightly behind the child.";
+/** De-dup guard for scenes with a real-world star (two Messis = ruined shot). */
+const NO_CLONES = "Show each person exactly once in the frame.";
+
 export const PRESETS: Preset[] = [
   {
     id: "headshot",
     label: "💼 Бизнес-портрет",
     category: "photo",
     prompt:
-      "Transform into a professional corporate headshot: tailored suit, soft studio key light, " +
-      "clean neutral gray backdrop, shallow depth of field, confident expression, magazine-cover retouching. " +
-      "Preserve the person's identity and facial features exactly.",
+      "Restyle into a professional corporate headshot: a tailored suit, soft studio key light with an 85mm lens " +
+      `look, clean neutral-gray backdrop, shallow depth of field, a confident expression, tack-sharp face. ${KEEP_ID}`,
   },
   {
     id: "fashion",
     label: "🕶 Fashion-съёмка",
     category: "photo",
     prompt:
-      "Transform into a high-fashion editorial photo: designer outfit, dramatic cinematic lighting, " +
-      "Vogue-style composition, film grain, bold styling. Preserve the person's identity and facial features exactly.",
+      "Restyle into a high-fashion editorial photo: a designer outfit, dramatic studio lighting, Vogue-style " +
+      `composition, subtle film grain, bold styling, tack-sharp face. ${KEEP_ID}`,
   },
   {
     id: "travel",
     label: "🌅 Закат на Санторини",
     category: "photo",
     prompt:
-      "Place the subject in a breathtaking golden-hour travel scene: Santorini rooftop at sunset, warm rim light, " +
-      "editorial travel-magazine look. Preserve the subject's identity exactly.",
+      "Place the person in a breathtaking golden-hour travel scene on a Santorini rooftop at sunset: warm rim " +
+      `light, an editorial travel-magazine look, tack-sharp face. ${KEEP_ID}`,
   },
   {
     id: "cinematic",
     label: "🎥 Кино-портрет",
     category: "photo",
     prompt:
-      "Transform into a cinematic movie-still portrait: anamorphic look, teal-and-orange grade, atmospheric haze, " +
-      "dramatic side lighting, 35mm film aesthetic. Preserve the person's identity and facial features exactly.",
+      "Restyle into a cinematic movie-still portrait: a 35mm anamorphic film look, dramatic soft side lighting, a " +
+      `gentle teal-and-amber grade that keeps skin tones natural, tack-sharp face. ${KEEP_ID}`,
   },
   {
     id: "product_hero",
@@ -487,20 +502,6 @@ export interface Campaign {
   videoScenes?: CampaignPreset[];
 }
 
-const KEEP_ID = "Preserve the person's identity and facial features exactly.";
-const KEEP_KID = "Preserve the child's identity and facial features exactly.";
-/**
- * Composition guard for kid+character scenes: models love to push the real
- * child into the background and to duplicate the famous character. Bake the
- * fix into every curated prompt (curated prompts skip the craft mapping).
- */
-const KID_FOCUS =
-  "The real child is the MAIN subject: in the foreground, centered, face in sharp focus and well lit. " +
-  "Show exactly ONE instance of the character, standing beside and slightly behind the child — " +
-  "never duplicate the character or the child.";
-/** De-dup guard for scenes with a real-world star (two Messis = ruined shot). */
-const NO_CLONES = "Show each person exactly once — no duplicated figures anywhere in the frame.";
-
 export const CAMPAIGNS: Campaign[] = [
   {
     id: "skazka",
@@ -512,29 +513,30 @@ export const CAMPAIGNS: Campaign[] = [
         id: "forest",
         label: "🌲 Волшебный лес",
         prompt:
-          "Transform this child into the hero of a magical fairy tale: an enchanted glowing forest, drifting " +
-          "fireflies, soft golden light, storybook-illustration-meets-cinematic look, wonder on their face, richly " +
-          `detailed. ${KEEP_KID}`,
+          "Place the child as the hero of a fairy tale in an enchanted glowing forest at golden hour: drifting " +
+          "fireflies, soft god-rays through the trees, wonder on their face, storybook-cinematic detail. " +
+          `${KEEP_KID}`,
       },
       {
         id: "dragon",
         label: "🐉 Дракон и герой",
         prompt:
-          "Turn this child into a brave storybook knight standing beside a friendly majestic dragon, epic castle in " +
-          `the background, warm sunset light, heroic fairy-tale atmosphere, cinematic detail. ${KEEP_KID}`,
+          "Make the child a brave storybook knight standing beside one friendly majestic dragon, an epic castle " +
+          `behind them in warm sunset light, heroic fairy-tale mood, cinematic detail. ${KEEP_KID}`,
       },
       {
         id: "royal",
         label: "👑 Королевство",
         prompt:
-          "Dress this child in royal fairy-tale attire inside a grand castle ballroom: crown, elegant costume, " +
-          `sparkling chandeliers, magical festive atmosphere, storybook grandeur. ${KEEP_KID}`,
+          "Dress the child in royal fairy-tale attire in a grand candle-lit castle ballroom: a delicate crown, " +
+          `an elegant costume, sparkling chandeliers, warm magical glow, storybook grandeur. ${KEEP_KID}`,
       },
     ],
     animateLabel: "🎬 Оживить сказку",
+    // One-shot, motion-first: camera as narrator + a single wonder beat.
     animatePrompt:
-      "Gentle magical motion: soft camera push-in, fireflies drifting, hair and clothing moving in a light breeze, " +
-      "the child smiles with wonder, cinematic storybook atmosphere.",
+      "Slow cinematic push-in as fireflies drift past and warm light blooms; a light breeze lifts the child's hair " +
+      "and clothing and they break into a wonder-struck smile — one calm magical beat, storybook atmosphere.",
     animateModel: MODELS.hailuo_fast,
     videoScenes: [
       {
@@ -542,22 +544,23 @@ export const CAMPAIGNS: Campaign[] = [
         label: "🐉 Полёт на драконе",
         tier: "epic",
         prompt:
-          "The child soars through the sky riding a friendly dragon, wind in their hair, magical glowing clouds and " +
-          "sparkles trailing behind, pure joy on their face, epic storybook adventure, cinematic slow motion.",
+          "The camera sweeps alongside as the child soars on the friendly dragon's back, wind rushing through their " +
+          "hair, glowing clouds and trailing sparkles streaming past, pure joy on their face — one continuous " +
+          "heroic flight, cinematic slow motion.",
       },
       {
         id: "castspell",
         label: "🪄 Волшебное заклинание",
         prompt:
-          "The child raises a glowing magic wand and casts a shimmering spell — sparks swirl into ribbons of light, " +
-          "eyes wide with wonder, enchanted particles fill the air, magical cinematic moment.",
+          "Slow push-in as the child lifts a glowing wand and casts a shimmering spell — sparks swirl upward into " +
+          "ribbons of light, eyes widening with wonder, enchanted particles filling the air — one magical beat.",
       },
       {
         id: "portal",
         label: "✨ Портал в сказку",
         prompt:
-          "The child steps through a glowing magical portal into a fairy-tale world, radiant light blooms around " +
-          "them, awe and wonder on their face, dreamy cinematic reveal.",
+          "The camera holds as the child steps through a blooming magical portal, radiant light washing over their " +
+          "awe-struck face, sparks spiralling around them — one dreamy reveal into the fairy-tale world.",
       },
     ],
     quiz: [
@@ -602,69 +605,67 @@ export const CAMPAIGNS: Campaign[] = [
         id: "sponge",
         label: "🧽 Губка Боб",
         prompt:
-          "Place this child happily standing with SpongeBob SquarePants in colorful underwater Bikini Bottom, " +
-          `the cartoon world blended photorealistically around the real child, joyful vibrant scene. ${KID_FOCUS} ${KEEP_KID}`,
+          "Place the child laughing beside SpongeBob SquarePants in colorful underwater Bikini Bottom, the cartoon " +
+          `world blended photorealistically around them, bright joyful scene. ${KID_FOCUS} ${KEEP_KID}`,
       },
       {
         id: "gumball",
         label: "😺 Гамбол",
         prompt:
-          "Place this child with Gumball Watterson from The Amazing World of Gumball in the town of Elmore, " +
-          `playful mixed cartoon-and-photo style, bright cheerful colors, both laughing together. ${KID_FOCUS} ${KEEP_KID}`,
+          "Place the child beside Gumball Watterson in the town of Elmore, playful mixed cartoon-and-photo style, " +
+          `bright cheerful colors, both laughing together. ${KID_FOCUS} ${KEEP_KID}`,
       },
       {
         id: "trikota",
         label: "🐱 Три кота",
         prompt:
-          "Place this child with the three cheerful kitten characters of the cartoon «Три кота» (Kid-E-Cats) " +
-          "in their cozy cartoon town, warm family atmosphere, bright friendly colors. " +
-          "The real child is the MAIN subject: in the foreground, centered, face in sharp focus and well lit. " +
-          `Show each of the three kittens exactly once, beside and slightly behind the child. ${KEEP_KID}`,
+          "Place the child with the three cheerful kittens of «Три кота» (Kid-E-Cats) in their cozy cartoon town, " +
+          "warm family atmosphere, bright friendly colors. Keep the real child as the clear hero — foreground, " +
+          `centered, face sharp and well lit — with each kitten shown once beside and behind them. ${KEEP_KID}`,
       },
       {
         id: "dbillions",
         label: "🎵 D Billions",
         prompt:
-          "Place this child dancing with the colorful D Billions characters on a bright festive stage, " +
-          "confetti, joyful kids-show energy, vivid colors. " +
-          "The real child is the MAIN subject: in the foreground, centered, face in sharp focus and well lit. " +
-          `Show each character exactly once, around and slightly behind the child. ${KEEP_KID}`,
+          "Place the child dancing with the colorful D Billions characters on a bright festive stage, confetti, " +
+          "joyful kids-show energy, vivid colors. Keep the real child as the clear hero — foreground, centered, " +
+          `face sharp and well lit — with each character shown once around and behind them. ${KEEP_KID}`,
       },
       {
         id: "shark",
         label: "🦈 Baby Shark",
         prompt:
-          "Place this child in a cheerful underwater scene swimming with Baby Shark, bubbles and " +
-          `sunbeams through the water, bright preschool-cartoon joy blended with the real child. ${KID_FOCUS} ${KEEP_KID}`,
+          "Place the child in a cheerful underwater scene swimming beside Baby Shark, bubbles and sunbeams through " +
+          `the water, bright preschool-cartoon joy blended around the real child. ${KID_FOCUS} ${KEEP_KID}`,
       },
     ],
     animateLabel: "🎬 Оживить встречу",
     animatePrompt:
-      "Playful lively motion: the cartoon character waves and bounces, the child laughs, confetti or bubbles drift, " +
-      "gentle camera push-in, joyful kids-show energy.",
+      "The cartoon character waves and bounces playfully while the child laughs and claps; confetti or bubbles " +
+      "drift through the frame, gentle camera push-in — one lively, joyful kids-show beat.",
     animateModel: MODELS.hailuo_fast,
     videoScenes: [
       {
         id: "dance",
         label: "💃 Танцуют вместе",
         prompt:
-          "The child and the cartoon character dance together with joyful energy, bright confetti and colors, both " +
-          "laughing, playful viral kids-dance-clip vibe, lively bouncy motion.",
+          "The child and the cartoon character dance together in sync, both laughing, bright confetti bursting " +
+          "around them — one bouncy, joyful viral kids-dance beat, lively motion.",
       },
       {
         id: "adventure",
         label: "🚀 Весёлое приключение",
         prompt:
-          "The child and the cartoon character run off on a fun adventure together, laughing and high-fiving, " +
-          "bright playful cartoon world rushing by, energetic joyful motion.",
+          "The camera tracks alongside as the child and the cartoon character dash off on an adventure, laughing " +
+          "and high-fiving, the bright cartoon world rushing past — one energetic, playful beat.",
       },
       {
         id: "fly",
         label: "🦸 Полёт супергероев",
         tier: "epic",
         prompt:
-          "The child flies through the bright sky as a little superhero alongside the cartoon character, cape " +
-          "fluttering, big happy smile, heroic and joyful, vivid colors.",
+          "The camera rises with them as the child and the cartoon character soar through a bright sky as little " +
+          "superheroes, capes fluttering, huge happy smiles — one heroic, joyful flight.",
       },
     ],
   },
@@ -678,36 +679,35 @@ export const CAMPAIGNS: Campaign[] = [
         id: "messi",
         label: "🇦🇷 С Месси",
         prompt:
-          "Place this person on the pitch of a packed World Cup final stadium at night, standing shoulder to " +
-          "shoulder with Lionel Messi, both in football kits, stadium lights blazing, confetti falling, " +
-          `sports-photography realism. ${NO_CLONES} ${KEEP_ID}`,
+          "Put the person on the pitch of a floodlit World Cup final at night, shoulder to shoulder with Lionel " +
+          `Messi, both in football kits, confetti falling, a roaring crowd behind, sports-photography realism. ${NO_CLONES} ${KEEP_ID}`,
       },
       {
         id: "ronaldo",
         label: "🇵🇹 С Роналду",
         prompt:
-          "Place this person on the pitch of a packed World Cup final stadium at night, celebrating side by side " +
-          `with Cristiano Ronaldo, both in football kits, dramatic stadium lighting, sports-photography realism. ${NO_CLONES} ${KEEP_ID}`,
+          "Put the person on the pitch of a floodlit World Cup final at night, celebrating side by side with " +
+          `Cristiano Ronaldo, both in football kits, dramatic stadium light, sports-photography realism. ${NO_CLONES} ${KEEP_ID}`,
       },
       {
         id: "yamal",
         label: "🇪🇸 С Ямалем",
         prompt:
-          "Place this person on the pitch of a packed World Cup final stadium celebrating with Lamine Yamal, both " +
-          `in football kits, golden confetti falling, electric atmosphere, sports-photography realism. ${NO_CLONES} ${KEEP_ID}`,
+          "Put the person on the pitch of a packed World Cup final celebrating beside Lamine Yamal, both in " +
+          `football kits, golden confetti falling, electric atmosphere, sports-photography realism. ${NO_CLONES} ${KEEP_ID}`,
       },
       {
         id: "kit",
         label: "🏟 Я в форме сборной",
         prompt:
-          "Transform this person into a professional footballer celebrating a goal in a packed World Cup stadium: " +
+          "Turn the person into a professional footballer celebrating a goal in a packed World Cup stadium: " +
           `national-team kit, roaring crowd, floodlights, confetti, epic sports-photography shot. ${KEEP_ID}`,
       },
     ],
     animateLabel: "🎬 Оживить момент",
     animatePrompt:
-      "Epic stadium motion: crowd roaring and waving flags, confetti falling, floodlight flares, slow heroic camera " +
-      "orbit around the subjects.",
+      "Slow heroic camera orbit around the pair as the floodlit crowd roars and waves flags, confetti drifting " +
+      "down, lens flares catching the light — one triumphant stadium beat.",
     animateModel: MODELS.hailuo_fast,
     videoScenes: [
       {
@@ -715,31 +715,31 @@ export const CAMPAIGNS: Campaign[] = [
         label: "⚽️ Легендарный гол",
         tier: "epic",
         prompt:
-          "The person receives a perfect pass from the football superstar and scores a legendary winning goal — the " +
-          "net ripples, the packed stadium erupts, teammates rush in, slow-motion cinematic sports-broadcast celebration.",
+          "In one continuous broadcast shot the person latches onto a through-ball and fires it into the net — the " +
+          "net ripples, the packed stadium erupts, teammates rush in to celebrate — cinematic slow-motion.",
       },
       {
         id: "fan",
         label: "📣 Фанат на трибуне",
         prompt:
-          "The person is a passionate fan in the packed stands, jumping and chanting with a team scarf raised high, " +
-          "flares smoke and confetti, roaring sea of supporters, energetic viral fan-cam style.",
+          "The person leaps and chants in the packed stands, team scarf raised high, flares and confetti smoking " +
+          "around them, a roaring sea of supporters behind — one electric fan-cam beat.",
       },
       {
         id: "trophy",
         label: "🏆 Победа с командой",
         tier: "epic",
         prompt:
-          "The person lifts the championship trophy together with the superstar and the whole team, golden confetti " +
-          "raining down, teammates cheering and hugging, triumphant slow-motion celebration.",
+          "The person lifts the championship trophy overhead beside the superstar as golden confetti rains down and " +
+          "teammates leap in to celebrate — one triumphant slow-motion beat.",
       },
       {
         id: "freekick",
         label: "🎯 Гол со штрафного",
         tier: "epic",
         prompt:
-          "The person steps up for a dramatic free kick and curls the ball into the top corner past the wall — the " +
-          "crowd explodes, arms raised in triumph, epic slow-motion sports moment.",
+          "The person strikes a dramatic free kick that curls over the wall into the top corner; the keeper dives " +
+          "too late, the crowd explodes, arms flying up in triumph — one epic slow-motion beat.",
       },
     ],
   },
@@ -768,30 +768,30 @@ export const CAMPAIGNS: Campaign[] = [
     ],
     animateLabel: "🎬 Оживить (как живые)",
     animatePrompt:
-      "Subtle lifelike motion, respectful and warm: the people gently blink, breathe and smile softly, a slight " +
-      "natural head movement, soft light shift — like a living memory.",
+      "Subtle, respectful living-memory motion: the people gently blink, breathe and let a soft smile form, a " +
+      "slight natural head turn, a gentle shift of warm light — one tender, lifelike beat.",
     animateModel: MODELS.hailuo_fast,
     videoScenes: [
       {
         id: "alive",
         label: "🤍 Оживают нежно",
         prompt:
-          "The people in the old photo gently come to life — they blink, breathe, smile softly and glance warmly at " +
-          "each other, a tender living-memory moment, respectful natural motion, soft nostalgic light.",
+          "The people gently come to life — they blink, breathe, let a soft smile form and glance warmly at each " +
+          "other — one tender living-memory beat, respectful natural motion, soft nostalgic light.",
       },
       {
         id: "wave",
         label: "👋 Улыбается и машет",
         prompt:
-          "The person in the restored photo warmly smiles and waves at the viewer, eyes lighting up, a heartfelt " +
-          "living-memory moment, gentle natural motion.",
+          "The person warmly smiles and raises a hand to wave at the viewer, eyes lighting up — one heartfelt " +
+          "living-memory beat, gentle natural motion.",
       },
       {
         id: "together",
         label: "🫂 Семья вместе",
         prompt:
-          "The family in the old photo turns to each other with warm smiles and a gentle embrace, a touching " +
-          "nostalgic moment brought to life, soft natural movement and light.",
+          "The family turns to each other with warm smiles and settles into a gentle embrace — one touching " +
+          "nostalgic beat brought to life, soft natural movement and light.",
       },
     ],
   },
@@ -805,28 +805,31 @@ export const CAMPAIGNS: Campaign[] = [
         id: "action",
         label: "💥 Боевик",
         prompt:
-          "Turn this person into the star of a blockbuster action movie poster: dramatic pose, explosions and " +
-          `cityscape behind, bold title typography, high-contrast cinematic grade, theatrical one-sheet layout. ${KEEP_ID}`,
+          "Turn the person into the star of a blockbuster action movie poster: a commanding hero pose, explosions " +
+          "and a city skyline behind, high-contrast cinematic grade, dramatic one-sheet composition with clean " +
+          `negative space at the top for a title. ${KEEP_ID}`,
       },
       {
         id: "romance",
         label: "❤️ Мелодрама",
         prompt:
-          "Turn this person into the lead of a romantic drama movie poster: golden-hour light, soft wind, elegant " +
-          `serif title typography, emotional cinematic atmosphere, theatrical one-sheet layout. ${KEEP_ID}`,
+          "Turn the person into the lead of a romantic-drama movie poster: soft golden-hour light, gentle wind, " +
+          "emotional cinematic atmosphere, elegant one-sheet composition with clean negative space for a title. " +
+          `${KEEP_ID}`,
       },
       {
         id: "scifi",
         label: "🚀 Фантастика",
         prompt:
-          "Turn this person into the hero of an epic sci-fi movie poster: futuristic suit, neon-lit alien world, " +
-          `starships above, glowing title typography, cinematic one-sheet composition. ${KEEP_ID}`,
+          "Turn the person into the hero of an epic sci-fi movie poster: a sleek futuristic suit, a neon-lit alien " +
+          "world with starships above, cinematic one-sheet composition with clean negative space for a title. " +
+          `${KEEP_ID}`,
       },
     ],
     animateLabel: "🎬 Оживить постер",
     animatePrompt:
-      "Cinematic poster comes alive: slow parallax depth, drifting smoke and light flares, hair and clothing move " +
-      "in the wind, dramatic trailer-style atmosphere.",
+      "The poster comes alive: slow parallax depth as drifting smoke and light flares cross the frame, hair and " +
+      "clothing stirring in the wind, the hero's gaze locking to camera — one dramatic trailer-style beat.",
     animateModel: MODELS.hailuo_fast,
     videoScenes: [
       {
@@ -834,23 +837,23 @@ export const CAMPAIGNS: Campaign[] = [
         label: "💥 Уход от взрыва",
         tier: "epic",
         prompt:
-          "The person strides toward camera in slow motion as a huge explosion blooms behind them, sparks and debris " +
-          "flying, unshaken blockbuster action-hero energy, cinematic.",
+          "The person strides toward camera in slow motion as a huge explosion blooms behind them, sparks and " +
+          "debris flying, unshaken action-hero energy — one cinematic blockbuster beat.",
       },
       {
         id: "turn",
         label: "🎬 Драматичный разворот",
         prompt:
-          "The person turns to camera with an intense dramatic gaze, wind and atmospheric haze swirling, epic " +
-          "movie-trailer mood, slow cinematic push-in.",
+          "Slow cinematic push-in as the person turns to camera with an intense, dramatic gaze, wind and " +
+          "atmospheric haze swirling around them — one epic movie-trailer beat.",
       },
       {
         id: "heroic",
         label: "⚡ Геройский облёт",
         tier: "epic",
         prompt:
-          "The person stands heroically as the camera orbits around them, dramatic god-ray light and lens flares, " +
-          "epic climactic movie-trailer energy.",
+          "The camera orbits the person as they stand heroically, god-ray light and lens flares sweeping across " +
+          "the frame — one climactic movie-trailer beat.",
       },
     ],
   },
@@ -946,11 +949,11 @@ export const FREE_SCENARIOS: FreeScenario[] = [
     imageModel: PRESET_MODEL,
     videoModel: DEFAULT_VIDEO,
     imagePrompt:
-      "Dress this child as a graceful fairy-tale princess in a flowing sparkling gown inside a grand castle " +
-      `ballroom: crown, glittering chandeliers, warm magical light, storybook grandeur. ${KEEP_KID}`,
+      "Dress the child as a graceful fairy-tale princess in a flowing sparkling gown inside a grand castle " +
+      `ballroom: a delicate crown, glittering chandeliers, warm magical light, storybook grandeur. ${KEEP_KID}`,
     videoPrompt:
-      "The princess gently turns toward the camera and smiles with wonder, her gown and hair softly flowing, " +
-      "magical sparkles drifting through the air, a slow gentle push-in — one calm, graceful movement.",
+      "Slow graceful push-in as the princess turns toward the camera and lights up with a wonder-struck smile, " +
+      "her gown and hair flowing softly, magical sparkles drifting past — one calm, enchanting beat.",
   },
   {
     id: "football",
@@ -959,11 +962,11 @@ export const FREE_SCENARIOS: FreeScenario[] = [
     imageModel: PRESET_MODEL,
     videoModel: DEFAULT_VIDEO,
     imagePrompt:
-      "Transform this person into a professional footballer on the pitch of a packed stadium at night: " +
-      `national-team kit, bright floodlights, roaring crowd behind, epic sports-photography look. ${KEEP_ID}`,
+      "Turn the person into a professional footballer on the pitch of a packed stadium at night: national-team " +
+      `kit, bright floodlights, a roaring crowd behind, epic sports-photography look. ${KEEP_ID}`,
     videoPrompt:
-      "The footballer raises both arms and celebrates a goal, golden confetti raining down, the floodlit crowd " +
-      "roars behind — one clear triumphant celebration, natural sports-broadcast motion.",
+      "The footballer wheels away with both arms raised in a roaring goal celebration, golden confetti raining " +
+      "down and the floodlit crowd erupting behind — one clear, triumphant sports-broadcast beat.",
   },
 ];
 
