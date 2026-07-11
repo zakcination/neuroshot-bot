@@ -972,6 +972,39 @@ export function freeScenarioById(id: string): FreeScenario | undefined {
 }
 
 /**
+ * Persona-routed entry links (docs/strategy §04). An acquisition-source slug
+ * (t.me/<bot>?start=src_football) can pre-select the FIRST action that hits that
+ * persona's priority gap — so a football-ad click lands straight on the football
+ * scenario, an "оживи фото" click on the restore flow, a Kaspi-seller click on
+ * the product-photo flow. The free scenario IS the sized trial, so routing grants
+ * NO extra patrons here — that keeps the public link un-farmable (identity-gating
+ * is the separate lever for any future bonus). Unknown slugs just fall through to
+ * the normal welcome, and source is still recorded for first-touch attribution.
+ */
+export type EntryRoute =
+  | { kind: "free"; id: FreeScenario["id"]; headline: string }
+  | { kind: "camp"; id: string; headline: string }
+  | { kind: "photoshoot"; headline: string }
+  | { kind: "product"; headline: string };
+
+export const ENTRY_LINKS: Record<string, EntryRoute> = {
+  src_football: { kind: "free", id: "football", headline: "⚽️ Ваш гол на стадионе — бесплатно!" },
+  src_princess: { kind: "free", id: "princess", headline: "👸 Сказка про принцессу — бесплатно!" },
+  src_revive: { kind: "camp", id: "oldphoto", headline: "🕰 Оживим старое фото — пришлите снимок." },
+  src_oldphoto: { kind: "camp", id: "oldphoto", headline: "🕰 Оживим старое фото — пришлите снимок." },
+  src_poster: { kind: "camp", id: "poster", headline: "🎬 Ваш кинопостер — пришлите фото." },
+  src_photoshoot: { kind: "photoshoot", headline: "📸 AI-фотосессия — пришлите ваш портрет." },
+  src_product: { kind: "product", headline: "🛍 Продающие фото товара — пришлите снимок." },
+  src_kaspi: { kind: "product", headline: "🛍 Фото товара для Kaspi/Instagram — пришлите снимок." },
+};
+
+/** Resolve an acquisition-source slug to its pre-selected first action, if any. */
+export function entryLinkFor(source: string | null | undefined): EntryRoute | null {
+  if (!source) return null;
+  return ENTRY_LINKS[source] ?? null;
+}
+
+/**
  * Whole ISO weeks (Monday-aligned, UTC) as a stable, monotonically rising index.
  * The Unix epoch (1970-01-01) is a Thursday, so +3 days shifts the boundary to
  * Monday 00:00 UTC — the rotation flips on Mondays, matching docs.

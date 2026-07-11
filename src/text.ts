@@ -10,6 +10,20 @@ export const UNIT_EMOJI = "🔫";
 export const UNIT_ONE = "патрон";
 
 /**
+ * One-line photo-quality nudge shown when we ask for a photo. Blurry / dark /
+ * tiny-face source photos are the silent churn driver for non-technical users
+ * (a bad result reads as "продукт плохой", not "плохое фото") — see docs/strategy.
+ * Kept short so it never buries the ask.
+ */
+export const PHOTO_TIP =
+  "💡 Совет: чёткое фото, лицо крупно и при хорошем свете — так результат получается заметно лучше.";
+
+/** Append the photo-quality tip to a "send me a photo" prompt. */
+export function withPhotoTip(ask: string): string {
+  return `${ask}\n\n${PHOTO_TIP}`;
+}
+
+/**
  * Correct Russian plural of the currency for any count.
  * 1 патрон · 2–4 патрона · 5–20 патронов · 21 патрон · …
  */

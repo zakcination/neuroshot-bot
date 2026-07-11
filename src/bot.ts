@@ -38,6 +38,7 @@ import { buildDigest, formatDigest } from "./monitor.js";
 import {
   CAMPAIGNS,
   campaignById,
+  entryLinkFor,
   FREE_SCENARIOS,
   freeScenarioById,
   IMAGE_MODEL_PICKER,
@@ -48,10 +49,11 @@ import {
   REFERRAL_MILESTONES,
   VIDEO_MODEL_PICKER,
   type Campaign,
+  type EntryRoute,
   type Preset,
 } from "./models.js";
 import { grantPurchase, registerPayments, sendBalance } from "./payments.js";
-import { nUnits, UNIT_EMOJI } from "./text.js";
+import { nUnits, UNIT_EMOJI, withPhotoTip } from "./text.js";
 
 async function user(
   ctx: { from?: { id: number; username?: string } },
@@ -212,6 +214,36 @@ const WELCOME = [
   "Что создаём?",
 ].join("\n");
 
+/**
+ * Persona-routed entry: pre-select the first action for an acquisition-source
+ * deep link (see ENTRY_LINKS) so a targeted click lands straight on the scenario
+ * that fits — set the pending mode and ask for the right photo (with the quality
+ * tip). No extra patrons are granted here, so the public link stays un-farmable.
+ */
+async function routeEntry(ctx: Context, userId: number, route: EntryRoute): Promise<void> {
+  if (route.kind === "free") {
+    if (!(await hasFreeScenario(userId))) return; // gift already used → the menu is enough
+    const s = freeScenarioById(route.id);
+    if (!s) return;
+    await setPending(userId, `mode_free_${s.id}`, null);
+    await ctx.reply(`${route.headline}\n\n${withPhotoTip(s.ask)}`);
+    return;
+  }
+  if (route.kind === "camp") {
+    const c = campaignById(route.id);
+    if (!c) return;
+    await setPending(userId, `mode_camp_${c.id}`, null);
+    await ctx.reply(`${route.headline}\n\n${withPhotoTip(c.ask)}`);
+    return;
+  }
+  if (route.kind === "product") {
+    await setPending(userId, "mode_product", null); // product photos: no face-tip
+    await ctx.reply(route.headline);
+    return;
+  }
+  await ctx.reply(withPhotoTip(route.headline)); // photoshoot: generic photo flow shows styles
+}
+
 export function createBot(botInfo?: UserFromGetMe): Bot {
   const bot = new Bot(config.botToken, botInfo ? { botInfo } : undefined);
 
@@ -278,6 +310,10 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       : { hasPhoto: !!u.pending_file_id, freeScenario };
     if (freeScenario) msg += `\n\n🎁 <b>Подарок:</b> одно фото → видео (принцесса или футбол) — бесплатно, без оплаты!`;
     await sendMainMenu(ctx, msg, menuOpts);
+    // Persona-routed deep link (src_football / src_revive / src_product …):
+    // pre-select the matching first action so the click lands where it converts.
+    const route = entryLinkFor(source);
+    if (route) await routeEntry(ctx, u.id, route);
     // Deep link from the Mini App's "Пополнить" button.
     if (payload === "buy") await sendBalance(ctx, u.credits);
   });
@@ -732,7 +768,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     }
     // Always ask for the right photo (child vs self) — don't reuse a stale one.
     await setPending(u.id, `mode_free_${s.id}`, null);
-    await ctx.reply(s.ask);
+    await ctx.reply(withPhotoTip(s.ask));
   });
 
   // ---- Campaigns: one-click viral scenarios (image → optional video upsell) ----
@@ -763,7 +799,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       return;
     }
     await setPending(u.id, `mode_camp_${c.id}`, null);
-    await ctx.reply(c.ask);
+    await ctx.reply(withPhotoTip(c.ask));
   });
 
   // One-tap campaign render; on success, offer the one-tap animate upsell that
@@ -778,7 +814,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     }
     const u = await user(ctx);
     if (!u.pending_file_id) {
-      await ctx.reply(c.ask);
+      await ctx.reply(withPhotoTip(c.ask));
       return;
     }
     const url = await runGeneration(ctx, u, PRESET_MODEL, preset.prompt, u.pending_file_id, {
