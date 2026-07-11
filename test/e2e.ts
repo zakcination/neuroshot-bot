@@ -22,7 +22,7 @@ process.env.WITHDRAW_MIN = "20"; // low so the withdrawal path is exercisable
 
 const { fal } = await import("@fal-ai/client");
 const { createBot } = await import("../src/bot.js");
-const { funnel, query, getUser, logGeneration, partnerAccount, usersToNudge, markNudged } = await import("../src/db.js");
+const { funnel, query, getUser, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay } = await import("../src/db.js");
 const { buildDigest, checkAlerts, nudgeText, runReengagement } = await import("../src/monitor.js");
 const { nUnits, nResults } = await import("../src/text.js");
 
@@ -1016,9 +1016,15 @@ await step("re-engagement nudge: sweeps dormant-but-recent users once, with a ta
   });
   assert.ok(!sent2.includes(8891), "already-nudged user was nudged again");
 
-  // markNudged is the idempotency guard usersToNudge respects.
+  // markNudged is the once-only guard usersToNudge respects.
   assert.ok(!(await usersToNudge(50)).map((t) => t.id).includes(8891), "nudged user still eligible");
-  await markNudged([8893]); // no-op path sanity (already ineligible)
+  // Idempotent: a second markNudged never overwrites the original nudge timestamp.
+  const t0 = (await query("SELECT nudged_at FROM users WHERE id = 8891"))[0].nudged_at;
+  await markNudged([8891]);
+  const t1 = (await query("SELECT nudged_at FROM users WHERE id = 8891"))[0].nudged_at;
+  assert.equal(String(t1), String(t0), "markNudged overwrote an existing nudge timestamp");
+  // Restart-safe daily guard: the DB reflects that a nudge happened today (UTC).
+  assert.equal(await nudgedOnUtcDay(new Date().toISOString().slice(0, 10)), true, "daily guard misses today's nudge");
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL || "embedded (pglite)"})`);

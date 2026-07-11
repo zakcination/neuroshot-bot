@@ -8,7 +8,7 @@
  * tomorrow's budget", so everything splits by acquisition source and payers.
  */
 import { config } from "./config.js";
-import { logEvent, markNudged, query, usersToNudge, type NudgeTarget } from "./db.js";
+import { logEvent, markNudged, nudgedOnUtcDay, query, usersToNudge, type NudgeTarget } from "./db.js";
 import { cheapestModel, CREDIT_COST_BASIS, MODELS } from "./models.js";
 
 const MODEL_COST = new Map(Object.values(MODELS).map((m) => [m.key, m.approxCostUsd]));
@@ -246,11 +246,17 @@ export async function runReengagement(send: SendFn): Promise<number> {
   const targets = await usersToNudge(config.reengageBatch);
   if (!targets.length) return 0;
   await markNudged(targets.map((t) => t.id));
+  let delivered = 0;
   for (const t of targets) {
-    await send(t.id, nudgeText(t)).catch(() => {});
-    await logEvent(t.id, "nudge").catch(() => {});
+    // Log the 'nudge' event only on a SUCCESSFUL send, so nudge→return metrics
+    // aren't skewed by users who blocked the bot (nudged_at still guards retries).
+    const ok = await send(t.id, nudgeText(t)).then(() => true).catch(() => false);
+    if (ok) {
+      delivered++;
+      await logEvent(t.id, "nudge").catch(() => {});
+    }
   }
-  return targets.length;
+  return delivered;
 }
 
 /**
@@ -273,10 +279,14 @@ export function startMonitor(send: SendFn): NodeJS.Timeout {
         for (const id of config.adminIds) await send(id, text).catch(() => {});
       }
       // Daily 48-hour re-engagement sweep (once per day, at most once per user).
+      // In-memory lastNudgeDay avoids re-checking every minute within a process;
+      // nudgedOnUtcDay makes it restart-safe (a mid-hour restart won't re-sweep).
       if (config.reengageEnabled && now.getUTCHours() === config.reengageHourUtc && lastNudgeDay !== day) {
         lastNudgeDay = day;
-        const n = await runReengagement(send);
-        if (n > 0) console.log(`re-engagement: nudged ${n} dormant user(s)`);
+        if (!(await nudgedOnUtcDay(day))) {
+          const n = await runReengagement(send);
+          if (n > 0) console.log(`re-engagement: nudged ${n} dormant user(s)`);
+        }
       }
       // Alerts: every 10 minutes (tick runs each minute).
       if (now.getUTCMinutes() % 10 === 0) {

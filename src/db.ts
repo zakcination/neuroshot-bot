@@ -829,8 +829,10 @@ export async function usersToNudge(limit: number): Promise<NudgeTarget[]> {
      LEFT JOIN (SELECT user_id, MAX(created_at) AS last_at FROM events GROUP BY user_id) e
        ON e.user_id = u.id
      WHERE u.nudged_at IS NULL
-       AND COALESCE(e.last_at, u.created_at)
-           BETWEEN now() - interval '14 days' AND now() - interval '48 hours'
+       -- half-open window: dormant strictly >48h, but active within the last 14d
+       -- (avoids the boundary off-by-one an inclusive BETWEEN would allow).
+       AND COALESCE(e.last_at, u.created_at) > now() - interval '14 days'
+       AND COALESCE(e.last_at, u.created_at) < now() - interval '48 hours'
      ORDER BY u.id
      LIMIT $1`,
     [Math.max(0, Math.floor(limit))],
@@ -842,11 +844,31 @@ export async function usersToNudge(limit: number): Promise<NudgeTarget[]> {
   }));
 }
 
-/** Stamp nudged_at so the sweep never messages the same user twice. */
+/**
+ * Stamp nudged_at so the sweep never messages the same user twice. Idempotent:
+ * only sets it when NULL, so a re-run never overwrites the original nudge time
+ * (which analytics/audits rely on).
+ */
 export async function markNudged(ids: number[]): Promise<void> {
   if (!ids.length) return;
   const ph = ids.map((_, i) => `$${i + 1}`).join(",");
-  await q(`UPDATE users SET nudged_at = now() WHERE id IN (${ph})`, ids);
+  await q(`UPDATE users SET nudged_at = now() WHERE id IN (${ph}) AND nudged_at IS NULL`, ids);
+}
+
+/**
+ * Whether the re-engagement sweep already ran on this UTC day — derived from the
+ * DB (nudged_at), so a process restart during/after the nudge hour can't run an
+ * extra batch the same day and blow past the daily cap. `day` is 'YYYY-MM-DD' UTC.
+ */
+export async function nudgedOnUtcDay(day: string): Promise<boolean> {
+  const rows = await q(
+    `SELECT 1 FROM users
+     WHERE nudged_at IS NOT NULL
+       AND to_char(nudged_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') = $1
+     LIMIT 1`,
+    [day],
+  );
+  return rows.length > 0;
 }
 
 export async function setPending(
