@@ -41,10 +41,11 @@ export const config = {
     .filter(Boolean)
     .map(Number),
   // --- Kaspi payments (KZT) — replaces Telegram Stars ---
-  // Kaspi payment link shown to buyers. Blank until the merchant link is live;
-  // while blank the buy flow records the order but tells the user payment isn't
-  // open yet. Set KASPI_PAY_URL to go live.
-  kaspiPayUrl: process.env.KASPI_PAY_URL ?? "",
+  // Kaspi payment link shown to buyers (the owner's live pay link is the default,
+  // so the buy flow works on deploy without extra config; override per-env with
+  // KASPI_PAY_URL, or set it to "" to close payments). Per-pack fixed-amount links
+  // can still override via KASPI_PAY_URL_<PACK> (kaspiLinkFor).
+  kaspiPayUrl: process.env.KASPI_PAY_URL ?? "https://pay.kaspi.kz/pay/1dwehs4t",
   // Auto-approval (merchant API): shared secret used to verify Kaspi's payment
   // callback (HMAC-SHA256 over the raw request body). BLANK → the callback route
   // is disabled (404) and purchases stay on the admin `/order N ok` path. Set
