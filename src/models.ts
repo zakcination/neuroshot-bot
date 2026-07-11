@@ -8,10 +8,25 @@
  */
 export type ModelKind = "image_edit" | "text_to_image" | "image_to_video";
 
-/** Per-generation options the studio composer can set (video mostly). */
+/** Per-generation options the studio composer can set. */
 export interface GenOpts {
   duration?: number; // video length in seconds
-  aspectRatio?: string; // "auto" (omit) | "9:16" | "16:9" | "1:1"
+  aspectRatio?: string; // "auto" | "1:1" | "9:16" | "16:9" | "4:3" | "3:4"
+  endImageUrl?: string; // video END frame (Kling 3.0 / Seedance) — start frame is the source image
+  resolution?: string; // quality-tier id (model-specific: "1K"/"2K"/"4K", "720p"/"1080p")
+}
+
+/** A quality/resolution tier the composer can offer; `mult` scales credits AND cost. */
+export interface ResTier {
+  id: string;
+  label: string; // RU-facing chip
+  mult: number; // credit multiplier over the base `credits` (tier[0].mult = 1)
+}
+
+/** Image composer capabilities (aspect ratio + optional quality ladder). */
+export interface ImageParams {
+  aspectRatios: string[]; // selectable ratios; "auto" ⇒ model/source decides
+  resolutions?: ResTier[]; // optional quality ladder; resolutions[0] = default
 }
 
 /** Video composer capabilities + per-second pricing (credits scale with length). */
@@ -19,6 +34,8 @@ export interface VideoParams {
   perSecondUsd: number; // provider cost per second — the credit-scaling basis
   durations: number[]; // selectable seconds; durations[0] = default (matches `credits`)
   aspectRatios: string[]; // selectable ratios; "auto" keeps the source frame's ratio
+  endFrame?: boolean; // accepts an optional end_image_url (morph source → end frame)
+  resolutions?: ResTier[]; // optional quality ladder; resolutions[0] = default
 }
 
 export interface ModelSpec {
@@ -30,9 +47,56 @@ export interface ModelSpec {
   label: string;
   /** Builds the fal input payload. imageUrl set for edit/video; opts from the composer. */
   input: (prompt: string, imageUrl?: string, opts?: GenOpts) => Record<string, unknown>;
+  /** Present on image models the composer can fine-tune (aspect ratio / quality). */
+  image?: ImageParams;
   /** Present on image_to_video models the composer can fine-tune. */
   video?: VideoParams;
 }
+
+/** Aspect ratios offered for images ("auto" = model decides / keep source). */
+export const IMAGE_ASPECTS = ["auto", "1:1", "9:16", "16:9", "4:3", "3:4"];
+
+/**
+ * Seedream & GPT-Image-2 take a NAMED `image_size`, not a ratio string — map the
+ * composer's ratio onto the right preset (hd = Seedream's ~2K set, sd = GPT's set).
+ */
+const NAMED_SIZE: Record<string, { hd: string; sd: string }> = {
+  "1:1": { hd: "square_hd", sd: "square" },
+  "9:16": { hd: "portrait_16_9", sd: "portrait_16_9" },
+  "16:9": { hd: "landscape_16_9", sd: "landscape_16_9" },
+  "3:4": { hd: "portrait_4_3", sd: "portrait_4_3" },
+  "4:3": { hd: "landscape_4_3", sd: "landscape_4_3" },
+};
+/** {image_size} for Seedream (hd) / GPT (sd) when a concrete ratio is chosen. */
+function sizeParam(opts: GenOpts | undefined, hd: boolean): { image_size?: string } {
+  const ar = opts?.aspectRatio;
+  if (!ar || ar === "auto") return {};
+  const m = NAMED_SIZE[ar];
+  return m ? { image_size: hd ? m.hd : m.sd } : {};
+}
+/** {aspect_ratio} for models that take a ratio string directly (Nano Banana / Seedance). */
+function arParam(opts: GenOpts | undefined): { aspect_ratio?: string } {
+  return opts?.aspectRatio && opts.aspectRatio !== "auto" ? { aspect_ratio: opts.aspectRatio } : {};
+}
+/** {end_image_url} for video models that support an end frame. */
+function endParam(opts: GenOpts | undefined): { end_image_url?: string } {
+  return opts?.endImageUrl ? { end_image_url: opts.endImageUrl } : {};
+}
+
+/** Quality ladders (credit multiplier covers the higher provider cost with margin). */
+const NB_RES: ResTier[] = [
+  { id: "1K", label: "1K", mult: 1 },
+  { id: "2K", label: "2K ✨", mult: 1.5 },
+  { id: "4K", label: "4K 💎", mult: 2.5 },
+];
+const NBPRO_RES: ResTier[] = [
+  { id: "2K", label: "2K", mult: 1 },
+  { id: "4K", label: "4K 💎", mult: 1.8 },
+];
+const SEEDANCE_RES: ResTier[] = [
+  { id: "720p", label: "720p", mult: 1 },
+  { id: "1080p", label: "1080p 💎", mult: 1.6 },
+];
 
 export const MODELS = {
   photo_edit: {
@@ -42,7 +106,8 @@ export const MODELS = {
     credits: 3,
     approxCostUsd: 0.06,
     label: "🖼 Редактирование фото",
-    input: (prompt, imageUrl) => ({ prompt, image_urls: [imageUrl] }),
+    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], ...arParam(opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS },
   },
   text_to_image: {
     key: "text_to_image",
@@ -51,7 +116,8 @@ export const MODELS = {
     credits: 2,
     approxCostUsd: 0.04,
     label: "✨ Картинка из текста",
-    input: (prompt) => ({ prompt }),
+    input: (prompt, _img, opts) => ({ prompt, ...sizeParam(opts, true) }),
+    image: { aspectRatios: IMAGE_ASPECTS },
   },
   // Seedream 4.5 edit — the default scenario image engine (photo → styled scene).
   // Stronger face-anchored scene edits than v4 at the same 2 🔫 tier ($0.04/img);
@@ -63,7 +129,8 @@ export const MODELS = {
     credits: 2,
     approxCostUsd: 0.04,
     label: "🖼 Seedream 4.5 — сцена по фото",
-    input: (prompt, imageUrl) => ({ prompt, image_urls: [imageUrl] }),
+    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], ...sizeParam(opts, true) }),
+    image: { aspectRatios: IMAGE_ASPECTS },
   },
   animate: {
     key: "animate",
@@ -72,13 +139,14 @@ export const MODELS = {
     credits: 25,
     approxCostUsd: 0.5,
     label: "🎬 Оживление фото",
+    // Kling 2.5-turbo has NO aspect_ratio param (ratio is inherited from the frame)
+    // and no end-frame — don't advertise settings fal will silently ignore.
     input: (prompt, imageUrl, opts) => ({
       prompt,
       image_url: imageUrl,
       duration: String(opts?.duration ?? 5),
-      ...(opts?.aspectRatio && opts.aspectRatio !== "auto" ? { aspect_ratio: opts.aspectRatio } : {}),
     }),
-    video: { perSecondUsd: 0.1, durations: [5, 10], aspectRatios: ["auto", "9:16", "16:9", "1:1"] },
+    video: { perSecondUsd: 0.1, durations: [5, 10], aspectRatios: ["auto"] },
   },
   premium_image: {
     key: "premium_image",
@@ -87,7 +155,8 @@ export const MODELS = {
     credits: 11,
     approxCostUsd: 0.21, // high quality, 1024x1024
     label: "💎 Премиум-картинка",
-    input: (prompt) => ({ prompt, quality: "high", image_size: { width: 1024, height: 1024 } }),
+    input: (prompt, _img, opts) => ({ prompt, quality: "high", image_size: sizeParam(opts, false).image_size ?? "square" }),
+    image: { aspectRatios: IMAGE_ASPECTS },
   },
   premium_edit: {
     key: "premium_edit",
@@ -96,7 +165,8 @@ export const MODELS = {
     credits: 11,
     approxCostUsd: 0.22, // high quality, 1024x1024
     label: "💎 Премиум-правка",
-    input: (prompt, imageUrl) => ({ prompt, image_urls: [imageUrl], quality: "high" }),
+    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], quality: "high", ...sizeParam(opts, false) }),
+    image: { aspectRatios: IMAGE_ASPECTS },
   },
 
   // --- Top-tier models (verified against fal.ai model pages, Jul 2026) ---
@@ -113,7 +183,8 @@ export const MODELS = {
     credits: 4,
     approxCostUsd: 0.08,
     label: "🍌 Nano Banana 2",
-    input: (prompt) => ({ prompt, resolution: "1K" }),
+    input: (prompt, _img, opts) => ({ prompt, resolution: opts?.resolution ?? "1K", ...arParam(opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES },
   },
   nb2_edit: {
     key: "nb2_edit",
@@ -122,7 +193,8 @@ export const MODELS = {
     credits: 4,
     approxCostUsd: 0.08,
     label: "🍌 Nano Banana 2 — правка",
-    input: (prompt, imageUrl) => ({ prompt, image_urls: [imageUrl] }),
+    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], resolution: opts?.resolution ?? "1K", ...arParam(opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES },
   },
   // Nano Banana Pro (Gemini 3 Pro) — SOTA image, $0.15/img @1K–2K.
   nbpro_image: {
@@ -132,7 +204,8 @@ export const MODELS = {
     credits: 8,
     approxCostUsd: 0.15,
     label: "🍌 Nano Banana Pro",
-    input: (prompt) => ({ prompt, resolution: "2K" }),
+    input: (prompt, _img, opts) => ({ prompt, resolution: opts?.resolution ?? "2K", ...arParam(opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES },
   },
   nbpro_edit: {
     key: "nbpro_edit",
@@ -141,7 +214,8 @@ export const MODELS = {
     credits: 8,
     approxCostUsd: 0.15,
     label: "🍌 Nano Banana Pro — правка",
-    input: (prompt, imageUrl) => ({ prompt, image_urls: [imageUrl], resolution: "2K" }),
+    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], resolution: opts?.resolution ?? "2K", ...arParam(opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES },
   },
   // Kling 3.0 Pro — top image→video, $0.168/s audio-on → 5s ≈ $0.84.
   kling3: {
@@ -151,13 +225,15 @@ export const MODELS = {
     credits: 42,
     approxCostUsd: 0.84,
     label: "🎬 Kling 3.0",
+    // Kling 3.0 has NO aspect_ratio param (ratio inherited from the start frame)
+    // but DOES support an end frame — morph from the source image into end_image_url.
     input: (prompt, imageUrl, opts) => ({
       prompt,
       start_image_url: imageUrl,
       duration: String(opts?.duration ?? 5),
-      ...(opts?.aspectRatio && opts.aspectRatio !== "auto" ? { aspect_ratio: opts.aspectRatio } : {}),
+      ...endParam(opts),
     }),
-    video: { perSecondUsd: 0.168, durations: [5, 10], aspectRatios: ["auto", "9:16", "16:9", "1:1"] },
+    video: { perSecondUsd: 0.168, durations: [5, 10], aspectRatios: ["auto"], endFrame: true },
   },
   // Seedance 2.0 Fast (ByteDance) — economy premium video, $0.2419/s → 5s ≈ $1.21.
   seedance_fast: {
@@ -170,11 +246,18 @@ export const MODELS = {
     input: (prompt, imageUrl, opts) => ({
       prompt,
       image_url: imageUrl,
-      resolution: "720p",
+      resolution: opts?.resolution ?? "720p",
       duration: String(opts?.duration ?? 5),
-      ...(opts?.aspectRatio && opts.aspectRatio !== "auto" ? { aspect_ratio: opts.aspectRatio } : {}),
+      ...arParam(opts),
+      ...endParam(opts),
     }),
-    video: { perSecondUsd: 0.2419, durations: [5, 10], aspectRatios: ["auto", "9:16", "16:9", "1:1"] },
+    video: {
+      perSecondUsd: 0.2419,
+      durations: [5, 10],
+      aspectRatios: ["auto", "9:16", "16:9", "1:1", "4:3", "3:4"],
+      endFrame: true,
+      resolutions: SEEDANCE_RES,
+    },
   },
   // Seedance 2.0 (ByteDance) — flagship video with audio/physics, $0.3034/s @720p → 5s ≈ $1.52.
   // NOTE: Seedance 2.0 lives in the "bytedance/" namespace on fal (NO fal-ai/ prefix).
@@ -188,12 +271,19 @@ export const MODELS = {
     input: (prompt, imageUrl, opts) => ({
       prompt,
       image_url: imageUrl,
-      resolution: "720p",
+      resolution: opts?.resolution ?? "720p",
       generate_audio: true, // the flagship's whole point — real synced sound
       duration: String(opts?.duration ?? 5),
-      ...(opts?.aspectRatio && opts.aspectRatio !== "auto" ? { aspect_ratio: opts.aspectRatio } : {}),
+      ...arParam(opts),
+      ...endParam(opts),
     }),
-    video: { perSecondUsd: 0.3034, durations: [5, 10], aspectRatios: ["auto", "9:16", "16:9", "1:1"] },
+    video: {
+      perSecondUsd: 0.3034,
+      durations: [5, 10],
+      aspectRatios: ["auto", "9:16", "16:9", "1:1", "4:3", "3:4"],
+      endFrame: true,
+      resolutions: SEEDANCE_RES,
+    },
   },
   // MiniMax Hailuo 2.3 Fast [Standard] — the DEFAULT scenario video engine:
   // fast, cheap, great for simple one-action motion. $0.19/6s → 10 🔫, $0.32/10s.
@@ -249,23 +339,46 @@ export function cheapestModel(kind: ModelKind): ModelSpec {
  * use the fixed `credits`. Kept ≥1 and rounded up so margin never inverts.
  */
 export function priceFor(model: ModelSpec, opts?: GenOpts): number {
+  let credits = model.credits;
+  // Video: scale with the chosen duration (cost is per-second).
   if (model.video && opts?.duration && opts.duration !== model.video.durations[0]) {
-    return Math.max(1, Math.ceil((model.video.perSecondUsd * opts.duration) / CREDIT_COST_BASIS));
+    credits = Math.max(1, Math.ceil((model.video.perSecondUsd * opts.duration) / CREDIT_COST_BASIS));
   }
-  return model.credits;
+  // Higher resolution/quality tier costs more provider $ — scale the charge so
+  // margin holds (tier[0].mult = 1, so the base price is unchanged by default).
+  const tiers = model.image?.resolutions ?? model.video?.resolutions;
+  if (tiers && opts?.resolution) {
+    const t = tiers.find((x) => x.id === opts.resolution);
+    if (t && t.mult !== 1) credits = Math.max(1, Math.ceil(credits * t.mult));
+  }
+  return credits;
 }
 
 /** Validate composer options against a model's declared capabilities. */
 export function normalizeOpts(model: ModelSpec, opts?: GenOpts): GenOpts | null {
-  if (!opts || !model.video) return {};
+  if (!opts) return {};
   const out: GenOpts = {};
+  // Aspect ratio — valid against the image OR video capability (whichever exists).
+  const aspects = model.image?.aspectRatios ?? model.video?.aspectRatios;
+  if (opts.aspectRatio != null) {
+    if (!aspects || !aspects.includes(opts.aspectRatio)) return null;
+    out.aspectRatio = opts.aspectRatio;
+  }
+  // Duration — video only.
   if (opts.duration != null) {
-    if (!model.video.durations.includes(opts.duration)) return null;
+    if (!model.video || !model.video.durations.includes(opts.duration)) return null;
     out.duration = opts.duration;
   }
-  if (opts.aspectRatio != null) {
-    if (!model.video.aspectRatios.includes(opts.aspectRatio)) return null;
-    out.aspectRatio = opts.aspectRatio;
+  // Resolution/quality tier — image or video ladder.
+  const tiers = model.image?.resolutions ?? model.video?.resolutions;
+  if (opts.resolution != null) {
+    if (!tiers || !tiers.some((t) => t.id === opts.resolution)) return null;
+    out.resolution = opts.resolution;
+  }
+  // End frame — only video models that declare support (URL format checked by caller).
+  if (opts.endImageUrl != null) {
+    if (!model.video?.endFrame) return null;
+    out.endImageUrl = opts.endImageUrl;
   }
   return out;
 }

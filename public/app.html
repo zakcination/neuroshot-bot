@@ -257,6 +257,7 @@
 
     /* quiz chips (story builder) */
     .quiz-q { font-size: 13px; font-weight: 700; color: var(--muted); margin: 14px 0 8px; }
+    .hint { font-size: 12px; color: var(--muted); margin: 6px 0 2px; opacity: .85; }
     .chips { display: flex; flex-wrap: wrap; gap: 7px; }
     .chip {
       border: 1px solid var(--line); background: var(--surface); color: var(--ink);
@@ -498,7 +499,7 @@
         const prompt = sheetBody.querySelector("#tprompt").value.trim();
         if (!prompt) { toast("Опишите, что нарисовать 🙂"); return; }
         st.pick = { source: "model", model: m.key, credits: m.credits, needPhoto: false, prompt };
-        run();
+        viewImageComposer(m);
       }));
     }
 
@@ -567,10 +568,18 @@
           <div class="mini" id="mini">${works.map((g) =>
             `<img src="${esc(g.output_url)}" data-gid="${g.id}" loading="lazy" alt="" />`).join("")}</div>` : ""}
         </div>
+        ${(st.pick.source === "preset" || st.pick.source === "campaign") && (ME.catalog.presetAspects || []).length > 1 ? `
+        <div class="quiz-q">Формат кадра</div>
+        <div class="chips" id="arRow">${ME.catalog.presetAspects.map((r) =>
+          `<button class="chip ${r === (st.pick.aspect_ratio || "auto") ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>` : ""}
         <div class="stack">
           <button class="btn primary" id="goBtn" disabled>Создать за ${st.pick.credits} 🔫</button>
           <button class="btn ghost" id="backBtn">← Назад</button>
         </div>`;
+      sheetBody.querySelectorAll("#arRow .chip").forEach((c) => (c.onclick = () => {
+        sheetBody.querySelectorAll("#arRow .chip").forEach((x) => x.classList.remove("on"));
+        c.classList.add("on"); st.pick.aspect_ratio = c.dataset.ar;
+      }));
       sheetBody.querySelector("#backBtn").onclick = () => viewPick();
       const goBtn = sheetBody.querySelector("#goBtn");
       sheetBody.querySelector("#file").onchange = async (e) => {
@@ -614,9 +623,15 @@
 
     async function ensureUploaded() {
       if (st.photoUrl || !st.photo) return st.photoUrl;
-      const { status, data } = await api("/api/upload", { method: "POST", body: JSON.stringify({ data: st.photo }) });
-      if (status !== 200) { toast("Не удалось загрузить фото — попробуйте ещё раз"); return null; }
-      return (st.photoUrl = data.url);
+      const url = await uploadData(st.photo);
+      if (!url) { toast("Не удалось загрузить фото — попробуйте ещё раз"); return null; }
+      return (st.photoUrl = url);
+    }
+
+    /** Upload a downscaled data-URL to fal storage; returns the HTTPS url or null. */
+    async function uploadData(dataUrl) {
+      const { status, data } = await api("/api/upload", { method: "POST", body: JSON.stringify({ data: dataUrl }) });
+      return status === 200 ? data.url : null;
     }
 
     async function run(payloadOverride) {
@@ -629,6 +644,12 @@
         image_url = await ensureUploaded();
         if (!image_url) { viewPhoto(); return; }
       }
+      // Optional video end frame: upload the chosen file (a picked own-work goes by id).
+      let end_image_url;
+      if (!payloadOverride && pick.end_photo && !pick.end_generation_id) {
+        end_image_url = await uploadData(pick.end_photo);
+        if (!end_image_url) { toast("Не удалось загрузить финальный кадр"); viewPick(); return; }
+      }
 
       const body = payloadOverride || {
         source: pick.source, id: pick.id, model: pick.model,
@@ -638,6 +659,9 @@
         custom: pick.custom || undefined,
         duration: pick.duration || undefined,
         aspect_ratio: pick.aspect_ratio && pick.aspect_ratio !== "auto" ? pick.aspect_ratio : undefined,
+        resolution: pick.resolution || undefined,
+        end_image_url,
+        end_generation_id: pick.end_generation_id || undefined,
         scene: pick.scene || undefined,
       };
       st.retry = { body, campaignId: pick.campaignId || null };
@@ -804,7 +828,44 @@
       }));
     }
 
-    const RATIO_LABEL = { auto: "Как фото", "9:16": "9:16 ↕", "16:9": "16:9 ↔", "1:1": "1:1 ◻" };
+    const RATIO_LABEL = { auto: "Как фото", "9:16": "9:16 ↕", "16:9": "16:9 ↔", "1:1": "1:1 ◻", "4:3": "4:3 ▭", "3:4": "3:4 ▯" };
+
+    /**
+     * Image composer: aspect ratio (no more square-by-default) + optional quality
+     * ladder (Nano Banana 2K/4K), live price. Text→image models run straight after.
+     */
+    function viewImageComposer(m) {
+      const pick = st.pick;
+      const ratios = (m.image && m.image.aspectRatios) || ["auto"];
+      const resList = (m.image && m.image.resolutions) || [];
+      pick.aspect_ratio = pick.aspect_ratio || ratios[0];
+      if (resList.length && !resList.some((r) => r.id === pick.resolution)) pick.resolution = resList[0].id;
+      if (!resList.length) pick.resolution = undefined;
+      const priceOf = () => (pick.resolution && resList.length ? (resList.find((r) => r.id === pick.resolution) || resList[0]).credits : m.credits);
+      sheetBody.innerHTML = `
+        <h3>Настройки картинки</h3>
+        ${ratios.length > 1 ? `<div class="quiz-q">Формат кадра</div>
+        <div class="chips" id="arRow">${ratios.map((r) =>
+          `<button class="chip ${r === pick.aspect_ratio ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>` : ""}
+        ${resList.length ? `<div class="quiz-q">Качество</div>
+        <div class="chips" id="resRow">${resList.map((r) =>
+          `<button class="chip ${r.id === pick.resolution ? "on" : ""}" data-res="${r.id}" data-rc="${r.credits}">${esc(r.label)} · ${r.credits} 🔫</button>`).join("")}</div>` : ""}
+        <div class="stack">
+          <button class="btn primary" id="goBtn"><span class="priceBadge">Создать · <span id="prN">${priceOf()}</span> 🔫</span></button>
+          <button class="btn ghost" id="backBtn">← Назад</button>
+        </div>`;
+      sheetBody.querySelectorAll("#arRow .chip").forEach((c) => (c.onclick = () => {
+        sheetBody.querySelectorAll("#arRow .chip").forEach((x) => x.classList.remove("on"));
+        c.classList.add("on"); pick.aspect_ratio = c.dataset.ar;
+      }));
+      sheetBody.querySelectorAll("#resRow .chip").forEach((c) => (c.onclick = () => {
+        sheetBody.querySelectorAll("#resRow .chip").forEach((x) => x.classList.remove("on"));
+        c.classList.add("on"); pick.resolution = c.dataset.res;
+        sheetBody.querySelector("#prN").textContent = c.dataset.rc;
+      }));
+      sheetBody.querySelector("#backBtn").onclick = () => viewPick();
+      sheetBody.querySelector("#goBtn").onclick = () => (pick.needPhoto && !pick.generation_id ? viewPhoto() : run());
+    }
 
     /**
      * Video composer: aspect ratio + duration (live price) + story quiz
@@ -815,6 +876,8 @@
       const pick = st.pick;
       const durs = m.video ? m.video.durations : [{ seconds: 5, credits: m.credits }];
       const ratios = m.video ? m.video.aspectRatios : ["auto"];
+      const resList = (m.video && m.video.resolutions) || []; // quality ladder (Seedance)
+      const hasEnd = !!(m.video && m.video.endFrame); // Kling 3.0 / Seedance: end frame
       const isCurated = pick.source === "campaign_video"; // motion prompt is curated
       const camp = pick.campaignId ? ME.catalog.campaigns.find((x) => x.id === pick.campaignId) : null;
       const scenes = (isCurated && camp && camp.videoScenes) || [];
@@ -823,8 +886,17 @@
       pick.model = m.key; // always send the (possibly swapped) model
       pick.aspect_ratio = pick.aspect_ratio || ratios[0];
       if (!durs.some((d) => d.seconds === pick.duration)) pick.duration = durs[0].seconds;
+      if (resList.length && !resList.some((r) => r.id === pick.resolution)) pick.resolution = resList[0].id;
+      if (!resList.length) pick.resolution = undefined;
+      if (!hasEnd) { pick.end_photo = null; pick.end_generation_id = null; } // drop a stale end frame on models without it
       pick.options = pick.options || [];
-      const priceOf = (sec) => (durs.find((d) => d.seconds === sec) || durs[0]).credits;
+      // Live price = duration price × the chosen quality multiplier (res tier / base).
+      const resMult = () => {
+        if (!pick.resolution || !resList.length) return 1;
+        const t = resList.find((r) => r.id === pick.resolution) || resList[0];
+        return t.credits / resList[0].credits;
+      };
+      const priceOf = (sec) => Math.ceil((durs.find((d) => d.seconds === sec) || durs[0]).credits * resMult());
 
       sheetBody.innerHTML = `
         <h3>Настройки видео</h3>
@@ -835,12 +907,25 @@
           <div class="chips" id="sceneRow">${scenes.map((s) =>
             `<button class="chip ${pick.scene === s.id ? "on" : ""}" data-scene="${s.id}" data-sctier="${s.tier || "simple"}" data-scmodel="${s.videoModelKey}">${esc(s.label)}${s.tier === "epic" ? ` · ⚡${s.videoCredits} 🔫` : ""}</button>`).join("")}</div>
           ${scenes.some((s) => s.tier === "epic") ? `<div class="hint">⚡ — эпичная сцена на движке Seedance (звук и физика)</div>` : ""}` : ""}
-        <div class="quiz-q">Формат кадра</div>
+        ${ratios.length > 1 ? `<div class="quiz-q">Формат кадра</div>
         <div class="chips" id="arRow">${ratios.map((r) =>
-          `<button class="chip ${r === pick.aspect_ratio ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>
+          `<button class="chip ${r === pick.aspect_ratio ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>`
+        : `<div class="hint">Формат кадра — как у исходного фото (эта модель не меняет соотношение).</div>`}
+        ${resList.length ? `<div class="quiz-q">Качество</div>
+        <div class="chips" id="resRow">${resList.map((r) =>
+          `<button class="chip ${r.id === pick.resolution ? "on" : ""}" data-res="${r.id}">${esc(r.label)}</button>`).join("")}</div>` : ""}
         <div class="quiz-q">Длительность</div>
         <div class="chips" id="durRow">${durs.map((d) =>
-          `<button class="chip ${d.seconds === pick.duration ? "on" : ""}" data-dur="${d.seconds}">${d.seconds}с · ${d.credits} 🔫</button>`).join("")}</div>
+          `<button class="chip ${d.seconds === pick.duration ? "on" : ""}" data-dur="${d.seconds}">${d.seconds}с · ${priceOf(d.seconds)} 🔫</button>`).join("")}</div>
+        ${hasEnd ? `<div class="quiz-q">Финальный кадр — переход к другому фото (необязательно)</div>
+        <div id="endZone">
+          <label class="drop"><input type="file" accept="image/*" id="endFile" />
+            <span class="em">🎞</span><b>${pick.end_photo || pick.end_generation_id ? "Кадр выбран ✓" : "Добавить финальный кадр"}</b>
+            <span>видео плавно перейдёт к нему</span></label>
+          ${myImages().slice(0, 8).length ? `<div class="mini" id="endMini">${myImages().slice(0, 8).map((g) =>
+            `<img src="${esc(g.output_url)}" data-egid="${g.id}" class="${pick.end_generation_id === g.id ? "on" : ""}" loading="lazy" alt="" />`).join("")}</div>` : ""}
+          ${pick.end_photo || pick.end_generation_id ? `<button class="btn ghost" id="endClear">Убрать финальный кадр</button>` : ""}
+        </div>` : ""}
         ${story.map((s) => `
           <div class="quiz-q">${esc(s.question)}</div>
           <div class="chips" data-step="${s.id}">${s.options.map((o) =>
@@ -887,6 +972,28 @@
         c.classList.add("on"); pick.duration = Number(c.dataset.dur);
         sheetBody.querySelector("#prN").textContent = priceOf(pick.duration);
       }));
+      // Keep typed fields when a control re-renders the composer for fresh prices.
+      const preserveRerender = () => {
+        const cw = sheetBody.querySelector("#cw"); if (cw) pick.custom = cw.value.trim();
+        const mp0 = sheetBody.querySelector("#mp"); if (mp0) pick.prompt = mp0.value.trim();
+        viewVideoComposer(m);
+      };
+      // Quality tier: re-render so every duration price + the badge reflect the multiplier.
+      sheetBody.querySelectorAll("#resRow .chip").forEach((c) => (c.onclick = () => {
+        pick.resolution = c.dataset.res; preserveRerender();
+      }));
+      // End frame: upload a file, pick one of your own works, or clear it.
+      const endFile = sheetBody.querySelector("#endFile");
+      if (endFile) endFile.onchange = async () => {
+        const f = endFile.files && endFile.files[0]; if (!f) return;
+        const data = await downscale(f); if (!data) { toast("Не получилось прочитать фото"); return; }
+        pick.end_photo = data; pick.end_generation_id = null; preserveRerender();
+      };
+      sheetBody.querySelectorAll("#endMini img").forEach((im) => (im.onclick = () => {
+        pick.end_generation_id = Number(im.dataset.egid); pick.end_photo = null; preserveRerender();
+      }));
+      const endClear = sheetBody.querySelector("#endClear");
+      if (endClear) endClear.onclick = () => { pick.end_photo = null; pick.end_generation_id = null; preserveRerender(); };
       // story chips: one per step, tap again to clear.
       const sel = {};
       sheetBody.querySelectorAll(".chips[data-step]").forEach((row) => {

@@ -212,26 +212,51 @@ function catalogPayload(): Record<string, unknown> {
         options: s.options.map((o) => ({ id: o.id, label: o.label })),
       })),
     })),
-    imageModels: IMAGE_MODEL_PICKER.map((k) => ({
-      key: k,
-      label: MODELS[k].label,
-      credits: MODELS[k].credits,
-    })),
-    videoModels: VIDEO_MODEL_PICKER.map((k) => ({
-      key: k,
-      label: MODELS[k].label,
-      credits: MODELS[k].credits,
-      // Composer capabilities: selectable durations (with per-length price) + ratios.
-      video: MODELS[k].video
-        ? {
-            durations: MODELS[k].video!.durations.map((d) => ({
-              seconds: d,
-              credits: priceFor(MODELS[k], { duration: d }),
-            })),
-            aspectRatios: MODELS[k].video!.aspectRatios,
-          }
-        : null,
-    })),
+    // Aspect ratios offered for preset/campaign images (rendered by PRESET_MODEL).
+    presetAspects: PRESET_MODEL.image?.aspectRatios ?? [],
+    imageModels: IMAGE_MODEL_PICKER.map((k) => {
+      const spec = MODELS[k] as ModelSpec;
+      return {
+        key: k,
+        label: spec.label,
+        credits: spec.credits,
+        // Composer capabilities: aspect ratio + optional quality ladder (priced).
+        image: spec.image
+          ? {
+              aspectRatios: spec.image.aspectRatios,
+              resolutions: (spec.image.resolutions ?? []).map((t) => ({
+                id: t.id,
+                label: t.label,
+                credits: priceFor(spec, { resolution: t.id }),
+              })),
+            }
+          : null,
+      };
+    }),
+    videoModels: VIDEO_MODEL_PICKER.map((k) => {
+      const spec = MODELS[k] as ModelSpec;
+      return {
+        key: k,
+        label: spec.label,
+        credits: spec.credits,
+        // Composer capabilities: durations (per-length price), ratios, end-frame, quality.
+        video: spec.video
+          ? {
+              durations: spec.video.durations.map((d) => ({
+                seconds: d,
+                credits: priceFor(spec, { duration: d }),
+              })),
+              aspectRatios: spec.video.aspectRatios,
+              endFrame: !!spec.video.endFrame,
+              resolutions: (spec.video.resolutions ?? []).map((t) => ({
+                id: t.id,
+                label: t.label,
+                credits: priceFor(spec, { resolution: t.id }),
+              })),
+            }
+          : null,
+      };
+    }),
     // Video story composer (personalize any image→video): ids/labels only.
     videoStory: VIDEO_STORY.map((s) => ({
       id: s.id,
@@ -450,10 +475,21 @@ export async function generateResponse(
     return { status: 400, body: { error: "bad_request" } };
   }
 
-  // Composer options (duration/aspect ratio) — validated against the model.
+  // Video END frame (morph target): an uploaded HTTPS image, or one of the
+  // caller's OWN previous image results by id — same rules as the source image.
+  let endImageUrl = isHttpsUrl(body?.end_image_url) ? (body.end_image_url as string) : undefined;
+  if (!endImageUrl && body?.end_generation_id != null) {
+    const src = await getGeneration(Number(body.end_generation_id), userId);
+    if (src?.status === "ok" && src.output_url && !/\.(mp4|webm|mov)(\?|$)/i.test(src.output_url)) {
+      endImageUrl = src.output_url;
+    }
+  }
+  // Composer options (duration / aspect ratio / quality / end frame) — validated.
   const opts = normalizeOpts(model, {
     duration: body?.duration != null ? Number(body.duration) : undefined,
     aspectRatio: typeof body?.aspect_ratio === "string" ? body.aspect_ratio : undefined,
+    resolution: typeof body?.resolution === "string" ? body.resolution : undefined,
+    endImageUrl,
   } as GenOpts);
   if (opts === null) return { status: 400, body: { error: "bad_opts" } };
 
