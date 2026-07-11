@@ -303,10 +303,10 @@ await step("catalog rides on /api/me: presets, campaigns with video prices, mode
   const c = body.catalog;
   assert.ok(c.presets.some((p) => p.id === "headshot" && p.category === "photo"));
   assert.ok(c.presets.some((p) => p.id === "product_white" && p.category === "product"));
-  assert.equal(c.presetCredits, 2); // Seedream 4 edit preset/scenario engine
+  assert.equal(c.presetCredits, 2); // Seedream 4.5 edit preset/scenario engine
   const mini = c.campaigns.find((k) => k.id === "minifilm");
   assert.ok(mini, "minifilm campaign missing from catalog");
-  assert.equal(mini!.videoCredits, 61); // Seedance 2.0 Fast story upsell
+  assert.equal(mini!.videoCredits, 76); // flagship Seedance 2.0 (audio) story upsell
   assert.ok(mini!.presets.length >= 3);
   assert.ok(c.imageModels.some((m) => m.key === "nbpro_image"));
   assert.equal(c.videoModels[0].key, "hailuo_fast"); // cheap default video first
@@ -349,11 +349,11 @@ await step("POST /api/generate: preset charges, renders async, poll reaches ok",
   assert.equal(done.status, "ok");
   assert.match(done.output_url ?? "", /^https:\/\/fal\.test\/out\/.*\.png$/);
   const call = falCalls.at(-1)!;
-  assert.equal(call.endpoint, "fal-ai/bytedance/seedream/v4/edit");
+  assert.equal(call.endpoint, "fal-ai/bytedance/seedream/v4.5/edit");
   assert.match(call.input.prompt as string, /corporate headshot/);
 });
 
-await step("campaign video upsell via API: minifilm renders on Seedance 2.0 Fast (61 🔫)", async () => {
+await step("campaign video upsell via API: minifilm renders on flagship Seedance 2.0 with audio (76 🔫)", async () => {
   const r = await fetch(`${base}/api/generate`, {
     method: "POST",
     headers: { ...makerHeaders(), "Content-Type": "application/json" },
@@ -361,13 +361,14 @@ await step("campaign video upsell via API: minifilm renders on Seedance 2.0 Fast
   });
   assert.equal(r.status, 200);
   const d = (await r.json()) as { id: number; credits: number; balance: number };
-  assert.equal(d.credits, 61);
-  assert.equal(d.balance, 40); // 101 − 61
+  assert.equal(d.credits, 76);
+  assert.equal(d.balance, 25); // 101 − 76
   const done = await pollGen(d.id);
   assert.equal(done.status, "ok");
   assert.match(done.output_url ?? "", /\.mp4$/);
   const call = falCalls.at(-1)!;
-  assert.equal(call.endpoint, "bytedance/seedance-2.0/fast/image-to-video");
+  assert.equal(call.endpoint, "bytedance/seedance-2.0/image-to-video");
+  assert.equal(call.input.generate_audio, true); // «со звуком»
   assert.equal(call.input.image_url, "https://fal.test/out/1.png");
 });
 
@@ -671,7 +672,20 @@ await step("catalog: model news banner + video composer params (durations priced
   const { body } = await apiMe(signInitData(maker));
   const c = body.catalog as unknown as {
     news: Array<{ key: string; title: string; credits: number; kind: string; freeTrial: boolean }>;
-    videoModels: Array<{ key: string; video: { durations: Array<{ seconds: number; credits: number }>; aspectRatios: string[] } | null }>;
+    videoModels: Array<{
+      key: string;
+      video: {
+        durations: Array<{ seconds: number; credits: number }>;
+        aspectRatios: string[];
+        endFrame: boolean;
+        resolutions: Array<{ id: string; label: string; credits: number }>;
+      } | null;
+    }>;
+    imageModels: Array<{
+      key: string;
+      image: { aspectRatios: string[]; resolutions: Array<{ id: string; credits: number }> } | null;
+    }>;
+    presetAspects: string[];
     videoStory: Array<{ id: string; options: Array<Record<string, unknown>> }>;
   };
   assert.ok(c.news.length >= 3, "news banner empty");
@@ -682,7 +696,19 @@ await step("catalog: model news banner + video composer params (durations priced
   assert.deepEqual(kling.video!.durations.map((d) => d.seconds), [5, 10]);
   assert.equal(kling.video!.durations[0].credits, 42); // 5s default
   assert.equal(kling.video!.durations[1].credits, 84); // 10s = 2× ($0.168/s)
-  assert.ok(kling.video!.aspectRatios.includes("9:16")); // TikTok/Reels vertical
+  // Kling has NO aspect_ratio param (ratio inherited from the frame) — advertise honestly.
+  assert.deepEqual(kling.video!.aspectRatios, ["auto"]);
+  assert.equal(kling.video!.endFrame, true); // …but it DOES support an end frame
+  // Seedance actually honors ratio + a resolution ladder.
+  const seed = c.videoModels.find((m) => m.key === "seedance_fast")!;
+  assert.ok(seed.video!.aspectRatios.includes("9:16"), "Seedance missing vertical ratio");
+  assert.ok(seed.video!.resolutions.some((r) => r.id === "1080p"), "Seedance missing 1080p tier");
+  // Images now expose aspect ratio (fixes square-by-default) + Nano Banana quality tiers.
+  const t2i = c.imageModels.find((m) => m.key === "text_to_image")!;
+  assert.ok(t2i.image!.aspectRatios.includes("9:16"), "image model missing vertical ratio");
+  const nb2 = c.imageModels.find((m) => m.key === "nb2_image")!;
+  assert.ok(nb2.image!.resolutions.some((r) => r.id === "4K"), "Nano Banana missing 4K tier");
+  assert.ok(c.presetAspects.includes("9:16"), "preset images missing vertical ratio");
   assert.ok(c.videoStory.length >= 3);
   for (const s of c.videoStory) for (const o of s.options) assert.ok(!("fragment" in o), "video-story fragment leaked");
 });
@@ -696,7 +722,7 @@ await step("video composer: duration scales the charge, ratio flows to fal, stor
     body: JSON.stringify({
       source: "model", model: "kling3", generation_id: undefined,
       image_url: "https://fal.test/storage/u-1.jpg", prompt: "base motion",
-      duration: 10, aspect_ratio: "9:16",
+      duration: 10, end_image_url: "https://fal.test/storage/u-2.jpg", // morph target
       options: ["reveal", "cinematic"], custom: "  любит  футбол ",
     }),
   });
@@ -707,7 +733,7 @@ await step("video composer: duration scales the charge, ratio flows to fal, stor
   await pollGen(d.id);
   const call = falCalls.at(-1)!;
   assert.equal(call.input.duration, "10");
-  assert.equal(call.input.aspect_ratio, "9:16");
+  assert.equal(call.input.end_image_url, "https://fal.test/storage/u-2.jpg"); // end frame flows through
   assert.match(call.input.prompt as string, /cinematic reveal as the subject steps into the light/);
   assert.match(call.input.prompt as string, /film-grade color/);
   assert.match(call.input.prompt as string, /любит футбол/); // sanitized personalization
@@ -736,6 +762,69 @@ await step("video composer validation: bad duration/ratio → 400 bad_opts, bad 
   assert.equal(((await badStory.json()) as { error: string }).error, "bad_option");
 });
 
+await step("input params: image aspect ratio → image_size, quality tier prices up, Seedance ratio+res flow", async () => {
+  await addCredits(maker.id, 300, "admin_grant", "test");
+  // Image aspect ratio: Seedream maps "9:16" → the named portrait_16_9 size (no more square-by-default).
+  const img = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "text_to_image", prompt: "рисунок кота", aspect_ratio: "9:16" }),
+  });
+  assert.equal(img.status, 200);
+  await pollGen(((await img.json()) as { id: number }).id);
+  assert.equal(falCalls.at(-1)!.input.image_size, "portrait_16_9");
+
+  // Quality tier: Nano Banana 2 at 4K costs the 2.5× multiplier and passes resolution through.
+  const hi = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "nb2_image", prompt: "рисунок кота", resolution: "4K" }),
+  });
+  assert.equal(hi.status, 200);
+  const hid = (await hi.json()) as { id: number; credits: number };
+  assert.equal(hid.credits, 10); // 4 base × 2.5
+  await pollGen(hid.id);
+  assert.equal(falCalls.at(-1)!.input.resolution, "4K");
+
+  // Seedance honors ratio + resolution (unlike Kling): both flow to fal, price scales.
+  const sv = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_fast", image_url: "https://fal.test/storage/u-1.jpg",
+      prompt: "motion", aspect_ratio: "9:16", resolution: "1080p",
+    }),
+  });
+  assert.equal(sv.status, 200);
+  const svd = (await sv.json()) as { id: number; credits: number };
+  assert.equal(svd.credits, 98); // 61 base (5s 720p) × 1.6 (1080p), ceil
+  await pollGen(svd.id);
+  const scall = falCalls.at(-1)!;
+  assert.equal(scall.input.aspect_ratio, "9:16");
+  assert.equal(scall.input.resolution, "1080p");
+});
+
+await step("end frame is validated as strictly as the source: video url or foreign id → 400", async () => {
+  // A .mp4 end frame is rejected (end frames must be images).
+  const vid = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "kling3", image_url: "https://fal.test/storage/u-1.jpg",
+      prompt: "m", end_image_url: "https://fal.test/out/9.mp4",
+    }),
+  });
+  assert.equal(vid.status, 400);
+  assert.equal(((await vid.json()) as { error: string }).error, "bad_end_frame");
+
+  // A foreign/non-existent end_generation_id fails loudly instead of silently dropping.
+  const foreign = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "kling3", image_url: "https://fal.test/storage/u-1.jpg",
+      prompt: "m", end_generation_id: 999999,
+    }),
+  });
+  assert.equal(foreign.status, 400);
+  assert.equal(((await foreign.json()) as { error: string }).error, "bad_end_frame");
+});
+
 await step("scenario video scenes: on-theme scene sets the motion; model swap adjusts price", async () => {
   const { body } = await apiMe(signInitData(maker));
   const wc = body.catalog.campaigns.find((k) => k.id === "worldcup") as unknown as {
@@ -760,7 +849,7 @@ await step("scenario video scenes: on-theme scene sets the motion; model swap ad
   await pollGen(d.id);
   const call = falCalls.at(-1)!;
   assert.equal(call.endpoint, "bytedance/seedance-2.0/fast/image-to-video");
-  assert.match(call.input.prompt as string, /scores a legendary winning goal/); // the scene
+  assert.match(call.input.prompt as string, /fires it into the net/); // the scene
 
   // Unknown scene id / off-picker model → 400 (nothing charged).
   const badScene = await fetch(`${base}/api/generate`, {
@@ -819,12 +908,12 @@ await step("prompt quality guards: kid-focus + no-duplicates baked into cartoon 
   const { CAMPAIGNS } = await import("../src/models.js");
   const cartoon = CAMPAIGNS.find((c) => c.id === "cartoon")!;
   for (const p of cartoon.presets) {
-    assert.match(p.prompt, /MAIN subject/i, `${p.id} missing kid-focus`);
-    assert.match(p.prompt, /exactly (ONE|once)/i, `${p.id} missing de-dup guard`);
+    assert.match(p.prompt, /clear hero/i, `${p.id} missing kid-focus`);
+    assert.match(p.prompt, /one single instance|shown once/i, `${p.id} missing de-dup guard`);
   }
   const wc = CAMPAIGNS.find((c) => c.id === "worldcup")!;
   for (const p of wc.presets.filter((x) => x.id !== "kit")) {
-    assert.match(p.prompt, /no duplicated figures/, `${p.id} missing NO_CLONES`);
+    assert.match(p.prompt, /exactly once in the frame/, `${p.id} missing NO_CLONES`);
   }
 });
 

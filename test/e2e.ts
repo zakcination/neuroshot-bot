@@ -391,7 +391,7 @@ await step("balance: /balance reflects the ledger", async () => {
   assert.match(lastText(), /Баланс: 🔫 212 патронов/);
 });
 
-await step("photoshoot preset: photo → menu:photoshoot → one tap renders via Seedream 4 edit (2 🔫)", async () => {
+await step("photoshoot preset: photo → menu:photoshoot → one tap renders via Seedream 4.5 edit (2 🔫)", async () => {
   await sendPhoto(alice, "photo-3");
   const albumsBefore = calls("sendMediaGroup").length;
   await pressButton(alice, "pick:photo");
@@ -405,7 +405,7 @@ await step("photoshoot preset: photo → menu:photoshoot → one tap renders via
   assert.ok(!buttons.includes("preset:product_white"), "product presets leak into photo menu");
   await pressButton(alice, "preset:headshot");
   const call = falCalls.at(-1)!;
-  assert.equal(call.endpoint, "fal-ai/bytedance/seedream/v4/edit"); // cheap, strong-identity preset engine
+  assert.equal(call.endpoint, "fal-ai/bytedance/seedream/v4.5/edit"); // cheap, strong-identity preset engine
   assert.match(call.input.prompt as string, /corporate headshot/);
   assert.ok(Array.isArray(call.input.image_urls));
   assert.equal(await credits(alice.id), 210); // 212 - 2
@@ -451,7 +451,7 @@ await step("product flow: menu:product → photo → product preset renders (2 �
   assert.ok(!buttons.includes("preset:headshot"), "photo presets leak into product menu");
   await pressButton(alice, "preset:product_white");
   const call = falCalls.at(-1)!;
-  assert.equal(call.endpoint, "fal-ai/bytedance/seedream/v4/edit");
+  assert.equal(call.endpoint, "fal-ai/bytedance/seedream/v4.5/edit");
   assert.match(call.input.prompt as string, /white studio background/);
   assert.equal(await credits(alice.id), 197); // 199 - 2
 });
@@ -647,7 +647,7 @@ await step("campaigns: one-tap fairy-tale image → one-tap «Оживить» a
 
   await pressButton(parent, "cpre:skazka:forest");
   const gen = falCalls.at(-1)!;
-  assert.equal(gen.endpoint, "fal-ai/bytedance/seedream/v4/edit"); // default scenario image engine
+  assert.equal(gen.endpoint, "fal-ai/bytedance/seedream/v4.5/edit"); // default scenario image engine
   assert.match(gen.input.prompt as string, /fairy tale/i);
   assert.equal(await credits(parent.id), 70); // 72 − 2
   const resultUrl = `https://fal.test/out/${falCalls.length}.png`;
@@ -667,7 +667,7 @@ await step("campaigns: one-tap fairy-tale image → one-tap «Оживить» a
   assert.equal(await credits(parent.id), 60); // 70 − 10
 });
 
-await step("мини-фильм campaign: Seedream film still → Seedance 2.0 Fast multi-shot upsell (63 🔫 flow)", async () => {
+await step("мини-фильм campaign: Seedream film still → Seedance 2.0 (со звуком) multi-shot upsell (78 🔫 flow)", async () => {
   const actor: From = { id: 5502, is_bot: false, first_name: "Actor", username: "actor" };
   await sendText(actor, "/start"); // 12 free
   await payForPack(actor, "popular", 2200); // +200 → 212
@@ -676,7 +676,7 @@ await step("мини-фильм campaign: Seedream film still → Seedance 2.0 F
   await sendPhoto(actor, "actor-1");
   await pressButton(actor, "cpre:minifilm:drama");
   const still = falCalls.at(-1)!;
-  assert.equal(still.endpoint, "fal-ai/bytedance/seedream/v4/edit");
+  assert.equal(still.endpoint, "fal-ai/bytedance/seedream/v4.5/edit");
   assert.match(still.input.prompt as string, /film still/i);
   assert.equal(await credits(actor.id), 210); // 212 − 2
   const stillUrl = `https://fal.test/out/${falCalls.length}.png`;
@@ -688,10 +688,11 @@ await step("мини-фильм campaign: Seedream film still → Seedance 2.0 F
 
   await pressButton(actor, mfCamv!);
   const clip = falCalls.at(-1)!;
-  assert.equal(clip.endpoint, "bytedance/seedance-2.0/fast/image-to-video"); // story model
+  assert.equal(clip.endpoint, "bytedance/seedance-2.0/image-to-video"); // flagship story model (audio)
   assert.equal(clip.input.image_url, stillUrl); // animates the generated still
+  assert.equal(clip.input.generate_audio, true); // «со звуком» is real
   assert.match(clip.input.prompt as string, /multi-shot/i);
-  assert.equal(await credits(actor.id), 149); // 210 − 61
+  assert.equal(await credits(actor.id), 134); // 210 − 76
 });
 
 await step("partner attribution is exclusive: no friend-referral double payout", async () => {
@@ -780,7 +781,7 @@ await step("free scenario: princess renders the WHOLE chain free (Seedream → H
   await sendPhoto(zoe, "zoe-kid");
   // Two provider calls: photo → Seedream scene image, then scene → Hailuo video.
   assert.equal(falCalls.length, falBefore + 2);
-  assert.equal(falCalls.at(-2)!.endpoint, "fal-ai/bytedance/seedream/v4/edit");
+  assert.equal(falCalls.at(-2)!.endpoint, "fal-ai/bytedance/seedream/v4.5/edit");
   assert.equal(falCalls.at(-1)!.endpoint, "fal-ai/minimax/hailuo-2.3-fast/standard/image-to-video");
   assert.equal(falCalls.at(-1)!.input.image_url, `https://fal.test/out/${falBefore + 1}.png`); // animates the scene
   assert.equal(calls("sendVideo").length, videosBefore + 1);
@@ -815,7 +816,7 @@ await step("persona entry link: /start src_football routes straight to the footb
   const videosBefore = calls("sendVideo").length;
   await sendPhoto(finn, "finn-selfie");
   assert.equal(falCalls.length, falBefore + 2); // Seedream scene → Hailuo video
-  assert.equal(falCalls.at(-2)!.endpoint, "fal-ai/bytedance/seedream/v4/edit");
+  assert.equal(falCalls.at(-2)!.endpoint, "fal-ai/bytedance/seedream/v4.5/edit");
   assert.equal(falCalls.at(-1)!.endpoint, "fal-ai/minimax/hailuo-2.3-fast/standard/image-to-video");
   assert.equal(calls("sendVideo").length, videosBefore + 1);
   assert.equal(await credits(finn.id), 12); // whole scenario cost nothing
