@@ -122,13 +122,15 @@ export const MODELS = {
   // Seedream 4.5 edit — the default scenario image engine (photo → styled scene).
   // Stronger face-anchored scene edits than v4 at the same 2 🔫 tier ($0.04/img);
   // same input contract (prompt + image_urls), so it's a drop-in over v4.
+  // Label deliberately drops the provider codename — never shown to users anyway
+  // (not in a picker), but kept clean in case a future surface renders it.
   seedream_edit: {
     key: "seedream_edit",
     kind: "image_edit",
     falEndpoint: "fal-ai/bytedance/seedream/v4.5/edit",
     credits: 2,
     approxCostUsd: 0.04,
-    label: "🖼 Seedream 4.5 — сцена по фото",
+    label: "🖼 Сцена по фото",
     input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], ...sizeParam(opts, true) }),
     image: { aspectRatios: IMAGE_ASPECTS },
   },
@@ -176,13 +178,15 @@ export const MODELS = {
   // on mobile Stars payout and after the referral share. Re-verify before launch.
 
   // Nano Banana 2 (Google) — fast SOTA image, $0.08/img @1K.
+  // Labels are benefit/tier-named, never the fal provider codename — "Nano
+  // Banana" reads as a novelty app name to a user, not a professional tool.
   nb2_image: {
     key: "nb2_image",
     kind: "text_to_image",
     falEndpoint: "fal-ai/nano-banana-2",
     credits: 4,
     approxCostUsd: 0.08,
-    label: "🍌 Nano Banana 2",
+    label: "🎨 Картинка — быстро",
     input: (prompt, _img, opts) => ({ prompt, resolution: opts?.resolution ?? "1K", ...arParam(opts) }),
     image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES },
   },
@@ -192,7 +196,7 @@ export const MODELS = {
     falEndpoint: "fal-ai/nano-banana-2/edit",
     credits: 4,
     approxCostUsd: 0.08,
-    label: "🍌 Nano Banana 2 — правка",
+    label: "🎨 Правка — быстро",
     input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], resolution: opts?.resolution ?? "1K", ...arParam(opts) }),
     image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES },
   },
@@ -203,7 +207,7 @@ export const MODELS = {
     falEndpoint: "fal-ai/nano-banana-pro",
     credits: 8,
     approxCostUsd: 0.15,
-    label: "🍌 Nano Banana Pro",
+    label: "🎨 Картинка — детально (2K)",
     input: (prompt, _img, opts) => ({ prompt, resolution: opts?.resolution ?? "2K", ...arParam(opts) }),
     image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES },
   },
@@ -213,7 +217,7 @@ export const MODELS = {
     falEndpoint: "fal-ai/nano-banana-pro/edit",
     credits: 8,
     approxCostUsd: 0.15,
-    label: "🍌 Nano Banana Pro — правка",
+    label: "🎨 Правка — детально (2K)",
     input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], resolution: opts?.resolution ?? "2K", ...arParam(opts) }),
     image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES },
   },
@@ -224,7 +228,7 @@ export const MODELS = {
     falEndpoint: "fal-ai/kling-video/v3/pro/image-to-video",
     credits: 42,
     approxCostUsd: 0.84,
-    label: "🎬 Kling 3.0",
+    label: "🎬 Кино-движение",
     // Kling 3.0 has NO aspect_ratio param (ratio inherited from the start frame)
     // but DOES support an end frame — morph from the source image into end_image_url.
     input: (prompt, imageUrl, opts) => ({
@@ -242,7 +246,7 @@ export const MODELS = {
     falEndpoint: "bytedance/seedance-2.0/fast/image-to-video",
     credits: 61,
     approxCostUsd: 1.21,
-    label: "🎬 Seedance 2.0 Fast",
+    label: "🎬 Эпичная сцена",
     input: (prompt, imageUrl, opts) => ({
       prompt,
       image_url: imageUrl,
@@ -267,7 +271,7 @@ export const MODELS = {
     falEndpoint: "bytedance/seedance-2.0/image-to-video",
     credits: 76,
     approxCostUsd: 1.52,
-    label: "🎬 Seedance 2.0",
+    label: "🎬 Видео со звуком",
     input: (prompt, imageUrl, opts) => ({
       prompt,
       image_url: imageUrl,
@@ -295,7 +299,7 @@ export const MODELS = {
     falEndpoint: "fal-ai/minimax/hailuo-2.3-fast/standard/image-to-video",
     credits: 10,
     approxCostUsd: 0.19,
-    label: "🎬 Hailuo 2.3 Fast",
+    label: "⚡ Видео — эконом",
     input: (prompt, imageUrl, opts) => ({
       prompt,
       image_url: imageUrl,
@@ -306,14 +310,15 @@ export const MODELS = {
 } satisfies Record<string, ModelSpec>;
 
 /**
- * Model pickers surfaced in the bot ("market bombing" the famous models by name).
+ * Model pickers surfaced in the bot — a price/quality ladder, labeled by
+ * OUTCOME and TIER (never the fal provider codename; see docs/model-inputs.md).
  * Order = display order; each entry must be a real MODELS key of the right kind.
- * Default lineup (price/quality selection, Jul 2026): Nano Banana 2 for images,
- * Kling 3.0 for video, Kling 2.5 kept as the budget («эконом») video entry.
+ * Default lineup (Jul 2026): fast SOTA image → detailed 2K → premium/GPT for
+ * images; the cheap "эконом" video entry leads, then cinematic → epic → audio.
  */
 export const IMAGE_MODEL_PICKER = ["text_to_image", "nb2_image", "nbpro_image", "premium_image"] as const;
-// Hailuo 2.3 Fast leads: the cheap default users keep until they swap up to a
-// cinematic (Kling) or physics/audio (Seedance) engine in the composer.
+// The cheap "эконом" default leads: users keep it until they swap up to a
+// cinematic or physics/audio tier in the composer.
 export const VIDEO_MODEL_PICKER = ["hailuo_fast", "kling3", "animate", "seedance_fast", "seedance"] as const;
 
 /** Default image→video model for campaign upsells and one-tap animate flows. */
@@ -444,12 +449,12 @@ export interface ModelNews {
   tag: string; // short chip: what's special
 }
 export const MODEL_NEWS: ModelNews[] = [
-  { key: "hailuo_fast", title: "Hailuo 2.3 Fast — видео-сценарий за 10 🔫", tag: "⚡ дёшево" },
-  { key: "seedance", title: "Seedance 2.0 — видео со звуком и физикой", tag: "🆕 звук" },
-  { key: "seedance_fast", title: "Seedance 2.0 Fast — эпичные сцены", tag: "🎞 эпик" },
-  { key: "kling3", title: "Kling 3.0 — кино-движение и консистентность", tag: "🎬 видео" },
-  { key: "nbpro_image", title: "Nano Banana Pro — детализация уровня 2K", tag: "💎 2K" },
-  { key: "text_to_image", title: "Seedream 4.5 — картинка из текста за 2 🔫", tag: "🎁 бесплатно" },
+  { key: "hailuo_fast", title: "Видео-сценарий за 10 🔫", tag: "⚡ дёшево" },
+  { key: "seedance", title: "Видео со звуком и физикой", tag: "🆕 звук" },
+  { key: "seedance_fast", title: "Эпичные сцены на видео", tag: "🎞 эпик" },
+  { key: "kling3", title: "Кино-движение и консистентность", tag: "🎬 видео" },
+  { key: "nbpro_image", title: "Детализация уровня 2K", tag: "💎 2K" },
+  { key: "text_to_image", title: "Картинка из текста за 2 🔫", tag: "🎁 бесплатно" },
 ];
 
 /**
