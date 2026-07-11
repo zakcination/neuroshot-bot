@@ -92,14 +92,32 @@ export async function startWebGeneration(
 }
 
 /**
+ * A WhatsApp share deep link for a delivered result. WhatsApp is KZ's dominant
+ * messenger (~83% of the population vs. Telegram's ~25% among youth — see
+ * docs/strategy research), yet it's where a happy user actually forwards a clip
+ * to family. We can't push the media itself, so the button opens WhatsApp with a
+ * source-tagged bot link (`?start=src_wa`) — spreading the acquisition link
+ * through the channel people really use. Null when the bot username isn't set.
+ */
+export function whatsappShareUrl(): string | null {
+  const bot = config.webappBotUsername;
+  if (!bot) return null;
+  const text = `Смотри, что я сделал в NeuroShot 🔥 Сделай своё бесплатно: https://t.me/${bot}?start=src_wa`;
+  return `https://wa.me/?text=${encodeURIComponent(text)}`;
+}
+
+/**
  * Next-step keyboard on every delivered result. «Ещё стиль» only makes sense
  * when a source photo is still on file (image edits/presets/video); text→image
- * has no photo, so it gets a menu-only keyboard.
+ * has no photo, so it gets a menu-only keyboard. A "share to WhatsApp" button
+ * turns every result into word-of-mouth on KZ's biggest messenger.
  */
 export function afterKeyboard(hasPhoto: boolean): InlineKeyboard {
   const kb = new InlineKeyboard();
   if (hasPhoto) kb.text("🎭 Ещё стиль", "menu:styles");
   kb.text("📋 Меню", "menu:main");
+  const wa = whatsappShareUrl();
+  if (wa) kb.row().url("📲 Поделиться в WhatsApp", wa);
   // Flagship surface: every delivered result routes into the app's studio/gallery.
   if (config.webappUrl) kb.row().webApp("🌐 Открыть в студии", config.webappUrl);
   return kb;

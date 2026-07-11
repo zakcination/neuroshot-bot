@@ -45,6 +45,21 @@ export const config = {
   // while blank the buy flow records the order but tells the user payment isn't
   // open yet. Set KASPI_PAY_URL to go live.
   kaspiPayUrl: process.env.KASPI_PAY_URL ?? "",
+  // Auto-approval (merchant API): shared secret used to verify Kaspi's payment
+  // callback (HMAC-SHA256 over the raw request body). BLANK → the callback route
+  // is disabled (404) and purchases stay on the admin `/order N ok` path. Set
+  // KASPI_API_SECRET only once you have a real Kaspi Pay merchant integration and
+  // have confirmed the callback's field names + signature scheme — see docs/kaspi.md.
+  kaspiApiSecret: process.env.KASPI_API_SECRET ?? "",
+  // Header carrying the callback signature (Kaspi's exact header — confirm on integration).
+  kaspiSignatureHeader: (process.env.KASPI_SIGNATURE_HEADER ?? "x-kaspi-signature").toLowerCase(),
+  // On-demand server-side verification of «Я оплатил»: when the Kaspi merchant
+  // REST API base + token are set, the bot QUERIES the order's real status from
+  // Kaspi and auto-grants if paid — no admin, no trust-the-button. BLANK → the
+  // button falls back to pinging an admin (the interim). Confirm the exact status
+  // endpoint + response shape against Kaspi's merchant docs — see docs/kaspi.md.
+  kaspiApiBase: (process.env.KASPI_API_BASE ?? "").replace(/\/+$/, ""),
+  kaspiApiToken: process.env.KASPI_API_TOKEN ?? "",
   // ₸ per USD — used ONLY for the digest's gross-margin estimate, never pricing.
   kztPerUsd: Number(process.env.KZT_PER_USD ?? 480),
   // Launch combo offer window: the "🔥 Комбо-сет" sale ends this many days after
@@ -61,3 +76,19 @@ export const config = {
   webappPort: Number(process.env.WEBAPP_PORT ?? 8080),
   webappBotUsername: process.env.BOT_USERNAME ?? "",
 };
+
+/**
+ * The Kaspi pay link for a specific pack. A plain Kaspi link can't be reliably
+ * amount-parameterized via a query string, so the way to "pre-fill the amount"
+ * is one FIXED-AMOUNT link per pack: create them in Kaspi Pay and set e.g.
+ * KASPI_PAY_URL_COMBO / KASPI_PAY_URL_START. Any pack without its own link falls
+ * back to the single KASPI_PAY_URL (the buyer then enters/confirms the amount).
+ */
+export function kaspiLinkFor(packId: string): string {
+  const key = `KASPI_PAY_URL_${packId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
+  // Treat a blank/whitespace override as UNSET (not "payments off"): `.env.example`
+  // ships these keys empty, so a plain `??` would resolve them to "" and disable
+  // the pack. Only a non-blank override wins; otherwise fall back to KASPI_PAY_URL.
+  const override = process.env[key]?.trim();
+  return override ? override : config.kaspiPayUrl;
+}
