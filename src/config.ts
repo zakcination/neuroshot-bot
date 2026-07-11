@@ -70,6 +70,14 @@ export const config = {
   // --- CEO monitoring (docs/monitoring.md): digest pushed, alerts interrupt ---
   // UTC hour when the daily digest is pushed to admins (6 UTC = 09:00 МСК).
   digestHourUtc: Number(process.env.DIGEST_HOUR_UTC ?? 6),
+  // --- 48-hour re-engagement nudge (docs/growth-product.md) ---
+  // A once-daily sweep DMs users who went dormant (no activity >48h) but were
+  // recently active (≤14d), at most once each. Outbound messaging → env off-switch.
+  reengageEnabled: (process.env.REENGAGE_ENABLED ?? "true") !== "false",
+  // UTC hour to run the nudge sweep (7 UTC = 10:00 МСК — a good time to reach users).
+  reengageHourUtc: Number(process.env.REENGAGE_HOUR_UTC ?? 7),
+  // Max users nudged per daily sweep (keeps the send gentle + rate-limit-safe).
+  reengageBatch: Number(process.env.REENGAGE_BATCH ?? 50),
   // Telegram Mini App (web layer). Public HTTPS URL of the deployed app; when
   // set, the bot shows a "🌐 Приложение" button and index.ts starts the server.
   webappUrl: process.env.WEBAPP_URL ?? "",

@@ -8,7 +8,7 @@
  * tomorrow's budget", so everything splits by acquisition source and payers.
  */
 import { config } from "./config.js";
-import { query } from "./db.js";
+import { logEvent, markNudged, query, usersToNudge, type NudgeTarget } from "./db.js";
 import { cheapestModel, CREDIT_COST_BASIS, MODELS } from "./models.js";
 
 const MODEL_COST = new Map(Object.values(MODELS).map((m) => [m.key, m.approxCostUsd]));
@@ -218,12 +218,49 @@ export async function checkAlerts(): Promise<Alert[]> {
 type SendFn = (chatId: number, text: string) => Promise<unknown>;
 
 /**
+ * The re-engagement DM, tailored to the strongest reason to come back:
+ *   • never claimed the free gift → lead with it (the biggest un-taken value);
+ *   • has 🔫 left → remind them their patrons are waiting;
+ *   • otherwise → a fresh-content nudge.
+ */
+export function nudgeText(u: NudgeTarget): string {
+  if (!u.free_scenario_used) {
+    return (
+      "🎁 Вы не забрали свой <b>бесплатный подарок</b>! Одно фото → готовое видео " +
+      "(принцесса 👸 или футбол ⚽️), без оплаты. Откройте меню — /menu"
+    );
+  }
+  if (u.credits > 0) {
+    return "✨ Ваши 🔫 патроны ждут — создайте новый шедевр за пару тапов. Открыть меню — /menu";
+  }
+  return "🆕 В NeuroShot новые сценарии и модели — загляните и сделайте что-нибудь крутое: /menu";
+}
+
+/**
+ * One daily sweep that DMs a capped batch of dormant-but-recent users exactly
+ * once each. Marks BEFORE sending so a crash mid-batch or a blocked user (send
+ * throws) can never turn into a repeat nudge — a missed nudge is fine, a spammed
+ * user is not. Exported for tests.
+ */
+export async function runReengagement(send: SendFn): Promise<number> {
+  const targets = await usersToNudge(config.reengageBatch);
+  if (!targets.length) return 0;
+  await markNudged(targets.map((t) => t.id));
+  for (const t of targets) {
+    await send(t.id, nudgeText(t)).catch(() => {});
+    await logEvent(t.id, "nudge").catch(() => {});
+  }
+  return targets.length;
+}
+
+/**
  * Background loop: daily digest at config.digestHourUtc + alert checks every
  * 10 minutes (each alert key fires at most once per 24h). Failures are logged
  * and never crash the bot.
  */
 export function startMonitor(send: SendFn): NodeJS.Timeout {
   let lastDigestDay = "";
+  let lastNudgeDay = "";
   const lastAlertAt = new Map<string, number>();
 
   const tick = async () => {
@@ -234,6 +271,12 @@ export function startMonitor(send: SendFn): NodeJS.Timeout {
         lastDigestDay = day;
         const text = formatDigest(await buildDigest(24));
         for (const id of config.adminIds) await send(id, text).catch(() => {});
+      }
+      // Daily 48-hour re-engagement sweep (once per day, at most once per user).
+      if (config.reengageEnabled && now.getUTCHours() === config.reengageHourUtc && lastNudgeDay !== day) {
+        lastNudgeDay = day;
+        const n = await runReengagement(send);
+        if (n > 0) console.log(`re-engagement: nudged ${n} dormant user(s)`);
       }
       // Alerts: every 10 minutes (tick runs each minute).
       if (now.getUTCMinutes() % 10 === 0) {

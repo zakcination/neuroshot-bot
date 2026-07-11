@@ -90,9 +90,21 @@ for non-technical users (a bad result reads as "продукт плохой", no
 фото"). Applied to the free scenarios and campaign asks; product photos are
 exempt (the tip is face-oriented).
 
+### 6. 48-hour re-engagement nudge — ideas #6/#12 (retention)
+A once-daily sweep on the existing `monitor.ts` loop DMs users who went **dormant
+(no activity >48h) but were recently active (≤14d)**, **at most once each**
+(`users.nudged_at`). The copy is tailored to the strongest reason to return:
+never-claimed free gift → lead with it; 🔫 left → "your patrons are waiting";
+else a fresh-content nudge. Marks before sending (a crash or a blocked user can
+never spam), batch-capped (`REENGAGE_BATCH`, default 50/day) and rate-limit-safe,
+with an env off-switch. This closes the CJM gap flagged in the strategy audit —
+returning users previously had no scripted reason to come back.
+
+`db.usersToNudge` / `db.markNudged` · `monitor.runReengagement` / `nudgeText`.
+
 ## Not shipped yet (need infra / a scheduler)
-Abandoned-cart 24h discount (#9), weekly broadcast to past users (#6), daily
-streak (#10), 48-hour re-engagement nudge, and identity-gating the free hook —
-all need a cron/broadcast (or contact-request) layer the ephemeral env doesn't
-have yet. Next infra step: a scheduled job that reads the event log and messages
-paywall-no-buy / lapsed users.
+Abandoned-cart 24h discount (#9), weekly broadcast to past users (#6 full),
+daily streak (#10), and identity-gating the free hook (needs a contact-request
+flow) — the next lifecycle steps. The re-engagement sweep above is the first
+scheduled-messaging job; the same loop can later read the event log to target
+paywall-no-buy users specifically.

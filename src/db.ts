@@ -54,6 +54,8 @@ const SCHEMA: string[] = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS free_result_used BOOLEAN NOT NULL DEFAULT false`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS free_scenario_used BOOLEAN NOT NULL DEFAULT false`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS watermark_enabled BOOLEAN NOT NULL DEFAULT true`,
+  // 48-hour re-engagement nudge: when a dormant user was DM'd (once-only guard).
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS nudged_at TIMESTAMPTZ`,
   // Acquisition source (first-touch, immutable): 'ref' | 'c_<code>' | a deep-link
   // slug per creative/channel (t.me/<bot>?start=src_tiktok1) | NULL = organic.
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT`,
@@ -805,6 +807,46 @@ export async function consumeFreeScenario(userId: number): Promise<boolean> {
     [userId],
   );
   return rows.length > 0;
+}
+
+/** A user eligible for the re-engagement nudge (with the fields that pick the copy). */
+export interface NudgeTarget {
+  id: number;
+  free_scenario_used: boolean;
+  credits: number;
+}
+
+/**
+ * Users to re-engage: dormant (no event for >48h) but recently active (within
+ * 14d, so a long-gone user is never blasted), and never nudged before. Batch-
+ * capped by the caller; markNudged makes it one-shot per user. Last activity =
+ * their most recent event, falling back to signup time when they have none.
+ */
+export async function usersToNudge(limit: number): Promise<NudgeTarget[]> {
+  const rows = await q(
+    `SELECT u.id, u.free_scenario_used, u.credits
+     FROM users u
+     LEFT JOIN (SELECT user_id, MAX(created_at) AS last_at FROM events GROUP BY user_id) e
+       ON e.user_id = u.id
+     WHERE u.nudged_at IS NULL
+       AND COALESCE(e.last_at, u.created_at)
+           BETWEEN now() - interval '14 days' AND now() - interval '48 hours'
+     ORDER BY u.id
+     LIMIT $1`,
+    [Math.max(0, Math.floor(limit))],
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    free_scenario_used: r.free_scenario_used === true,
+    credits: Number(r.credits),
+  }));
+}
+
+/** Stamp nudged_at so the sweep never messages the same user twice. */
+export async function markNudged(ids: number[]): Promise<void> {
+  if (!ids.length) return;
+  const ph = ids.map((_, i) => `$${i + 1}`).join(",");
+  await q(`UPDATE users SET nudged_at = now() WHERE id IN (${ph})`, ids);
 }
 
 export async function setPending(
