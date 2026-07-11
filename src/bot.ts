@@ -38,6 +38,7 @@ import { buildDigest, formatDigest } from "./monitor.js";
 import {
   CAMPAIGNS,
   campaignById,
+  entryLinkFor,
   FREE_SCENARIOS,
   freeScenarioById,
   IMAGE_MODEL_PICKER,
@@ -48,10 +49,11 @@ import {
   REFERRAL_MILESTONES,
   VIDEO_MODEL_PICKER,
   type Campaign,
+  type EntryRoute,
   type Preset,
 } from "./models.js";
 import { grantPurchase, registerPayments, sendBalance } from "./payments.js";
-import { nUnits, UNIT_EMOJI } from "./text.js";
+import { nUnits, UNIT_EMOJI, withPhotoTip } from "./text.js";
 
 async function user(
   ctx: { from?: { id: number; username?: string } },
@@ -212,6 +214,52 @@ const WELCOME = [
   "Что создаём?",
 ].join("\n");
 
+/**
+ * Persona-routed entry: pre-select the first action for an acquisition-source
+ * deep link (see ENTRY_LINKS) so a targeted click lands straight on the scenario
+ * that fits — set the pending mode, show the relevant preview, and ask for the
+ * right photo (with the quality tip), all in ONE message (`intro` carries the
+ * welcome/credits line, so no separate generic menu is sent). Returns false when
+ * it can't route (e.g. the free gift is already used) so the caller falls back to
+ * the normal menu. No extra patrons are granted, so the public link stays
+ * un-farmable.
+ */
+async function routeEntry(
+  ctx: Context,
+  userId: number,
+  route: EntryRoute,
+  intro = "",
+): Promise<boolean> {
+  const lead = intro ? `${intro}\n\n` : "";
+  const say = (body: string) => ctx.reply(`${lead}${body}`, { parse_mode: "HTML" });
+  if (route.kind === "free") {
+    if (!(await hasFreeScenario(userId))) return false; // gift used → let the menu show
+    const s = freeScenarioById(route.id);
+    if (!s) return false;
+    await setPending(userId, `mode_free_${s.id}`, null);
+    await say(`${route.headline}\n\n${withPhotoTip(s.ask)}`);
+    return true;
+  }
+  if (route.kind === "camp") {
+    const c = campaignById(route.id);
+    if (!c) return false;
+    await setPending(userId, `mode_camp_${c.id}`, null);
+    await say(`${route.headline}\n\n${withPhotoTip(c.ask)}`);
+    return true;
+  }
+  if (route.kind === "product") {
+    await setPending(userId, "mode_product", null); // product photos: no face-tip
+    await sendPreviewAlbum(ctx, "product");
+    await say(route.headline);
+    return true;
+  }
+  // photoshoot: mirror the menu:photoshoot flow so the next photo lands in styles.
+  await setPending(userId, "mode_photo", null);
+  await sendPreviewAlbum(ctx, "photo");
+  await say(withPhotoTip(route.headline));
+  return true;
+}
+
 export function createBot(botInfo?: UserFromGetMe): Bot {
   const bot = new Bot(config.botToken, botInfo ? { botInfo } : undefined);
 
@@ -277,7 +325,16 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       ? { freeScenario }
       : { hasPhoto: !!u.pending_file_id, freeScenario };
     if (freeScenario) msg += `\n\n🎁 <b>Подарок:</b> одно фото → видео (принцесса или футбол) — бесплатно, без оплаты!`;
-    await sendMainMenu(ctx, msg, menuOpts);
+    // Persona-routed deep link (src_football / src_revive / src_product …): land
+    // STRAIGHT on the matching first action — one message (credits line + the
+    // scenario prompt), no generic menu. Falls back to the menu if it can't route
+    // (e.g. the free gift is already used).
+    const route = entryLinkFor(source);
+    const intro = u.justCreated
+      ? `🎁 Вам начислено <b>${UNIT_EMOJI} ${nUnits(u.credits)}</b> на старт!`
+      : `💰 Баланс: <b>${UNIT_EMOJI} ${nUnits(u.credits)}</b>`;
+    const routed = route ? await routeEntry(ctx, u.id, route, intro) : false;
+    if (!routed) await sendMainMenu(ctx, msg, menuOpts);
     // Deep link from the Mini App's "Пополнить" button.
     if (payload === "buy") await sendBalance(ctx, u.credits);
   });
@@ -732,7 +789,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     }
     // Always ask for the right photo (child vs self) — don't reuse a stale one.
     await setPending(u.id, `mode_free_${s.id}`, null);
-    await ctx.reply(s.ask);
+    await ctx.reply(withPhotoTip(s.ask));
   });
 
   // ---- Campaigns: one-click viral scenarios (image → optional video upsell) ----
@@ -763,7 +820,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       return;
     }
     await setPending(u.id, `mode_camp_${c.id}`, null);
-    await ctx.reply(c.ask);
+    await ctx.reply(withPhotoTip(c.ask));
   });
 
   // One-tap campaign render; on success, offer the one-tap animate upsell that
@@ -778,7 +835,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     }
     const u = await user(ctx);
     if (!u.pending_file_id) {
-      await ctx.reply(c.ask);
+      await ctx.reply(withPhotoTip(c.ask));
       return;
     }
     const url = await runGeneration(ctx, u, PRESET_MODEL, preset.prompt, u.pending_file_id, {

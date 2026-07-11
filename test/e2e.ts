@@ -776,6 +776,31 @@ await step("free scenario: princess renders the WHOLE chain free (Seedream → H
   assert.equal(falCalls.length, falAfter);
 });
 
+await step("persona entry link: /start src_football routes straight to the football free scenario", async () => {
+  const finn: From = { id: 6200, is_bot: false, first_name: "Finn", username: "finn" };
+  await sendText(finn, "/start src_football");
+  // The routed follow-up: tailored headline + the football ask + the photo-quality tip (#8).
+  const routed = lastText();
+  assert.match(routed, /гол на стадионе/i); // football headline
+  assert.match(routed, /Пришлите своё фото/); // the football scenario ask
+  assert.match(routed, /Совет/); // photo-quality tip
+  // Lands STRAIGHT on the scenario: no generic main menu is sent for the deep link.
+  const routedMsg = calls("sendMessage").at(-1)!;
+  assert.ok(!routedMsg.payload.reply_markup, "routed deep link must not show the generic menu");
+  // Source is still recorded for first-touch attribution.
+  const src = await query("SELECT source FROM users WHERE id = $1", [finn.id]);
+  assert.equal(src[0].source, "src_football");
+  // Sending a photo now runs the WHOLE free football chain — no extra button taps.
+  const falBefore = falCalls.length;
+  const videosBefore = calls("sendVideo").length;
+  await sendPhoto(finn, "finn-selfie");
+  assert.equal(falCalls.length, falBefore + 2); // Seedream scene → Hailuo video
+  assert.equal(falCalls.at(-2)!.endpoint, "fal-ai/bytedance/seedream/v4/edit");
+  assert.equal(falCalls.at(-1)!.endpoint, "fal-ai/minimax/hailuo-2.3-fast/standard/image-to-video");
+  assert.equal(calls("sendVideo").length, videosBefore + 1);
+  assert.equal(await credits(finn.id), 12); // whole scenario cost nothing
+});
+
 await step("returning /start: lean menu keeps the continue-with-photo shortcut", async () => {
   // Nora is a returning user who still has a photo on file from the preset flow above.
   await sendText({ id: 6001, is_bot: false, first_name: "Nora", username: "nora" }, "/start");

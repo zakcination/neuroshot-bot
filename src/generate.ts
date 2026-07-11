@@ -94,7 +94,7 @@ export async function startWebGeneration(
 /**
  * A WhatsApp share deep link for a delivered result. WhatsApp is KZ's dominant
  * messenger (~83% of the population vs. Telegram's ~25% among youth — see
- * docs/strategy research), yet it's where a happy user actually forwards a clip
+ * docs/growth-product.md), yet it's where a happy user actually forwards a clip
  * to family. We can't push the media itself, so the button opens WhatsApp with a
  * source-tagged bot link (`?start=src_wa`) — spreading the acquisition link
  * through the channel people really use. Null when the bot username isn't set.
