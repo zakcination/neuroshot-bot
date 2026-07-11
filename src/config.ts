@@ -82,6 +82,12 @@ export const config = {
   // Reaper: a generation still 'pending' beyond this many minutes is treated as a
   // render whose process died (renders take 1–3 min); it's failed and refunded.
   genStaleMinutes: Number(process.env.GEN_STALE_MINUTES ?? 15),
+  // Identity-gate the free hook (docs/growth-product.md): require a verified phone
+  // before the free scenario and tie the gift to the PHONE, so multi-account
+  // farming needs multiple real numbers (Higgsfield banned 40k farmed accounts).
+  // Default OFF — it adds onboarding friction, so enable only when scaling PAID
+  // acquisition into the free scenario.
+  freeGateEnabled: (process.env.FREE_GATE_ENABLED ?? "false") === "true",
   // Telegram Mini App (web layer). Public HTTPS URL of the deployed app; when
   // set, the bot shows a "🌐 Приложение" button and index.ts starts the server.
   webappUrl: process.env.WEBAPP_URL ?? "",

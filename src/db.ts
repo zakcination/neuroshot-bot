@@ -56,6 +56,15 @@ const SCHEMA: string[] = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS watermark_enabled BOOLEAN NOT NULL DEFAULT true`,
   // 48-hour re-engagement nudge: when a dormant user was DM'd (once-only guard).
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS nudged_at TIMESTAMPTZ`,
+  // Identity-gate the free hook: the user's verified phone (Telegram contact).
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT`,
+  // One free scenario per PHONE (not per Telegram account) — multi-account farming
+  // then needs multiple real numbers. PK dedups the claim across accounts.
+  `CREATE TABLE IF NOT EXISTS free_claims (
+    phone TEXT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
   // Acquisition source (first-touch, immutable): 'ref' | 'c_<code>' | a deep-link
   // slug per creative/channel (t.me/<bot>?start=src_tiktok1) | NULL = organic.
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT`,
@@ -180,6 +189,8 @@ export interface UserRow {
   partner_code: string | null;
   /** Brand this user's deliverables with the watermark (default true; user-toggleable). */
   watermark_enabled: boolean;
+  /** Verified phone (Telegram contact) — set when identity-gating the free hook. */
+  phone: string | null;
   /** Set only by getOrCreateUser on the call that actually inserted the row. */
   justCreated?: boolean;
   /** Welcome bonus granted at creation (0 unless joined via a link/code). */
@@ -199,6 +210,7 @@ function mapUser(r: Row): UserRow {
     pending_file_id: (r.pending_file_id as string | null) ?? null,
     partner_code: (r.partner_code as string | null) ?? null,
     watermark_enabled: r.watermark_enabled !== false, // default true for legacy rows
+    phone: (r.phone as string | null) ?? null,
   };
 }
 
@@ -206,6 +218,34 @@ function mapUser(r: Row): UserRow {
 export async function setWatermark(userId: number, enabled: boolean): Promise<boolean> {
   await q("UPDATE users SET watermark_enabled = $2 WHERE id = $1", [userId, enabled]);
   return enabled;
+}
+
+/** Store a user's verified phone (from a shared Telegram contact). */
+export async function setUserPhone(userId: number, phone: string): Promise<void> {
+  await q("UPDATE users SET phone = $2 WHERE id = $1", [userId, phone]);
+}
+
+/**
+ * Claim the one free scenario for a phone number. Returns true if this phone may
+ * proceed — i.e. it's a fresh claim OR the existing claim already belongs to this
+ * same user (so the owner can retry after a failed render). Returns false only
+ * when a DIFFERENT account already claimed the gift with this number — the
+ * cross-account anti-farm guard.
+ */
+export async function claimFreePhone(phone: string, userId: number): Promise<boolean> {
+  const won = await q(
+    "INSERT INTO free_claims (phone, user_id) VALUES ($1, $2) ON CONFLICT (phone) DO NOTHING RETURNING user_id",
+    [phone, userId],
+  );
+  if (won.length > 0) return true; // fresh claim
+  const existing = await q("SELECT user_id FROM free_claims WHERE phone = $1", [phone]);
+  return existing.length > 0 && Number(existing[0].user_id) === userId; // same owner may retry
+}
+
+/** Peek whether a phone already claimed the free gift (UX pre-check; not the guard). */
+export async function phoneClaimedFree(phone: string): Promise<boolean> {
+  const rows = await q("SELECT 1 FROM free_claims WHERE phone = $1", [phone]);
+  return rows.length > 0;
 }
 
 export async function getOrCreateUser(

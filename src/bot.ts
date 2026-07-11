@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import type { UserFromGetMe } from "grammy/types";
 import type { Context } from "grammy";
-import { Bot, GrammyError, HttpError, InlineKeyboard, InputFile, InputMediaBuilder } from "grammy";
+import { Bot, GrammyError, HttpError, InlineKeyboard, InputFile, InputMediaBuilder, Keyboard } from "grammy";
 import { config } from "./config.js";
 import {
   addCredits,
@@ -25,10 +25,12 @@ import {
   resolveOrder,
   partnerStats,
   pendingWithdrawals,
+  phoneClaimedFree,
   referralStats,
   requestWithdrawal,
   resolveWithdrawal,
   setPending,
+  setUserPhone,
   stats,
   upsertPartnerCode,
   type PartnerCodeRow,
@@ -805,9 +807,46 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       await ctx.reply("🎁 Бесплатный сценарий уже использован 🙂");
       return;
     }
+    // Identity gate (optional, default off): verify a phone before unlocking the
+    // gift, so it can't be farmed across throwaway accounts. Remember the chosen
+    // scenario; the contact handler resumes it once the number is shared.
+    if (config.freeGateEnabled && !u.phone) {
+      await setPending(u.id, `gate_free_${s.id}`, null);
+      await ctx.reply(
+        "🔒 Чтобы получить бесплатный подарок, подтвердите номер телефона — так мы защищаем подарок от накрутки. Это займёт секунду 👇",
+        { reply_markup: new Keyboard().requestContact("📱 Поделиться номером").resized().oneTime() },
+      );
+      return;
+    }
     // Always ask for the right photo (child vs self) — don't reuse a stale one.
     await setPending(u.id, `mode_free_${s.id}`, null);
     await ctx.reply(withPhotoTip(s.ask));
+  });
+
+  // Phone shared → verify identity and resume a gated free scenario (or just ack).
+  bot.on("message:contact", async (ctx) => {
+    const u = await user(ctx);
+    const contact = ctx.message.contact;
+    // Only accept the sender's OWN number (a forwarded contact carries a different user_id).
+    if (contact.user_id && contact.user_id !== ctx.from?.id) {
+      await ctx.reply("Пожалуйста, поделитесь СВОИМ номером 🙂");
+      return;
+    }
+    await setUserPhone(u.id, contact.phone_number);
+    const gated = u.pending_action?.startsWith("gate_free_") ? freeScenarioById(u.pending_action.slice("gate_free_".length)) : null;
+    if (gated) {
+      if (await phoneClaimedFree(contact.phone_number)) {
+        await setPending(u.id, null, null);
+        await ctx.reply("Этот номер уже получал бесплатный подарок 🙂 Но всё можно создать за 🔫 — /menu", {
+          reply_markup: { remove_keyboard: true },
+        });
+        return;
+      }
+      await setPending(u.id, `mode_free_${gated.id}`, null);
+      await ctx.reply(`✅ Номер подтверждён!\n\n${withPhotoTip(gated.ask)}`, { reply_markup: { remove_keyboard: true } });
+      return;
+    }
+    await ctx.reply("✅ Спасибо, номер подтверждён!", { reply_markup: { remove_keyboard: true } });
   });
 
   // ---- Campaigns: one-click viral scenarios (image → optional video upsell) ----

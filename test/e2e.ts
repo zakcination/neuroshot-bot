@@ -23,7 +23,7 @@ process.env.WITHDRAW_MIN = "20"; // low so the withdrawal path is exercisable
 const { fal } = await import("@fal-ai/client");
 const { createBot } = await import("../src/bot.js");
 const { drainRenders, inFlightRenders } = await import("../src/generate.js");
-const { funnel, query, getUser, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay, createPendingGeneration, completeGeneration } = await import("../src/db.js");
+const { funnel, query, getUser, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay, createPendingGeneration, completeGeneration, claimFreePhone, phoneClaimedFree, setUserPhone } = await import("../src/db.js");
 const { buildDigest, checkAlerts, nudgeText, runReengagement, runReaper } = await import("../src/monitor.js");
 const { nUnits, nResults } = await import("../src/text.js");
 
@@ -1115,6 +1115,20 @@ await step("reaper: a render stuck 'pending' is failed and refunded, idempotentl
   const gid = await createPendingGeneration(dan, "hailuo_fast", "p", 5);
   assert.equal(await completeGeneration(gid, "ok", "u"), true);
   assert.equal(await completeGeneration(gid, "error"), false);
+});
+
+await step("identity gate: one free gift per PHONE — cross-account farming blocked, owner may retry", async () => {
+  const phone = "+77010000001";
+  assert.equal(await phoneClaimedFree(phone), false);
+  assert.equal(await claimFreePhone(phone, 8811), true); // fresh claim wins
+  assert.equal(await phoneClaimedFree(phone), true);
+  assert.equal(await claimFreePhone(phone, 8811), true); // SAME account may retry (failed render)
+  assert.equal(await claimFreePhone(phone, 8812), false); // DIFFERENT account with the same number → blocked
+
+  // setUserPhone records a verified number on the user row.
+  await query("INSERT INTO users (id, credits) VALUES (8813, 0)");
+  await setUserPhone(8813, "+77010000002");
+  assert.equal((await query("SELECT phone FROM users WHERE id = 8813"))[0].phone, "+77010000002");
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL || "embedded (pglite)"})`);

@@ -4,6 +4,7 @@ import { InlineKeyboard, InputFile } from "grammy";
 import { config } from "./config.js";
 import {
   addCredits,
+  claimFreePhone,
   completeGeneration,
   consumeFreeResult,
   consumeFreeScenario,
@@ -312,9 +313,23 @@ export async function runFreeScenario(
   scenario: FreeScenario,
   fileId: string,
 ): Promise<void> {
-  // ---- PROLOGUE (serialized) ---- claim the freebie ATOMICALLY up front so the
-  // whole expensive two-model chain is gated on winning it exactly once; restore
-  // it if the render fails (below), so a failure never burns the gift.
+  // ---- PROLOGUE (serialized) ----
+  // Identity gate (optional): the gift is one-per-PHONE. Claim the phone
+  // atomically FIRST (the cross-account anti-farm guard) before consuming the
+  // per-account flag, so N throwaway accounts sharing one number get one gift.
+  if (config.freeGateEnabled) {
+    if (!user.phone) {
+      await ctx.reply("🔒 Сначала подтвердите номер телефона в /menu → бесплатный подарок 🙂");
+      return;
+    }
+    if (!(await claimFreePhone(user.phone, user.id))) {
+      await ctx.reply("Этот номер уже получал бесплатный подарок 🙂 Создайте всё за 🔫 — /menu");
+      return;
+    }
+  }
+  // Claim the freebie ATOMICALLY up front so the whole expensive two-model chain
+  // is gated on winning it exactly once; restore it if the render fails (below),
+  // so a failure never burns the gift (the same-owner phone claim allows a retry).
   if (!(await consumeFreeScenario(user.id))) {
     await ctx.reply("🎁 Бесплатный сценарий уже использован. Дальше — за 🔫 (их хватает надолго).");
     return;

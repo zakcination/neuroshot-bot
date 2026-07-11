@@ -102,9 +102,21 @@ returning users previously had no scripted reason to come back.
 
 `db.usersToNudge` / `db.markNudged` · `monitor.runReengagement` / `nudgeText`.
 
+### 7. Identity-gate the free hook — anti-farm (unit economics)
+Optional gate (`FREE_GATE_ENABLED`, default **off**) that, before the free
+scenario, asks for a **verified phone** via a Telegram contact request and ties
+the gift to the **phone number, not the Telegram account** — so multi-account
+farming needs multiple real numbers (Higgsfield had to ban 40k farmed accounts).
+`free_claims.phone` is a PK, so a number can claim once; the same owner may retry
+a failed render, a different account with the same number is blocked. Kept **off**
+by default because it adds onboarding friction — turn it on **before scaling paid
+acquisition** into the free scenario, per the strategy audit.
+
+`db.claimFreePhone` / `setUserPhone` · `bot` (free gate + `message:contact`) ·
+`generate.runFreeScenario` prologue.
+
 ## Not shipped yet (need infra / a scheduler)
-Abandoned-cart 24h discount (#9), weekly broadcast to past users (#6 full),
-daily streak (#10), and identity-gating the free hook (needs a contact-request
-flow) — the next lifecycle steps. The re-engagement sweep above is the first
-scheduled-messaging job; the same loop can later read the event log to target
-paywall-no-buy users specifically.
+Abandoned-cart 24h discount (#9), weekly broadcast to past users (#6 full), and
+daily streak (#10) — the next lifecycle steps. The re-engagement sweep is the
+first scheduled-messaging job; the same loop can later target paywall-no-buy
+users specifically.
