@@ -6,8 +6,10 @@
  *
  * The window is COMBO_OFFER_DAYS long, anchored at COMBO_OFFER_START (ISO) if
  * set, else at process boot — so a fresh deploy runs the sale for ~a month
- * unless a fixed date is pinned. The deadline is real and never resets: honesty
- * is structural, not a copywriting promise (see docs/pricing.md).
+ * unless a fixed date is pinned. The deadline is a single real countdown, not a
+ * fake per-user timer that silently resets on every visit. Pin COMBO_OFFER_START
+ * to fix an exact end date; leaving it unset re-anchors to boot on each redeploy
+ * (fine for a rolling launch window). See docs/pricing.md.
  */
 import { config } from "./config.js";
 

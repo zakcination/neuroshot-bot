@@ -86,5 +86,9 @@ export const config = {
  */
 export function kaspiLinkFor(packId: string): string {
   const key = `KASPI_PAY_URL_${packId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
-  return process.env[key] ?? config.kaspiPayUrl;
+  // Treat a blank/whitespace override as UNSET (not "payments off"): `.env.example`
+  // ships these keys empty, so a plain `??` would resolve them to "" and disable
+  // the pack. Only a non-blank override wins; otherwise fall back to KASPI_PAY_URL.
+  const override = process.env[key]?.trim();
+  return override ? override : config.kaspiPayUrl;
 }

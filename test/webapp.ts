@@ -26,6 +26,9 @@ const { issueSession, verifySession } = await import("../src/auth.js");
 const { addCredits, createOrder, getOrCreateUser, getOrder, logGeneration, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
+const { kaspiLinkFor } = await import("../src/config.js");
+const { settleApprovedOrder } = await import("../src/payments.js");
+const { Api } = await import("grammy");
 
 // ---- fal stubs (network edge): model runs + storage uploads ----
 interface FalCall {
@@ -489,6 +492,24 @@ await step("Kaspi callback: rejects a bad signature, amount mismatch, and unknow
   const pendingCb = Buffer.from(JSON.stringify({ orderId, status: "wait" }));
   assert.equal((await kaspiCallbackResponse(pendingCb, sign(pendingCb), grant)).status, 200);
   assert.equal((await getOrder(orderId))?.status, "pending");
+});
+
+await step("kaspiLinkFor: a blank/whitespace per-pack override falls back to KASPI_PAY_URL", async () => {
+  process.env.KASPI_PAY_URL_PRO = ""; // present-but-empty, exactly like .env.example ships
+  assert.equal(kaspiLinkFor("pro"), "https://pay.test/neuroshot"); // must fall back, not disable
+  process.env.KASPI_PAY_URL_PRO = "   ";
+  assert.equal(kaspiLinkFor("pro"), "https://pay.test/neuroshot");
+  assert.equal(kaspiLinkFor("combo"), "https://pay.test/combo"); // a non-blank override still wins
+  delete process.env.KASPI_PAY_URL_PRO;
+});
+
+await step("settleApprovedOrder: an unknown pack id leaves the order pending (never 'paid but ungranted')", async () => {
+  const buyer = 99004;
+  await getOrCreateUser(buyer, "ghost_pack", null, 3);
+  const id = await createOrder(buyer, "ghost", 3700); // pack id not in PACKS
+  const pack = await settleApprovedOrder(new Api(BOT_TOKEN), id);
+  assert.equal(pack, null);
+  assert.equal((await getOrder(id))?.status, "pending"); // must NOT have been marked paid
 });
 
 await step("Kaspi verify: no merchant API configured → 'unknown' (button falls back to admin)", async () => {

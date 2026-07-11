@@ -139,10 +139,16 @@ function paidKeyboard(orderId: number): InlineKeyboard {
  * pack, or null if the order was already resolved / unknown.
  */
 export async function settleApprovedOrder(api: Api, orderId: number): Promise<Pack | null> {
-  const won = await resolveOrder(orderId, true);
-  if (!won) return null;
-  const pack = packById(won.pack_id);
+  // Resolve the pack BEFORE the atomic paid-transition: if a pack id was removed
+  // or renamed while the order was pending, we must NOT mark it paid (that would
+  // strand the order "paid but ungranted"). Leaving it pending keeps it
+  // recoverable. Mirrors the webhook's order→pack→resolve→grant ordering.
+  const order = await getOrder(orderId);
+  if (!order || order.status !== "pending") return null;
+  const pack = packById(order.pack_id);
   if (!pack) return null;
+  const won = await resolveOrder(orderId, true);
+  if (!won) return null; // lost the race — already resolved by another path
   await grantPurchase(api, won.user_id, pack);
   return pack;
 }
