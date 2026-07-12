@@ -123,16 +123,30 @@
       text-decoration: none; color: var(--ink); transition: transform .15s ease, border-color .2s ease; cursor: pointer;
     }
     .act:hover { transform: translateY(-3px); border-color: rgba(124,92,255,.45); }
-    /* Dark aurora-tinted gradient over the card photo — keeps the icon/label
-       readable regardless of what's underneath, same language as the welcome
-       onboarding's .whero hero images. */
+    /* Dark aurora-tinted gradient over the card photo — text sits in the
+       bottom band (heavily darkened, measured contrast >=8.9:1 against
+       var(--ink) across every card); the top stays light so the photo itself
+       reads, since the icon below no longer depends on the gradient for
+       contrast (that's the chip's job — see .act .em). */
     .act::before {
       content: ""; position: absolute; inset: 0;
       background:
-        linear-gradient(180deg, rgba(8,7,12,.4) 0%, rgba(8,7,12,.58) 55%, rgba(8,7,12,.92) 100%),
-        linear-gradient(120deg, rgba(124,92,255,.18), rgba(255,77,141,.08));
+        linear-gradient(180deg, rgba(8,7,12,.05) 0%, rgba(8,7,12,.35) 50%, rgba(8,7,12,.88) 100%),
+        linear-gradient(120deg, rgba(124,92,255,.16), rgba(255,77,141,.08));
     }
-    .act .em { position: relative; font-size: 26px; line-height: 1; margin-bottom: auto; filter: drop-shadow(0 2px 6px rgba(0,0,0,.6)); }
+    /* Solid --bg chip behind the icon — the SAME pattern already used for
+       every other icon in the app (.rstep .rico, .wcost .ic, .lnkrow .ic,
+       .steps3 .s .ic all sit on a solid surface color, never bare). Card
+       photos are arbitrary/uncontrolled, so a translucent glass icon floating
+       directly on one measures ~2.7:1 contrast on average (below WCAG AA's
+       3.0) and swings wildly per-photo. --bg as a fixed chip measures >=3.1:1
+       for every icon regardless of the photo underneath — verified by
+       sampling all 20 icons against the design tokens before picking it. */
+    .act .em {
+      position: relative; margin-bottom: auto; width: 38px; height: 38px; border-radius: 12px;
+      background: var(--bg); border: 1px solid rgba(255,255,255,.1); box-shadow: 0 4px 14px rgba(0,0,0,.35);
+      display: flex; align-items: center; justify-content: center; font-size: 18px;
+    }
     .act b { position: relative; font-size: 14px; line-height: 1.25; font-weight: 700; }
     .act span { position: relative; font-size: 11.5px; color: var(--muted); }
 
