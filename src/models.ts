@@ -122,8 +122,10 @@ export const MODELS = {
   // Seedream 4.5 edit — the default scenario image engine (photo → styled scene).
   // Stronger face-anchored scene edits than v4 at the same 2 🔫 tier ($0.04/img);
   // same input contract (prompt + image_urls), so it's a drop-in over v4.
-  // Label deliberately drops the provider codename — never shown to users anyway
-  // (not in a picker), but kept clean in case a future surface renders it.
+  // Label deliberately drops the provider codename: not in a model picker, but
+  // this IS PRESET_MODEL, and payments.paywallText renders `model.label`
+  // directly when a preset/campaign generation hits the insufficient-credits
+  // paywall — so it does reach users, just not through a picker keyboard.
   seedream_edit: {
     key: "seedream_edit",
     kind: "image_edit",
@@ -311,7 +313,8 @@ export const MODELS = {
 
 /**
  * Model pickers surfaced in the bot — a price/quality ladder, labeled by
- * OUTCOME and TIER (never the fal provider codename; see docs/model-inputs.md).
+ * OUTCOME and TIER, never the fal provider codename (a raw name like "Nano
+ * Banana Pro" reads as a novelty app, not a professional tool).
  * Order = display order; each entry must be a real MODELS key of the right kind.
  * Default lineup (Jul 2026): fast SOTA image → detailed 2K → premium/GPT for
  * images; the cheap "эконом" video entry leads, then cinematic → epic → audio.
