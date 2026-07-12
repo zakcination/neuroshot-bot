@@ -321,6 +321,10 @@
     .wgiftbox .gn { font-size: 38px; font-weight: 800; font-variant-numeric: tabular-nums; }
     .wgiftbox .gn span { font-size: 19px; vertical-align: 2px; }
     .wgiftbox .gd { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+    /* "Already received" state — a green success treatment (matches .rstep.done
+       elsewhere) instead of a checkmark glyph; the caption reads bold, not muted. */
+    .wgiftbox.received { background: rgba(55,201,154,.14); border-color: rgba(55,201,154,.4); }
+    .wgiftbox.received .gd { font-weight: 800; color: #37c99a; font-size: 13.5px; }
     .wclaim {
       width: 100%; border: 0; border-radius: 16px; padding: 16px; font: inherit; font-weight: 800; font-size: 14.5px;
       color: #fff; background: var(--aurora); box-shadow: 0 12px 26px rgba(180,77,255,.4); cursor: pointer; margin-bottom: 8px;
@@ -679,7 +683,7 @@
               <button class="wclaim" id="wclaimbtn">🎁 Получить ${wb.pending} бесплатно</button>
               <button class="wskipclaim" id="wskipclaimbtn">Продолжить без патронов</button>
             ` : `
-              <div class="wgiftbox"><div class="gn">✓</div><div class="gd">стартовые патроны уже получены</div></div>
+              <div class="wgiftbox received"><div class="gn"><img class="appicon" src="/img/ic-patron.png" alt="" /></div><div class="gd">Вы уже получили стартовые патроны</div></div>
               <p class="lead" style="text-align:center">Вы уже забирали бесплатный старт —
               самое время продолжить создавать.</p>
               <button class="wclaim" id="wdonebtn">Погнали! →</button>
