@@ -30,10 +30,16 @@ gen() { # id model aspect extra-args... prompt
   echo "  → $DEST/$id.jpg"
 }
 
-gen headshot          text2image_soul_v2 3:4 --quality 2k \
-  "Professional corporate business headshot of a confident woman in a tailored charcoal blazer, soft studio key light, clean neutral gray backdrop, shallow depth of field, subtle smile, magazine-cover retouching, ultra sharp, high fashion."
-gen fashion           text2image_soul_v2 3:4 --quality 2k \
-  "High-fashion editorial full-body photograph, model in an avant-garde designer outfit, dramatic cinematic lighting, Vogue-style composition, film grain, bold styling, studio."
+# headshot/fashion moved off Soul V2 (a fashion-editorial-biased model) to
+# gpt_image_2: Soul V2 + "magazine-cover retouching"/"Vogue-style" language
+# rendered as a literal fake-Vogue-cover mockup with garbled AI text for
+# headshot, and a near-nude editorial look for fashion — the opposite of the
+# "business tool" impression these previews are supposed to sell. Prompts
+# below are explicit about full coverage and drop any magazine/cover framing.
+gen headshot          gpt_image_2 3:4 --quality high --resolution 2k \
+  "A genuine corporate LinkedIn-style business headshot, photorealistic. A person in a well-tailored charcoal suit, arms confidently crossed, warm professional smile, soft studio key light, clean neutral gray softly blurred backdrop, shallow depth of field, magazine-cover-caliber retouching. Absolutely no text, no typography, no logo, no magazine masthead anywhere in the image — a plain clean photographic portrait only."
+gen fashion           gpt_image_2 3:4 --quality high --resolution 2k \
+  "A tasteful modern high-fashion editorial portrait, photorealistic. A person in a sharply tailored designer coat, fully covered and elegant, dramatic moody studio lighting with a single rim light, confident poised stance, magazine-editorial quality in the style of a premium fashion retailer's lookbook. Sophisticated, professional, modest styling — no visible logos, no text overlay, no readable typography anywhere in the frame."
 gen travel            text2image_soul_v2 3:4 --quality 2k \
   "Golden-hour travel editorial portrait, woman on a Santorini rooftop at sunset, warm rim light, flowing linen dress, travel-magazine composition, breathtaking, cinematic."
 gen cinematic         text2image_soul_v2 3:4 --quality 2k \

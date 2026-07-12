@@ -24,8 +24,14 @@ img() { # id aspect width prompt
   echo "  → $DEST/$id.jpg"
 }
 
-img hero 16:9 1280 \
-  "A premium 2x2 grid marketing collage for an AI photo studio app. Four cohesive high-end panels: top-left a professional business headshot of a confident woman; top-right a luxury amber product bottle on a clean white studio background; bottom-left a cinematic teal-and-orange film-style portrait of a man; bottom-right a golden-hour travel portrait of a woman on a rooftop. Thin subtle dividers, vibrant, scroll-stopping, no text."
+img hero 1:1 1080 \
+  "A clean 2x2 grid collage, single photorealistic image divided into four equal quadrants by a thin white gutter, no text anywhere. Top-left: a professional corporate headshot, a person in a tailored dark blazer, warm approachable smile, soft studio key light, neutral gray backdrop, shallow depth of field, camera-facing. Top-right: an e-commerce product hero shot of an elegant leather handbag on a clean seamless white studio background, soft natural shadow, professional three-point lighting. Bottom-left: a warm restored vintage family photograph look, an old sepia photo brought back to life with natural realistic color, nostalgic golden tone, two generations smiling together. Bottom-right: a joyful, wholesome, family-friendly photorealistic scene of a child dressed as a storybook princess in a sparkling gown inside a warm castle ballroom, pure wonder and joy, fully modest clothing, magical golden light."
+# NOTE: the previous hero prompt's "golden-hour travel portrait of a woman on
+# a rooftop" panel rendered as a backless-dress glamour shot with no coverage
+# constraint — read as AI-companion marketing, not a business tool, on the
+# very first image every new user sees. Swapped for a product + family/kids
+# use case instead — covers more of the actual product range and avoids the
+# problem entirely rather than re-prompting around it.
 img text_example_1 1:1 864 \
   "Ultra-detailed fantasy illustration: a floating island city at sunset with cascading waterfalls and airships, cinematic lighting, vibrant colors, high quality digital art."
 img text_example_2 1:1 864 \
