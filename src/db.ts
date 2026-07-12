@@ -346,13 +346,33 @@ export interface WelcomeClaim {
  * written here, at the moment credits actually land, not at account creation.
  */
 export async function claimWelcomeBonus(userId: number): Promise<WelcomeClaim | null> {
+  // A single writable-CTE statement — the credit move and both ledger inserts
+  // commit or fail together (one statement is one implicit transaction), so a
+  // crash or transient error between them can never leave credits granted with
+  // no matching ledger row.
   const rows = await q(
-    `UPDATE users
-     SET credits = credits + pending_signup_credits + pending_join_bonus,
-         welcome_bonus_claimed = true
-     WHERE id = $1 AND welcome_bonus_claimed = false
-       AND (pending_signup_credits > 0 OR pending_join_bonus > 0)
-     RETURNING pending_signup_credits, pending_join_bonus, pending_join_via, pending_join_meta`,
+    `WITH claim AS (
+       UPDATE users
+       SET credits = credits + pending_signup_credits + pending_join_bonus,
+           welcome_bonus_claimed = true
+       WHERE id = $1 AND welcome_bonus_claimed = false
+         AND (pending_signup_credits > 0 OR pending_join_bonus > 0)
+       RETURNING id, pending_signup_credits, pending_join_bonus, pending_join_via, pending_join_meta
+     ),
+     ins_signup AS (
+       INSERT INTO ledger (user_id, delta, reason)
+       SELECT id, pending_signup_credits, 'signup' FROM claim WHERE pending_signup_credits > 0
+       RETURNING 1
+     ),
+     ins_join AS (
+       INSERT INTO ledger (user_id, delta, reason, meta)
+       SELECT id, pending_join_bonus,
+              CASE WHEN pending_join_via = 'partner' THEN 'partner_join' ELSE 'referral_join' END,
+              pending_join_meta
+       FROM claim WHERE pending_join_bonus > 0 AND pending_join_via IS NOT NULL
+       RETURNING 1
+     )
+     SELECT * FROM claim`,
     [userId],
   );
   if (!rows.length) return null;
@@ -360,18 +380,6 @@ export async function claimWelcomeBonus(userId: number): Promise<WelcomeClaim | 
   const signup = Number(r.pending_signup_credits);
   const joinBonus = Number(r.pending_join_bonus);
   const joinVia = (r.pending_join_via as "friend" | "partner" | null) ?? null;
-  if (signup > 0) {
-    await q("INSERT INTO ledger (user_id, delta, reason) VALUES ($1, $2, 'signup')", [userId, signup]);
-  }
-  if (joinBonus > 0 && joinVia) {
-    const reason = joinVia === "partner" ? "partner_join" : "referral_join";
-    await q("INSERT INTO ledger (user_id, delta, reason, meta) VALUES ($1, $2, $3, $4)", [
-      userId,
-      joinBonus,
-      reason,
-      r.pending_join_meta ?? null,
-    ]);
-  }
   return { granted: signup + joinBonus, joinBonus, joinVia, joinMeta: (r.pending_join_meta as string | null) ?? null };
 }
 
@@ -392,12 +400,18 @@ export async function ensureRefCode(userId: number): Promise<string> {
   if (current) return current;
   for (let i = 0; i < 5; i++) {
     const code = genCode();
-    const ins = await q(
-      "UPDATE users SET ref_code = $2 WHERE id = $1 AND ref_code IS NULL RETURNING ref_code",
-      [userId, code],
-    );
-    if (ins.length) return code;
-    // Lost the race to a concurrent call, or a (rare) slug collision — re-check.
+    try {
+      const ins = await q(
+        "UPDATE users SET ref_code = $2 WHERE id = $1 AND ref_code IS NULL RETURNING ref_code",
+        [userId, code],
+      );
+      if (ins.length) return code;
+    } catch (e) {
+      // Unique-violation on the rare slug collision with another user's ref_code
+      // — retry with a freshly generated one instead of failing the request.
+      if ((e as { code?: string }).code !== "23505") throw e;
+    }
+    // Lost the race to a concurrent call, or the collision above — re-check.
     const now = await q("SELECT ref_code FROM users WHERE id = $1", [userId]);
     if (now[0]?.ref_code) return now[0].ref_code as string;
   }

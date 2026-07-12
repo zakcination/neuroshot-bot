@@ -588,7 +588,7 @@
       const c = d.catalog;
       const videoMin = c.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9);
       const packs = [...(d.packs || [])].filter((p) => !p.offer).sort((a, b) => a.kzt - b.kzt);
-      const cheapestId = packs.at(-1)?.id;
+      const cheapestId = packs.reduce((best, p) => (!best || p.kzt / p.credits < best.kzt / best.credits) ? p : best, null)?.id;
       const presetSample = c.presets.slice(0, 4);
 
       el.innerHTML = `
