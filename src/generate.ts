@@ -16,7 +16,7 @@ import {
   spendCredits,
   type UserRow,
 } from "./db.js";
-import { MODELS, priceFor, type FreeScenario, type GenOpts, type ModelSpec } from "./models.js";
+import { costUsdFor, MODELS, priceFor, type FreeScenario, type GenOpts, type ModelSpec } from "./models.js";
 import { paywallKeyboard, paywallText } from "./payments.js";
 import { craftPrompt } from "./promptcraft.js";
 import { watermarkImage, watermarkVideo } from "./watermark.js";
@@ -55,10 +55,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * sustained DB outage still degrades to the reaper's customer-favourable refund;
  * the retry closes the realistic transient window.
  */
-async function markOk(genId: number, url: string): Promise<void> {
+async function markOk(genId: number, url: string, costUsd: number, requestId: string): Promise<void> {
   for (let i = 0; i < 3; i++) {
     try {
-      await completeGeneration(genId, "ok", url);
+      await completeGeneration(genId, "ok", url, costUsd, requestId);
       return;
     } catch (e) {
       if (i === 2) {
@@ -95,17 +95,17 @@ function extractResultUrl(data: unknown): string | null {
   return d?.images?.[0]?.url ?? d?.image?.url ?? d?.video?.url ?? null;
 }
 
-/** Run a model on fal and return the output URL (throws on provider failure). */
+/** Run a model on fal; returns the output URL + fal's request id (throws on provider failure). */
 async function falRun(
   model: ModelSpec,
   prompt: string,
   imageUrl?: string,
   opts?: GenOpts,
-): Promise<string> {
+): Promise<{ url: string; requestId: string }> {
   const result = await fal.subscribe(model.falEndpoint, { input: model.input(prompt, imageUrl, opts) });
   const url = extractResultUrl(result.data);
   if (!url) throw new Error(`No output URL in fal response for ${model.falEndpoint}`);
-  return url;
+  return { url, requestId: result.requestId };
 }
 
 /**
@@ -134,8 +134,8 @@ export async function startWebGeneration(
   const id = await createPendingGeneration(userId, model.key, prompt, credits);
   void (async () => {
     try {
-      const url = await falRun(model, prompt, imageUrl, opts);
-      await completeGeneration(id, "ok", url);
+      const { url, requestId } = await falRun(model, prompt, imageUrl, opts);
+      await completeGeneration(id, "ok", url, costUsdFor(model, opts), requestId);
       await logEvent(userId, "gen_ok", model.key);
     } catch (err) {
       console.error(`web generation failed (${model.key}):`, err);
@@ -253,7 +253,7 @@ export async function runGeneration(
             ? fileId
             : await telegramFileUrl(ctx, fileId)
           : undefined;
-        const url = await falRun(model, prompt, imageUrl);
+        const { url, requestId } = await falRun(model, prompt, imageUrl);
         const after = afterKeyboard(isUpload, opts.animate && !isVideo ? { campId: opts.animate, genId } : undefined);
         // Brand every deliverable by default (user can turn the watermark off).
         if (isVideo) {
@@ -269,7 +269,7 @@ export async function runGeneration(
         // Terminal transition first (the pending row IS the generation record —
         // no separate logGeneration, or the render would double-count). Post-
         // delivery bookkeeping below must never be able to trigger compensation.
-        await markOk(genId, url);
+        await markOk(genId, url, costUsdFor(model), requestId);
         if (free) {
           await ctx.api
             .sendMessage(chatId, "🎁 Первый результат — бесплатно, патроны не списаны! Дальше — за 🔫.")
@@ -349,8 +349,15 @@ export async function runFreeScenario(
       try {
         const photoUrl = await telegramFileUrl(ctx, fileId);
         // 1) Photo → styled scene image (Seedream edit). 2) Scene → short video (Hailuo).
-        const sceneImg = await falRun(scenario.imageModel, scenario.imagePrompt, photoUrl);
-        const videoUrl = await falRun(scenario.videoModel, scenario.videoPrompt, sceneImg);
+        const scene = await falRun(scenario.imageModel, scenario.imagePrompt, photoUrl);
+        const videoResult = await falRun(scenario.videoModel, scenario.videoPrompt, scene.url);
+        const videoUrl = videoResult.url;
+        // This ONE generations row represents the whole free chain — the actual
+        // cost NeuroShot paid is both legs combined (the highest-COGS acquisition
+        // path in the product, hence the two-model chain being worth tracking
+        // precisely); the video leg's request id is the primary audit trail since
+        // it's the delivered artifact.
+        const chainCostUsd = costUsdFor(scenario.imageModel) + costUsdFor(scenario.videoModel);
         // Free scenarios are ALWAYS branded (the badge is the price of "free").
         const branded = await watermarkVideo(videoUrl);
         const video = branded ? new InputFile(branded, "neuroshot.mp4") : new InputFile({ url: videoUrl });
@@ -359,7 +366,7 @@ export async function runFreeScenario(
           reply_markup: afterKeyboard(true),
         });
         delivered = true;
-        await markOk(genId, videoUrl); // durable terminal write (retry through blips)
+        await markOk(genId, videoUrl, chainCostUsd, videoResult.requestId); // durable terminal write (retry through blips)
         await logEvent(user.id, "gen_ok", `free_${scenario.id}`).catch(() => {});
       } catch (err) {
         console.error(`free scenario failed (${scenario.id}):`, err);

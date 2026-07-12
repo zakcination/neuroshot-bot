@@ -828,6 +828,16 @@ await step("free scenario: princess renders the WHOLE chain free (Seedream → H
   const flag = await query("SELECT free_scenario_used FROM users WHERE id = $1", [zoe.id]);
   assert.equal(flag[0].free_scenario_used, true);
 
+  // Free to the USER, but item-0's cost tracking still logs what it actually
+  // cost NeuroShot: both legs of the chain (Seedream $0.04 + Hailuo $0.19),
+  // even though the row's patron `credits` charge is 0.
+  const genRow = await query(
+    "SELECT cost_usd, provider_request_id FROM generations WHERE user_id = $1 ORDER BY id DESC LIMIT 1",
+    [zoe.id],
+  );
+  assert.equal(Number(genRow[0].cost_usd), 0.23);
+  assert.match(String(genRow[0].provider_request_id), /^req-\d+$/);
+
   // One-time: a second attempt is refused, no provider call.
   await pressButton(zoe, "menu:free");
   assert.match(lastText(), /уже использован/i);

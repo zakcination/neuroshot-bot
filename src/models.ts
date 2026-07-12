@@ -362,6 +362,29 @@ export function priceFor(model: ModelSpec, opts?: GenOpts): number {
   return credits;
 }
 
+/**
+ * The real provider cost in USD for a generation — the single source of truth
+ * COGS accounting, per-user cost caps, and the patron exchange-rate display
+ * are all computed from (see docs/pricing.md § cost tracking). Mirrors
+ * priceFor's duration/resolution scaling exactly, but returns USD instead of
+ * a patron charge, so it reflects what the run actually cost, not what the
+ * user was billed. Rounded to 6 decimal places (well below cent-level) purely
+ * to keep stored/logged values clean — floating-point multiplication of the
+ * per-second rates otherwise leaves noise like 1.6800000000000002.
+ */
+export function costUsdFor(model: ModelSpec, opts?: GenOpts): number {
+  let usd = model.approxCostUsd;
+  if (model.video && opts?.duration && opts.duration !== model.video.durations[0]) {
+    usd = model.video.perSecondUsd * opts.duration;
+  }
+  const tiers = model.image?.resolutions ?? model.video?.resolutions;
+  if (tiers && opts?.resolution) {
+    const t = tiers.find((x) => x.id === opts.resolution);
+    if (t && t.mult !== 1) usd *= t.mult;
+  }
+  return Math.round(usd * 1e6) / 1e6;
+}
+
 /** Validate composer options against a model's declared capabilities. */
 export function normalizeOpts(model: ModelSpec, opts?: GenOpts): GenOpts | null {
   if (!opts) return {};

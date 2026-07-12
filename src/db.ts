@@ -172,6 +172,13 @@ const SCHEMA: string[] = [
     output_url TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
+  // Real provider cost (models.costUsdFor) + the fal request id, captured on
+  // successful completion — the COGS accounting / per-user cost cap this data
+  // layer didn't have before (only the patron CHARGE was tracked, never the
+  // actual $ cost). NULL on rows from before this column existed and on
+  // 'error' rows (never billed by the provider).
+  `ALTER TABLE generations ADD COLUMN IF NOT EXISTS cost_usd NUMERIC`,
+  `ALTER TABLE generations ADD COLUMN IF NOT EXISTS provider_request_id TEXT`,
   `CREATE TABLE IF NOT EXISTS events (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
@@ -1065,10 +1072,13 @@ export async function logGeneration(
   credits: number,
   status: "ok" | "error",
   outputUrl?: string,
+  costUsd?: number,
+  providerRequestId?: string,
 ): Promise<void> {
   await q(
-    "INSERT INTO generations (user_id, model, prompt, credits, status, output_url) VALUES ($1, $2, $3, $4, $5, $6)",
-    [userId, model, prompt, credits, status, outputUrl ?? null],
+    `INSERT INTO generations (user_id, model, prompt, credits, status, output_url, cost_usd, provider_request_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [userId, model, prompt, credits, status, outputUrl ?? null, costUsd ?? null, providerRequestId ?? null],
   );
 }
 
@@ -1122,12 +1132,84 @@ export async function completeGeneration(
   id: number,
   status: "ok" | "error",
   outputUrl?: string,
+  costUsd?: number,
+  providerRequestId?: string,
 ): Promise<boolean> {
   const rows = await q(
-    "UPDATE generations SET status = $1, output_url = $2 WHERE id = $3 AND status = 'pending' RETURNING id",
-    [status, outputUrl ?? null, id],
+    `UPDATE generations SET status = $1, output_url = $2, cost_usd = $3, provider_request_id = $4
+     WHERE id = $5 AND status = 'pending' RETURNING id`,
+    [status, outputUrl ?? null, costUsd ?? null, providerRequestId ?? null, id],
   );
   return rows.length > 0;
+}
+
+/**
+ * A user's real provider spend (USD) over a rolling window — the per-user COGS
+ * a free/reward path (welcome bonus, referral, roadmap gift…) must be checked
+ * against before it ships. Sums the actual cost_usd logged on delivery, not
+ * the patron charge, so it reflects real money regardless of whether the
+ * generation was paid for with purchased or free/gifted patrons.
+ */
+export async function userCogsUsd(userId: number, hours = 24): Promise<number> {
+  const rows = await q(
+    `SELECT COALESCE(SUM(cost_usd), 0) AS c FROM generations
+     WHERE user_id = $1 AND status = 'ok' AND created_at > now() - make_interval(hours => $2)`,
+    [userId, hours],
+  );
+  return Number(rows[0].c);
+}
+
+/**
+ * Users whose rolling spend crossed the alert threshold — feeds the ops sweep
+ * in monitor.ts (checkAlerts). Not a block: a legitimate heavy PAYER can trip
+ * this harmlessly (they already cleared margin); the point is visibility on
+ * abuse of a free/reward path, which is exactly the uncapped-loss risk item 0
+ * exists to catch.
+ */
+export async function usersOverCogsThreshold(
+  thresholdUsd: number,
+  hours = 24,
+): Promise<Array<{ userId: number; cogsUsd: number }>> {
+  const rows = await q(
+    `SELECT user_id, SUM(cost_usd) AS c FROM generations
+     WHERE status = 'ok' AND created_at > now() - make_interval(hours => $2)
+     GROUP BY user_id HAVING SUM(cost_usd) > $1
+     ORDER BY c DESC`,
+    [thresholdUsd, hours],
+  );
+  return rows.map((r) => ({ userId: Number(r.user_id), cogsUsd: Number(r.c) }));
+}
+
+/**
+ * Approximate reroll rate: the share of terminal generations that are a
+ * SAME-USER, SAME-MODEL repeat within `windowMinutes` of a prior one — a proxy
+ * for "the user didn't keep the first take and tried again." This is a heuristic,
+ * not a precise measurement (there's no explicit "regenerate" action distinct
+ * from "new generation" yet) — treat it as directional, not exact, per item 0's
+ * mandate to have SOME visibility into this before pricing reward economics on
+ * a first-take-success assumption.
+ */
+export async function rerollRateApprox(
+  hours = 24,
+  windowMinutes = 10,
+): Promise<{ total: number; rerolls: number; ratePct: number | null }> {
+  const rows = await q(
+    `SELECT
+       COUNT(*)::int AS total,
+       COUNT(*) FILTER (
+         WHERE EXISTS (
+           SELECT 1 FROM generations p
+           WHERE p.user_id = g.user_id AND p.model = g.model AND p.id < g.id
+             AND g.created_at - p.created_at <= make_interval(mins => $2)
+         )
+       )::int AS rerolls
+     FROM generations g
+     WHERE g.status IN ('ok', 'error') AND g.created_at > now() - make_interval(hours => $1)`,
+    [hours, windowMinutes],
+  );
+  const total = Number(rows[0]?.total ?? 0);
+  const rerolls = Number(rows[0]?.rerolls ?? 0);
+  return { total, rerolls, ratePct: total > 0 ? Math.round((rerolls / total) * 100) : null };
 }
 
 /** Return a burned "first result" freebie (idempotent) — used when a free render fails. */

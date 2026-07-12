@@ -73,7 +73,8 @@ export async function buildDigest(hours = 24): Promise<Digest> {
     [win],
   );
   const gens = await query(
-    `SELECT model, status, COUNT(*)::int AS c, COALESCE(SUM(credits), 0)::int AS credits
+    `SELECT model, status, COUNT(*)::int AS c, COALESCE(SUM(credits), 0)::int AS credits,
+            COALESCE(SUM(cost_usd), 0)::numeric AS cost_usd_sum, COUNT(cost_usd)::int AS cost_usd_count
      FROM generations WHERE created_at > now() - $1::interval GROUP BY 1, 2`,
     [win],
   );
@@ -90,10 +91,14 @@ export async function buildDigest(hours = 24): Promise<Digest> {
     const c = num(g.c);
     if (g.status === "ok") {
       genOk += c;
-      // Unknown/legacy model keys fall back to the credit cost basis.
-      costUsd += MODEL_COST.get(String(g.model)) != null
-        ? MODEL_COST.get(String(g.model))! * c
-        : num(g.credits) * CREDIT_COST_BASIS;
+      // Real cost_usd (logged since this column shipped) is used wherever
+      // present; only rows from before that (cost_usd IS NULL) fall back to
+      // the credit-cost-basis estimate, so the number gets more accurate over
+      // time without a backfill.
+      const realSum = Number(g.cost_usd_sum ?? 0);
+      const missing = c - num(g.cost_usd_count);
+      const fallbackPerUnit = MODEL_COST.get(String(g.model)) ?? (num(g.credits) / c) * CREDIT_COST_BASIS;
+      costUsd += realSum + Math.max(0, missing) * fallbackPerUnit;
     } else if (g.status === "error") {
       genError += c;
     }
