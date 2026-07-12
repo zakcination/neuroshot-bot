@@ -75,6 +75,9 @@ const SCHEMA: string[] = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_join_via TEXT`, // 'friend' | 'partner' | NULL
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_join_meta TEXT`, // referrer id or partner code, for the ledger row
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS welcome_bonus_claimed BOOLEAN NOT NULL DEFAULT false`,
+  // One-time gift for completing all 5 "Ваш путь в NeuroShot" roadmap steps —
+  // claim-gated the same way as the welcome bonus (see claimRoadmapBonus).
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS roadmap_bonus_claimed BOOLEAN NOT NULL DEFAULT false`,
   // Backfill only: rows from before this column existed have pending=0 by the
   // column DEFAULT, so this can never touch a real unclaimed balance — it just
   // marks pre-existing accounts (already credited under the old immediate-grant
@@ -226,6 +229,8 @@ export interface UserRow {
   pendingJoinVia: "friend" | "partner" | null;
   /** True once the welcome bonus has been claimed (or there was never one to claim). */
   welcomeBonusClaimed: boolean;
+  /** True once the "Ваш путь в NeuroShot" completion bonus has been claimed. */
+  roadmapBonusClaimed: boolean;
   /** Set only by getOrCreateUser on the call that actually inserted the row. */
   justCreated?: boolean;
   /** Welcome bonus granted at creation (0 unless joined via a link/code). */
@@ -250,6 +255,7 @@ function mapUser(r: Row): UserRow {
     pendingJoinBonus: Number(r.pending_join_bonus ?? 0),
     pendingJoinVia: (r.pending_join_via as "friend" | "partner" | null) ?? null,
     welcomeBonusClaimed: r.welcome_bonus_claimed !== false, // default true for legacy rows
+    roadmapBonusClaimed: r.roadmap_bonus_claimed === true, // default false for legacy rows
   };
 }
 
@@ -1315,6 +1321,34 @@ export async function roadmapProgress(userId: number): Promise<RoadmapProgress> 
     scenario: scenarioTap.length > 0,
     invitedFriend: friend.length > 0,
   };
+}
+
+/**
+ * Move the one-time "all 5 roadmap steps done" gift into the spendable balance
+ * — exactly once. Mirrors claimWelcomeBonus's claim-gating (a deliberate tap
+ * reads as a real reward) and its atomicity fix (credit move + ledger row in
+ * one writable-CTE statement). Returns null if any step is still incomplete or
+ * the bonus was already claimed.
+ */
+export async function claimRoadmapBonus(userId: number, bonus: number): Promise<{ granted: number } | null> {
+  const progress = await roadmapProgress(userId);
+  const allDone =
+    progress.firstPhoto && progress.ownIdea && progress.revivePhoto && progress.scenario && progress.invitedFriend;
+  if (!allDone || bonus <= 0) return null;
+  const rows = await q(
+    `WITH claim AS (
+       UPDATE users SET credits = credits + $2, roadmap_bonus_claimed = true
+       WHERE id = $1 AND roadmap_bonus_claimed = false
+       RETURNING id
+     ),
+     ins AS (
+       INSERT INTO ledger (user_id, delta, reason) SELECT id, $2, 'roadmap_complete' FROM claim RETURNING 1
+     )
+     SELECT * FROM claim`,
+    [userId, bonus],
+  );
+  if (!rows.length) return null;
+  return { granted: bonus };
 }
 
 /**

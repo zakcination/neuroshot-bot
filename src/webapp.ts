@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { claimWelcomeBonus, createOrder, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, logEvent, recentGenerations, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { claimRoadmapBonus, claimWelcomeBonus, createOrder, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, logEvent, recentGenerations, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { grantPurchase } from "./payments.js";
 import { comboEndsAt } from "./offer.js";
@@ -308,6 +308,10 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     },
     // "Ваш путь в NeuroShot" roadmap — real completion signals, see roadmapProgress.
     roadmap,
+    // The completion gift for finishing all 5 roadmap steps — claim-gated the
+    // same way as welcomeBonus. amount is always sent so the client can show
+    // "закончите путь — получите N 🔫" before every step is done.
+    roadmapBonus: { amount: config.roadmapBonus, claimed: row?.roadmapBonusClaimed ?? false },
   };
 }
 
@@ -316,6 +320,13 @@ export async function claimWelcomeResponse(userId: number): Promise<{ status: nu
   const res = await claimWelcomeBonus(userId);
   if (!res) return { status: 200, body: { granted: 0, alreadyClaimed: true } };
   return { status: 200, body: { granted: res.granted, joinBonus: res.joinBonus, joinVia: res.joinVia } };
+}
+
+/** POST /api/claim-roadmap — grant the roadmap-completion gift, once, once all 5 steps are real. */
+export async function claimRoadmapResponse(userId: number): Promise<{ status: number; body: Record<string, unknown> }> {
+  const res = await claimRoadmapBonus(userId, config.roadmapBonus);
+  if (!res) return { status: 200, body: { granted: 0 } };
+  return { status: 200, body: { granted: res.granted } };
 }
 
 /** Read a JSON request body with a hard size cap (uploads are base64 images). */
@@ -836,6 +847,17 @@ export function createWebApp(): Server {
         if (!user) return json(res, 401, { error: "unauthorized" });
         await getOrCreateUser(user.id, user.username, null, config.freeCredits);
         const { status, body } = await claimWelcomeResponse(user.id);
+        return json(res, status, body);
+      }
+
+      // POST /api/claim-roadmap — the "🎁 Забрать N 🔫" tap once all 5 "Ваш путь
+      // в NeuroShot" steps are done; grants the completion gift exactly once.
+      if (url.pathname === "/api/claim-roadmap") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        await getOrCreateUser(user.id, user.username, null, config.freeCredits);
+        const { status, body } = await claimRoadmapResponse(user.id);
         return json(res, status, body);
       }
 
