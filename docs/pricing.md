@@ -61,12 +61,20 @@ The whole scenario stack was re-based onto the two cheapest capable engines so a
 - **Default scenario = Seedream edit (2 🔫) + Hailuo 6s (10 🔫) = 12 🔫 ≈ $0.24**
   of provider cost — down from 46 🔫 (Nano Banana 2 + Kling 3.0). That 4× drop is
   what makes the free offer sustainable.
-- **The free onboarding gift:** every newcomer keeps the 4 free 🔫 **and** gets
-  ONE whole scenario (princess **or** football) rendered free — Seedream scene →
-  Hailuo video — **watermarked** with the NeuroShot logo (`src/watermark.ts`).
-  Marketing cost ≈ **$0.22/new user**, and each shared clip is a branded ad, so
-  the loop is CAC-negative at any reasonable share rate. Claimed once
-  (`users.free_scenario_used`); a failed render keeps the freebie.
+- **The free onboarding gift:** every newcomer is offered the 4 free 🔫 **and**
+  gets ONE whole scenario (princess **or** football) rendered free — Seedream
+  scene → Hailuo video — **watermarked** with the NeuroShot logo
+  (`src/watermark.ts`). The signup 🔫 are **claim-gated**, not silently
+  credited: they park in `pending_signup_credits` until the user taps "🎁
+  Получить" (bot inline button, or the Mini App's welcome flow →
+  `POST /api/claim-welcome`) — a deliberate claim reads as a real gift and
+  onboards better than a number that was just already there. `claimWelcomeBonus`
+  (`src/db.ts`) moves it into `credits` exactly once; persona-routed ad deep
+  links (`src_football` etc.) auto-claim silently first to keep their ≤2-tap
+  promise. Marketing cost ≈ **$0.22/new user**, and each shared clip is a
+  branded ad, so the loop is CAC-negative at any reasonable share rate. The
+  scenario gift itself is unrelated and claimed once (`users.free_scenario_used`);
+  a failed render keeps the freebie.
 - **Complexity ↔ engine matching:** simple one-action scenes run on the cheap
   Hailuo default; "epic" scenes (multi-actor goals, trophy lifts, flight,
   multi-shot) are gated to **Seedance** and priced accordingly — a simple model

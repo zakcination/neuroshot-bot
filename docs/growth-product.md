@@ -115,6 +115,26 @@ acquisition** into the free scenario, per the strategy audit.
 `db.claimFreePhone` / `setUserPhone` · `bot` (free gate + `message:contact`) ·
 `generate.runFreeScenario` prologue.
 
+### 8. Claim-gated welcome bonus + real onboarding roadmap — idea #19 (activation)
+The signup 🔫 (and any referral/partner join bonus) now park in
+`pending_signup_credits`/`pending_join_bonus` instead of landing in `credits`
+silently at account creation — the user has to tap "🎁 Получить" (bot inline
+button on `/start`, or the Mini App welcome flow's claim screen) to actually
+receive them. A deliberate claim reads as a real gift and commits the user to
+the app, vs. a number that was just already there when they arrived. Persona-
+routed ad deep links (`src_football` etc., idea #2 above) auto-claim silently
+first so the paid-acquisition ≤2-tap promise isn't touched by this.
+
+The Mini App's onboarding checklist from idea #19 also shipped for real: "Ваш
+путь в NeuroShot", a 5-step roadmap (first photo, own idea, revive a photo, a
+scenario, invite a friend) replacing the old wallet card, computed from actual
+generation/event history (`roadmapProgress` in `src/db.ts`) — not a fabricated
+progress bar.
+
+`db.claimWelcomeBonus` / `roadmapProgress` · `bot` (`claim:welcome`) ·
+`webapp.claimWelcomeResponse` (`POST /api/claim-welcome`) · `public/app.html`
+welcome overlay.
+
 ## Not shipped yet (need infra / a scheduler)
 Abandoned-cart 24h discount (#9), weekly broadcast to past users (#6 full), and
 daily streak (#10) — the next lifecycle steps. The re-engagement sweep is the

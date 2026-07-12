@@ -27,10 +27,22 @@ Telegram│  Bot (grammY)│        │ Mini App (webapp)│  ← same HTML late
   keeps working outside Telegram, where there is no `initData`.
 - **`GET /api/me`** — returns the caller's shared state: `dashboard` (balance,
   creations, credits spent, referral earnings), `generations` (recent gallery
-  with result URLs). Authenticates by `initData` **or** a `Bearer` session token.
-  Opening the app onboards idempotently, same as the bot.
+  with result URLs), `welcomeBonus` (`{pending, claimed}` — the claim-gated
+  signup gift, see below) and `roadmap` (real "Ваш путь в NeuroShot" step
+  completion — `firstPhoto`/`ownIdea`/`revivePhoto`/`scenario`/`invitedFriend`,
+  computed from actual generation/event history, not a fabricated bar; see
+  `roadmapProgress` in `src/db.ts`). Authenticates by `initData` **or** a
+  `Bearer` session token. Opening the app onboards idempotently, same as the bot.
+- **`POST /api/claim-welcome`** — the welcome flow's "🎁 Получить" tap: moves
+  the parked signup + referral/partner join bonus into the spendable balance,
+  exactly once (`claimWelcomeBonus`). Shared with the bot's own `claim:welcome`
+  inline button — same DB function, same one-time guarantee, whichever surface
+  the user claims from.
 - **`public/app.html`** — the Mini App: a personal cabinet (balance, top-up,
-  gallery of the user's own work, usage stats). Adapts to Telegram theme.
+  gallery of the user's own work, usage stats), a first-launch welcome/
+  onboarding flow (currency + pricing-ladder explainer, claim CTA — resurfaces
+  on every load until claimed), and a "Ваш путь в NeuroShot" roadmap replacing
+  the old wallet card. Adapts to Telegram theme.
 - **`public/manifest.webmanifest` + `public/sw.js`** — make it an **installable
   PWA**: home-screen launch, offline app shell (the auth'd API is never cached).
 - **Bot integration** — a `🌐 Приложение` menu button + `/app` command +
