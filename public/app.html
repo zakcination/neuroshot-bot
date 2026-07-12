@@ -224,6 +224,12 @@
     .lnkrow .tx small { display: block; color: var(--muted); font-size: 11px; margin-top: 1px; }
     .lnkrow .chev { color: var(--faint); flex: none; }
 
+    /* Custom icon set (public/img/ic-*.png) — sized like an emoji glyph (1em) so
+       it drops into any font-sized container (tabbar, rail cards, pills, roadmap)
+       without per-spot sizing rules. Premium glass/aurora style, generated to
+       match the app's own palette — see docs/web-app.md. */
+    .appicon { width: 1em; height: 1em; display: inline-block; vertical-align: -0.15em; object-fit: contain; }
+
     /* ————— welcome / first-launch onboarding ————— */
     .welcome {
       position: fixed; inset: 0; z-index: 70; background: var(--bg); display: flex; flex-direction: column;
@@ -576,11 +582,11 @@
             отдаёт готовый результат: портрет, карточку товара или видео-сюжет.
             Никакого фотошопа руками — одно фото и пара тапов.</p>
             <div class="steps3">
-              <div class="s"><div class="ic">📸</div><small>Фото</small></div>
+              <div class="s"><div class="ic"><img class="appicon" src="/img/ic-camera.png" alt="" /></div><small>Фото</small></div>
               <div class="ar">→</div>
-              <div class="s"><div class="ic">🎨</div><small>Стиль</small></div>
+              <div class="s"><div class="ic"><img class="appicon" src="/img/ic-palette.png" alt="" /></div><small>Стиль</small></div>
               <div class="ar">→</div>
-              <div class="s"><div class="ic">✨</div><small>Результат</small></div>
+              <div class="s"><div class="ic"><img class="appicon" src="/img/ic-sparkle.png" alt="" /></div><small>Результат</small></div>
             </div>
             <div class="wnote"><span>💡</span><span>Дальше — 3 коротких экрана: как
             устроена оплата, почему выгодно покупать больше и как забрать бесплатный старт.</span></div>
@@ -592,8 +598,8 @@
             платите за каждый результат. Патроны не сгорают и списываются, только
             когда вы сами запускаете генерацию — никаких скрытых списаний.</p>
             <div class="wcosts">
-              <div class="wcost"><span class="ic">🖼</span><span class="tx">Фото<small>портрет, карточка товара, стиль</small></span><span class="px">от ${c.presetCredits} 🔫</span></div>
-              <div class="wcost"><span class="ic">🎬</span><span class="tx">Видео<small>сцена с движением и озвучкой</small></span><span class="px">от ${videoMin} 🔫</span></div>
+              <div class="wcost"><span class="ic"><img class="appicon" src="/img/ic-frame.png" alt="" /></span><span class="tx">Фото<small>портрет, карточка товара, стиль</small></span><span class="px">от ${c.presetCredits} 🔫</span></div>
+              <div class="wcost"><span class="ic"><img class="appicon" src="/img/ic-film.png" alt="" /></span><span class="tx">Видео<small>сцена с движением и озвучкой</small></span><span class="px">от ${videoMin} 🔫</span></div>
             </div>
             <div class="wnote"><span>ℹ️</span><span>Цена патрона зависит от пакета —
             дальше покажем на цифрах.</span></div>
@@ -620,7 +626,7 @@
             <p class="lead">Загружаете фото, выбираете готовый пресет — результат
             собирает сам ИИ. Никаких промптов, формулировок и подбора слов.</p>
             <div class="wcosts">${presetSample.map((p) =>
-              `<div class="wcost"><span class="ic">✨</span><span class="tx">${esc(p.label)}<small>готовый пресет — просто выберите</small></span></div>`).join("")}</div>
+              `<div class="wcost"><span class="ic"><img class="appicon" src="/img/ic-sparkle.png" alt="" /></span><span class="tx">${esc(p.label)}<small>готовый пресет — просто выберите</small></span></div>`).join("")}</div>
             <div class="wnote"><span>📚</span><span>Пресетов уже много — библиотека
             растёт: мы регулярно добавляем новые сценарии, чтобы результат был
             классным при минимуме действий с вашей стороны.</span></div>
@@ -628,14 +634,14 @@
 
           <div class="wslide" data-slide="4">
             ${heroHtml("/img/onboard-gift.jpg", 5, "Ваш бесплатный старт")}
-            <div class="wgiftbox"><div class="gn">${wb.pending}<span>🔫</span></div><div class="gd">бесплатно — без карты и оплаты</div></div>
+            <div class="wgiftbox"><div class="gn">${wb.pending}<span><img class="appicon" src="/img/ic-patron.png" alt="" /></span></div><div class="gd">бесплатно — без карты и оплаты</div></div>
             <p class="lead" style="text-align:center">Это ваш пробный набор — попробуйте
             студию без риска. Патроны придут на баланс только после того, как вы
             нажмёте кнопку ниже.</p>
             <button class="wclaim" id="wclaimbtn">🎁 Получить ${wb.pending} бесплатно</button>
             <button class="wskipclaim" id="wskipclaimbtn">Продолжить без патронов</button>
             <div class="wtour" id="wtourbtn" style="display:none">
-              <span class="ic">🧭</span><span class="tx">Короткий тур по студии<small>«Ваш путь в NeuroShot» — 5 шагов</small></span><span class="chev">›</span>
+              <span class="ic"><img class="appicon" src="/img/ic-compass.png" alt="" /></span><span class="tx">Короткий тур по студии<small>«Ваш путь в NeuroShot» — 5 шагов</small></span><span class="chev">›</span>
             </div>
           </div>
         </div>
@@ -1496,11 +1502,11 @@
       const initial = esc((d.user.first_name || "?").trim().charAt(0).toUpperCase() || "?");
       const rm = d.roadmap || {};
       const ROADMAP_STEPS = [
-        { go: "shoot", em: "📸", label: "Первое фото", done: !!rm.firstPhoto },
-        { go: "text", em: "✨", label: "Своя идея", done: !!rm.ownIdea },
-        { go: "video", em: "🎬", label: "Оживите фото", done: !!rm.revivePhoto },
-        { go: "scenes", em: "🎉", label: "Сценарий", done: !!rm.scenario },
-        { go: "friends", em: "🎁", label: "Пригласить друга", done: dash.referralCount > 0 },
+        { go: "shoot", icon: "camera", label: "Первое фото", done: !!rm.firstPhoto },
+        { go: "text", icon: "sparkle", label: "Своя идея", done: !!rm.ownIdea },
+        { go: "video", icon: "film", label: "Оживите фото", done: !!rm.revivePhoto },
+        { go: "scenes", icon: "confetti", label: "Сценарий", done: !!rm.scenario },
+        { go: "friends", icon: "gift", label: "Пригласить друга", done: dash.referralCount > 0 },
       ];
 
       root.innerHTML = "";
@@ -1511,8 +1517,8 @@
             <span class="nm">${esc(d.user.first_name || "друг")}</span>
           </div>
           <span class="pillrow">
-            <button class="pill topup" id="balancePill"><span class="plus">+</span>🔫 <span id="pillN">${dash.credits}</span></button>
-            <span class="pill jobs" id="jobsPill" style="display:none;cursor:pointer">⏳ <span id="jobsN">0</span></span>
+            <button class="pill topup" id="balancePill"><span class="plus">+</span><img class="appicon" src="/img/ic-patron.png" alt="" /> <span id="pillN">${dash.credits}</span></button>
+            <span class="pill jobs" id="jobsPill" style="display:none;cursor:pointer"><img class="appicon" src="/img/ic-hourglass.png" alt="" /> <span id="jobsN">0</span></span>
           </span>
         </div>
 
@@ -1523,7 +1529,7 @@
             <div class="rsteps">
               ${ROADMAP_STEPS.map((s) => `
                 <button class="rstep ${s.done ? "done" : ""}" data-go="${s.go}">
-                  <span class="rico">${s.done ? "✓" : s.em}</span>
+                  <span class="rico">${s.done ? "✓" : `<img class="appicon" src="/img/ic-${s.icon}.png" alt="" />`}</span>
                   <span class="rlabel">${esc(s.label)}</span>
                 </button>`).join("")}
             </div>
@@ -1538,10 +1544,10 @@
           <section class="reveal">
             <div class="sec-h"><h2>Что создаём</h2></div>
             <div class="rail">
-              <a class="act a1" data-studio="shoot"><span class="em">📸</span><b>AI-фотосессия</b><span>от ${d.catalog.presetCredits} 🔫 · прямо здесь</span></a>
-              <a class="act a2" data-studio="product"><span class="em">🛍</span><b>Карточка товара</b><span>для маркетплейса</span></a>
-              <a class="act a3" data-studio="video"><span class="em">🎬</span><b>Оживить фото</b><span>видео от ${d.catalog.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} 🔫</span></a>
-              <a class="act a4" data-studio="text"><span class="em">✨</span><b>Из текста</b><span>от ${d.catalog.imageModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} 🔫</span></a>
+              <a class="act a1" data-studio="shoot"><span class="em"><img class="appicon" src="/img/ic-camera.png" alt="" /></span><b>AI-фотосессия</b><span>от ${d.catalog.presetCredits} 🔫 · прямо здесь</span></a>
+              <a class="act a2" data-studio="product"><span class="em"><img class="appicon" src="/img/ic-bag.png" alt="" /></span><b>Карточка товара</b><span>для маркетплейса</span></a>
+              <a class="act a3" data-studio="video"><span class="em"><img class="appicon" src="/img/ic-film.png" alt="" /></span><b>Оживить фото</b><span>видео от ${d.catalog.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} 🔫</span></a>
+              <a class="act a4" data-studio="text"><span class="em"><img class="appicon" src="/img/ic-sparkle.png" alt="" /></span><b>Из текста</b><span>от ${d.catalog.imageModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} 🔫</span></a>
             </div>
           </section>
 
@@ -1616,44 +1622,44 @@
               стиль и монтаж и отдаёт готовый результат — портрет, карточку товара или
               видео-сюжет.</p>
               <div class="steps3">
-                <div class="s"><div class="ic">📸</div><small>Фото</small></div>
+                <div class="s"><div class="ic"><img class="appicon" src="/img/ic-camera.png" alt="" /></div><small>Фото</small></div>
                 <div class="ar">→</div>
-                <div class="s"><div class="ic">🎨</div><small>Стиль</small></div>
+                <div class="s"><div class="ic"><img class="appicon" src="/img/ic-palette.png" alt="" /></div><small>Стиль</small></div>
                 <div class="ar">→</div>
-                <div class="s"><div class="ic">✨</div><small>Результат</small></div>
+                <div class="s"><div class="ic"><img class="appicon" src="/img/ic-sparkle.png" alt="" /></div><small>Результат</small></div>
               </div>
-              <div class="valuebar"><span class="em">🔫</span><p>Патрон — внутренняя валюта: от 2 🔫 за фото, от 10 🔫 за видео. Чем больше пакет — тем дешевле патрон.</p></div>
+              <div class="valuebar"><span class="em"><img class="appicon" src="/img/ic-patron.png" alt="" /></span><p>Патрон — внутренняя валюта: от 2 🔫 за фото, от 10 🔫 за видео. Чем больше пакет — тем дешевле патрон.</p></div>
               <button class="btn primary" id="aboutCta">✨ Начать создавать</button>
             </div>
           </section>
 
           <section class="reveal">
             <div class="sec-h"><h2>Друзья</h2></div>
-            <div class="lnkrow" id="moreFriends"><span class="ic">🎁</span><span class="tx">Реферальная программа<small>приглашено ${dash.referralCount} · заработано ${dash.referralEarned} 🔫</small></span><span class="chev">›</span></div>
+            <div class="lnkrow" id="moreFriends"><span class="ic"><img class="appicon" src="/img/ic-gift.png" alt="" /></span><span class="tx">Реферальная программа<small>приглашено ${dash.referralCount} · заработано ${dash.referralEarned} 🔫</small></span><span class="chev">›</span></div>
           </section>
 
           <section class="reveal">
             <div class="sec-h"><h2>Помощь</h2></div>
-            <div class="lnkrow" id="moreSupport"><span class="ic">💬</span><span class="tx">Написать в бот<small>@${esc(BOT)} — отвечаем в чате</small></span><span class="chev">›</span></div>
+            <div class="lnkrow" id="moreSupport"><span class="ic"><img class="appicon" src="/img/ic-chat.png" alt="" /></span><span class="tx">Написать в бот<small>@${esc(BOT)} — отвечаем в чате</small></span><span class="chev">›</span></div>
           </section>
 
           <section class="reveal">
             <div class="sec-h"><h2>О проекте</h2></div>
-            <div class="lnkrow" id="moreRoadmap"><span class="ic">🧭</span><span class="tx">Ваш путь в NeuroShot<small>${ROADMAP_STEPS.filter((s) => s.done).length} из ${ROADMAP_STEPS.length} шагов пройдено</small></span><span class="chev">›</span></div>
+            <div class="lnkrow" id="moreRoadmap"><span class="ic"><img class="appicon" src="/img/ic-compass.png" alt="" /></span><span class="tx">Ваш путь в NeuroShot<small>${ROADMAP_STEPS.filter((s) => s.done).length} из ${ROADMAP_STEPS.length} шагов пройдено</small></span><span class="chev">›</span></div>
           </section>
 
           <section class="reveal">
             <div class="sec-h"><h2>Связаться</h2></div>
-            <div class="lnkrow" id="moreContact"><span class="ic">✈️</span><span class="tx">Telegram-бот<small>@${esc(BOT)}</small></span><span class="chev">›</span></div>
+            <div class="lnkrow" id="moreContact"><span class="ic"><img class="appicon" src="/img/ic-plane.png" alt="" /></span><span class="tx">Telegram-бот<small>@${esc(BOT)}</small></span><span class="chev">›</span></div>
           </section>
         </div>
 
         <nav class="tabbar">
-          <button class="tabbtn on" data-page="studio"><span>🎨</span>Студия</button>
-          <button class="tabbtn" data-page="profile"><span>🖼</span>Профиль</button>
-          <button class="tabbtn" data-page="friends"><span>🎁</span>Друзья</button>
-          <button class="tabbtn" data-page="buy"><span>🔫</span>Патроны</button>
-          <button class="tabbtn" data-page="more"><span>⋯</span>Ещё</button>
+          <button class="tabbtn on" data-page="studio"><span><img class="appicon" src="/img/ic-palette.png" alt="" /></span>Студия</button>
+          <button class="tabbtn" data-page="profile"><span><img class="appicon" src="/img/ic-frame.png" alt="" /></span>Профиль</button>
+          <button class="tabbtn" data-page="friends"><span><img class="appicon" src="/img/ic-gift.png" alt="" /></span>Друзья</button>
+          <button class="tabbtn" data-page="buy"><span><img class="appicon" src="/img/ic-patron.png" alt="" /></span>Патроны</button>
+          <button class="tabbtn" data-page="more"><span><img class="appicon" src="/img/ic-dots.png" alt="" /></span>Ещё</button>
         </nav>
       </div>`));
 
