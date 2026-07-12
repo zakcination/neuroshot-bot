@@ -35,6 +35,9 @@ export const config = {
   partnerMaxCodes: Number(process.env.PARTNER_MAX_CODES ?? 10),
   // Minimum withdrawable 🔫 to request a cash-out (biweekly).
   withdrawMin: Number(process.env.WITHDRAW_MIN ?? 500),
+  // One-time gift for completing all 5 "Ваш путь в NeuroShot" roadmap steps —
+  // claim-gated like the welcome bonus (see claimRoadmapBonus in db.ts).
+  roadmapBonus: Number(process.env.ROADMAP_BONUS ?? 10),
   adminIds: (process.env.ADMIN_IDS ?? "")
     .split(",")
     .map((s) => s.trim())

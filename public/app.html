@@ -95,6 +95,18 @@
     .rstep.done .rico { background: rgba(55,201,154,.16); border-color: rgba(55,201,154,.4); color: #37c99a; }
     .rstep.done .rlabel { color: var(--ink); }
     @media (max-width: 360px) { .rstep .rlabel { font-size: 8.8px; } }
+    /* Reward note (before completion) / claim button (after) — makes the
+       "finish all 5 steps" incentive visible, not a silent progress bar. */
+    .rmnote { margin: 11px 0 0; font-size: 12px; line-height: 1.4; color: var(--muted); }
+    .rmnote b { color: var(--ink); }
+    .rmclaim {
+      margin-top: 11px; width: 100%; appearance: none; border: 0; cursor: pointer;
+      border-radius: var(--radius-s); background: var(--aurora); color: #fff; font: inherit;
+      font-weight: 800; font-size: 13.5px; padding: 11px; box-shadow: 0 8px 24px rgba(180,77,255,.3);
+      transition: transform .12s ease;
+    }
+    .rmclaim:active { transform: scale(.97); }
+    .rmclaim[disabled] { opacity: .55; pointer-events: none; }
 
     .btn {
       appearance: none; border: 0; cursor: pointer; border-radius: var(--radius-s);
@@ -309,6 +321,10 @@
     .wgiftbox .gn { font-size: 38px; font-weight: 800; font-variant-numeric: tabular-nums; }
     .wgiftbox .gn span { font-size: 19px; vertical-align: 2px; }
     .wgiftbox .gd { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+    /* "Already received" state — a green success treatment (matches .rstep.done
+       elsewhere) instead of a checkmark glyph; the caption reads bold, not muted. */
+    .wgiftbox.received { background: rgba(55,201,154,.14); border-color: rgba(55,201,154,.4); }
+    .wgiftbox.received .gd { font-weight: 800; color: #37c99a; font-size: 13.5px; }
     .wclaim {
       width: 100%; border: 0; border-radius: 16px; padding: 16px; font: inherit; font-weight: 800; font-size: 14.5px;
       color: #fff; background: var(--aurora); box-shadow: 0 12px 26px rgba(180,77,255,.4); cursor: pointer; margin-bottom: 8px;
@@ -579,11 +595,18 @@
       return `<div class="whero"><img src="${img}" alt="" />${sparklesHtml()}` +
         `<div class="wherotext"><div class="kicker">Шаг ${step} из 5</div><h2>${title}</h2></div></div>`;
     }
-    function closeWelcome() { document.getElementById("welcome").style.display = "none"; }
+    function closeWelcome() {
+      document.getElementById("welcome").style.display = "none";
+      if (ME) ME.onboardingSeen = true;
+      api("/api/ack-onboarding", { method: "POST" }).catch(() => {});
+    }
 
-    function renderWelcome(d) {
+    /** force=true replays the slideshow on demand (the "Ещё" tab link),
+     *  bypassing the onboardingSeen gate that otherwise limits it to once. */
+    function renderWelcome(d, force) {
       const wb = d.welcomeBonus || { pending: 0, claimed: true };
-      if (wb.claimed || wb.pending <= 0) return;
+      if (!force && d.onboardingSeen) return;
+      const claimable = !wb.claimed && wb.pending > 0;
       const el = document.getElementById("welcome");
       const c = d.catalog;
       const videoMin = c.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9);
@@ -651,13 +674,20 @@
           </div>
 
           <div class="wslide" data-slide="4">
-            ${heroHtml("/img/onboard-gift.jpg", 5, "Ваш бесплатный старт")}
-            <div class="wgiftbox"><div class="gn">${wb.pending}<span><img class="appicon" src="/img/ic-patron.png" alt="" /></span></div><div class="gd">бесплатно — без карты и оплаты</div></div>
-            <p class="lead" style="text-align:center">Это ваш пробный набор — попробуйте
-            студию без риска. Патроны придут на баланс только после того, как вы
-            нажмёте кнопку ниже.</p>
-            <button class="wclaim" id="wclaimbtn">🎁 Получить ${wb.pending} бесплатно</button>
-            <button class="wskipclaim" id="wskipclaimbtn">Продолжить без патронов</button>
+            ${heroHtml("/img/onboard-gift.jpg", 5, claimable ? "Ваш бесплатный старт" : "Вы уже в деле!")}
+            ${claimable ? `
+              <div class="wgiftbox"><div class="gn">${wb.pending}<span><img class="appicon" src="/img/ic-patron.png" alt="" /></span></div><div class="gd">бесплатно — без карты и оплаты</div></div>
+              <p class="lead" style="text-align:center">Это ваш пробный набор — попробуйте
+              студию без риска. Патроны придут на баланс только после того, как вы
+              нажмёте кнопку ниже.</p>
+              <button class="wclaim" id="wclaimbtn">🎁 Получить ${wb.pending} бесплатно</button>
+              <button class="wskipclaim" id="wskipclaimbtn">Продолжить без патронов</button>
+            ` : `
+              <div class="wgiftbox received"><div class="gn"><img class="appicon" src="/img/ic-patron.png" alt="" /></div><div class="gd">Вы уже получили стартовые патроны</div></div>
+              <p class="lead" style="text-align:center">Вы уже забирали бесплатный старт —
+              самое время продолжить создавать.</p>
+              <button class="wclaim" id="wdonebtn">Погнали! →</button>
+            `}
             <div class="wtour" id="wtourbtn" style="display:none">
               <span class="ic"><img class="appicon" src="/img/ic-compass.png" alt="" /></span><span class="tx">Короткий тур по студии<small>«Ваш путь в NeuroShot» — 5 шагов</small></span><span class="chev">›</span>
             </div>
@@ -684,7 +714,13 @@
       }
       wnextbtn.onclick = () => goSlide(wcur + 1);
       document.getElementById("wskipbtn").onclick = () => goSlide(wslides.length - 1);
-      document.getElementById("wclaimbtn").onclick = async function () {
+      const openStudioTour = () => {
+        closeWelcome();
+        if (window.showPage) window.showPage("studio");
+        document.querySelector(".roadmap")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      };
+      const claimBtn = document.getElementById("wclaimbtn");
+      if (claimBtn) claimBtn.onclick = async function () {
         this.disabled = true;
         const { status, data } = await api("/api/claim-welcome", { method: "POST" });
         if (status === 200 && data && data.granted > 0) {
@@ -699,12 +735,11 @@
           toast("Не удалось начислить — попробуйте ещё раз");
         }
       };
-      document.getElementById("wskipclaimbtn").onclick = closeWelcome;
-      document.getElementById("wtourbtn").onclick = () => {
-        closeWelcome();
-        if (window.showPage) window.showPage("studio");
-        document.querySelector(".roadmap")?.scrollIntoView({ behavior: "smooth", block: "start" });
-      };
+      const skipClaimBtn = document.getElementById("wskipclaimbtn");
+      if (skipClaimBtn) skipClaimBtn.onclick = closeWelcome;
+      const doneBtn = document.getElementById("wdonebtn");
+      if (doneBtn) doneBtn.onclick = openStudioTour;
+      document.getElementById("wtourbtn").onclick = openStudioTour;
     }
 
     // ————— global state —————
@@ -1408,6 +1443,69 @@
       openBot(BOT, "buy");
     }
 
+    // ————— "Ваш путь в NeuroShot" roadmap — shared by the initial render and
+    // the live refresh below, so a step's checkmark shows up right after the
+    // job that completes it, not only after a full page reload. —————
+    function roadmapStepsFor(d) {
+      const rm = d.roadmap || {};
+      return [
+        { go: "shoot", icon: "camera", label: "Первое фото", done: !!rm.firstPhoto },
+        { go: "text", icon: "sparkle", label: "Своя идея", done: !!rm.ownIdea },
+        { go: "video", icon: "film", label: "Оживите фото", done: !!rm.revivePhoto },
+        { go: "scenes", icon: "confetti", label: "Сценарий", done: !!rm.scenario },
+        { go: "friends", icon: "gift", label: "Пригласить друга", done: (d.dashboard.referralCount || 0) > 0 },
+      ];
+    }
+    function roadmapStepsHtml(steps) {
+      return steps.map((s) => `
+        <button class="rstep ${s.done ? "done" : ""}" data-go="${s.go}">
+          <span class="rico">${s.done ? "✓" : `<img class="appicon" src="/img/ic-${s.icon}.png" alt="" />`}</span>
+          <span class="rlabel">${esc(s.label)}</span>
+        </button>`).join("");
+    }
+    /** The reward note/claim button under the checklist — visible before AND
+     *  after completion, so the incentive is never a secret. */
+    function roadmapBonusHtml(d, steps) {
+      const rb = d.roadmapBonus || { amount: 0, claimed: true };
+      if (rb.claimed || rb.amount <= 0) return "";
+      if (steps.every((s) => s.done)) {
+        return `<button class="rmclaim" id="rmclaimbtn">🎁 Забрать ${rb.amount} 🔫 — путь пройден!</button>`;
+      }
+      return `<p class="rmnote">Пройдите все 5 шагов — получите <b>${rb.amount} 🔫</b> в подарок</p>`;
+    }
+    function bindRoadmap() {
+      document.querySelectorAll(".rstep[data-go]").forEach((b) => (b.onclick = () => {
+        if (b.dataset.go === "friends") showPage("friends"); else studio(b.dataset.go);
+      }));
+      const claimBtn = document.getElementById("rmclaimbtn");
+      if (claimBtn) claimBtn.onclick = async function () {
+        this.disabled = true;
+        const { status, data } = await api("/api/claim-roadmap", { method: "POST" });
+        if (status === 200 && data && data.granted > 0) {
+          setBalance((ME?.dashboard.credits || 0) + data.granted);
+          haptic("success");
+          toast(`🎁 +${data.granted} 🔫 за пройденный путь!`);
+          await refreshMe();
+        } else {
+          this.disabled = false;
+          toast("Не удалось начислить — попробуйте ещё раз");
+        }
+      };
+    }
+    /** Re-render just the roadmap card (+ its "Ещё" tab counter) from fresh
+     *  /api/me data, without rebuilding the whole page (which would reset the
+     *  active tab and any open sheet). */
+    function renderRoadmap(d) {
+      const steps = roadmapStepsFor(d);
+      const rsteps = document.querySelector(".roadmap .rsteps");
+      if (rsteps) rsteps.innerHTML = roadmapStepsHtml(steps);
+      const bonusHost = document.getElementById("rmbonus");
+      if (bonusHost) bonusHost.innerHTML = roadmapBonusHtml(d, steps);
+      bindRoadmap();
+      const small = document.getElementById("moreRoadmap")?.querySelector("small");
+      if (small) small.textContent = `${steps.filter((s) => s.done).length} из ${steps.length} шагов пройдено`;
+    }
+
     // ————— page —————
     async function refreshMe() {
       const { status, data } = await api("/api/me");
@@ -1416,6 +1514,7 @@
       setBalance(data.dashboard.credits);
       const s = document.getElementById("statsRow");
       if (s) s.innerHTML = statsHtml(data.dashboard);
+      renderRoadmap(data);
     }
     function statsHtml(dash) {
       return `
@@ -1518,14 +1617,7 @@
 
       const avatarUrl = tg?.initDataUnsafe?.user?.photo_url || "";
       const initial = esc((d.user.first_name || "?").trim().charAt(0).toUpperCase() || "?");
-      const rm = d.roadmap || {};
-      const ROADMAP_STEPS = [
-        { go: "shoot", icon: "camera", label: "Первое фото", done: !!rm.firstPhoto },
-        { go: "text", icon: "sparkle", label: "Своя идея", done: !!rm.ownIdea },
-        { go: "video", icon: "film", label: "Оживите фото", done: !!rm.revivePhoto },
-        { go: "scenes", icon: "confetti", label: "Сценарий", done: !!rm.scenario },
-        { go: "friends", icon: "gift", label: "Пригласить друга", done: dash.referralCount > 0 },
-      ];
+      const ROADMAP_STEPS = roadmapStepsFor(d);
       // Custom icon + background photo per campaign — keyed by real CAMPAIGNS
       // ids (models.ts), not the emoji in the label (that stays in bot messages
       // untouched). Falls back to the label's own emoji if a campaign is added
@@ -1556,13 +1648,8 @@
         <div class="page on" data-page="studio">
           <div class="roadmap reveal">
             <div class="sec-h"><h2>Ваш путь в NeuroShot</h2></div>
-            <div class="rsteps">
-              ${ROADMAP_STEPS.map((s) => `
-                <button class="rstep ${s.done ? "done" : ""}" data-go="${s.go}">
-                  <span class="rico">${s.done ? "✓" : `<img class="appicon" src="/img/ic-${s.icon}.png" alt="" />`}</span>
-                  <span class="rlabel">${esc(s.label)}</span>
-                </button>`).join("")}
-            </div>
+            <div class="rsteps">${roadmapStepsHtml(ROADMAP_STEPS)}</div>
+            <div id="rmbonus">${roadmapBonusHtml(d, ROADMAP_STEPS)}</div>
           </div>
 
           <div class="news reveal">
@@ -1681,6 +1768,7 @@
           <section class="reveal">
             <div class="sec-h"><h2>О проекте</h2></div>
             <div class="lnkrow" id="moreRoadmap"><span class="ic"><img class="appicon" src="/img/ic-compass.png" alt="" /></span><span class="tx">Ваш путь в NeuroShot<small>${ROADMAP_STEPS.filter((s) => s.done).length} из ${ROADMAP_STEPS.length} шагов пройдено</small></span><span class="chev">›</span></div>
+            <div class="lnkrow" id="moreWelcome"><span class="ic"><img class="appicon" src="/img/ic-book.png" alt="" /></span><span class="tx">Обзор NeuroShot<small>Заново посмотреть введение в продукт</small></span><span class="chev">›</span></div>
           </section>
 
           <section class="reveal">
@@ -1731,10 +1819,10 @@
       document.querySelectorAll("[data-studio]").forEach((a) => (a.onclick = () => studio(a.dataset.studio)));
       document.querySelectorAll("[data-camp-open]").forEach((a) => (a.onclick = () => { st.tab = "scenes"; openSheet(); viewCampaign(a.dataset.campOpen); }));
       // Roadmap steps are the same entry points as "Что создаём" — either into
-      // the studio sheet on a given tab, or the Друзья page for the invite step.
-      document.querySelectorAll(".rstep[data-go]").forEach((b) => (b.onclick = () => {
-        if (b.dataset.go === "friends") showPage("friends"); else studio(b.dataset.go);
-      }));
+      // the studio sheet on a given tab, or the Друзья page for the invite step
+      // — plus the completion-bonus claim button (see renderRoadmap for the
+      // live-refresh path after a job finishes).
+      bindRoadmap();
       // "Ещё" tab links.
       const aboutCta = document.getElementById("aboutCta");
       if (aboutCta) aboutCta.onclick = () => studio("shoot");
@@ -1744,6 +1832,11 @@
       if (moreRoadmap) moreRoadmap.onclick = () => {
         showPage("studio");
         document.querySelector(".roadmap")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      };
+      const moreWelcome = document.getElementById("moreWelcome");
+      if (moreWelcome) moreWelcome.onclick = async () => {
+        await refreshMe();
+        renderWelcome(ME, true);
       };
       const moreSupport = document.getElementById("moreSupport");
       if (moreSupport) moreSupport.onclick = () => openBot(BOT);

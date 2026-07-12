@@ -23,7 +23,7 @@ process.env.KASPI_API_SECRET = "test-kaspi-secret"; // enable the auto-approval 
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, createOrder, getOrCreateUser, getOrder, logGeneration, spendCredits } = await import("../src/db.js");
+const { addCredits, createOrder, getOrCreateUser, getOrder, logEvent, logGeneration, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
@@ -128,7 +128,9 @@ interface MeResponse {
   generations: Array<{ output_url: string | null; status: string }>;
   bot_username: string;
   welcomeBonus: { pending: number; claimed: boolean };
+  onboardingSeen: boolean;
   roadmap: { firstPhoto: boolean; ownIdea: boolean; revivePhoto: boolean; scenario: boolean; invitedFriend: boolean };
+  roadmapBonus: { amount: number; claimed: boolean };
   packs: Array<{ id: string; title: string; credits: number; kzt: number; offer: boolean }>;
   catalog: {
     presetCredits: number;
@@ -179,6 +181,7 @@ await step("GET /api/me onboards a new user with a CLAIMABLE welcome bonus (shar
   // Claim-gated: nothing lands in the spendable balance until POST /api/claim-welcome.
   assert.equal(body.dashboard.credits, 0);
   assert.deepEqual(body.welcomeBonus, { pending: 3, claimed: false }); // FREE_CREDITS
+  assert.equal(body.onboardingSeen, false); // slideshow hasn't been dismissed yet
   assert.equal(body.bot_username, "neuroshot_test_bot"); // from BOT_USERNAME env
   assert.deepEqual(body.generations, []);
   // Pack catalog rides along — one source of truth with the bot's /buy.
@@ -202,6 +205,31 @@ await step("POST /api/claim-welcome moves the parked bonus into credits, once", 
   assert.equal(again.body.granted, 0);
   assert.equal(again.body.alreadyClaimed, true);
   assert.equal((await apiMe(initData)).body.dashboard.credits, 3);
+});
+
+await step("POST /api/ack-onboarding: the slideshow is decoupled from welcome-bonus claim status", async () => {
+  const initData = signInitData({ id: 555, username: "sam" });
+  // 555 already claimed its welcome bonus above, but never dismissed the
+  // slideshow — onboardingSeen must still read false so it pops once for
+  // every existing account, not just new ones.
+  assert.equal((await apiMe(initData)).body.onboardingSeen, false);
+
+  const ack = await fetch(`${base}/api/ack-onboarding`, { method: "POST", headers: { Authorization: `tma ${initData}` } });
+  assert.equal(ack.status, 200);
+  assert.deepEqual(await ack.json(), { ok: true });
+
+  assert.equal((await apiMe(initData)).body.onboardingSeen, true);
+
+  // Idempotent — replaying the slideshow from the "Ещё" tab and closing it
+  // again is a harmless no-op, not an error.
+  const again = await fetch(`${base}/api/ack-onboarding`, { method: "POST", headers: { Authorization: `tma ${initData}` } });
+  assert.equal(again.status, 200);
+  assert.equal((await apiMe(initData)).body.onboardingSeen, true);
+});
+
+await step("POST /api/ack-onboarding requires auth", async () => {
+  const res = await fetch(`${base}/api/ack-onboarding`, { method: "POST" });
+  assert.equal(res.status, 401);
 });
 
 await step("app reflects the SAME state the bot writes: spend + gallery", async () => {
@@ -645,6 +673,47 @@ await step("roadmap progress: real signals, not a fabricated bar (firstPhoto/rev
     scenario: true, // from the "campaign" generate above — logged the same "camp:preset" shape as the bot's cpre: taps
     invitedFriend: false,
   });
+});
+
+await step("POST /api/claim-roadmap: only pays out once all 5 steps are real, exactly once", async () => {
+  const traveler = { id: 750, username: "traveler", first_name: "Tara" };
+  const initData = signInitData(traveler);
+  await apiMe(initData); // onboard
+
+  // Amount is visible from the very first load, before anything is done —
+  // the incentive the user asked to see up front.
+  const fresh = await apiMe(initData);
+  assert.deepEqual(fresh.body.roadmapBonus, { amount: 10, claimed: false }); // ROADMAP_BONUS default
+
+  const early = await fetch(`${base}/api/claim-roadmap`, { method: "POST", headers: { Authorization: `tma ${initData}` } });
+  assert.deepEqual(await early.json(), { granted: 0 }); // steps incomplete — no payout
+
+  // Complete all 5 real signals: a plain render, a text_to_image render (own
+  // idea), an image_to_video render (revive), a colon-shaped preset tap
+  // (scenario), and a referred friend.
+  await logGeneration(traveler.id, "photo_edit", "portrait", 3, "ok", "https://fal.test/out/t1.png");
+  await logGeneration(traveler.id, "text_to_image", "a castle at dusk", 2, "ok", "https://fal.test/out/t2.png");
+  await logGeneration(traveler.id, "animate", "slow zoom", 25, "ok", "https://fal.test/out/t3.mp4");
+  await logEvent(traveler.id, "preset", "skazka:forest");
+  await getOrCreateUser(808, "friend", traveler.id, 3);
+
+  const done = await apiMe(initData);
+  assert.deepEqual(done.body.roadmap, {
+    firstPhoto: true, ownIdea: true, revivePhoto: true, scenario: true, invitedFriend: true,
+  });
+  assert.deepEqual(done.body.roadmapBonus, { amount: 10, claimed: false });
+
+  const claim = await fetch(`${base}/api/claim-roadmap`, { method: "POST", headers: { Authorization: `tma ${initData}` } });
+  assert.deepEqual(await claim.json(), { granted: 10 });
+
+  const after = await apiMe(initData);
+  assert.equal(after.body.dashboard.credits, 10);
+  assert.deepEqual(after.body.roadmapBonus, { amount: 10, claimed: true });
+
+  // A second claim is a no-op, not a double credit.
+  const again = await fetch(`${base}/api/claim-roadmap`, { method: "POST", headers: { Authorization: `tma ${initData}` } });
+  assert.deepEqual(await again.json(), { granted: 0 });
+  assert.equal((await apiMe(initData)).body.dashboard.credits, 10);
 });
 
 let videoGenId = 0; // captured for the video-as-source guard below
