@@ -706,6 +706,23 @@ export function createWebApp(): Server {
         return res.end(readFileSync(join(PUBLIC_DIR, asset.file)));
       }
 
+      // GET /img/<name> — decorative art (onboarding backgrounds, etc.), served
+      // from public/img/. Filename is allowlisted (no path traversal possible —
+      // no "..", no "/") and long-cached since these are content-addressed by
+      // deploy, not user-editable.
+      const imgMatch = /^\/img\/([a-z0-9][a-z0-9._-]{0,63}\.(?:jpg|jpeg|png|webp))$/i.exec(url.pathname);
+      if (imgMatch) {
+        try {
+          const ext = imgMatch[1].split(".").pop()!.toLowerCase();
+          const type = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+          const buf = readFileSync(join(PUBLIC_DIR, "img", imgMatch[1]));
+          res.writeHead(200, { "Content-Type": type, "Cache-Control": "public, max-age=604800, immutable" });
+          return res.end(buf);
+        } catch {
+          return json(res, 404, { error: "not_found" });
+        }
+      }
+
       // POST /api/auth — initData → session token (client-agnostic).
       if (url.pathname === "/api/auth") {
         if (!methodIs(res, req.method, "POST")) return;

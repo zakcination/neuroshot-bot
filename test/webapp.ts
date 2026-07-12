@@ -305,6 +305,22 @@ await step("serves the PWA manifest and service worker (SW is no-cache)", async 
   assert.match(sw.headers.get("cache-control") ?? "", /no-cache/); // prompt SW updates
 });
 
+await step("GET /img/<name>: serves decorative art, long-cached; rejects traversal/unknown", async () => {
+  const ok = await fetch(`${base}/img/onboard-gift.jpg`);
+  assert.equal(ok.status, 200);
+  assert.match(ok.headers.get("content-type") ?? "", /image\/jpeg/);
+  assert.match(ok.headers.get("cache-control") ?? "", /immutable/);
+
+  const missing = await fetch(`${base}/img/does-not-exist.jpg`);
+  assert.equal(missing.status, 404);
+
+  // Path traversal / non-image extensions never resolve through this route.
+  const traversal = await fetch(`${base}/img/..%2F..%2Fpackage.json`);
+  assert.notEqual(traversal.status, 200);
+  const badExt = await fetch(`${base}/img/app.html`);
+  assert.notEqual(badExt.status, 200);
+});
+
 await step("method gating: /api/auth is POST-only, /api/me is GET-only (405 otherwise)", async () => {
   const getAuth = await fetch(`${base}/api/auth`); // GET
   assert.equal(getAuth.status, 405);
