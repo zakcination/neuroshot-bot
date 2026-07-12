@@ -366,11 +366,20 @@ await step("referral: link gives friend a join bonus; first purchase pays invite
   assert.match(notify.payload.text as string, /\+20 патронов/);
 });
 
-await step("/ref: dashboard shows stats + the invite link with the user id", async () => {
+await step("/ref: dashboard shows stats + an opaque invite link (never the raw tg id)", async () => {
   await sendText(alice, "/ref");
-  assert.match(lastText(), new RegExp(`t\\.me/${botInfo.username}\\?start=${alice.id}`));
-  assert.match(lastText(), /Приглашено: <b>1<\/b>/); // bob
-  assert.match(lastText(), /покупают: <b>1<\/b>/); // bob bought
+  const text = lastText();
+  // Opaque 6-char code from the unforgeable alphabet — never alice's numeric id.
+  const m = text.match(new RegExp(`t\\.me/${botInfo.username}\\?start=([a-z2-9]{6})`));
+  assert.ok(m, "invite link missing or not in the opaque-code format");
+  assert.notEqual(m![1], String(alice.id), "invite link leaked the raw tg id");
+  assert.match(text, /Приглашено: <b>1<\/b>/); // bob
+  assert.match(text, /покупают: <b>1<\/b>/); // bob bought
+
+  // The code is stable across requests (same link keeps working if re-shared).
+  await sendText(alice, "/ref");
+  const m2 = lastText().match(new RegExp(`t\\.me/${botInfo.username}\\?start=([a-z2-9]{6})`));
+  assert.equal(m2![1], m![1], "ref code changed between requests");
 });
 
 await step("/stats: admin sees totals, non-admin gets silence", async () => {
@@ -1130,6 +1139,19 @@ await step("identity gate: one free gift per PHONE — cross-account farming blo
   await query("INSERT INTO users (id, credits) VALUES (8813, 0)");
   await setUserPhone(8813, "+77010000002");
   assert.equal((await query("SELECT phone FROM users WHERE id = 8813"))[0].phone, "+77010000002");
+});
+
+await step("ref code round-trip: a new user joining via the opaque code attributes correctly", async () => {
+  // Placed last — introduces a fresh user, which would shift earlier /stats counts.
+  const owner: From = { id: 9701, is_bot: false, first_name: "Owner" };
+  await sendText(owner, "/ref");
+  const code = lastText().match(/\?start=([a-z2-9]{6})/)![1];
+
+  const viaCode: From = { id: 9702, is_bot: false, first_name: "ViaCode" };
+  await sendText(viaCode, `/start ${code}`);
+  const row = await query("SELECT referrer_id, source FROM users WHERE id = $1", [viaCode.id]);
+  assert.equal(Number(row[0].referrer_id), owner.id); // attributed via the code, same as the legacy numeric path
+  assert.equal(row[0].source, "ref");
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL || "embedded (pglite)"})`);

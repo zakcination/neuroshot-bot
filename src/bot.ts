@@ -9,11 +9,13 @@ import {
   addCredits,
   createPartnerCode,
   deactivatePartnerCode,
+  ensureRefCode,
   funnel,
   getGeneration,
   getOrCreateUser,
   getPartnerCode,
   getUser,
+  getUserIdByRefCode,
   hasFreeScenario,
   joinPartnerProgram,
   listPartnerCodes,
@@ -294,16 +296,23 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   bot.command("start", async (ctx) => {
     const payload = ctx.match?.trim();
-    // Deep-link payloads: numeric = friend referral, c_<code> = creator/partner
-    // code, anything else = an acquisition-source slug (one per creative/channel:
-    // t.me/<bot>?start=src_tiktok1) for the per-source funnel in /dash.
-    const referrerId = payload && /^\d+$/.test(payload) ? Number(payload) : null;
+    // Deep-link payloads: numeric = a LEGACY friend-referral link (raw tg id —
+    // links minted before the opaque ref_code existed; still honored so old
+    // shares keep crediting), c_<code>/p_<code> = creator/partner code,
+    // anything else = try it as the new opaque ref_code, else it's an
+    // acquisition-source slug (t.me/<bot>?start=src_tiktok1) for /dash.
+    const legacyReferrerId = payload && /^\d+$/.test(payload) ? Number(payload) : null;
     // c_<code> = admin creator deal · p_<code> = self-serve partner code — both
     // live in partner_codes, so one lookup resolves either (first-touch attribution).
     const partner =
       payload && /^[cp]_/.test(payload)
         ? ((await getPartnerCode(payload.slice(2).toLowerCase())) ?? null)
         : null;
+    // New opaque referral code (never the raw tg id) — a lookup, not a format
+    // guess, so it can never collide with a future source-slug naming choice.
+    const codeReferrerId =
+      payload && !legacyReferrerId && !partner ? await getUserIdByRefCode(payload) : null;
+    const referrerId = legacyReferrerId ?? codeReferrerId;
     const source =
       payload && !referrerId && !partner && payload !== "buy"
         ? payload.toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32) || null
@@ -981,7 +990,8 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   async function sendRefLink(ctx: Context) {
     const u = await user(ctx);
-    const link = `https://t.me/${ctx.me.username}?start=${u.id}`;
+    const code = await ensureRefCode(u.id);
+    const link = `https://t.me/${ctx.me.username}?start=${code}`;
     const st = await referralStats(u.id);
     const pct = Math.round(config.referralPercent * 100);
 

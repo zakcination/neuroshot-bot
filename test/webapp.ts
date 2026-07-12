@@ -123,7 +123,7 @@ await step("verifyInitData rejects a future-dated auth_date (clock skew guard)",
 // ---- API over HTTP, backed by the shared DB ----
 
 interface MeResponse {
-  user: { id: number; username?: string; first_name?: string };
+  user: { id: number; username?: string; first_name?: string; ref_code: string };
   dashboard: { credits: number; okGenerations: number; creditsSpent: number; referralEarned: number };
   generations: Array<{ output_url: string | null; status: string }>;
   bot_username: string;
@@ -161,6 +161,9 @@ await step("GET /api/me onboards a new user with free credits (shared with bot)"
   const { status, body } = await apiMe(signInitData({ id: 555, username: "sam", first_name: "Sam" }));
   assert.equal(status, 200);
   assert.equal(body.user.id, 555);
+  // Never the raw tg id — the Mini App's Друзья page builds the share link from this.
+  assert.match(body.user.ref_code, /^[a-z2-9]{6}$/);
+  assert.notEqual(body.user.ref_code, "555");
   assert.equal(body.dashboard.credits, 3); // FREE_CREDITS
   assert.equal(body.bot_username, "neuroshot_test_bot"); // from BOT_USERNAME env
   assert.deepEqual(body.generations, []);

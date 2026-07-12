@@ -58,6 +58,12 @@ const SCHEMA: string[] = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS nudged_at TIMESTAMPTZ`,
   // Identity-gate the free hook: the user's verified phone (Telegram contact).
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT`,
+  // Opaque referral-link code (never the raw Telegram id) — minted lazily on
+  // first request via ensureRefCode, stable thereafter so shared links keep
+  // working. Old numeric-id links stay honored for backward compatibility
+  // (see resolveReferrer in bot.ts); this only stops MINTING new leaky ones.
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS ref_code TEXT`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ref_code ON users(ref_code) WHERE ref_code IS NOT NULL`,
   // One free scenario per PHONE (not per Telegram account) — multi-account farming
   // then needs multiple real numbers. PK dedups the claim across accounts.
   `CREATE TABLE IF NOT EXISTS free_claims (
@@ -303,6 +309,36 @@ export async function getOrCreateUser(
 export async function getUser(id: number): Promise<UserRow | undefined> {
   const rows = await q("SELECT * FROM users WHERE id = $1", [id]);
   return rows[0] ? mapUser(rows[0]) : undefined;
+}
+
+/**
+ * The user's opaque referral-link code — minted lazily on first request (not
+ * derived from the Telegram id, so the invite link never leaks it), then
+ * stable forever so links already shared keep working. Reuses genCode()'s
+ * unforgeable slug + collision-retry pattern (see the partner-code section).
+ */
+export async function ensureRefCode(userId: number): Promise<string> {
+  const existing = await q("SELECT ref_code FROM users WHERE id = $1", [userId]);
+  const current = existing[0]?.ref_code as string | null | undefined;
+  if (current) return current;
+  for (let i = 0; i < 5; i++) {
+    const code = genCode();
+    const ins = await q(
+      "UPDATE users SET ref_code = $2 WHERE id = $1 AND ref_code IS NULL RETURNING ref_code",
+      [userId, code],
+    );
+    if (ins.length) return code;
+    // Lost the race to a concurrent call, or a (rare) slug collision — re-check.
+    const now = await q("SELECT ref_code FROM users WHERE id = $1", [userId]);
+    if (now[0]?.ref_code) return now[0].ref_code as string;
+  }
+  throw new Error("could not generate a unique referral code");
+}
+
+/** Resolve an opaque referral code back to its owner's numeric id, if valid. */
+export async function getUserIdByRefCode(code: string): Promise<number | null> {
+  const rows = await q("SELECT id FROM users WHERE ref_code = $1", [code]);
+  return rows[0] ? Number(rows[0].id) : null;
 }
 
 export interface ReferralOpts {

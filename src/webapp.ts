@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { createOrder, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, recentGenerations, resolveOrder, setWatermark, userDashboard } from "./db.js";
+import { createOrder, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, recentGenerations, resolveOrder, setWatermark, userDashboard } from "./db.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { grantPurchase } from "./payments.js";
 import { comboEndsAt } from "./offer.js";
@@ -281,12 +281,14 @@ function catalogPayload(): Record<string, unknown> {
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations] = await Promise.all([
+  const [dashboard, generations, refCode] = await Promise.all([
     userDashboard(user.id),
     recentGenerations(user.id, 30),
+    ensureRefCode(user.id),
   ]);
   return {
-    user: { id: user.id, username: user.username, first_name: user.first_name },
+    // No raw tg id in ref_code — an opaque link the client builds the share URL from.
+    user: { id: user.id, username: user.username, first_name: user.first_name, ref_code: refCode },
     dashboard,
     generations,
     bot_username: config.webappBotUsername,

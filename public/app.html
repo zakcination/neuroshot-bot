@@ -1215,7 +1215,7 @@
       ME = d;
       const dash = d.dashboard;
       BOT = d.bot_username || "neuroshot_ai_bot";
-      const refLink = "https://t.me/" + BOT + "?start=" + d.user.id;
+      const refLink = "https://t.me/" + BOT + "?start=" + d.user.ref_code;
       const bestPack = (d.packs || [])[1]?.id; // «Популярный»
       const feat = d.catalog.campaigns[d.catalog.campaigns.length - 1]; // freshest scenario
 
