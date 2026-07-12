@@ -9,6 +9,7 @@
 import { randomBytes } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 import { PGlite } from "@electric-sql/pglite";
+import { MODELS } from "./models.js";
 
 type Row = Record<string, unknown>;
 type Driver = (text: string, params: unknown[]) => Promise<Row[]>;
@@ -58,6 +59,29 @@ const SCHEMA: string[] = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS nudged_at TIMESTAMPTZ`,
   // Identity-gate the free hook: the user's verified phone (Telegram contact).
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT`,
+  // Opaque referral-link code (never the raw Telegram id) — minted lazily on
+  // first request via ensureRefCode, stable thereafter so shared links keep
+  // working. Old numeric-id links stay honored for backward compatibility
+  // (see resolveReferrer in bot.ts); this only stops MINTING new leaky ones.
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS ref_code TEXT`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ref_code ON users(ref_code) WHERE ref_code IS NOT NULL`,
+  // Welcome bonus is claim-gated (product decision: a deliberate "get your free
+  // patrons" tap converts/onboards better than a silent credit): the signup
+  // amount is parked here at creation, NOT added to `credits`, until claimWelcomeBonus
+  // moves it over. pending_join_* mirrors the same gating for a referral/partner
+  // join bonus so the whole free package lands in one claim, per spec.
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_signup_credits INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_join_bonus INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_join_via TEXT`, // 'friend' | 'partner' | NULL
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_join_meta TEXT`, // referrer id or partner code, for the ledger row
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS welcome_bonus_claimed BOOLEAN NOT NULL DEFAULT false`,
+  // Backfill only: rows from before this column existed have pending=0 by the
+  // column DEFAULT, so this can never touch a real unclaimed balance — it just
+  // marks pre-existing accounts (already credited under the old immediate-grant
+  // model) as "nothing left to claim" so the UI never re-prompts them. Safe to
+  // run on every boot.
+  `UPDATE users SET welcome_bonus_claimed = true
+   WHERE welcome_bonus_claimed = false AND pending_signup_credits = 0 AND pending_join_bonus = 0`,
   // One free scenario per PHONE (not per Telegram account) — multi-account farming
   // then needs multiple real numbers. PK dedups the claim across accounts.
   `CREATE TABLE IF NOT EXISTS free_claims (
@@ -121,6 +145,9 @@ const SCHEMA: string[] = [
     -- | referral_join (invitee bonus) | referral_bonus (1st-purchase) | referral_milestone
     -- | partner (creator/partner revenue share) | partner_join (creator-code welcome bonus)
     -- | partner_welcome (self-serve join bonus) | withdrawal | withdrawal_reject
+    -- signup and referral_join/partner_join are now inserted by claimWelcomeBonus
+    -- at CLAIM time, not at account creation (see pending_signup_credits above) —
+    -- so created_at on these rows reflects when credits actually landed.
     reason TEXT NOT NULL,
     meta TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -191,6 +218,14 @@ export interface UserRow {
   watermark_enabled: boolean;
   /** Verified phone (Telegram contact) — set when identity-gating the free hook. */
   phone: string | null;
+  /** 🔫 parked at signup, not yet in `credits` — moved over by claimWelcomeBonus. */
+  pendingSignupCredits: number;
+  /** Referral/partner join bonus parked alongside pendingSignupCredits (0 if none). */
+  pendingJoinBonus: number;
+  /** What the pending join bonus came from — friend referral link or a creator code. */
+  pendingJoinVia: "friend" | "partner" | null;
+  /** True once the welcome bonus has been claimed (or there was never one to claim). */
+  welcomeBonusClaimed: boolean;
   /** Set only by getOrCreateUser on the call that actually inserted the row. */
   justCreated?: boolean;
   /** Welcome bonus granted at creation (0 unless joined via a link/code). */
@@ -211,6 +246,10 @@ function mapUser(r: Row): UserRow {
     partner_code: (r.partner_code as string | null) ?? null,
     watermark_enabled: r.watermark_enabled !== false, // default true for legacy rows
     phone: (r.phone as string | null) ?? null,
+    pendingSignupCredits: Number(r.pending_signup_credits ?? 0),
+    pendingJoinBonus: Number(r.pending_join_bonus ?? 0),
+    pendingJoinVia: (r.pending_join_via as "friend" | "partner" | null) ?? null,
+    welcomeBonusClaimed: r.welcome_bonus_claimed !== false, // default true for legacy rows
   };
 }
 
@@ -268,41 +307,121 @@ export async function getOrCreateUser(
   // Acquisition source, first-touch (set only on the INSERT): referral link →
   // 'ref', creator code → 'c_<code>', ad/channel deep link → its slug.
   const src = ref ? "ref" : via ? `c_${via.code}` : source;
+  const joinVia = ref ? "friend" : via ? "partner" : null;
+  const joinMeta = ref ? String(ref) : via ? via.code : null;
+  // credits starts at 0 — the whole free package (signup + join bonus) is parked
+  // in pending_* and only lands in `credits` when claimWelcomeBonus fires.
   const inserted = await q(
-    `INSERT INTO users (id, username, credits, referrer_id, partner_code, source) VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO users
+       (id, username, credits, referrer_id, partner_code, source,
+        pending_signup_credits, pending_join_bonus, pending_join_via, pending_join_meta)
+     VALUES ($1, $2, 0, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (id) DO NOTHING RETURNING *`,
-    [id, username ?? null, freeCredits + bonus, ref, via?.code ?? null, src],
+    [id, username ?? null, ref, via?.code ?? null, src, freeCredits, bonus, joinVia, joinMeta],
   );
   if (inserted.length) {
-    await q("INSERT INTO ledger (user_id, delta, reason) VALUES ($1, $2, 'signup')", [id, freeCredits]);
-    if (bonus > 0) {
-      if (ref) {
-        await q("INSERT INTO ledger (user_id, delta, reason, meta) VALUES ($1, $2, 'referral_join', $3)", [
-          id,
-          bonus,
-          String(ref),
-        ]);
-      } else if (via) {
-        await q("INSERT INTO ledger (user_id, delta, reason, meta) VALUES ($1, $2, 'partner_join', $3)", [
-          id,
-          bonus,
-          via.code,
-        ]);
-      }
-    }
     const u = mapUser(inserted[0]);
     u.justCreated = true;
     u.joinBonus = bonus;
-    u.joinVia = ref ? "friend" : via ? "partner" : undefined;
+    u.joinVia = joinVia ?? undefined;
     return u;
   }
   const existing = await q("SELECT * FROM users WHERE id = $1", [id]);
   return mapUser(existing[0]);
 }
 
+export interface WelcomeClaim {
+  /** Total 🔫 just moved into `credits` (signup + join bonus combined). */
+  granted: number;
+  joinBonus: number;
+  joinVia: "friend" | "partner" | null;
+  /** Referrer id (as a string) or partner code — whichever joinVia implies. */
+  joinMeta: string | null;
+}
+
+/**
+ * Move a user's parked signup + join bonus into their spendable balance —
+ * exactly once. Returns null if there was nothing to claim (already claimed,
+ * or a legacy account from before claim-gating existed). The ledger rows are
+ * written here, at the moment credits actually land, not at account creation.
+ */
+export async function claimWelcomeBonus(userId: number): Promise<WelcomeClaim | null> {
+  // A single writable-CTE statement — the credit move and both ledger inserts
+  // commit or fail together (one statement is one implicit transaction), so a
+  // crash or transient error between them can never leave credits granted with
+  // no matching ledger row.
+  const rows = await q(
+    `WITH claim AS (
+       UPDATE users
+       SET credits = credits + pending_signup_credits + pending_join_bonus,
+           welcome_bonus_claimed = true
+       WHERE id = $1 AND welcome_bonus_claimed = false
+         AND (pending_signup_credits > 0 OR pending_join_bonus > 0)
+       RETURNING id, pending_signup_credits, pending_join_bonus, pending_join_via, pending_join_meta
+     ),
+     ins_signup AS (
+       INSERT INTO ledger (user_id, delta, reason)
+       SELECT id, pending_signup_credits, 'signup' FROM claim WHERE pending_signup_credits > 0
+       RETURNING 1
+     ),
+     ins_join AS (
+       INSERT INTO ledger (user_id, delta, reason, meta)
+       SELECT id, pending_join_bonus,
+              CASE WHEN pending_join_via = 'partner' THEN 'partner_join' ELSE 'referral_join' END,
+              pending_join_meta
+       FROM claim WHERE pending_join_bonus > 0 AND pending_join_via IS NOT NULL
+       RETURNING 1
+     )
+     SELECT * FROM claim`,
+    [userId],
+  );
+  if (!rows.length) return null;
+  const r = rows[0];
+  const signup = Number(r.pending_signup_credits);
+  const joinBonus = Number(r.pending_join_bonus);
+  const joinVia = (r.pending_join_via as "friend" | "partner" | null) ?? null;
+  return { granted: signup + joinBonus, joinBonus, joinVia, joinMeta: (r.pending_join_meta as string | null) ?? null };
+}
+
 export async function getUser(id: number): Promise<UserRow | undefined> {
   const rows = await q("SELECT * FROM users WHERE id = $1", [id]);
   return rows[0] ? mapUser(rows[0]) : undefined;
+}
+
+/**
+ * The user's opaque referral-link code — minted lazily on first request (not
+ * derived from the Telegram id, so the invite link never leaks it), then
+ * stable forever so links already shared keep working. Reuses genCode()'s
+ * unforgeable slug + collision-retry pattern (see the partner-code section).
+ */
+export async function ensureRefCode(userId: number): Promise<string> {
+  const existing = await q("SELECT ref_code FROM users WHERE id = $1", [userId]);
+  const current = existing[0]?.ref_code as string | null | undefined;
+  if (current) return current;
+  for (let i = 0; i < 5; i++) {
+    const code = genCode();
+    try {
+      const ins = await q(
+        "UPDATE users SET ref_code = $2 WHERE id = $1 AND ref_code IS NULL RETURNING ref_code",
+        [userId, code],
+      );
+      if (ins.length) return code;
+    } catch (e) {
+      // Unique-violation on the rare slug collision with another user's ref_code
+      // — retry with a freshly generated one instead of failing the request.
+      if ((e as { code?: string }).code !== "23505") throw e;
+    }
+    // Lost the race to a concurrent call, or the collision above — re-check.
+    const now = await q("SELECT ref_code FROM users WHERE id = $1", [userId]);
+    if (now[0]?.ref_code) return now[0].ref_code as string;
+  }
+  throw new Error("could not generate a unique referral code");
+}
+
+/** Resolve an opaque referral code back to its owner's numeric id, if valid. */
+export async function getUserIdByRefCode(code: string): Promise<number | null> {
+  const rows = await q("SELECT id FROM users WHERE ref_code = $1", [code]);
+  return rows[0] ? Number(rows[0].id) : null;
 }
 
 export interface ReferralOpts {
@@ -1158,6 +1277,43 @@ export async function userDashboard(userId: number): Promise<{
     referralCount: Number(friends[0].invited),
     referralPaying: Number(friends[0].paying),
     watermarkEnabled: u[0] ? u[0].watermark_enabled !== false : true,
+  };
+}
+
+export interface RoadmapProgress {
+  firstPhoto: boolean; // any successful generation
+  ownIdea: boolean; // a text_to_image render (typed a prompt, no upload)
+  revivePhoto: boolean; // an image_to_video render (animated a photo)
+  scenario: boolean; // tapped into a campaign preset (сказка/кумиры/кино…)
+  invitedFriend: boolean; // at least one referred friend
+}
+
+/**
+ * "Ваш путь в NeuroShot" roadmap step completion — built ONLY from signals that
+ * genuinely distinguish what the step describes, not a fabricated progress bar:
+ *  - firstPhoto/ownIdea/revivePhoto come from generations.model, classified by
+ *    the model's real `kind` (models.ts) — a text_to_image render really is
+ *    "своя идея", not a guess.
+ *  - scenario comes from the events log's `preset` taps: campaign preset ids are
+ *    logged as "camp:preset" (colon-joined — see the cpre: middleware in bot.ts),
+ *    a plain photoshoot preset has no colon, so this is genuinely "used a
+ *    сценарий" and not just "used any preset".
+ * This intentionally does NOT require a schema change — both signals already
+ * exist for other reasons (dashboards, analytics).
+ */
+export async function roadmapProgress(userId: number): Promise<RoadmapProgress> {
+  const [gen, scenarioTap, friend] = await Promise.all([
+    q("SELECT DISTINCT model FROM generations WHERE user_id = $1 AND status = 'ok'", [userId]),
+    q("SELECT 1 FROM events WHERE user_id = $1 AND type = 'preset' AND meta LIKE '%:%' LIMIT 1", [userId]),
+    q("SELECT 1 FROM users WHERE referrer_id = $1 LIMIT 1", [userId]),
+  ]);
+  const kinds = new Set(gen.map((r) => (MODELS as Record<string, { kind: string }>)[String(r.model)]?.kind));
+  return {
+    firstPhoto: gen.length > 0,
+    ownIdea: kinds.has("text_to_image"),
+    revivePhoto: kinds.has("image_to_video"),
+    scenario: scenarioTap.length > 0,
+    invitedFriend: friend.length > 0,
   };
 }
 

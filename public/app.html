@@ -48,30 +48,54 @@
 
     .wrap { position: relative; z-index: 1; max-width: 720px; margin: 0 auto; padding: 14px 16px calc(44px + env(safe-area-inset-bottom)); }
 
-    .top { display: flex; align-items: center; justify-content: space-between; padding: 6px 2px 16px; }
-    .word { display: flex; align-items: center; gap: 9px; font-weight: 800; letter-spacing: .14em; font-size: 13px; }
-    .word .dot { width: 22px; height: 22px; border-radius: 7px; background: var(--aurora); box-shadow: 0 0 18px rgba(180, 77, 255, .55); }
-    .word small { color: var(--magenta); }
     .pill {
       display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px;
       background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 7px 13px;
       font-variant-numeric: tabular-nums;
     }
-
-    .wallet { position: relative; border-radius: var(--radius); padding: 1px; background: linear-gradient(140deg, rgba(124,92,255,.7), rgba(255,77,141,.5) 55%, rgba(124,92,255,.2)); }
-    .wallet .in {
-      border-radius: calc(var(--radius) - 1px); padding: 22px 22px 20px; overflow: hidden; position: relative;
-      background:
-        radial-gradient(120% 160% at 85% -20%, rgba(255,77,141,.22), transparent 55%),
-        radial-gradient(130% 170% at 0% 110%, rgba(124,92,255,.28), transparent 55%),
-        var(--bg-2);
+    /* Header — profile + balance + in-progress count, nothing else. Telegram's
+       own webview title bar already shows "NeuroShot" above this, so an in-app
+       logo was a second, redundant brand mark eating space for no new info. */
+    .top2 { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 2px 16px; }
+    .idbox { display: flex; align-items: center; gap: 9px; flex: none; min-width: 0; }
+    .idbox .nm { font-size: 13.5px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .avatar { width: 30px; height: 30px; border-radius: 50%; flex: none; object-fit: cover; border: 1.5px solid var(--line); }
+    .avatar.ph { display: flex; align-items: center; justify-content: center; background: var(--aurora); font-size: 12px; font-weight: 800; color: #fff; }
+    .pillrow { display: flex; gap: 6px; flex: none; }
+    .pill.jobs { color: var(--amber); border-color: rgba(245,182,74,.35); }
+    /* Balance pill IS the top-up entry point (tap → Патроны) — replaces the old
+       wallet card's "Пополнить" button so it's reachable without a permanent
+       block duplicating the balance already shown right here. */
+    .pill.topup { border: 0; cursor: pointer; padding-right: 6px; font: inherit; color: var(--ink); }
+    .pill.topup .plus {
+      width: 15px; height: 15px; border-radius: 50%; background: var(--aurora); color: #fff;
+      display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 800; line-height: 1; margin-right: 1px;
     }
-    .eyebrow { font-size: 10.5px; letter-spacing: .22em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
-    .balance { display: flex; align-items: baseline; gap: 10px; margin-top: 8px; }
-    .balance .n { font-size: clamp(44px, 13vw, 60px); font-weight: 800; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; }
-    .balance .u { font-size: 24px; }
-    .balance .l { color: var(--muted); font-size: 13px; }
-    .cta-row { display: flex; gap: 10px; margin-top: 18px; }
+    .pill.topup:active { transform: scale(.95); }
+
+    /* "Ваш путь в NeuroShot" — replaces the old wallet card (balance now lives
+       in the header pill). Every step is a real clickable link into the studio
+       sheet (or the Друзья page); "done" reflects genuine backend signals
+       (roadmapProgress in db.ts), not a fabricated progress bar. */
+    .roadmap { background: var(--surface); border: 1px solid rgba(124,92,255,.28); border-radius: var(--radius); padding: 15px 15px 16px; }
+    .roadmap .sec-h { margin-bottom: 11px; }
+    .rsteps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; }
+    .rstep {
+      display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
+      background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-s);
+      padding: 10px 4px 9px; font: inherit; color: var(--ink); cursor: pointer; transition: border-color .15s ease, transform .12s ease;
+    }
+    .rstep:active { transform: scale(.96); }
+    .rstep .rico {
+      width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      font-size: 13px; background: var(--surface); border: 1px solid var(--line);
+    }
+    .rstep .rlabel { font-size: 9.5px; font-weight: 700; line-height: 1.25; color: var(--muted); }
+    .rstep.done { border-color: rgba(55,201,154,.4); }
+    .rstep.done .rico { background: rgba(55,201,154,.16); border-color: rgba(55,201,154,.4); color: #37c99a; }
+    .rstep.done .rlabel { color: var(--ink); }
+    @media (max-width: 360px) { .rstep .rlabel { font-size: 8.8px; } }
+
     .btn {
       appearance: none; border: 0; cursor: pointer; border-radius: var(--radius-s);
       font: inherit; font-weight: 700; font-size: 14.5px; padding: 13px 18px; color: #fff;
@@ -94,19 +118,37 @@
     .rail::-webkit-scrollbar { display: none; }
     .act {
       scroll-snap-align: start; position: relative; border-radius: var(--radius-s); overflow: hidden;
-      background: var(--surface); border: 1px solid var(--line); padding: 16px 14px 14px;
+      background: var(--surface) center/cover no-repeat; border: 1px solid var(--line); padding: 16px 14px 14px;
       min-height: 128px; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px;
       text-decoration: none; color: var(--ink); transition: transform .15s ease, border-color .2s ease; cursor: pointer;
     }
     .act:hover { transform: translateY(-3px); border-color: rgba(124,92,255,.45); }
-    .act::before { content: ""; position: absolute; inset: 0; background: var(--art, none); opacity: .8; }
-    .act .em { position: relative; font-size: 26px; line-height: 1; margin-bottom: auto; }
+    /* Dark aurora-tinted gradient over the card photo — text sits in the
+       bottom band (heavily darkened, measured contrast >=8.9:1 against
+       var(--ink) across every card); the top stays light so the photo itself
+       reads, since the icon below no longer depends on the gradient for
+       contrast (that's the chip's job — see .act .em). */
+    .act::before {
+      content: ""; position: absolute; inset: 0;
+      background:
+        linear-gradient(180deg, rgba(8,7,12,.05) 0%, rgba(8,7,12,.35) 50%, rgba(8,7,12,.88) 100%),
+        linear-gradient(120deg, rgba(124,92,255,.16), rgba(255,77,141,.08));
+    }
+    /* Solid --bg chip behind the icon — the SAME pattern already used for
+       every other icon in the app (.rstep .rico, .wcost .ic, .lnkrow .ic,
+       .steps3 .s .ic all sit on a solid surface color, never bare). Card
+       photos are arbitrary/uncontrolled, so a translucent glass icon floating
+       directly on one measures ~2.7:1 contrast on average (below WCAG AA's
+       3.0) and swings wildly per-photo. --bg as a fixed chip measures >=3.1:1
+       for every icon regardless of the photo underneath — verified by
+       sampling all 20 icons against the design tokens before picking it. */
+    .act .em {
+      position: relative; margin-bottom: auto; width: 38px; height: 38px; border-radius: 12px;
+      background: var(--bg); border: 1px solid rgba(255,255,255,.1); box-shadow: 0 4px 14px rgba(0,0,0,.35);
+      display: flex; align-items: center; justify-content: center; font-size: 18px;
+    }
     .act b { position: relative; font-size: 14px; line-height: 1.25; font-weight: 700; }
     .act span { position: relative; font-size: 11.5px; color: var(--muted); }
-    .a1 { --art: radial-gradient(140% 110% at 100% 0%, rgba(124,92,255,.35), transparent 60%); }
-    .a2 { --art: radial-gradient(140% 110% at 100% 0%, rgba(245,182,74,.28), transparent 60%); }
-    .a3 { --art: radial-gradient(140% 110% at 100% 0%, rgba(255,77,141,.32), transparent 60%); }
-    .a4 { --art: radial-gradient(140% 110% at 100% 0%, rgba(77,205,255,.25), transparent 60%); }
 
     .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
     .stat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 13px 10px; text-align: center; }
@@ -166,6 +208,129 @@
       font-family: ui-monospace, Menlo, monospace;
     }
     .copy { flex: none; width: auto; padding: 11px 15px; }
+
+    /* "Ещё" tab — the About card + link groups (Друзья/Помощь/О проекте/Связаться). */
+    .aboutcard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 19px; }
+    .ac-hero { display: flex; margin-bottom: 12px; }
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 800; letter-spacing: .1em;
+      color: var(--ink); background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px;
+    }
+    .badge i { width: 6px; height: 6px; border-radius: 50%; background: var(--violet); box-shadow: 0 0 8px var(--violet); }
+    .aboutcard h2 { margin: 0 0 8px; font-size: 19px; letter-spacing: -.01em; }
+    .aboutcard h2 span { color: var(--violet); }
+    .aboutcard p { margin: 0 0 16px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .steps3 { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 4px; margin-bottom: 16px; }
+    .steps3 .s { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+    .steps3 .s .ic { width: 40px; height: 40px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; font-size: 18px; }
+    .steps3 .s small { font-size: 10.5px; font-weight: 700; }
+    .steps3 .ar { color: var(--faint); font-size: 13px; }
+    .valuebar {
+      display: flex; align-items: center; gap: 10px; padding: 12px 13px; border-radius: 13px; margin-bottom: 16px;
+      background: linear-gradient(100deg, rgba(124,92,255,.16), rgba(255,77,141,.06)); border: 1px solid rgba(124,92,255,.28);
+    }
+    .valuebar .em { font-size: 20px; flex: none; }
+    .valuebar p { margin: 0; font-size: 12px; }
+    .lnkrow {
+      display: flex; align-items: center; gap: 11px; padding: 14px 15px; border-radius: var(--radius-s);
+      background: var(--surface); border: 1px solid var(--line); font-size: 13.5px; color: var(--ink);
+      cursor: pointer; transition: border-color .15s ease;
+    }
+    .lnkrow:hover { border-color: rgba(124,92,255,.4); }
+    .lnkrow .ic { width: 32px; height: 32px; border-radius: 10px; background: var(--surface-2); display: flex; align-items: center; justify-content: center; font-size: 15px; flex: none; }
+    .lnkrow .tx { flex: 1; }
+    .lnkrow .tx small { display: block; color: var(--muted); font-size: 11px; margin-top: 1px; }
+    .lnkrow .chev { color: var(--faint); flex: none; }
+
+    /* Custom icon set (public/img/ic-*.png) — sized like an emoji glyph (1em) so
+       it drops into any font-sized container (tabbar, rail cards, pills, roadmap)
+       without per-spot sizing rules. Premium glass/aurora style, generated to
+       match the app's own palette — see docs/web-app.md. */
+    .appicon { width: 1em; height: 1em; display: inline-block; vertical-align: -0.15em; object-fit: contain; }
+
+    /* ————— welcome / first-launch onboarding ————— */
+    .welcome {
+      position: fixed; inset: 0; z-index: 70; background: var(--bg); display: flex; flex-direction: column;
+      padding: env(safe-area-inset-top) 16px calc(16px + env(safe-area-inset-bottom));
+    }
+    .wskip {
+      align-self: flex-end; background: none; border: 0; color: var(--muted); font: inherit; font-size: 13px;
+      font-weight: 700; padding: 14px 2px 4px; cursor: pointer;
+    }
+    .wslides { flex: 1; overflow: hidden; position: relative; max-width: 560px; margin: 0 auto; width: 100%; }
+    .wslide { display: none; height: 100%; overflow-y: auto; -ms-overflow-style: none; scrollbar-width: none; }
+    .wslide::-webkit-scrollbar { display: none; }
+    .wslide.on { display: block; animation: pagein .22s ease; }
+    .whero { position: relative; border-radius: 18px; overflow: hidden; margin: 6px 0 16px; aspect-ratio: 16/11; }
+    .whero img { width: 100%; height: 100%; object-fit: cover; display: block; animation: wkenburns 16s ease-in-out infinite alternate; }
+    .whero::after {
+      content: ""; position: absolute; inset: 0;
+      background:
+        linear-gradient(180deg, rgba(8,7,12,0) 28%, rgba(8,7,12,.6) 72%, rgba(8,7,12,.94) 100%),
+        linear-gradient(120deg, rgba(124,92,255,.22), rgba(255,77,141,.1));
+    }
+    .wsparkles i {
+      position: absolute; width: 3px; height: 3px; border-radius: 50%; background: #fff;
+      box-shadow: 0 0 8px 2px rgba(255,255,255,.85); animation: wtwinkle 3.2s ease-in-out infinite;
+    }
+    .whero .wherotext { position: absolute; left: 16px; right: 16px; bottom: 14px; z-index: 2; }
+    .kicker { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: rgba(255,255,255,.75); font-weight: 700; margin-bottom: 4px; }
+    .whero h2 { font-size: 21px; font-weight: 800; letter-spacing: -.01em; color: #fff; margin: 0; text-shadow: 0 2px 10px rgba(0,0,0,.5); }
+    @keyframes wkenburns { from { transform: scale(1); } to { transform: scale(1.11); } }
+    @keyframes wtwinkle { 0%, 100% { opacity: .12; transform: scale(.6); } 50% { opacity: 1; transform: scale(1); } }
+    .wslide > p.lead { font-size: 14px; color: var(--muted); margin: 0 0 18px; line-height: 1.55; }
+    .wcosts { display: flex; flex-direction: column; gap: 9px; margin-bottom: 16px; }
+    .wcost { display: flex; align-items: center; gap: 11px; padding: 12px 13px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); }
+    .wcost .ic { width: 34px; height: 34px; border-radius: 11px; background: var(--surface-2); display: flex; align-items: center; justify-content: center; font-size: 16px; flex: none; }
+    .wcost .tx { flex: 1; font-size: 13.5px; font-weight: 700; }
+    .wcost .tx small { display: block; color: var(--muted); font-size: 11px; font-weight: 500; margin-top: 1px; }
+    .wcost .px { font-size: 13.5px; font-weight: 800; color: var(--amber); flex: none; }
+    .wnote {
+      display: flex; gap: 9px; padding: 12px 13px; border-radius: 13px; margin-bottom: 6px;
+      background: rgba(124,92,255,.1); border: 1px solid rgba(124,92,255,.25); font-size: 12.5px; color: var(--muted); line-height: 1.5;
+    }
+    .wladder { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+    .wrow { display: flex; align-items: center; gap: 12px; padding: 12px 13px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); position: relative; }
+    .wrow.best { border-color: rgba(245,182,74,.5); background: linear-gradient(100deg, rgba(245,182,74,.12), rgba(124,92,255,.06)); }
+    .wrow .wt { flex: 1; }
+    .wrow .wt b { display: block; font-size: 13.5px; }
+    .wrow .wt small { font-size: 11px; color: var(--muted); }
+    .wrow .wp { text-align: right; flex: none; }
+    .wrow .wp b { display: block; font-size: 14px; font-variant-numeric: tabular-nums; }
+    .wrow .wp small { font-size: 10px; color: #37c99a; font-weight: 800; }
+    .wrow .tag {
+      position: absolute; top: -8px; right: 11px; font-size: 8.5px; font-weight: 800; letter-spacing: .03em;
+      background: var(--amber); color: #241a06; padding: 2px 7px; border-radius: 6px;
+    }
+    .wgiftbox {
+      text-align: center; padding: 24px 16px 20px; border-radius: 18px; margin-bottom: 16px;
+      background: linear-gradient(160deg, rgba(124,92,255,.16), rgba(255,77,141,.08)); border: 1px solid rgba(124,92,255,.28);
+    }
+    .wgiftbox .gn { font-size: 38px; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .wgiftbox .gn span { font-size: 19px; vertical-align: 2px; }
+    .wgiftbox .gd { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+    .wclaim {
+      width: 100%; border: 0; border-radius: 16px; padding: 16px; font: inherit; font-weight: 800; font-size: 14.5px;
+      color: #fff; background: var(--aurora); box-shadow: 0 12px 26px rgba(180,77,255,.4); cursor: pointer; margin-bottom: 8px;
+    }
+    .wclaim:active { transform: scale(.98); }
+    .wclaim.done { background: rgba(55,201,154,.14); color: #37c99a; box-shadow: none; border: 1px solid rgba(55,201,154,.35); }
+    .wclaim[disabled] { pointer-events: none; }
+    .wskipclaim { display: block; width: 100%; background: none; border: 0; color: var(--faint); font: inherit; font-size: 12.5px; font-weight: 700; padding: 8px; cursor: pointer; text-align: center; }
+    .wtour {
+      display: flex; align-items: center; gap: 11px; padding: 13px; border-radius: 14px; margin-top: 6px;
+      background: var(--surface-2); border: 1px solid var(--line); cursor: pointer;
+    }
+    .wtour .ic { font-size: 19px; flex: none; }
+    .wtour .tx { flex: 1; font-size: 13px; font-weight: 700; }
+    .wtour .tx small { display: block; color: var(--muted); font-size: 11px; font-weight: 500; margin-top: 1px; }
+    .wtour .chev { color: var(--faint); }
+    .wnext { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 4px 4px; max-width: 560px; margin: 0 auto; width: 100%; }
+    .wdots { display: flex; gap: 6px; }
+    .wdots i { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+    .wdots i.on { width: 18px; border-radius: 3px; background: var(--aurora); }
+    .wnextbtn { border: 0; border-radius: 13px; padding: 11px 20px; font: inherit; font-weight: 800; font-size: 13.5px; color: #fff; background: var(--aurora); cursor: pointer; }
+    @media (prefers-reduced-motion: reduce) { .whero img, .wsparkles i { animation: none; } }
 
     footer { margin-top: 34px; text-align: center; color: var(--faint); font-size: 11px; letter-spacing: .05em; }
 
@@ -325,13 +490,11 @@
 <body>
   <div class="sky" aria-hidden="true"><i></i><i></i></div>
   <div class="wrap" id="root">
-    <div class="top">
-      <div class="word"><span class="dot"></span>NEURO<small>SHOT</small></div>
-    </div>
     <div class="skel"></div>
   </div>
   <div class="sheet-bg" id="sheetBg"></div>
   <div class="sheet" id="sheet" role="dialog" aria-modal="true"><div class="sheet-top"><div class="grip"></div><button class="sheet-x" id="sheetX" type="button" aria-label="Закрыть">✕</button></div><div id="sheetBody"></div></div>
+  <div class="welcome" id="welcome" role="dialog" aria-modal="true" style="display:none"></div>
   <div class="toast" id="toast"></div>
 
   <script>
@@ -382,16 +545,6 @@
     }
     function haptic(kind) { try { tg?.HapticFeedback?.notificationOccurred?.(kind); } catch (e) { /* optional */ } }
 
-    function countUp(el, target) {
-      if (matchMedia("(prefers-reduced-motion: reduce)").matches || target === 0) { el.textContent = target; return; }
-      const t0 = performance.now(), dur = 700;
-      const tick = (t) => {
-        const p = Math.min(1, (t - t0) / dur), eased = 1 - Math.pow(1 - p, 3);
-        el.textContent = Math.round(target * eased);
-        if (p < 1) requestAnimationFrame(tick);
-      };
-      requestAnimationFrame(tick);
-    }
     function reveal() {
       const io = new IntersectionObserver((es) => es.forEach((e) => {
         if (e.isIntersecting) { e.target.classList.add("on"); io.unobserve(e.target); }
@@ -409,6 +562,151 @@
         </div>`));
     }
 
+    // ————— welcome / first-launch onboarding —————
+    // Shown whenever the welcome bonus is unclaimed (see claimWelcomeBonus in
+    // db.ts) — a brand-new signup, or a returning user who tapped "Продолжить
+    // без патронов" last time. There's no separate "seen it" flag: /api/me is
+    // the single source of truth, so the claim is never permanently stranded —
+    // it just resurfaces on the next open until actually claimed.
+    function sparklesHtml() {
+      return `<span class="wsparkles"><i style="left:12%;top:18%;animation-delay:.2s"></i>` +
+        `<i style="left:80%;top:14%;animation-delay:1.1s"></i>` +
+        `<i style="left:42%;top:34%;animation-delay:.6s"></i>` +
+        `<i style="left:86%;top:46%;animation-delay:1.8s"></i>` +
+        `<i style="left:22%;top:52%;animation-delay:2.3s"></i></span>`;
+    }
+    function heroHtml(img, step, title) {
+      return `<div class="whero"><img src="${img}" alt="" />${sparklesHtml()}` +
+        `<div class="wherotext"><div class="kicker">Шаг ${step} из 5</div><h2>${title}</h2></div></div>`;
+    }
+    function closeWelcome() { document.getElementById("welcome").style.display = "none"; }
+
+    function renderWelcome(d) {
+      const wb = d.welcomeBonus || { pending: 0, claimed: true };
+      if (wb.claimed || wb.pending <= 0) return;
+      const el = document.getElementById("welcome");
+      const c = d.catalog;
+      const videoMin = c.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9);
+      const packs = [...(d.packs || [])].filter((p) => !p.offer).sort((a, b) => a.kzt - b.kzt);
+      const cheapestId = packs.reduce((best, p) => (!best || p.kzt / p.credits < best.kzt / best.credits) ? p : best, null)?.id;
+      const presetSample = c.presets.slice(0, 4);
+
+      el.innerHTML = `
+        <button class="wskip" id="wskipbtn">Пропустить</button>
+        <div class="wslides">
+          <div class="wslide on" data-slide="0">
+            ${heroHtml("/img/onboard-product.jpg", 1, "Добро пожаловать в NeuroShot")}
+            <p class="lead">Загружаете фото — ИИ проводит его через стиль и монтаж и
+            отдаёт готовый результат: портрет, карточку товара или видео-сюжет.
+            Никакого фотошопа руками — одно фото и пара тапов.</p>
+            <div class="steps3">
+              <div class="s"><div class="ic"><img class="appicon" src="/img/ic-camera.png" alt="" /></div><small>Фото</small></div>
+              <div class="ar">→</div>
+              <div class="s"><div class="ic"><img class="appicon" src="/img/ic-palette.png" alt="" /></div><small>Стиль</small></div>
+              <div class="ar">→</div>
+              <div class="s"><div class="ic"><img class="appicon" src="/img/ic-sparkle.png" alt="" /></div><small>Результат</small></div>
+            </div>
+            <div class="wnote"><span>💡</span><span>Дальше — 3 коротких экрана: как
+            устроена оплата, почему выгодно покупать больше и как забрать бесплатный старт.</span></div>
+          </div>
+
+          <div class="wslide" data-slide="1">
+            ${heroHtml("/img/onboard-patron.jpg", 2, "Патрон — ваша валюта здесь")}
+            <p class="lead"><b>🔫 патрон</b> — внутренняя валюта NeuroShot. Им вы
+            платите за каждый результат. Патроны не сгорают и списываются, только
+            когда вы сами запускаете генерацию — никаких скрытых списаний.</p>
+            <div class="wcosts">
+              <div class="wcost"><span class="ic"><img class="appicon" src="/img/ic-frame.png" alt="" /></span><span class="tx">Фото<small>портрет, карточка товара, стиль</small></span><span class="px">от ${c.presetCredits} 🔫</span></div>
+              <div class="wcost"><span class="ic"><img class="appicon" src="/img/ic-film.png" alt="" /></span><span class="tx">Видео<small>сцена с движением и озвучкой</small></span><span class="px">от ${videoMin} 🔫</span></div>
+            </div>
+            <div class="wnote"><span>ℹ️</span><span>Цена патрона зависит от пакета —
+            дальше покажем на цифрах.</span></div>
+          </div>
+
+          <div class="wslide" data-slide="2">
+            ${heroHtml("/img/onboard-pricing.jpg", 3, "Чем больше патронов — тем дешевле")}
+            <p class="lead">Цена за один патрон падает с каждым пакетом — как оптовая
+            скидка. Берёте про запас — платите меньше за каждый результат.</p>
+            <div class="wladder">${packs.map((p) => {
+              const per = Math.round(p.kzt / p.credits);
+              const best = p.id === cheapestId;
+              return `<div class="wrow ${best ? "best" : ""}">${best ? `<span class="tag">Выгоднее всего</span>` : ""}` +
+                `<div class="wt"><b>${esc(p.title.split(" — ")[0])}</b><small>${p.credits} 🔫 · ${p.kzt.toLocaleString("ru-RU")} ₸</small></div>` +
+                `<div class="wp"><b>${per} ₸</b><small>за 🔫</small></div></div>`;
+            }).join("")}</div>
+            <div class="wnote"><span>💳</span><span>Оплата — картой через Kaspi,
+            патроны зачисляются автоматически. Докупить можно в любой момент во
+            вкладке «Патроны».</span></div>
+          </div>
+
+          <div class="wslide" data-slide="3">
+            ${heroHtml("/img/onboard-presets.jpg", 4, "Придумывать промпты не нужно")}
+            <p class="lead">Загружаете фото, выбираете готовый пресет — результат
+            собирает сам ИИ. Никаких промптов, формулировок и подбора слов.</p>
+            <div class="wcosts">${presetSample.map((p) =>
+              `<div class="wcost"><span class="ic"><img class="appicon" src="/img/ic-sparkle.png" alt="" /></span><span class="tx">${esc(p.label)}<small>готовый пресет — просто выберите</small></span></div>`).join("")}</div>
+            <div class="wnote"><span>📚</span><span>Пресетов уже много — библиотека
+            растёт: мы регулярно добавляем новые сценарии, чтобы результат был
+            классным при минимуме действий с вашей стороны.</span></div>
+          </div>
+
+          <div class="wslide" data-slide="4">
+            ${heroHtml("/img/onboard-gift.jpg", 5, "Ваш бесплатный старт")}
+            <div class="wgiftbox"><div class="gn">${wb.pending}<span><img class="appicon" src="/img/ic-patron.png" alt="" /></span></div><div class="gd">бесплатно — без карты и оплаты</div></div>
+            <p class="lead" style="text-align:center">Это ваш пробный набор — попробуйте
+            студию без риска. Патроны придут на баланс только после того, как вы
+            нажмёте кнопку ниже.</p>
+            <button class="wclaim" id="wclaimbtn">🎁 Получить ${wb.pending} бесплатно</button>
+            <button class="wskipclaim" id="wskipclaimbtn">Продолжить без патронов</button>
+            <div class="wtour" id="wtourbtn" style="display:none">
+              <span class="ic"><img class="appicon" src="/img/ic-compass.png" alt="" /></span><span class="tx">Короткий тур по студии<small>«Ваш путь в NeuroShot» — 5 шагов</small></span><span class="chev">›</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="wnext" id="wnextrow">
+          <div class="wdots"><i class="on"></i><i></i><i></i><i></i><i></i></div>
+          <button class="wnextbtn" id="wnextbtn">Далее</button>
+        </div>`;
+
+      el.style.display = "flex";
+
+      const wslides = el.querySelectorAll(".wslide");
+      const wdots = el.querySelectorAll(".wdots i");
+      const wnextbtn = document.getElementById("wnextbtn");
+      const wnextrow = document.getElementById("wnextrow");
+      let wcur = 0;
+      function goSlide(i) {
+        wcur = Math.max(0, Math.min(wslides.length - 1, i));
+        wslides.forEach((s, idx) => s.classList.toggle("on", idx === wcur));
+        wdots.forEach((dot, idx) => dot.classList.toggle("on", idx === wcur));
+        wnextrow.style.display = wcur === wslides.length - 1 ? "none" : "";
+      }
+      wnextbtn.onclick = () => goSlide(wcur + 1);
+      document.getElementById("wskipbtn").onclick = () => goSlide(wslides.length - 1);
+      document.getElementById("wclaimbtn").onclick = async function () {
+        this.disabled = true;
+        const { status, data } = await api("/api/claim-welcome", { method: "POST" });
+        if (status === 200 && data && data.granted > 0) {
+          this.textContent = "✓ Начислено — можно начинать";
+          this.classList.add("done");
+          document.getElementById("wskipclaimbtn").style.display = "none";
+          document.getElementById("wtourbtn").style.display = "flex";
+          setBalance((ME?.dashboard.credits || 0) + data.granted);
+          haptic("success");
+        } else {
+          this.disabled = false;
+          toast("Не удалось начислить — попробуйте ещё раз");
+        }
+      };
+      document.getElementById("wskipclaimbtn").onclick = closeWelcome;
+      document.getElementById("wtourbtn").onclick = () => {
+        closeWelcome();
+        if (window.showPage) window.showPage("studio");
+        document.querySelector(".roadmap")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      };
+    }
+
     // ————— global state —————
     let ME = null; // /api/me payload
     let BOT = "neuroshot_ai_bot";
@@ -416,9 +714,8 @@
     function setBalance(n) {
       if (!ME) return;
       ME.dashboard.credits = n;
-      const pill = document.getElementById("pillN"), bal = document.getElementById("balN");
+      const pill = document.getElementById("pillN");
       if (pill) pill.textContent = n;
-      if (bal) bal.textContent = n;
     }
 
     // ————— studio (create-in-app) —————
@@ -1215,31 +1512,58 @@
       ME = d;
       const dash = d.dashboard;
       BOT = d.bot_username || "neuroshot_ai_bot";
-      const refLink = "https://t.me/" + BOT + "?start=" + d.user.id;
+      const refLink = "https://t.me/" + BOT + "?start=" + d.user.ref_code;
       const bestPack = (d.packs || [])[1]?.id; // «Популярный»
-      const feat = d.catalog.campaigns[d.catalog.campaigns.length - 1]; // freshest scenario
+      renderWelcome(d);
+
+      const avatarUrl = tg?.initDataUnsafe?.user?.photo_url || "";
+      const initial = esc((d.user.first_name || "?").trim().charAt(0).toUpperCase() || "?");
+      const rm = d.roadmap || {};
+      const ROADMAP_STEPS = [
+        { go: "shoot", icon: "camera", label: "Первое фото", done: !!rm.firstPhoto },
+        { go: "text", icon: "sparkle", label: "Своя идея", done: !!rm.ownIdea },
+        { go: "video", icon: "film", label: "Оживите фото", done: !!rm.revivePhoto },
+        { go: "scenes", icon: "confetti", label: "Сценарий", done: !!rm.scenario },
+        { go: "friends", icon: "gift", label: "Пригласить друга", done: dash.referralCount > 0 },
+      ];
+      // Custom icon + background photo per campaign — keyed by real CAMPAIGNS
+      // ids (models.ts), not the emoji in the label (that stays in bot messages
+      // untouched). Falls back to the label's own emoji if a campaign is added
+      // without art yet, so nothing silently disappears.
+      const CAMP_ART = {
+        skazka: { icon: "book", bg: "skazka" },
+        cartoon: { icon: "superhero", bg: "cartoon" },
+        worldcup: { icon: "trophy", bg: "worldcup" },
+        oldphoto: { icon: "pocketwatch", bg: "oldphoto" },
+        poster: { icon: "ticket", bg: "poster" },
+        minifilm: { icon: "reel", bg: "minifilm" },
+      };
 
       root.innerHTML = "";
       root.appendChild($(`<div>
-        <div class="top">
-          <div class="word"><span class="dot"></span>NEURO<small>SHOT</small></div>
-          <span style="display:flex;gap:8px">
-            <span class="pill" id="jobsPill" style="display:none;cursor:pointer">⏳ <span id="jobsN">0</span></span>
-            <span class="pill">🔫 <span id="pillN">${dash.credits}</span></span>
+        <div class="top2">
+          <div class="idbox">
+            ${avatarUrl ? `<img class="avatar" src="${esc(avatarUrl)}" alt="" />` : `<div class="avatar ph">${initial}</div>`}
+            <span class="nm">${esc(d.user.first_name || "друг")}</span>
+          </div>
+          <span class="pillrow">
+            <button class="pill topup" id="balancePill"><span class="plus">+</span><img class="appicon" src="/img/ic-patron.png" alt="" /> <span id="pillN">${dash.credits}</span></button>
+            <span class="pill jobs" id="jobsPill" style="display:none;cursor:pointer"><img class="appicon" src="/img/ic-hourglass.png" alt="" /> <span id="jobsN">0</span></span>
           </span>
         </div>
 
         <!-- ===== СТУДИЯ (create) ===== -->
         <div class="page on" data-page="studio">
-          <div class="wallet reveal"><div class="in">
-            <div class="eyebrow">Студия · Баланс</div>
-            <div class="balance"><span class="n" id="balN">0</span><span class="u">🔫</span></div>
-            <div class="balance"><span class="l">${esc(plural(dash.credits, "патрон", "патрона", "патронов"))} · привет, ${esc(d.user.first_name || "друг")} 👋</span></div>
-            <div class="cta-row">
-              <button class="btn primary" id="createTop">✨ Создать</button>
-              <button class="btn ghost" id="buyTop">💳 Пополнить</button>
+          <div class="roadmap reveal">
+            <div class="sec-h"><h2>Ваш путь в NeuroShot</h2></div>
+            <div class="rsteps">
+              ${ROADMAP_STEPS.map((s) => `
+                <button class="rstep ${s.done ? "done" : ""}" data-go="${s.go}">
+                  <span class="rico">${s.done ? "✓" : `<img class="appicon" src="/img/ic-${s.icon}.png" alt="" />`}</span>
+                  <span class="rlabel">${esc(s.label)}</span>
+                </button>`).join("")}
             </div>
-          </div></div>
+          </div>
 
           <div class="news reveal">
             <div class="sec-h"><h2>🆕 Новые модели</h2></div>
@@ -1250,19 +1574,24 @@
           <section class="reveal">
             <div class="sec-h"><h2>Что создаём</h2></div>
             <div class="rail">
-              <a class="act a1" data-studio="shoot"><span class="em">📸</span><b>AI-фотосессия</b><span>от ${d.catalog.presetCredits} 🔫 · прямо здесь</span></a>
-              <a class="act a2" data-studio="product"><span class="em">🛍</span><b>Карточка товара</b><span>для маркетплейса</span></a>
-              <a class="act a3" data-studio="video"><span class="em">🎬</span><b>Оживить фото</b><span>видео от ${d.catalog.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} 🔫</span></a>
-              <a class="act a4" data-studio="text"><span class="em">✨</span><b>Из текста</b><span>от ${d.catalog.imageModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} 🔫</span></a>
+              <a class="act" data-studio="shoot" style="background-image:url('/img/card-shoot.jpg')"><span class="em"><img class="appicon" src="/img/ic-camera.png" alt="" /></span><b>AI-фотосессия</b><span>от ${d.catalog.presetCredits} 🔫 · прямо здесь</span></a>
+              <a class="act" data-studio="product" style="background-image:url('/img/card-product.jpg')"><span class="em"><img class="appicon" src="/img/ic-bag.png" alt="" /></span><b>Карточка товара</b><span>для маркетплейса</span></a>
+              <a class="act" data-studio="video" style="background-image:url('/img/card-video.jpg')"><span class="em"><img class="appicon" src="/img/ic-film.png" alt="" /></span><b>Оживить фото</b><span>видео от ${d.catalog.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} 🔫</span></a>
+              <a class="act" data-studio="text" style="background-image:url('/img/card-text.jpg')"><span class="em"><img class="appicon" src="/img/ic-sparkle.png" alt="" /></span><b>Из текста</b><span>от ${d.catalog.imageModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} 🔫</span></a>
             </div>
           </section>
 
           <section class="reveal">
             <div class="sec-h"><h2>Сценарии</h2></div>
             <div class="rail">
-              ${d.catalog.campaigns.map((k, i) => `
-                <a class="act a${(i % 4) + 1}" data-camp-open="${k.id}"><span class="em">${esc(k.label.split(" ")[0])}</span>
-                  <b>${esc(k.label.slice(k.label.indexOf(" ") + 1))}</b><span>${k.imageCredits} 🔫 + видео ${k.videoCredits} 🔫</span></a>`).join("")}
+              ${d.catalog.campaigns.map((k) => {
+                const art = CAMP_ART[k.id];
+                const bgStyle = art ? ` style="background-image:url('/img/card-${art.bg}.jpg')"` : "";
+                const emHtml = art ? `<img class="appicon" src="/img/ic-${art.icon}.png" alt="" />` : esc(k.label.split(" ")[0]);
+                return `
+                <a class="act" data-camp-open="${k.id}"${bgStyle}><span class="em">${emHtml}</span>
+                  <b>${esc(k.label.slice(k.label.indexOf(" ") + 1))}</b><span>${k.imageCredits} 🔫 + видео ${k.videoCredits} 🔫</span></a>`;
+              }).join("")}
             </div>
           </section>
         </div>
@@ -1318,15 +1647,57 @@
           </section>
         </div>
 
+        <!-- ===== ЕЩЁ (about + support + roadmap link) ===== -->
+        <div class="page" data-page="more">
+          <section class="reveal">
+            <div class="aboutcard">
+              <div class="ac-hero"><span class="badge"><i></i>NEUROSHOT</span></div>
+              <h2>Что такое <span>NeuroShot</span></h2>
+              <p>Одно фото — и у вас целая студия: загружаете фото, ИИ проводит его через
+              стиль и монтаж и отдаёт готовый результат — портрет, карточку товара или
+              видео-сюжет.</p>
+              <div class="steps3">
+                <div class="s"><div class="ic"><img class="appicon" src="/img/ic-camera.png" alt="" /></div><small>Фото</small></div>
+                <div class="ar">→</div>
+                <div class="s"><div class="ic"><img class="appicon" src="/img/ic-palette.png" alt="" /></div><small>Стиль</small></div>
+                <div class="ar">→</div>
+                <div class="s"><div class="ic"><img class="appicon" src="/img/ic-sparkle.png" alt="" /></div><small>Результат</small></div>
+              </div>
+              <div class="valuebar"><span class="em"><img class="appicon" src="/img/ic-patron.png" alt="" /></span><p>Патрон — внутренняя валюта: от 2 🔫 за фото, от 10 🔫 за видео. Чем больше пакет — тем дешевле патрон.</p></div>
+              <button class="btn primary" id="aboutCta">✨ Начать создавать</button>
+            </div>
+          </section>
+
+          <section class="reveal">
+            <div class="sec-h"><h2>Друзья</h2></div>
+            <div class="lnkrow" id="moreFriends"><span class="ic"><img class="appicon" src="/img/ic-gift.png" alt="" /></span><span class="tx">Реферальная программа<small>приглашено ${dash.referralCount} · заработано ${dash.referralEarned} 🔫</small></span><span class="chev">›</span></div>
+          </section>
+
+          <section class="reveal">
+            <div class="sec-h"><h2>Помощь</h2></div>
+            <div class="lnkrow" id="moreSupport"><span class="ic"><img class="appicon" src="/img/ic-chat.png" alt="" /></span><span class="tx">Написать в бот<small>@${esc(BOT)} — отвечаем в чате</small></span><span class="chev">›</span></div>
+          </section>
+
+          <section class="reveal">
+            <div class="sec-h"><h2>О проекте</h2></div>
+            <div class="lnkrow" id="moreRoadmap"><span class="ic"><img class="appicon" src="/img/ic-compass.png" alt="" /></span><span class="tx">Ваш путь в NeuroShot<small>${ROADMAP_STEPS.filter((s) => s.done).length} из ${ROADMAP_STEPS.length} шагов пройдено</small></span><span class="chev">›</span></div>
+          </section>
+
+          <section class="reveal">
+            <div class="sec-h"><h2>Связаться</h2></div>
+            <div class="lnkrow" id="moreContact"><span class="ic"><img class="appicon" src="/img/ic-plane.png" alt="" /></span><span class="tx">Telegram-бот<small>@${esc(BOT)}</small></span><span class="chev">›</span></div>
+          </section>
+        </div>
+
         <nav class="tabbar">
-          <button class="tabbtn on" data-page="studio"><span>🎨</span>Студия</button>
-          <button class="tabbtn" data-page="profile"><span>🖼</span>Профиль</button>
-          <button class="tabbtn" data-page="friends"><span>🎁</span>Друзья</button>
-          <button class="tabbtn" data-page="buy"><span>🔫</span>Патроны</button>
+          <button class="tabbtn on" data-page="studio"><span><img class="appicon" src="/img/ic-palette.png" alt="" /></span>Студия</button>
+          <button class="tabbtn" data-page="profile"><span><img class="appicon" src="/img/ic-frame.png" alt="" /></span>Профиль</button>
+          <button class="tabbtn" data-page="friends"><span><img class="appicon" src="/img/ic-gift.png" alt="" /></span>Друзья</button>
+          <button class="tabbtn" data-page="buy"><span><img class="appicon" src="/img/ic-patron.png" alt="" /></span>Патроны</button>
+          <button class="tabbtn" data-page="more"><span><img class="appicon" src="/img/ic-dots.png" alt="" /></span>Ещё</button>
         </nav>
       </div>`));
 
-      countUp(document.getElementById("balN"), dash.credits);
       renderGallery();
       renderNews();
 
@@ -1355,11 +1726,29 @@
         const job = [...jobs.values()].at(-1);
         if (job) { viewedJob = job.id; viewProgress(job.isVideo, job.id); }
       };
-      document.getElementById("createTop").onclick = () => studio(feat ? "scenes" : "shoot");
-      document.getElementById("buyTop").onclick = () => showPage("buy");
+      document.getElementById("balancePill").onclick = () => showPage("buy");
       document.querySelectorAll("[data-buy]").forEach((b) => (b.onclick = () => buyPack(b.dataset.buy, false)));
       document.querySelectorAll("[data-studio]").forEach((a) => (a.onclick = () => studio(a.dataset.studio)));
       document.querySelectorAll("[data-camp-open]").forEach((a) => (a.onclick = () => { st.tab = "scenes"; openSheet(); viewCampaign(a.dataset.campOpen); }));
+      // Roadmap steps are the same entry points as "Что создаём" — either into
+      // the studio sheet on a given tab, or the Друзья page for the invite step.
+      document.querySelectorAll(".rstep[data-go]").forEach((b) => (b.onclick = () => {
+        if (b.dataset.go === "friends") showPage("friends"); else studio(b.dataset.go);
+      }));
+      // "Ещё" tab links.
+      const aboutCta = document.getElementById("aboutCta");
+      if (aboutCta) aboutCta.onclick = () => studio("shoot");
+      const moreFriends = document.getElementById("moreFriends");
+      if (moreFriends) moreFriends.onclick = () => showPage("friends");
+      const moreRoadmap = document.getElementById("moreRoadmap");
+      if (moreRoadmap) moreRoadmap.onclick = () => {
+        showPage("studio");
+        document.querySelector(".roadmap")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      };
+      const moreSupport = document.getElementById("moreSupport");
+      if (moreSupport) moreSupport.onclick = () => openBot(BOT);
+      const moreContact = document.getElementById("moreContact");
+      if (moreContact) moreContact.onclick = () => openBot(BOT);
       document.getElementById("refC").onclick = async () => {
         try { await navigator.clipboard.writeText(refLink); } catch (e) { /* ignore */ }
         document.getElementById("refC").textContent = "Скопировано ✓";

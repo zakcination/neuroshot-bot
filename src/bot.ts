@@ -7,13 +7,16 @@ import { Bot, GrammyError, HttpError, InlineKeyboard, InputFile, InputMediaBuild
 import { config } from "./config.js";
 import {
   addCredits,
+  claimWelcomeBonus,
   createPartnerCode,
   deactivatePartnerCode,
+  ensureRefCode,
   funnel,
   getGeneration,
   getOrCreateUser,
   getPartnerCode,
   getUser,
+  getUserIdByRefCode,
   hasFreeScenario,
   joinPartnerProgram,
   listPartnerCodes,
@@ -85,15 +88,24 @@ async function user(
  *
  * @param opts.featured  prepend a one-tap "🆕 Новинка недели" row (recurring reason)
  * @param opts.hasPhoto  prepend "продолжить с вашим фото" (try-on-your-last-photo hook)
+ * @param opts.claimPending  🔫 parked and unclaimed (see claimWelcomeBonus) — shown
+ *   as the very first row since it's a zero-cost, zero-friction action that should
+ *   resolve before anything else (an unclaimed newcomer has 0 spendable balance).
  */
 export function mainMenu(
-  opts: { featured?: Campaign; hasPhoto?: boolean; freeScenario?: boolean } = {},
+  opts: { featured?: Campaign; hasPhoto?: boolean; freeScenario?: boolean; claimPending?: number } = {},
 ): InlineKeyboard {
   // Deliberately minimal: only the anchors that get a newcomer to a result
   // fast (upload → wow). Secondary surfaces (product, text→image, top-models,
   // balance, invite) live behind commands (/buy, /ref) and inside the studio,
   // so the chat stays a clean, high-converting funnel — not a control panel.
   const kb = new InlineKeyboard();
+  // 0) The claim gate: free patrons parked but not yet spendable (see db.ts
+  // claimWelcomeBonus) — a deliberate "get your gift" tap onboards better than a
+  // silent credit, per the product's welcome-flow design.
+  if (opts.claimPending && opts.claimPending > 0) {
+    kb.text(`🎁 Получить ${nUnits(opts.claimPending)} бесплатно`, "claim:welcome").row();
+  }
   // 1) The hook: one free video from a single photo (shown until claimed).
   if (opts.freeScenario) kb.text("🎁 Бесплатное видео за 1 фото — без оплаты", "menu:free").row();
   // 2) Contextual fast path: keep going with the photo already on file.
@@ -169,7 +181,7 @@ const MENU_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "assets", "
 async function sendMainMenu(
   ctx: Context,
   caption: string,
-  menuOpts: { featured?: Campaign; hasPhoto?: boolean; freeScenario?: boolean } = {},
+  menuOpts: { featured?: Campaign; hasPhoto?: boolean; freeScenario?: boolean; claimPending?: number } = {},
 ): Promise<void> {
   const hero = join(MENU_DIR, "hero.jpg");
   if (existsSync(hero)) {
@@ -294,30 +306,58 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   bot.command("start", async (ctx) => {
     const payload = ctx.match?.trim();
-    // Deep-link payloads: numeric = friend referral, c_<code> = creator/partner
-    // code, anything else = an acquisition-source slug (one per creative/channel:
-    // t.me/<bot>?start=src_tiktok1) for the per-source funnel in /dash.
-    const referrerId = payload && /^\d+$/.test(payload) ? Number(payload) : null;
+    // Deep-link payloads: numeric = a LEGACY friend-referral link (raw tg id —
+    // links minted before the opaque ref_code existed; still honored so old
+    // shares keep crediting), c_<code>/p_<code> = creator/partner code,
+    // anything else = try it as the new opaque ref_code, else it's an
+    // acquisition-source slug (t.me/<bot>?start=src_tiktok1) for /dash.
+    const legacyReferrerId = payload && /^\d+$/.test(payload) ? Number(payload) : null;
     // c_<code> = admin creator deal · p_<code> = self-serve partner code — both
     // live in partner_codes, so one lookup resolves either (first-touch attribution).
     const partner =
       payload && /^[cp]_/.test(payload)
         ? ((await getPartnerCode(payload.slice(2).toLowerCase())) ?? null)
         : null;
+    // New opaque referral code (never the raw tg id) — a lookup, not a format
+    // guess, so it can never collide with a future source-slug naming choice.
+    const codeReferrerId =
+      payload && !legacyReferrerId && !partner ? await getUserIdByRefCode(payload) : null;
+    const referrerId = legacyReferrerId ?? codeReferrerId;
     const source =
       payload && !referrerId && !partner && payload !== "buy"
         ? payload.toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32) || null
         : null;
     const u = await user(ctx, referrerId, partner, source);
+    // The welcome bonus (signup + any join bonus) is claim-gated — parked in
+    // pending_* until the user taps "🎁 Получить" (see claimWelcomeBonus). A
+    // brand-new/unclaimed account has 0 spendable credits until then.
+    let pending = u.pendingSignupCredits + u.pendingJoinBonus;
+    let claimable = !u.welcomeBonusClaimed && pending > 0;
+    // Persona-routed deep link (src_football / src_revive / src_product …): the
+    // paid-acquisition promise is "≤2 taps to a result" (see mainMenu's doc
+    // comment) — inserting a claim tap here would break that funnel. So THIS one
+    // path auto-claims silently before routing; the generic /start below still
+    // shows the deliberate "🎁 Получить" tap (better activation/onboarding for
+    // organic signups, where there's no ad-funnel latency budget to protect).
+    const route = entryLinkFor(source);
+    if (route && claimable) {
+      const claimed = await claimWelcomeBonus(u.id);
+      if (claimed) {
+        u.credits += claimed.granted;
+        pending = 0;
+        claimable = false;
+      }
+    }
     let msg = `${WELCOME}\n\n`;
-    if (u.justCreated) {
-      msg += `🎁 Вам начислено <b>${UNIT_EMOJI} ${nUnits(u.credits)}</b> на старт.`;
+    if (claimable) {
+      msg += `🎁 Для вас — <b>${UNIT_EMOJI} ${nUnits(pending)}</b> бесплатно на старт.`;
       if (u.joinBonus && u.joinBonus > 0) {
         msg +=
           u.joinVia === "partner"
             ? `\nИз них <b>+${nUnits(u.joinBonus)}</b> — подарок от ${partner?.title ?? "партнёра"} 🤝`
             : `\nИз них <b>+${nUnits(u.joinBonus)}</b> — бонус за приглашение. Спасибо другу! 🤝`;
       }
+      msg += `\nНажмите «🎁 Получить», чтобы забрать.`;
     } else {
       msg += `💰 На балансе: <b>${UNIT_EMOJI} ${nUnits(u.credits)}</b>.`;
     }
@@ -325,29 +365,55 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     // your-last-photo shortcut for returning users. No secondary noise.
     const freeScenario = await hasFreeScenario(u.id);
     const menuOpts = u.justCreated
-      ? { freeScenario }
-      : { hasPhoto: !!u.pending_file_id, freeScenario };
+      ? { freeScenario, claimPending: claimable ? pending : undefined }
+      : { hasPhoto: !!u.pending_file_id, freeScenario, claimPending: claimable ? pending : undefined };
     if (freeScenario) msg += `\n\n🎁 <b>Подарок:</b> одно фото → видео (принцесса или футбол) — бесплатно, без оплаты!`;
-    // Persona-routed deep link (src_football / src_revive / src_product …): land
-    // STRAIGHT on the matching first action — one message (credits line + the
-    // scenario prompt), no generic menu. Falls back to the menu if it can't route
-    // (e.g. the free gift is already used).
-    const route = entryLinkFor(source);
-    const intro = u.justCreated
-      ? `🎁 Вам начислено <b>${UNIT_EMOJI} ${nUnits(u.credits)}</b> на старт!`
-      : `💰 Баланс: <b>${UNIT_EMOJI} ${nUnits(u.credits)}</b>`;
-    const routed = route ? await routeEntry(ctx, u.id, route, intro) : false;
+    // Lands STRAIGHT on the matching first action — one message (balance line +
+    // the scenario prompt), no generic menu. Still skipped while claimable (e.g.
+    // the free-scenario gift was already used, so there was nothing to auto-claim
+    // above) — an unclaimed newcomer then sees the menu instead, "🎁 Получить" on
+    // top. Falls back to the menu too if it can't route.
+    const intro = `💰 Баланс: <b>${UNIT_EMOJI} ${nUnits(u.credits)}</b>`;
+    const routed = !claimable && route ? await routeEntry(ctx, u.id, route, intro) : false;
     if (!routed) await sendMainMenu(ctx, msg, menuOpts);
     // Deep link from the Mini App's "Пополнить" button.
     if (payload === "buy") await sendBalance(ctx, u.credits);
   });
 
+  bot.callbackQuery("claim:welcome", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await user(ctx);
+    const res = await claimWelcomeBonus(u.id);
+    if (!res) {
+      // Already claimed (e.g. double-tap) — just show the current balance, no error.
+      await sendBalance(ctx, u.credits);
+      return;
+    }
+    let msg = `✅ Начислено <b>${UNIT_EMOJI} ${nUnits(res.granted)}</b>! Баланс: <b>${UNIT_EMOJI} ${nUnits(u.credits + res.granted)}</b>.`;
+    if (res.joinBonus > 0) {
+      if (res.joinVia === "partner") {
+        const partner = res.joinMeta ? await getPartnerCode(res.joinMeta) : undefined;
+        msg += `\nИз них <b>+${nUnits(res.joinBonus)}</b> — подарок от ${partner?.title ?? "партнёра"} 🤝`;
+      } else {
+        msg += `\nИз них <b>+${nUnits(res.joinBonus)}</b> — бонус за приглашение. Спасибо другу! 🤝`;
+      }
+    }
+    await ctx.reply(msg, { parse_mode: "HTML" });
+    const freeScenario = await hasFreeScenario(u.id);
+    await sendMainMenu(ctx, "Что создаём? Одно фото — и готово 👇", {
+      hasPhoto: !!u.pending_file_id,
+      freeScenario,
+    });
+  });
+
   bot.command("menu", async (ctx) => {
     const u = await user(ctx);
     await setPending(u.id, null, u.pending_file_id); // escape any mode/prompt-await, keep the photo
+    const pending = u.pendingSignupCredits + u.pendingJoinBonus;
     await sendMainMenu(ctx, "Что создаём? Одно фото — и готово 👇", {
       hasPhoto: !!u.pending_file_id,
       freeScenario: await hasFreeScenario(u.id),
+      claimPending: !u.welcomeBonusClaimed && pending > 0 ? pending : undefined,
     });
   });
 
@@ -981,7 +1047,8 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   async function sendRefLink(ctx: Context) {
     const u = await user(ctx);
-    const link = `https://t.me/${ctx.me.username}?start=${u.id}`;
+    const code = await ensureRefCode(u.id);
+    const link = `https://t.me/${ctx.me.username}?start=${code}`;
     const st = await referralStats(u.id);
     const pct = Math.round(config.referralPercent * 100);
 

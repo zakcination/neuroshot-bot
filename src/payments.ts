@@ -9,6 +9,7 @@ import {
   resolveOrder,
   rewardPartnerOnPurchase,
   rewardReferralOnPurchase,
+  type UserRow,
 } from "./db.js";
 import { kaspiVerifyOrder } from "./kaspi.js";
 import { PACKS, packById, REFERRAL_MILESTONES, type ModelSpec, type Pack } from "./models.js";
@@ -74,14 +75,21 @@ export function paywallText(model: ModelSpec, credits: number): string {
   );
 }
 
-/** Primary CTA = the entry pack (framed by results); secondary = all packs. */
-export function paywallKeyboard(model: ModelSpec): InlineKeyboard {
+/**
+ * Primary CTA = the entry pack (framed by results); secondary = all packs.
+ * If the caller still has an unclaimed welcome bonus parked (see
+ * claimWelcomeBonus in db.ts), that's the FIRST row — cheaper than a paywall
+ * for someone who hasn't even collected their free patrons yet.
+ */
+export function paywallKeyboard(model: ModelSpec, user?: UserRow): InlineKeyboard {
   const pack = entryPack();
   const n = resultsPerPack(pack, model);
-  return new InlineKeyboard()
-    .text(`${pack.kzt} ₸ · ${packShort(pack)}: ${nResults(n)}`, `buy:${pack.id}`)
-    .row()
-    .text("💎 Все пакеты", "show_packs");
+  const kb = new InlineKeyboard();
+  const pending = user ? user.pendingSignupCredits + user.pendingJoinBonus : 0;
+  if (user && !user.welcomeBonusClaimed && pending > 0) {
+    kb.text(`🎁 Забрать бесплатные ${nUnits(pending)}`, "claim:welcome").row();
+  }
+  return kb.text(`${pack.kzt} ₸ · ${packShort(pack)}: ${nResults(n)}`, `buy:${pack.id}`).row().text("💎 Все пакеты", "show_packs");
 }
 
 /**
