@@ -311,7 +311,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     // markOnboardingSeen. Independent of welcomeBonus: the slideshow pops once
     // for every account (including ones that already claimed/spent their free
     // patrons), and is always replayable from the "Ещё" tab regardless of this.
-    onboardingSeen: row?.onboardingSeen ?? true,
+    onboardingSeen: row?.onboardingSeen ?? false,
     // "Ваш путь в NeuroShot" roadmap — real completion signals, see roadmapProgress.
     roadmap,
     // The completion gift for finishing all 5 roadmap steps — claim-gated the
