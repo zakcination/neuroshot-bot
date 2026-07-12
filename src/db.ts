@@ -78,6 +78,13 @@ const SCHEMA: string[] = [
   // One-time gift for completing all 5 "Ваш путь в NeuroShot" roadmap steps —
   // claim-gated the same way as the welcome bonus (see claimRoadmapBonus).
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS roadmap_bonus_claimed BOOLEAN NOT NULL DEFAULT false`,
+  // Whether the first-launch onboarding slideshow has been shown to this
+  // account. Deliberately independent of welcome_bonus_claimed — the redesigned
+  // onboarding is new content nobody has seen yet, including users who already
+  // claimed (or spent) their free patrons long ago, so DEFAULT false applies to
+  // every existing row too and the slideshow pops for the whole install base
+  // once. It's replayable any time from the "Ещё" tab regardless of this flag.
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_seen BOOLEAN NOT NULL DEFAULT false`,
   // Backfill only: rows from before this column existed have pending=0 by the
   // column DEFAULT, so this can never touch a real unclaimed balance — it just
   // marks pre-existing accounts (already credited under the old immediate-grant
@@ -231,6 +238,8 @@ export interface UserRow {
   welcomeBonusClaimed: boolean;
   /** True once the "Ваш путь в NeuroShot" completion bonus has been claimed. */
   roadmapBonusClaimed: boolean;
+  /** True once this account has been shown the first-launch onboarding slideshow. */
+  onboardingSeen: boolean;
   /** Set only by getOrCreateUser on the call that actually inserted the row. */
   justCreated?: boolean;
   /** Welcome bonus granted at creation (0 unless joined via a link/code). */
@@ -256,6 +265,7 @@ function mapUser(r: Row): UserRow {
     pendingJoinVia: (r.pending_join_via as "friend" | "partner" | null) ?? null,
     welcomeBonusClaimed: r.welcome_bonus_claimed !== false, // default true for legacy rows
     roadmapBonusClaimed: r.roadmap_bonus_claimed === true, // default false for legacy rows
+    onboardingSeen: r.onboarding_seen === true, // default false — everyone gets the redesigned slideshow once
   };
 }
 
@@ -1349,6 +1359,17 @@ export async function claimRoadmapBonus(userId: number, bonus: number): Promise<
   );
   if (!rows.length) return null;
   return { granted: bonus };
+}
+
+/**
+ * Record that a user has been shown the first-launch onboarding slideshow —
+ * independent of the welcome-bonus claim, so a user who already claimed (or
+ * spent) their free patrons long ago still gets the redesigned slideshow once.
+ * Idempotent; replaying the slideshow from the "Ещё" tab calls this again
+ * harmlessly.
+ */
+export async function markOnboardingSeen(userId: number): Promise<void> {
+  await q("UPDATE users SET onboarding_seen = true WHERE id = $1", [userId]);
 }
 
 /**

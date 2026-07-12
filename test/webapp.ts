@@ -128,6 +128,7 @@ interface MeResponse {
   generations: Array<{ output_url: string | null; status: string }>;
   bot_username: string;
   welcomeBonus: { pending: number; claimed: boolean };
+  onboardingSeen: boolean;
   roadmap: { firstPhoto: boolean; ownIdea: boolean; revivePhoto: boolean; scenario: boolean; invitedFriend: boolean };
   roadmapBonus: { amount: number; claimed: boolean };
   packs: Array<{ id: string; title: string; credits: number; kzt: number; offer: boolean }>;
@@ -180,6 +181,7 @@ await step("GET /api/me onboards a new user with a CLAIMABLE welcome bonus (shar
   // Claim-gated: nothing lands in the spendable balance until POST /api/claim-welcome.
   assert.equal(body.dashboard.credits, 0);
   assert.deepEqual(body.welcomeBonus, { pending: 3, claimed: false }); // FREE_CREDITS
+  assert.equal(body.onboardingSeen, false); // slideshow hasn't been dismissed yet
   assert.equal(body.bot_username, "neuroshot_test_bot"); // from BOT_USERNAME env
   assert.deepEqual(body.generations, []);
   // Pack catalog rides along — one source of truth with the bot's /buy.
@@ -203,6 +205,31 @@ await step("POST /api/claim-welcome moves the parked bonus into credits, once", 
   assert.equal(again.body.granted, 0);
   assert.equal(again.body.alreadyClaimed, true);
   assert.equal((await apiMe(initData)).body.dashboard.credits, 3);
+});
+
+await step("POST /api/ack-onboarding: the slideshow is decoupled from welcome-bonus claim status", async () => {
+  const initData = signInitData({ id: 555, username: "sam" });
+  // 555 already claimed its welcome bonus above, but never dismissed the
+  // slideshow — onboardingSeen must still read false so it pops once for
+  // every existing account, not just new ones.
+  assert.equal((await apiMe(initData)).body.onboardingSeen, false);
+
+  const ack = await fetch(`${base}/api/ack-onboarding`, { method: "POST", headers: { Authorization: `tma ${initData}` } });
+  assert.equal(ack.status, 200);
+  assert.deepEqual(await ack.json(), { ok: true });
+
+  assert.equal((await apiMe(initData)).body.onboardingSeen, true);
+
+  // Idempotent — replaying the slideshow from the "Ещё" tab and closing it
+  // again is a harmless no-op, not an error.
+  const again = await fetch(`${base}/api/ack-onboarding`, { method: "POST", headers: { Authorization: `tma ${initData}` } });
+  assert.equal(again.status, 200);
+  assert.equal((await apiMe(initData)).body.onboardingSeen, true);
+});
+
+await step("POST /api/ack-onboarding requires auth", async () => {
+  const res = await fetch(`${base}/api/ack-onboarding`, { method: "POST" });
+  assert.equal(res.status, 401);
 });
 
 await step("app reflects the SAME state the bot writes: spend + gallery", async () => {

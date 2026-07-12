@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { claimRoadmapBonus, claimWelcomeBonus, createOrder, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, logEvent, recentGenerations, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { claimRoadmapBonus, claimWelcomeBonus, createOrder, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, logEvent, markOnboardingSeen, recentGenerations, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { grantPurchase } from "./payments.js";
 import { comboEndsAt } from "./offer.js";
@@ -300,12 +300,18 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     // Combo offer deadline (ms epoch) for the live countdown.
     comboOffer: { endsAt: comboEndsAt() },
     // Welcome bonus (signup + join bonus) is claim-gated — see claimWelcomeBonus
-    // in db.ts. The client shows the first-launch onboarding + "🎁 Получить"
-    // button only while claimed=false and pending>0; both 0 for legacy accounts.
+    // in db.ts. The client shows a "🎁 Получить" claim button on the onboarding
+    // slideshow's last slide only while claimed=false and pending>0; otherwise
+    // it shows an "already received" note instead (both 0 for legacy accounts).
     welcomeBonus: {
       pending: (row?.pendingSignupCredits ?? 0) + (row?.pendingJoinBonus ?? 0),
       claimed: row?.welcomeBonusClaimed ?? true,
     },
+    // Whether the first-launch onboarding slideshow has been shown — see
+    // markOnboardingSeen. Independent of welcomeBonus: the slideshow pops once
+    // for every account (including ones that already claimed/spent their free
+    // patrons), and is always replayable from the "Ещё" tab regardless of this.
+    onboardingSeen: row?.onboardingSeen ?? true,
     // "Ваш путь в NeuroShot" roadmap — real completion signals, see roadmapProgress.
     roadmap,
     // The completion gift for finishing all 5 roadmap steps — claim-gated the
@@ -327,6 +333,12 @@ export async function claimRoadmapResponse(userId: number): Promise<{ status: nu
   const res = await claimRoadmapBonus(userId, config.roadmapBonus);
   if (!res) return { status: 200, body: { granted: 0 } };
   return { status: 200, body: { granted: res.granted } };
+}
+
+/** POST /api/ack-onboarding — the client closing the welcome slideshow (claimed or skipped). */
+export async function ackOnboardingResponse(userId: number): Promise<{ status: number; body: Record<string, unknown> }> {
+  await markOnboardingSeen(userId);
+  return { status: 200, body: { ok: true } };
 }
 
 /** Read a JSON request body with a hard size cap (uploads are base64 images). */
@@ -858,6 +870,17 @@ export function createWebApp(): Server {
         if (!user) return json(res, 401, { error: "unauthorized" });
         await getOrCreateUser(user.id, user.username, null, config.freeCredits);
         const { status, body } = await claimRoadmapResponse(user.id);
+        return json(res, status, body);
+      }
+
+      // POST /api/ack-onboarding — the welcome slideshow closing (claimed or
+      // skipped); marks it seen so it doesn't auto-pop again on the next load.
+      if (url.pathname === "/api/ack-onboarding") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        await getOrCreateUser(user.id, user.username, null, config.freeCredits);
+        const { status, body } = await ackOnboardingResponse(user.id);
         return json(res, status, body);
       }
 

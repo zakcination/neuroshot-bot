@@ -40,8 +40,8 @@ Telegram│  Bot (grammY)│        │ Mini App (webapp)│  ← same HTML late
   the user claims from.
 - **`public/app.html`** — the Mini App: a personal cabinet (balance, top-up,
   gallery of the user's own work, usage stats), a first-launch welcome/
-  onboarding flow (currency + pricing-ladder explainer, claim CTA — resurfaces
-  on every load until claimed), and a "Ваш путь в NeuroShot" roadmap replacing
+  onboarding flow (currency + pricing-ladder explainer, claim CTA), and a
+  "Ваш путь в NeuroShot" roadmap replacing
   the old wallet card. Completing all 5 steps unlocks a one-time gift
   (`config.roadmapBonus`, default 10 🔫, env `ROADMAP_BONUS`) — a note under
   the checklist states the reward up front, and a claim button appears once
@@ -49,6 +49,15 @@ Telegram│  Bot (grammY)│        │ Mini App (webapp)│  ← same HTML late
   claim-gating as the welcome bonus; `POST /api/claim-roadmap`). The checklist
   itself re-renders live after every finished job (`renderRoadmap` in
   `app.html`), not only on a full reload. Adapts to Telegram theme.
+- **Onboarding slideshow visibility is decoupled from the welcome-bonus
+  claim** (`users.onboarding_seen`, `markOnboardingSeen` in `src/db.ts`,
+  `POST /api/ack-onboarding`). It pops once for every account — including
+  ones that claimed or already spent their free patrons long before this
+  flow existed, since `onboarding_seen` defaults `false` for every existing
+  row, not just new signups — and its last slide shows a claim button only
+  while there's something unclaimed to grant; otherwise it shows an
+  "already received" note instead of re-offering credits. Always replayable
+  on demand from the "Ещё" tab (`#moreWelcome`) regardless of the seen flag.
 - **`public/manifest.webmanifest` + `public/sw.js`** — make it an **installable
   PWA**: home-screen launch, offline app shell (the auth'd API is never cached).
 - **Bot integration** — a `🌐 Приложение` menu button + `/app` command +
