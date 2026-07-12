@@ -224,7 +224,7 @@ export async function runGeneration(
       await logEvent(user.id, "paywall", model.key);
       await ctx.reply(paywallText(model, user.credits), {
         parse_mode: "HTML",
-        reply_markup: paywallKeyboard(model),
+        reply_markup: paywallKeyboard(model, user),
       });
       return;
     }

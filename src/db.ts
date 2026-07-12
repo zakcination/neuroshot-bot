@@ -64,6 +64,23 @@ const SCHEMA: string[] = [
   // (see resolveReferrer in bot.ts); this only stops MINTING new leaky ones.
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS ref_code TEXT`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ref_code ON users(ref_code) WHERE ref_code IS NOT NULL`,
+  // Welcome bonus is claim-gated (product decision: a deliberate "get your free
+  // patrons" tap converts/onboards better than a silent credit): the signup
+  // amount is parked here at creation, NOT added to `credits`, until claimWelcomeBonus
+  // moves it over. pending_join_* mirrors the same gating for a referral/partner
+  // join bonus so the whole free package lands in one claim, per spec.
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_signup_credits INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_join_bonus INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_join_via TEXT`, // 'friend' | 'partner' | NULL
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_join_meta TEXT`, // referrer id or partner code, for the ledger row
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS welcome_bonus_claimed BOOLEAN NOT NULL DEFAULT false`,
+  // Backfill only: rows from before this column existed have pending=0 by the
+  // column DEFAULT, so this can never touch a real unclaimed balance — it just
+  // marks pre-existing accounts (already credited under the old immediate-grant
+  // model) as "nothing left to claim" so the UI never re-prompts them. Safe to
+  // run on every boot.
+  `UPDATE users SET welcome_bonus_claimed = true
+   WHERE welcome_bonus_claimed = false AND pending_signup_credits = 0 AND pending_join_bonus = 0`,
   // One free scenario per PHONE (not per Telegram account) — multi-account farming
   // then needs multiple real numbers. PK dedups the claim across accounts.
   `CREATE TABLE IF NOT EXISTS free_claims (
@@ -127,6 +144,9 @@ const SCHEMA: string[] = [
     -- | referral_join (invitee bonus) | referral_bonus (1st-purchase) | referral_milestone
     -- | partner (creator/partner revenue share) | partner_join (creator-code welcome bonus)
     -- | partner_welcome (self-serve join bonus) | withdrawal | withdrawal_reject
+    -- signup and referral_join/partner_join are now inserted by claimWelcomeBonus
+    -- at CLAIM time, not at account creation (see pending_signup_credits above) —
+    -- so created_at on these rows reflects when credits actually landed.
     reason TEXT NOT NULL,
     meta TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -197,6 +217,14 @@ export interface UserRow {
   watermark_enabled: boolean;
   /** Verified phone (Telegram contact) — set when identity-gating the free hook. */
   phone: string | null;
+  /** 🔫 parked at signup, not yet in `credits` — moved over by claimWelcomeBonus. */
+  pendingSignupCredits: number;
+  /** Referral/partner join bonus parked alongside pendingSignupCredits (0 if none). */
+  pendingJoinBonus: number;
+  /** What the pending join bonus came from — friend referral link or a creator code. */
+  pendingJoinVia: "friend" | "partner" | null;
+  /** True once the welcome bonus has been claimed (or there was never one to claim). */
+  welcomeBonusClaimed: boolean;
   /** Set only by getOrCreateUser on the call that actually inserted the row. */
   justCreated?: boolean;
   /** Welcome bonus granted at creation (0 unless joined via a link/code). */
@@ -217,6 +245,10 @@ function mapUser(r: Row): UserRow {
     partner_code: (r.partner_code as string | null) ?? null,
     watermark_enabled: r.watermark_enabled !== false, // default true for legacy rows
     phone: (r.phone as string | null) ?? null,
+    pendingSignupCredits: Number(r.pending_signup_credits ?? 0),
+    pendingJoinBonus: Number(r.pending_join_bonus ?? 0),
+    pendingJoinVia: (r.pending_join_via as "friend" | "partner" | null) ?? null,
+    welcomeBonusClaimed: r.welcome_bonus_claimed !== false, // default true for legacy rows
   };
 }
 
@@ -274,36 +306,72 @@ export async function getOrCreateUser(
   // Acquisition source, first-touch (set only on the INSERT): referral link →
   // 'ref', creator code → 'c_<code>', ad/channel deep link → its slug.
   const src = ref ? "ref" : via ? `c_${via.code}` : source;
+  const joinVia = ref ? "friend" : via ? "partner" : null;
+  const joinMeta = ref ? String(ref) : via ? via.code : null;
+  // credits starts at 0 — the whole free package (signup + join bonus) is parked
+  // in pending_* and only lands in `credits` when claimWelcomeBonus fires.
   const inserted = await q(
-    `INSERT INTO users (id, username, credits, referrer_id, partner_code, source) VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO users
+       (id, username, credits, referrer_id, partner_code, source,
+        pending_signup_credits, pending_join_bonus, pending_join_via, pending_join_meta)
+     VALUES ($1, $2, 0, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (id) DO NOTHING RETURNING *`,
-    [id, username ?? null, freeCredits + bonus, ref, via?.code ?? null, src],
+    [id, username ?? null, ref, via?.code ?? null, src, freeCredits, bonus, joinVia, joinMeta],
   );
   if (inserted.length) {
-    await q("INSERT INTO ledger (user_id, delta, reason) VALUES ($1, $2, 'signup')", [id, freeCredits]);
-    if (bonus > 0) {
-      if (ref) {
-        await q("INSERT INTO ledger (user_id, delta, reason, meta) VALUES ($1, $2, 'referral_join', $3)", [
-          id,
-          bonus,
-          String(ref),
-        ]);
-      } else if (via) {
-        await q("INSERT INTO ledger (user_id, delta, reason, meta) VALUES ($1, $2, 'partner_join', $3)", [
-          id,
-          bonus,
-          via.code,
-        ]);
-      }
-    }
     const u = mapUser(inserted[0]);
     u.justCreated = true;
     u.joinBonus = bonus;
-    u.joinVia = ref ? "friend" : via ? "partner" : undefined;
+    u.joinVia = joinVia ?? undefined;
     return u;
   }
   const existing = await q("SELECT * FROM users WHERE id = $1", [id]);
   return mapUser(existing[0]);
+}
+
+export interface WelcomeClaim {
+  /** Total 🔫 just moved into `credits` (signup + join bonus combined). */
+  granted: number;
+  joinBonus: number;
+  joinVia: "friend" | "partner" | null;
+  /** Referrer id (as a string) or partner code — whichever joinVia implies. */
+  joinMeta: string | null;
+}
+
+/**
+ * Move a user's parked signup + join bonus into their spendable balance —
+ * exactly once. Returns null if there was nothing to claim (already claimed,
+ * or a legacy account from before claim-gating existed). The ledger rows are
+ * written here, at the moment credits actually land, not at account creation.
+ */
+export async function claimWelcomeBonus(userId: number): Promise<WelcomeClaim | null> {
+  const rows = await q(
+    `UPDATE users
+     SET credits = credits + pending_signup_credits + pending_join_bonus,
+         welcome_bonus_claimed = true
+     WHERE id = $1 AND welcome_bonus_claimed = false
+       AND (pending_signup_credits > 0 OR pending_join_bonus > 0)
+     RETURNING pending_signup_credits, pending_join_bonus, pending_join_via, pending_join_meta`,
+    [userId],
+  );
+  if (!rows.length) return null;
+  const r = rows[0];
+  const signup = Number(r.pending_signup_credits);
+  const joinBonus = Number(r.pending_join_bonus);
+  const joinVia = (r.pending_join_via as "friend" | "partner" | null) ?? null;
+  if (signup > 0) {
+    await q("INSERT INTO ledger (user_id, delta, reason) VALUES ($1, $2, 'signup')", [userId, signup]);
+  }
+  if (joinBonus > 0 && joinVia) {
+    const reason = joinVia === "partner" ? "partner_join" : "referral_join";
+    await q("INSERT INTO ledger (user_id, delta, reason, meta) VALUES ($1, $2, $3, $4)", [
+      userId,
+      joinBonus,
+      reason,
+      r.pending_join_meta ?? null,
+    ]);
+  }
+  return { granted: signup + joinBonus, joinBonus, joinVia, joinMeta: (r.pending_join_meta as string | null) ?? null };
 }
 
 export async function getUser(id: number): Promise<UserRow | undefined> {

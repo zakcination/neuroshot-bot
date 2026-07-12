@@ -235,25 +235,38 @@ async function step(name: string, fn: () => void | Promise<void>): Promise<void>
 
 console.log("NeuroShot e2e — full user journey\n");
 
-await step("signup: /start creates user with 12 free 🔫 and shows the use-case menu", async () => {
+await step("signup: /start creates user with 12 🔫 PARKED (unclaimed) and a claim button", async () => {
   await sendText(alice, "/start");
-  assert.equal(await credits(alice.id), 12);
-  assert.equal(await ledgerCount("signup"), 1);
+  // Claim-gated: nothing lands in the spendable balance until the user taps
+  // "🎁 Получить" — see claimWelcomeBonus in db.ts.
+  assert.equal(await credits(alice.id), 0);
+  assert.equal(await ledgerCount("signup"), 0);
   // Main menu ships as a hero photo carrying the welcome caption + keyboard.
   const hero = calls("sendPhoto").at(-1)!;
-  assert.match(hero.payload.caption as string, /начислено.*12 патронов/);
+  assert.match(hero.payload.caption as string, /Для вас.*12.*бесплатно/s);
   const kb = hero.payload.reply_markup as {
     inline_keyboard: Array<Array<{ callback_data: string }>>;
   };
   const buttons = kb.inline_keyboard.flat().map((b) => b.callback_data);
-  // Lean funnel: only the free hook + two core create anchors (studio is a
-  // web_app button, no callback_data). Secondary surfaces are gone from the menu.
+  // The claim button leads, ahead of even the free-scenario hook.
+  assert.equal(buttons[0], "claim:welcome");
   for (const expected of ["menu:free", "menu:photoshoot", "menu:campaigns"]) {
     assert.ok(buttons.includes(expected), `menu misses ${expected}`);
   }
   for (const removed of ["menu:product", "menu:animate", "menu:text", "menu:models", "menu:balance", "menu:ref"]) {
     assert.ok(!buttons.includes(removed), `menu should not surface ${removed} anymore`);
   }
+});
+
+await step("claim: tapping 🎁 Получить moves the parked 12 🔫 into the spendable balance, once", async () => {
+  await pressButton(alice, "claim:welcome");
+  assert.equal(await credits(alice.id), 12);
+  assert.equal(await ledgerCount("signup"), 1);
+  assert.match(lastText(), /Начислено.*12/s);
+  // Double-tap (e.g. a stale button) must be a no-op, not a double credit.
+  await pressButton(alice, "claim:welcome");
+  assert.equal(await credits(alice.id), 12);
+  assert.equal(await ledgerCount("signup"), 1);
 });
 
 await step("text→image: prompt charges 2 🔫, calls Seedream, delivers photo (menu-only keyboard)", async () => {
@@ -349,6 +362,10 @@ await step("provider failure: 🔫 auto-refunded, error logged", async () => {
 
 await step("referral: link gives friend a join bonus; first purchase pays inviter bonus + 10%", async () => {
   await sendText(bob, `/start ${alice.id}`);
+  assert.equal(await credits(bob.id), 0); // still parked — claim-gated same as any signup
+  assert.equal(await ledgerCount("referral_join"), 0);
+
+  await pressButton(bob, "claim:welcome"); // both signup + join bonus land in one claim
   assert.equal(await credits(bob.id), 15); // 12 free + 3 join bonus
   assert.equal(await ledgerCount("referral_join"), 1);
 
@@ -467,6 +484,7 @@ await step("product flow: menu:product → photo → product preset renders (2 �
 
 await step("mode escape: menu:main clears a photo mode so text→image works again", async () => {
   await sendText(carol, "/start");
+  await pressButton(carol, "claim:welcome"); // claim-gated — needs a spendable balance for the flow below
   await pressButton(carol, "menu:photoshoot"); // no photo yet → enters mode_photo, asks for a photo
   const falBefore = falCalls.length;
   await sendText(carol, "just text without a photo"); // blocked by the mode guard (correct)
@@ -526,6 +544,7 @@ await step("menu media: animate shows a video preview, text shows example images
 
 await step("top models: image picker routes text→image to the chosen model (accurate endpoint)", async () => {
   await sendText(dave, "/start");
+  await pressButton(dave, "claim:welcome"); // +12 free, claim-gated same as any signup
   await payForPack(dave, "pro", 5000); // +500 🔫 to afford premium models
   await pressButton(dave, "menu:models");
   const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
@@ -567,6 +586,7 @@ await step("top models: video picker routes photo→video to the chosen model (S
 await step("referral milestone: 3 PAYING friends trigger the tier bonus, awarded once", async () => {
   const patron: From = { id: 2001, is_bot: false, first_name: "Patron", username: "patron" };
   await sendText(patron, "/start"); // 12 free
+  await pressButton(patron, "claim:welcome"); // claim-gated
   for (const fid of [2101, 2102, 2103]) {
     const f: From = { id: fid, is_bot: false, first_name: `F${fid}`, username: `f${fid}` };
     await sendText(f, `/start ${patron.id}`); // joins via patron's link (friend gets join bonus)
@@ -592,22 +612,27 @@ await step("referral is purchase-gated: a referred friend who never buys pays th
   const before = await credits(host.id);
   const freeloader: From = { id: 3101, is_bot: false, first_name: "Free", username: "free" };
   await sendText(freeloader, `/start ${host.id}`); // joins…
-  await sendText(freeloader, "a lonely lighthouse"); // …generates on free 🔫, never pays
+  await pressButton(freeloader, "claim:welcome"); // …claims the free 🔫…
+  await sendText(freeloader, "a lonely lighthouse"); // …generates on it, never pays
   assert.equal(await credits(host.id), before); // inviter earned nothing (no purchase)
 });
 
 await step("partner program: admin creates a code; c_<code> joins get the gift; purchases pay the custom %", async () => {
   const mentor: From = { id: 4001, is_bot: false, first_name: "Mentor", username: "mentor" };
   await sendText(mentor, "/start"); // 12 free
+  await pressButton(mentor, "claim:welcome"); // claim-gated
   await sendText(admin, "/partner_add mentor 4001 25 10 Курс Ментора");
   assert.match(lastText(), /c_mentor/);
 
   const student: From = { id: 4101, is_bot: false, first_name: "Student", username: "student" };
   await sendText(student, `/start c_mentor`);
+  assert.equal(await credits(student.id), 0); // parked — claim-gated same as any signup
+  assert.equal(await ledgerCount("partner_join"), 0);
+  await pressButton(student, "claim:welcome");
   assert.equal(await credits(student.id), 22); // 12 free + 10 partner gift
   assert.equal(await ledgerCount("partner_join"), 1);
-  const greet = calls("sendPhoto").at(-1)!;
-  assert.match(greet.payload.caption as string, /подарок от Курс Ментора/);
+  const greet = calls("sendMessage").at(-1)!;
+  assert.match(greet.payload.text as string, /подарок от Курс Ментора/);
 
   await payForPack(student, "popular", 2200); // 200 🔫 → mentor gets floor(200*0.25)=50
   assert.equal(await credits(mentor.id), 62); // 12 + 50
@@ -635,6 +660,7 @@ await step("partner program: admin creates a code; c_<code> joins get the gift; 
 await step("campaigns: one-tap fairy-tale image → one-tap «Оживить» animates the GENERATED image", async () => {
   const parent: From = { id: 5501, is_bot: false, first_name: "Parent", username: "parent" };
   await sendText(parent, "/start"); // 12 free
+  await pressButton(parent, "claim:welcome"); // claim-gated
   await payForPack(parent, "start", 720); // +60 → 72
 
   await pressButton(parent, "menu:campaigns");
@@ -679,6 +705,7 @@ await step("campaigns: one-tap fairy-tale image → one-tap «Оживить» a
 await step("мини-фильм campaign: Seedream film still → Seedance 2.0 (со звуком) multi-shot upsell (78 🔫 flow)", async () => {
   const actor: From = { id: 5502, is_bot: false, first_name: "Actor", username: "actor" };
   await sendText(actor, "/start"); // 12 free
+  await pressButton(actor, "claim:welcome"); // claim-gated
   await payForPack(actor, "popular", 2200); // +200 → 212
 
   await pressButton(actor, "camp:minifilm");
@@ -742,6 +769,7 @@ await step("promptcraft: every generation is filtered; raw text mapped, curated 
 await step("first result on us: a stuck newcomer's first preset renders free, second one paywalls", async () => {
   const nora: From = { id: 6001, is_bot: false, first_name: "Nora", username: "nora" };
   await sendText(nora, "/start"); // 12 free
+  await pressButton(nora, "claim:welcome"); // claim-gated
   // Drain below a preset's 2 🔫 via text→image (which never uses the free-first path).
   for (const p of ["a cat", "a dog", "a fox", "a bee", "an owl", "a ram"]) await sendText(nora, p); // 6×−2 → 0
   assert.equal(await credits(nora.id), 0);
@@ -774,7 +802,9 @@ await step("free scenario: princess renders the WHOLE chain free (Seedream → H
   };
   const startButtons = startKb.inline_keyboard.flat().map((b) => b.callback_data);
   assert.ok(startButtons.includes("menu:free"), "free-scenario button missing on /start");
+  assert.equal(startButtons[0], "claim:welcome", "claim button should lead, ahead of the free-scenario hook");
 
+  await pressButton(zoe, "claim:welcome"); // claim-gated — the 12 free below need this
   await pressButton(zoe, "menu:free");
   const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
     inline_keyboard: Array<Array<{ callback_data: string }>>;
@@ -885,6 +915,7 @@ await step("admin /grant: target + self shorthand + negative; non-admin silent; 
 await step("partner v2: join → welcome (spend-only) + code; invitee pays → 15% withdrawable cashback", async () => {
   const prt: From = { id: 8001, is_bot: false, first_name: "Prt", username: "prt" };
   await sendText(prt, "/start"); // 12 free
+  await pressButton(prt, "claim:welcome"); // claim-gated
   await pressButton(prt, "partner:join");
   const acct0 = await partnerAccount(prt.id);
   assert.equal(acct0.joined, true);
@@ -905,6 +936,7 @@ await step("partner v2: join → welcome (spend-only) + code; invitee pays → 1
   // invitee joins via p_<code> → gets the invitee bonus, attributed first-touch
   const inv: From = { id: 8101, is_bot: false, first_name: "Inv", username: "inv" };
   await sendText(inv, `/start p_${code}`);
+  await pressButton(inv, "claim:welcome"); // claim-gated
   assert.equal(await credits(inv.id), 12 + 5); // free + partnerInviteeBonus
   assert.equal(String((await getUser(inv.id))!.partner_code), code);
 
@@ -1062,6 +1094,7 @@ await step("re-engagement nudge: sweeps dormant-but-recent users once, with a ta
 await step("async: the render runs detached — the handler returns before it completes (bug #2)", async () => {
   const ada: From = { id: 5601, is_bot: false, first_name: "Ada", username: "ada" };
   await sendText(ada, "/start");
+  await pressButton(ada, "claim:welcome"); // claim-gated — needs a spendable balance to render below
   // Hold the provider call open so the detach is observable (in prod it's 1–3 min).
   falDelayMs = 50;
   // Fire a render WITHOUT draining: the handler must return while the tail is still in flight.
@@ -1090,6 +1123,7 @@ await step("fresh photo: a generated output is never left in pending_file_id; a 
 await step("exactly-once free: a FAILED free render restores the freebie for a retry (critique 2)", async () => {
   const cid: From = { id: 5603, is_bot: false, first_name: "Cid", username: "cid" };
   await sendText(cid, "/start");
+  await pressButton(cid, "claim:welcome"); // claim-gated
   for (const p of ["a", "b", "c", "d", "e", "f"]) await sendText(cid, p); // drain 12 → 0 via text→image
   assert.equal(await credits(cid.id), 0);
   await sendPhoto(cid, "cid-1");

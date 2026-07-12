@@ -127,6 +127,7 @@ interface MeResponse {
   dashboard: { credits: number; okGenerations: number; creditsSpent: number; referralEarned: number };
   generations: Array<{ output_url: string | null; status: string }>;
   bot_username: string;
+  welcomeBonus: { pending: number; claimed: boolean };
   packs: Array<{ id: string; title: string; credits: number; kzt: number; offer: boolean }>;
   catalog: {
     presetCredits: number;
@@ -152,19 +153,31 @@ async function apiMe(initData: string): Promise<{ status: number; body: MeRespon
   return { status: res.status, body: (await res.json()) as MeResponse };
 }
 
+async function apiClaimWelcome(
+  initData: string,
+): Promise<{ status: number; body: { granted: number; alreadyClaimed?: boolean } }> {
+  const res = await fetch(`${base}/api/claim-welcome`, {
+    method: "POST",
+    headers: { Authorization: `tma ${initData}` },
+  });
+  return { status: res.status, body: (await res.json()) as { granted: number; alreadyClaimed?: boolean } };
+}
+
 await step("GET /api/me rejects a missing/invalid initData with 401", async () => {
   const res = await fetch(`${base}/api/me`);
   assert.equal(res.status, 401);
 });
 
-await step("GET /api/me onboards a new user with free credits (shared with bot)", async () => {
+await step("GET /api/me onboards a new user with a CLAIMABLE welcome bonus (shared with bot)", async () => {
   const { status, body } = await apiMe(signInitData({ id: 555, username: "sam", first_name: "Sam" }));
   assert.equal(status, 200);
   assert.equal(body.user.id, 555);
   // Never the raw tg id — the Mini App's Друзья page builds the share link from this.
   assert.match(body.user.ref_code, /^[a-z2-9]{6}$/);
   assert.notEqual(body.user.ref_code, "555");
-  assert.equal(body.dashboard.credits, 3); // FREE_CREDITS
+  // Claim-gated: nothing lands in the spendable balance until POST /api/claim-welcome.
+  assert.equal(body.dashboard.credits, 0);
+  assert.deepEqual(body.welcomeBonus, { pending: 3, claimed: false }); // FREE_CREDITS
   assert.equal(body.bot_username, "neuroshot_test_bot"); // from BOT_USERNAME env
   assert.deepEqual(body.generations, []);
   // Pack catalog rides along — one source of truth with the bot's /buy.
@@ -173,9 +186,25 @@ await step("GET /api/me onboards a new user with free credits (shared with bot)"
   assert.ok(body.packs.some((p) => p.id === "combo" && p.offer), "combo offer missing");
 });
 
+await step("POST /api/claim-welcome moves the parked bonus into credits, once", async () => {
+  const initData = signInitData({ id: 555, username: "sam", first_name: "Sam" });
+  const { status, body } = await apiClaimWelcome(initData);
+  assert.equal(status, 200);
+  assert.equal(body.granted, 3);
+
+  const after = await apiMe(initData);
+  assert.equal(after.body.dashboard.credits, 3);
+  assert.deepEqual(after.body.welcomeBonus, { pending: 3, claimed: true }); // pending is a snapshot, stays visible
+
+  // A second claim is a no-op, not a double credit.
+  const again = await apiClaimWelcome(initData);
+  assert.equal(again.body.granted, 0);
+  assert.equal(again.body.alreadyClaimed, true);
+  assert.equal((await apiMe(initData)).body.dashboard.credits, 3);
+});
+
 await step("app reflects the SAME state the bot writes: spend + gallery", async () => {
-  // Simulate what the bot does: onboard, spend a credit, log a delivered result.
-  await getOrCreateUser(555, "sam", null, 3);
+  // Simulate what the bot does: spend a credit, log a delivered result (555 already claimed above).
   assert.equal(await spendCredits(555, 1, "photo_edit"), true);
   await logGeneration(555, "photo_edit", "make it pop", 1, "ok", "https://fal.test/out/1.png");
 
@@ -338,6 +367,7 @@ await step("POST /api/upload: base64 image → storage URL; bad mime and no auth
 });
 
 await step("POST /api/generate: preset charges, renders async, poll reaches ok", async () => {
+  await apiClaimWelcome(signInitData(maker)); // claim-gated — lands the 3 free 🔫 first
   await addCredits(maker.id, 100, "admin_grant", "test"); // 3 free + 100
   const r = await fetch(`${base}/api/generate`, {
     method: "POST",
@@ -377,6 +407,7 @@ await step("campaign video upsell via API: minifilm renders on flagship Seedance
 
 await step("insufficient 🔫 → 402 with the pack catalog (in-app paywall)", async () => {
   const broke = { id: 701, username: "broke" }; // fresh: 3 free < a scenario video's 10 🔫
+  await apiClaimWelcome(signInitData(broke)); // claim-gated — still short of the 10 🔫 needed
   const r = await fetch(`${base}/api/generate`, {
     method: "POST",
     headers: { Authorization: `tma ${signInitData(broke)}`, "Content-Type": "application/json" },

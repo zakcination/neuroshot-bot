@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { createOrder, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, recentGenerations, resolveOrder, setWatermark, userDashboard } from "./db.js";
+import { claimWelcomeBonus, createOrder, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, recentGenerations, resolveOrder, setWatermark, userDashboard } from "./db.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { grantPurchase } from "./payments.js";
 import { comboEndsAt } from "./offer.js";
@@ -281,10 +281,11 @@ function catalogPayload(): Record<string, unknown> {
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations, refCode] = await Promise.all([
+  const [dashboard, generations, refCode, row] = await Promise.all([
     userDashboard(user.id),
     recentGenerations(user.id, 30),
     ensureRefCode(user.id),
+    getUser(user.id),
   ]);
   return {
     // No raw tg id in ref_code — an opaque link the client builds the share URL from.
@@ -297,7 +298,21 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     catalog: catalogPayload(),
     // Combo offer deadline (ms epoch) for the live countdown.
     comboOffer: { endsAt: comboEndsAt() },
+    // Welcome bonus (signup + join bonus) is claim-gated — see claimWelcomeBonus
+    // in db.ts. The client shows the first-launch onboarding + "🎁 Получить"
+    // button only while claimed=false and pending>0; both 0 for legacy accounts.
+    welcomeBonus: {
+      pending: (row?.pendingSignupCredits ?? 0) + (row?.pendingJoinBonus ?? 0),
+      claimed: row?.welcomeBonusClaimed ?? true,
+    },
   };
+}
+
+/** POST /api/claim-welcome — move the parked signup+join bonus into `credits`, once. */
+export async function claimWelcomeResponse(userId: number): Promise<{ status: number; body: Record<string, unknown> }> {
+  const res = await claimWelcomeBonus(userId);
+  if (!res) return { status: 200, body: { granted: 0, alreadyClaimed: true } };
+  return { status: 200, body: { granted: res.granted, joinBonus: res.joinBonus, joinVia: res.joinVia } };
 }
 
 /** Read a JSON request body with a hard size cap (uploads are base64 images). */
@@ -787,6 +802,17 @@ export function createWebApp(): Server {
         if (!user) return json(res, 401, { error: "unauthorized" });
         await getOrCreateUser(user.id, user.username, null, config.freeCredits);
         const { status, body } = await settingsResponse(user.id, await readJsonBody(req, 1024));
+        return json(res, status, body);
+      }
+
+      // POST /api/claim-welcome — the welcome-onboarding "🎁 Получить" tap: moves
+      // the parked signup+join bonus into the spendable balance, exactly once.
+      if (url.pathname === "/api/claim-welcome") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        await getOrCreateUser(user.id, user.username, null, config.freeCredits);
+        const { status, body } = await claimWelcomeResponse(user.id);
         return json(res, status, body);
       }
 
