@@ -9,6 +9,7 @@
 import { randomBytes } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 import { PGlite } from "@electric-sql/pglite";
+import { MODELS } from "./models.js";
 
 type Row = Record<string, unknown>;
 type Driver = (text: string, params: unknown[]) => Promise<Row[]>;
@@ -1262,6 +1263,43 @@ export async function userDashboard(userId: number): Promise<{
     referralCount: Number(friends[0].invited),
     referralPaying: Number(friends[0].paying),
     watermarkEnabled: u[0] ? u[0].watermark_enabled !== false : true,
+  };
+}
+
+export interface RoadmapProgress {
+  firstPhoto: boolean; // any successful generation
+  ownIdea: boolean; // a text_to_image render (typed a prompt, no upload)
+  revivePhoto: boolean; // an image_to_video render (animated a photo)
+  scenario: boolean; // tapped into a campaign preset (сказка/кумиры/кино…)
+  invitedFriend: boolean; // at least one referred friend
+}
+
+/**
+ * "Ваш путь в NeuroShot" roadmap step completion — built ONLY from signals that
+ * genuinely distinguish what the step describes, not a fabricated progress bar:
+ *  - firstPhoto/ownIdea/revivePhoto come from generations.model, classified by
+ *    the model's real `kind` (models.ts) — a text_to_image render really is
+ *    "своя идея", not a guess.
+ *  - scenario comes from the events log's `preset` taps: campaign preset ids are
+ *    logged as "camp:preset" (colon-joined — see the cpre: middleware in bot.ts),
+ *    a plain photoshoot preset has no colon, so this is genuinely "used a
+ *    сценарий" and not just "used any preset".
+ * This intentionally does NOT require a schema change — both signals already
+ * exist for other reasons (dashboards, analytics).
+ */
+export async function roadmapProgress(userId: number): Promise<RoadmapProgress> {
+  const [gen, scenarioTap, friend] = await Promise.all([
+    q("SELECT DISTINCT model FROM generations WHERE user_id = $1 AND status = 'ok'", [userId]),
+    q("SELECT 1 FROM events WHERE user_id = $1 AND type = 'preset' AND meta LIKE '%:%' LIMIT 1", [userId]),
+    q("SELECT 1 FROM users WHERE referrer_id = $1 LIMIT 1", [userId]),
+  ]);
+  const kinds = new Set(gen.map((r) => (MODELS as Record<string, { kind: string }>)[String(r.model)]?.kind));
+  return {
+    firstPhoto: gen.length > 0,
+    ownIdea: kinds.has("text_to_image"),
+    revivePhoto: kinds.has("image_to_video"),
+    scenario: scenarioTap.length > 0,
+    invitedFriend: friend.length > 0,
   };
 }
 

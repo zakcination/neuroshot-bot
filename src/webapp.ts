@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { claimWelcomeBonus, createOrder, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, recentGenerations, resolveOrder, setWatermark, userDashboard } from "./db.js";
+import { claimWelcomeBonus, createOrder, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, logEvent, recentGenerations, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { grantPurchase } from "./payments.js";
 import { comboEndsAt } from "./offer.js";
@@ -281,11 +281,12 @@ function catalogPayload(): Record<string, unknown> {
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations, refCode, row] = await Promise.all([
+  const [dashboard, generations, refCode, row, roadmap] = await Promise.all([
     userDashboard(user.id),
     recentGenerations(user.id, 30),
     ensureRefCode(user.id),
     getUser(user.id),
+    roadmapProgress(user.id),
   ]);
   return {
     // No raw tg id in ref_code — an opaque link the client builds the share URL from.
@@ -305,6 +306,8 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
       pending: (row?.pendingSignupCredits ?? 0) + (row?.pendingJoinBonus ?? 0),
       claimed: row?.welcomeBonusClaimed ?? true,
     },
+    // "Ваш путь в NeuroShot" roadmap — real completion signals, see roadmapProgress.
+    roadmap,
   };
 }
 
@@ -449,6 +452,9 @@ export async function generateResponse(
     const custom = sanitizePrompt(typeof body?.custom === "string" ? body.custom : "").slice(0, 200);
     if (custom) composed += ` Extra details from the user: ${custom}.`;
     [model, prompt, crafted] = [PRESET_MODEL, composed, true];
+    // Same "camp:preset" shape the bot's cpre: taps log — one convention for the
+    // "Ваш путь в NeuroShot" roadmap's scenario signal, whichever surface it came from.
+    await logEvent(userId, "preset", `${campId}:${presetId}`);
   } else if (source === "campaign_video") {
     const c = campaignById(String(body?.id ?? ""));
     if (!c || !imageUrl) return { status: 400, body: { error: "bad_request" } };

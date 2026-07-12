@@ -128,6 +128,7 @@ interface MeResponse {
   generations: Array<{ output_url: string | null; status: string }>;
   bot_username: string;
   welcomeBonus: { pending: number; claimed: boolean };
+  roadmap: { firstPhoto: boolean; ownIdea: boolean; revivePhoto: boolean; scenario: boolean; invitedFriend: boolean };
   packs: Array<{ id: string; title: string; credits: number; kzt: number; offer: boolean }>;
   catalog: {
     presetCredits: number;
@@ -614,6 +615,20 @@ await step("campaign generate composes quiz options + sanitized custom words ser
   });
   assert.equal(bad.status, 400);
   assert.equal(((await bad.json()) as { error: string }).error, "bad_option");
+});
+
+await step("roadmap progress: real signals, not a fabricated bar (firstPhoto/revive/scenario so far)", async () => {
+  // maker has by now: a plain preset render (headshot), a campaign_video render
+  // (minifilm), and the campaign image render just above (skazka:forest) — but
+  // no free-text prompt yet, so ownIdea should still read false.
+  const { body } = await apiMe(signInitData(maker));
+  assert.deepEqual(body.roadmap, {
+    firstPhoto: true,
+    ownIdea: false,
+    revivePhoto: true,
+    scenario: true, // from the "campaign" generate above — logged the same "camp:preset" shape as the bot's cpre: taps
+    invitedFriend: false,
+  });
 });
 
 let videoGenId = 0; // captured for the video-as-source guard below
