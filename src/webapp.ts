@@ -464,7 +464,7 @@ export async function generateResponse(
     [model, prompt, crafted] = [PRESET_MODEL, p.prompt, true];
     // Log WHICH preset was used — the web studio was the one tap surface that
     // didn't (bot logs preset: taps, the campaign branch below logs camp:preset),
-    // so plain-preset usage by category (e.g. the product/ maркетплейс presets)
+    // so plain-preset usage by category (e.g. the product/маркетплейс presets)
     // was previously invisible to analytics. Meta is the bare preset id with NO
     // colon, matching the bot's preset: convention and deliberately staying out
     // of the roadmap "scenario" signal, which requires a colon (see db.ts).

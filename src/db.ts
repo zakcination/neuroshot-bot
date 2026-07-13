@@ -1316,16 +1316,18 @@ export interface ReferralEntry {
  * Newest-first and capped — this is a motivational list, not an analytics table.
  */
 export async function referralList(userId: number, limit = 100): Promise<ReferralEntry[]> {
+  // Correlate the "has this friend rendered anything" check to each referred
+  // user rather than aggregating the whole generations table on every /api/me:
+  // we only need a boolean per friend, and EXISTS short-circuits on the first ok
+  // row (indexed by user_id). Cheap even as generations grows.
   const rows = await q(
     `SELECT u.username,
             u.created_at,
             u.ref_first_purchase_at,
-            COALESCE(g.ok, 0)::int AS ok_generations
+            EXISTS (
+              SELECT 1 FROM generations g WHERE g.user_id = u.id AND g.status = 'ok'
+            ) AS has_generation
      FROM users u
-     LEFT JOIN (
-       SELECT user_id, COUNT(*)::int AS ok
-       FROM generations WHERE status = 'ok' GROUP BY user_id
-     ) g ON g.user_id = u.id
      WHERE u.referrer_id = $1
      ORDER BY u.created_at DESC
      LIMIT $2`,
@@ -1334,7 +1336,7 @@ export async function referralList(userId: number, limit = 100): Promise<Referra
   return rows.map((r): ReferralEntry => ({
     username: r.username == null ? null : String(r.username),
     joinedAt: String(r.created_at),
-    status: r.ref_first_purchase_at != null ? "paid" : Number(r.ok_generations) > 0 ? "used_free" : "inactive",
+    status: r.ref_first_purchase_at != null ? "paid" : r.has_generation ? "used_free" : "inactive",
   }));
 }
 
