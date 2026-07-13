@@ -610,6 +610,36 @@ export const PRESETS: Preset[] = [
       `skin tones, tack-sharp face. ${KEEP_ID}`,
   },
   {
+    id: "candid_lux",
+    label: "🚗 Lux-селфи в авто",
+    category: "photo",
+    prompt:
+      "Restyle into an ultra-realistic luxury-fashion candid selfie taken inside a car, shot handheld from a slightly " +
+      "low side angle for a living-moment feel. Voluminous loose hair with natural texture, an expensive restrained " +
+      "look — a structured jacket with clean shoulders over a soft top, narrow dark sunglasses, thin jewellery, warm " +
+      `daylight through the window, tack-sharp face. ${KEEP_ID}`,
+  },
+  {
+    id: "paris_rain",
+    label: "🗼 Париж под дождём",
+    category: "photo",
+    prompt:
+      "Place the person in a cinematic quiet-luxury lifestyle photo in Paris near the Eiffel Tower in soft rainy " +
+      "weather: a long structured beige-brown coat with a clean silhouette, Parisian-chic styling, holding a light " +
+      "umbrella and a coffee cup, wet asphalt with soft reflections, diffused overcast daylight, calm and elegant " +
+      `mood, tack-sharp face. ${KEEP_ID}`,
+  },
+  {
+    id: "pixar_me",
+    label: "🧸 Pixar мини-я",
+    category: "photo",
+    prompt:
+      "Create a Pixar-style 3D mini-version of the person standing next to their realistic self on a minimalist " +
+      "light-gray studio background with soft shadows. One figure stays a realistic human, the other is a cute Pixar " +
+      "mini-character with a large head and small body, standing in front and closer to the camera; the realistic " +
+      `person rests a hand on the mini-character's head, both looking at the camera, playful modern aesthetic. ${KEEP_ID}`,
+  },
+  {
     id: "product_hero",
     label: "🛍 Продающая карточка",
     category: "product",
