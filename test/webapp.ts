@@ -1168,7 +1168,7 @@ await step("watermark setting: default on, /api/settings toggles it, /me reflect
 });
 
 await step("AI disclosure: mandatory badge is always applied; promo CTA only when watermark on", async () => {
-  const { deliveryStyles, buildOverlayFilter, disclosureAvailable } = await import("../src/watermark.js");
+  const { deliveryStyles, buildOverlayFilter, brandForDelivery } = await import("../src/watermark.js");
   // The legal disclosure ("ai") is ALWAYS present and always first; the promo
   // CTA is appended only when requested — independent of one another.
   assert.deepEqual(deliveryStyles(false), ["ai"]);
@@ -1188,9 +1188,11 @@ await step("AI disclosure: mandatory badge is always applied; promo CTA only whe
   assert.match(two, /\[2:v\]scale=640/);
   assert.match(two, /\[b0\]\[wm1\]overlay=x=\(W-w\)\/2:y=H-h-32$/);
 
-  // In the hermetic test env there is no ffmpeg, so branding degrades to null and
-  // callers send the raw source — a missing toolchain never blocks delivery.
-  assert.equal(await disclosureAvailable(), false);
+  // Branding degrades gracefully to null (caller then sends the raw source) when
+  // the source can't be fetched/encoded — this holds whether or not the runner
+  // has ffmpeg (no ffmpeg → null early; ffmpeg present → the dead URL fails →
+  // null), so the assertion isn't tied to the CI host's toolchain.
+  assert.equal(await brandForDelivery(`${base}/nope.png`, "image", { promo: false }), null);
 });
 
 await new Promise<void>((r) => server.close(() => r()));
