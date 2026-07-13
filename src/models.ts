@@ -1348,6 +1348,14 @@ export interface Pack {
   title: string;
   /** A limited-time promo (shown with a sale countdown) — priced below the ladder. */
   offer?: boolean;
+  /**
+   * GenAI course tier (docs/course/README.md) — grants patrons AND a one-time
+   * invite into that tier's private cohort channel (payments.ts grantPurchase
+   * → inviteToCourseCohort). Excluded from the generic packsKeyboard() listing
+   * (payments.ts) so plain credit top-up buyers never see it; surfaced only via
+   * the dedicated /course command.
+   */
+  course?: "fast" | "flagship";
 }
 
 export const PACKS: Pack[] = [
@@ -1360,6 +1368,24 @@ export const PACKS: Pack[] = [
   // is flagged `offer` and shown only with a countdown — a limited-time tripwire,
   // not a permanent tier (which would break the ladder).
   { id: "combo", kzt: 1000, credits: 36, title: "🔥 Комбо-сет: 3 видео", offer: true },
+  // --- GenAI course tiers (docs/course-funnel.md, docs/course/README.md) ---
+  // Priced identically to `start`/`pro` on purpose — the course-funnel pricing
+  // is the same ladder anchor, just packaged with a cohort invite on top, so the
+  // included 🔫 alone already covers most of the sticker price.
+  {
+    id: "course_fast",
+    kzt: 3700,
+    credits: 60,
+    title: `🎓 Быстрый старт (курс) — 60 ${UNIT_EMOJI} + 5 уроков`,
+    course: "fast",
+  },
+  {
+    id: "course_flagship",
+    kzt: 25000,
+    credits: 500,
+    title: `🎓 AI-контент под ключ — 500 ${UNIT_EMOJI} + когорта`,
+    course: "flagship",
+  },
 ];
 
 export function packById(id: string): Pack | undefined {

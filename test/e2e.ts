@@ -19,6 +19,10 @@ process.env.ADMIN_IDS = "9999";
 process.env.KASPI_PAY_URL = "https://pay.test/neuroshot"; // enable the Kaspi buy flow
 process.env.PARTNER_WELCOME = "180"; // ≈$20 welcome bonus (spend-only)
 process.env.WITHDRAW_MIN = "20"; // low so the withdrawal path is exercisable
+// Cohort delivery (docs/course/README.md): only the "fast" channel is set —
+// COURSE_FLAGSHIP_CHANNEL_ID stays UNSET so the same run also exercises the
+// "purchase still succeeds with no channel configured" guarantee.
+process.env.COURSE_FAST_CHANNEL_ID = "-100123456789";
 
 const { fal } = await import("@fal-ai/client");
 const { createBot } = await import("../src/bot.js");
@@ -68,6 +72,9 @@ bot.api.config.use(async (_prev, method, payload) => {
   switch (method) {
     case "getFile":
       result = { file_id: "f", file_unique_id: "fu", file_path: "photos/test.jpg" };
+      break;
+    case "createChatInviteLink":
+      result = { invite_link: "https://t.me/+teststub" };
       break;
     case "deleteMessage":
     case "answerCallbackQuery":
@@ -337,6 +344,35 @@ await step("purchase: /buy → Kaspi order → admin confirm credits the pack", 
   await sendText(admin, `/order ${orderId} ok`); // admin verifies the payment → credits
   assert.equal(await credits(alice.id), 207); // 7 + 200
   assert.equal(await ledgerCount("purchase"), 1);
+});
+
+await step("/course: overview + free guide render; course packs are hidden from the generic /buy menu", async () => {
+  await sendText(alice, "/course");
+  const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data: string }>>;
+  };
+  const buttons = kb.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.deepEqual(buttons, ["course:guide", "buy:course_fast", "buy:course_flagship"]);
+
+  const guideMsgsBefore = calls("sendMessage").length;
+  await pressButton(alice, "course:guide");
+  const guideMsgs = calls("sendMessage").slice(guideMsgsBefore);
+  assert.ok(guideMsgs.length >= 2, "free guide should split into multiple messages");
+  assert.ok(guideMsgs.every((m) => ((m.payload.text as string) ?? "").length <= 4096));
+  assert.match(guideMsgs[0].payload.text as string, /Бизнес-портрет/);
+
+  // course_fast/course_flagship must never appear on the generic "все пакеты" menu
+  // (payments.ts packsKeyboard filters `!p.course`) — the earlier /buy assertion
+  // above already covers this (packButtons has no course:* entries), re-confirm here.
+  await sendText(alice, "/buy");
+  const buyButtons = (
+    calls("sendMessage").at(-1)!.payload.reply_markup as {
+      inline_keyboard: Array<Array<{ callback_data: string }>>;
+    }
+  ).inline_keyboard
+    .flat()
+    .map((b) => b.callback_data);
+  assert.ok(!buyButtons.includes("buy:course_fast") && !buyButtons.includes("buy:course_flagship"));
 });
 
 await step("pending action survives the paywall: motion prompt now renders Kling video (25 🔫)", async () => {
@@ -1233,6 +1269,59 @@ await step("ref code round-trip: a new user joining via the opaque code attribut
   const row = await query("SELECT referrer_id, source FROM users WHERE id = $1", [viaCode.id]);
   assert.equal(Number(row[0].referrer_id), owner.id); // attributed via the code, same as the legacy numeric path
   assert.equal(row[0].source, "ref");
+});
+
+// Course purchases (docs/course/README.md) — placed last, same reason as the
+// ref-code step above: fresh users + purchases would shift earlier /stats,
+// /dash and /funnel absolute counts otherwise.
+
+await step("course purchase: buying course_fast credits patrons AND DMs a one-time cohort invite link", async () => {
+  const finn: From = { id: 6101, is_bot: false, first_name: "Finn", username: "finn" };
+  await sendText(finn, "/start");
+  assert.equal(await credits(finn.id), 0); // parked, unclaimed — buying a pack doesn't require any balance
+
+  const invitesBefore = calls("createChatInviteLink").length;
+  const purchasesBefore = await ledgerCount("purchase");
+  await payForPack(finn, "course_fast");
+  assert.equal(await credits(finn.id), 60);
+  assert.equal(await ledgerCount("purchase"), purchasesBefore + 1);
+
+  const invites = calls("createChatInviteLink").slice(invitesBefore);
+  assert.equal(invites.length, 1, "course_fast (channel configured) must create exactly one invite link");
+  assert.equal(invites[0].payload.chat_id, "-100123456789");
+  assert.equal(invites[0].payload.member_limit, 1);
+  assert.equal(invites[0].payload.name, `course:fast:${finn.id}`);
+
+  // grantPurchase DMs the buyer directly (not the admin who ran /order N ok),
+  // so filter sendMessage by the buyer's own chat id rather than take the last
+  // overall message (that would be the admin's own "Заявка подтверждена" reply).
+  const dm = calls("sendMessage")
+    .filter((c) => c.payload.chat_id === finn.id)
+    .at(-1)!.payload.text as string;
+  assert.match(dm, /Быстрый старт/);
+  assert.match(dm, /t\.me\/\+teststub/); // the stubbed invite_link
+});
+
+await step("course purchase guarantee: buying course_flagship with NO channel configured still succeeds", async () => {
+  // COURSE_FLAGSHIP_CHANNEL_ID is deliberately left unset in this test run — the
+  // purchase (credits + confirmation) must NOT fail, roll back, or throw; it just
+  // skips the invite (payments.ts inviteToCourseCohort logs and returns).
+  const gia: From = { id: 6102, is_bot: false, first_name: "Gia", username: "gia" };
+  await sendText(gia, "/start");
+  const invitesBefore = calls("createChatInviteLink").length;
+  const purchasesBefore = await ledgerCount("purchase");
+
+  await payForPack(gia, "course_flagship");
+  assert.equal(await credits(gia.id), 500); // credits still granted
+  assert.equal(await ledgerCount("purchase"), purchasesBefore + 1); // purchase still journaled normally
+  assert.equal(calls("createChatInviteLink").length, invitesBefore); // no invite attempt — channel unset
+
+  // The existing "✅ Начислено" confirmation must stay intact regardless (it's
+  // the last DM gia receives), and no fallback/course DM follows it — since
+  // inviteToCourseCohort only logs+returns when the channel id is unset instead
+  // of sending anything further.
+  const dms = calls("sendMessage").filter((c) => c.payload.chat_id === gia.id);
+  assert.match(dms.at(-1)!.payload.text as string, /Начислено/, "credits confirmation must be gia's last DM");
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL || "embedded (pglite)"})`);

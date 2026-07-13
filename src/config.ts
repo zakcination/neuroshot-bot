@@ -97,6 +97,17 @@ export const config = {
   webappUrl: process.env.WEBAPP_URL ?? "",
   webappPort: Number(process.env.WEBAPP_PORT ?? 8080),
   webappBotUsername: process.env.BOT_USERNAME ?? "",
+  // --- GenAI course cohort delivery (docs/course/README.md) ---
+  // Telegram chat id (e.g. "-100xxxxxxxxxx") of the pre-made PRIVATE channel/group
+  // for each course tier's cohort. The bot canNOT create these itself (not a Bot
+  // API capability) — the owner must manually: 1) create a private Telegram
+  // group/channel, 2) add this bot as admin with "invite users via link"
+  // permission, 3) paste the numeric chat id here. BLANK by default (until that
+  // manual setup happens) — a purchase still grants credits either way; with a
+  // blank id it just logs an error and skips the invite instead of failing the
+  // purchase (payments.ts inviteToCourseCohort).
+  courseFastChannelId: process.env.COURSE_FAST_CHANNEL_ID ?? "",
+  courseFlagshipChannelId: process.env.COURSE_FLAGSHIP_CHANNEL_ID ?? "",
 };
 
 /**
