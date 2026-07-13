@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { claimRoadmapBonus, claimWelcomeBonus, createOrder, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, logEvent, markOnboardingSeen, recentGenerations, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { claimRoadmapBonus, claimWelcomeBonus, createOrder, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, logEvent, markOnboardingSeen, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { grantPurchase } from "./payments.js";
 import { comboEndsAt } from "./offer.js";
@@ -281,12 +281,13 @@ function catalogPayload(): Record<string, unknown> {
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations, refCode, row, roadmap] = await Promise.all([
+  const [dashboard, generations, refCode, row, roadmap, referrals] = await Promise.all([
     userDashboard(user.id),
     recentGenerations(user.id, 30),
     ensureRefCode(user.id),
     getUser(user.id),
     roadmapProgress(user.id),
+    referralList(user.id),
   ]);
   return {
     // No raw tg id in ref_code — an opaque link the client builds the share URL from.
@@ -312,6 +313,9 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     // for every account (including ones that already claimed/spent their free
     // patrons), and is always replayable from the "Ещё" tab regardless of this.
     onboardingSeen: row?.onboardingSeen ?? false,
+    // Per-referral drill-down for the Друзья page — who joined and whether they
+    // went inactive / used-free / paid. Aggregate counts stay in `dashboard`.
+    referrals,
     // "Ваш путь в NeuroShot" roadmap — real completion signals, see roadmapProgress.
     roadmap,
     // The completion gift for finishing all 5 roadmap steps — claim-gated the

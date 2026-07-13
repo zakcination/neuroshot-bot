@@ -1296,6 +1296,48 @@ export async function userDashboard(userId: number): Promise<{
   };
 }
 
+export interface ReferralEntry {
+  username: string | null; // Telegram @username if known (we don't store first_name)
+  joinedAt: string; // ISO — when they joined via the link
+  status: "inactive" | "used_free" | "paid";
+}
+
+/**
+ * Per-referral drill-down for the "Друзья" page — the inviter seeing which
+ * invited friends actually did something, not just an aggregate count (the
+ * aggregate lives in userDashboard). Status is derived entirely from signals
+ * already in the schema — NO new columns:
+ *  - paid: the friend has purchased at least once (ref_first_purchase_at is set
+ *    on the invitee at their 1st purchase — the same flag that fires the
+ *    inviter's first-purchase bonus), so the inviter is earning the lifetime share.
+ *  - used_free: no purchase yet, but ≥1 successful generation — they've actually
+ *    tried the studio on free/gifted patrons.
+ *  - inactive: joined via the link but never rendered anything.
+ * Newest-first and capped — this is a motivational list, not an analytics table.
+ */
+export async function referralList(userId: number, limit = 100): Promise<ReferralEntry[]> {
+  const rows = await q(
+    `SELECT u.username,
+            u.created_at,
+            u.ref_first_purchase_at,
+            COALESCE(g.ok, 0)::int AS ok_generations
+     FROM users u
+     LEFT JOIN (
+       SELECT user_id, COUNT(*)::int AS ok
+       FROM generations WHERE status = 'ok' GROUP BY user_id
+     ) g ON g.user_id = u.id
+     WHERE u.referrer_id = $1
+     ORDER BY u.created_at DESC
+     LIMIT $2`,
+    [userId, limit],
+  );
+  return rows.map((r): ReferralEntry => ({
+    username: r.username == null ? null : String(r.username),
+    joinedAt: String(r.created_at),
+    status: r.ref_first_purchase_at != null ? "paid" : Number(r.ok_generations) > 0 ? "used_free" : "inactive",
+  }));
+}
+
 export interface RoadmapProgress {
   firstPhoto: boolean; // any successful generation
   ownIdea: boolean; // a text_to_image render (typed a prompt, no upload)

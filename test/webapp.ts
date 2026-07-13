@@ -131,6 +131,7 @@ interface MeResponse {
   onboardingSeen: boolean;
   roadmap: { firstPhoto: boolean; ownIdea: boolean; revivePhoto: boolean; scenario: boolean; invitedFriend: boolean };
   roadmapBonus: { amount: number; claimed: boolean };
+  referrals: Array<{ username: string | null; joinedAt: string; status: "inactive" | "used_free" | "paid" }>;
   packs: Array<{ id: string; title: string; credits: number; kzt: number; offer: boolean }>;
   catalog: {
     presetCredits: number;
@@ -714,6 +715,31 @@ await step("POST /api/claim-roadmap: only pays out once all 5 steps are real, ex
   const again = await fetch(`${base}/api/claim-roadmap`, { method: "POST", headers: { Authorization: `tma ${initData}` } });
   assert.deepEqual(await again.json(), { granted: 0 });
   assert.equal((await apiMe(initData)).body.dashboard.credits, 10);
+});
+
+await step("/me referrals: per-friend drill-down with inactive/used_free/paid status", async () => {
+  const { rewardReferralOnPurchase } = await import("../src/db.js");
+  const inviter = { id: 760, username: "inviter", first_name: "Ivan" };
+  const initData = signInitData(inviter);
+  await apiMe(initData); // onboard the inviter
+
+  // A brand-new inviter has invited nobody yet → empty list, not an error.
+  assert.deepEqual((await apiMe(initData)).body.referrals, []);
+
+  // Three friends, each in a different funnel stage:
+  await getOrCreateUser(761, "idlefriend", inviter.id, 3); // joined, never rendered → inactive
+  await getOrCreateUser(762, "tryerfriend", inviter.id, 3); // rendered on free patrons → used_free
+  await logGeneration(762, "photo_edit", "portrait", 3, "ok", "https://fal.test/out/ref.png");
+  await getOrCreateUser(763, "payerfriend", inviter.id, 3); // purchased → paid
+  await rewardReferralOnPurchase(763, 60, { percent: 0.1, firstPurchaseBonus: 10, milestones: [] });
+
+  const byId = new Map(
+    (await apiMe(initData)).body.referrals.map((r) => [r.username, r.status]),
+  );
+  assert.equal(byId.get("idlefriend"), "inactive");
+  assert.equal(byId.get("tryerfriend"), "used_free");
+  assert.equal(byId.get("payerfriend"), "paid");
+  assert.equal(byId.size, 3);
 });
 
 let videoGenId = 0; // captured for the video-as-source guard below

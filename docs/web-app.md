@@ -31,7 +31,11 @@ Telegram│  Bot (grammY)│        │ Mini App (webapp)│  ← same HTML late
   signup gift, see below) and `roadmap` (real "Ваш путь в NeuroShot" step
   completion — `firstPhoto`/`ownIdea`/`revivePhoto`/`scenario`/`invitedFriend`,
   computed from actual generation/event history, not a fabricated bar; see
-  `roadmapProgress` in `src/db.ts`). Authenticates by `initData` **or** a
+  `roadmapProgress` in `src/db.ts`) and `referrals` (per-friend drill-down —
+  each invited friend's `{username, joinedAt, status}` where status is
+  `inactive`/`used_free`/`paid`, derived from existing signals with no new
+  columns; see `referralList` in `src/db.ts`, aggregate counts stay in
+  `dashboard`). Authenticates by `initData` **or** a
   `Bearer` session token. Opening the app onboards idempotently, same as the bot.
 - **`POST /api/claim-welcome`** — the welcome flow's "🎁 Получить" tap: moves
   the parked signup + referral/partner join bonus into the spendable balance,
@@ -48,7 +52,11 @@ Telegram│  Bot (grammY)│        │ Mini App (webapp)│  ← same HTML late
   every step is real (`claimRoadmapBonus` in `src/db.ts`, same atomic
   claim-gating as the welcome bonus; `POST /api/claim-roadmap`). The checklist
   itself re-renders live after every finished job (`renderRoadmap` in
-  `app.html`), not only on a full reload. Adapts to Telegram theme.
+  `app.html`), not only on a full reload. Once every step is done **and** the
+  completion gift is claimed (or there was none), the card graduates to a slim
+  one-line "путь пройден" row (`roadmapGraduated`/`roadmapCardInner` in
+  `app.html`) so a power user's studio isn't permanently topped by a dead
+  5-checkmark grid. Adapts to Telegram theme.
 - **Onboarding slideshow visibility is decoupled from the welcome-bonus
   claim** (`users.onboarding_seen`, `markOnboardingSeen` in `src/db.ts`,
   `POST /api/ack-onboarding`). It pops once for every account — including
