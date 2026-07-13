@@ -19,7 +19,7 @@ import {
 import { costUsdFor, MODELS, priceFor, type FreeScenario, type GenOpts, type ModelSpec } from "./models.js";
 import { paywallKeyboard, paywallText } from "./payments.js";
 import { craftPrompt } from "./promptcraft.js";
-import { watermarkImage, watermarkVideo } from "./watermark.js";
+import { brandForDelivery } from "./watermark.js";
 
 fal.config({ credentials: config.falKey });
 
@@ -277,13 +277,14 @@ export async function runGeneration(
         costUsd = costUsdFor(model);
         requestId = r.requestId;
         const after = afterKeyboard(isUpload, opts.animate && !isVideo ? { campId: opts.animate, genId } : undefined);
-        // Brand every deliverable by default (user can turn the watermark off).
+        // Every deliverable carries the mandatory AI-generated disclosure; the
+        // promo CTA is added on top only when the user's watermark setting is on.
         if (isVideo) {
-          const branded = user.watermark_enabled ? await watermarkVideo(url) : null;
+          const branded = await brandForDelivery(url, "video", { promo: user.watermark_enabled });
           const media = branded ? new InputFile(branded, "neuroshot.mp4") : new InputFile({ url });
           await ctx.api.sendVideo(chatId, media, { reply_markup: after });
         } else {
-          const branded = user.watermark_enabled ? await watermarkImage(url) : null;
+          const branded = await brandForDelivery(url, "image", { promo: user.watermark_enabled });
           const media = branded ? new InputFile(branded, "neuroshot.png") : new InputFile({ url });
           await ctx.api.sendPhoto(chatId, media, { reply_markup: after });
         }
@@ -385,8 +386,9 @@ export async function runFreeScenario(
         // it's the delivered artifact.
         chainCostUsd = costUsdFor(scenario.imageModel) + costUsdFor(scenario.videoModel);
         providerRequestId = videoResult.requestId;
-        // Free scenarios are ALWAYS branded (the badge is the price of "free").
-        const branded = await watermarkVideo(videoUrl);
+        // Free scenarios carry the AI disclosure AND the promo CTA (the badge is
+        // the price of "free").
+        const branded = await brandForDelivery(videoUrl, "video", { promo: true });
         const video = branded ? new InputFile(branded, "neuroshot.mp4") : new InputFile({ url: videoUrl });
         await ctx.api.sendVideo(chatId, video, {
           caption: "🎁 Ваш бесплатный сценарий готов! Понравилось? Создайте свой — /menu",

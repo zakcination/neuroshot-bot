@@ -1167,5 +1167,31 @@ await step("watermark setting: default on, /api/settings toggles it, /me reflect
   assert.equal(bad.status, 400);
 });
 
+await step("AI disclosure: mandatory badge is always applied; promo CTA only when watermark on", async () => {
+  const { deliveryStyles, buildOverlayFilter, disclosureAvailable } = await import("../src/watermark.js");
+  // The legal disclosure ("ai") is ALWAYS present and always first; the promo
+  // CTA is appended only when requested — independent of one another.
+  assert.deepEqual(deliveryStyles(false), ["ai"]);
+  assert.deepEqual(deliveryStyles(true), ["ai", "cta"]);
+
+  // One badge → one scale + one terminal overlay (no intermediate [b] label).
+  const one = buildOverlayFilter([{ path: "a.png", width: 460, opacity: 0.95, x: "32", y: "32" }]);
+  assert.match(one, /\[1:v\]scale=460:-1,format=rgba,colorchannelmixer=aa=0\.95\[wm0\]/);
+  assert.match(one, /\[0:v\]\[wm0\]overlay=x=32:y=32$/);
+
+  // Two badges → chained: base→[b0]→final, second badge is input [2:v].
+  const two = buildOverlayFilter([
+    { path: "a.png", width: 460, opacity: 0.95, x: "32", y: "32" },
+    { path: "b.png", width: 640, opacity: 0.9, x: "(W-w)/2", y: "H-h-32" },
+  ]);
+  assert.match(two, /\[0:v\]\[wm0\]overlay=x=32:y=32\[b0\]/);
+  assert.match(two, /\[2:v\]scale=640/);
+  assert.match(two, /\[b0\]\[wm1\]overlay=x=\(W-w\)\/2:y=H-h-32$/);
+
+  // In the hermetic test env there is no ffmpeg, so branding degrades to null and
+  // callers send the raw source — a missing toolchain never blocks delivery.
+  assert.equal(await disclosureAvailable(), false);
+});
+
 await new Promise<void>((r) => server.close(() => r()));
 console.log(`\nAll ${passed} web-app checks passed. ✨`);
