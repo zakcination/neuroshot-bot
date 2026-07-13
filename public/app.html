@@ -852,7 +852,7 @@
       if (st.tab === "shoot" || st.tab === "product") {
         const cat = st.tab === "shoot" ? "photo" : "product";
         inner = `<div class="choices">${c.presets.filter((p) => p.category === cat).map((p) =>
-          `<button class="choice" data-preset="${p.id}"><b>${esc(p.label)}</b><span class="price">${c.presetCredits} ${PATRON}</span></button>`).join("")}</div>`;
+          `<button class="choice" data-preset="${p.id}"><b>${esc(p.label)}</b><span class="price">${p.credits} ${PATRON}</span></button>`).join("")}</div>`;
       } else if (st.tab === "scenes") {
         inner = `<div class="choices">${c.campaigns.map((k) =>
           `<button class="choice" data-camp="${k.id}"><b>${esc(k.label)}</b><span class="desc">+ видео за ${k.videoCredits} ${PATRON}</span><span class="price">${k.imageCredits} ${PATRON}</span></button>`).join("")}</div>`;
@@ -872,7 +872,8 @@
       bindTabs();
 
       sheetBody.querySelectorAll("[data-preset]").forEach((b) => (b.onclick = () => {
-        st.pick = { source: "preset", id: b.dataset.preset, credits: c.presetCredits, needPhoto: true };
+        const p = c.presets.find((x) => x.id === b.dataset.preset);
+        st.pick = { source: "preset", id: b.dataset.preset, credits: p.credits, needPhoto: true };
         viewPhoto();
       }));
       sheetBody.querySelectorAll("[data-camp]").forEach((b) => (b.onclick = () => viewCampaign(b.dataset.camp)));

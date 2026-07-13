@@ -135,7 +135,7 @@ interface MeResponse {
   packs: Array<{ id: string; title: string; credits: number; kzt: number; offer: boolean }>;
   catalog: {
     presetCredits: number;
-    presets: Array<{ id: string; label: string; category: string }>;
+    presets: Array<{ id: string; label: string; category: string; credits: number }>;
     campaigns: Array<{
       id: string;
       label: string;
@@ -464,6 +464,38 @@ await step("prompt library: VeoSee-seeded presets are exposed in the catalog and
     if (status === "pending") await new Promise((rr) => setTimeout(rr, 15));
   }
   assert.equal(status, "ok");
+});
+
+await step("preset model routing: premium looks pin a stronger engine + price; cheap looks stay Seedream", async () => {
+  const presets = (await apiMe(signInitData(maker))).body.catalog.presets;
+  const price = Object.fromEntries(presets.map((p) => [p.id, p.credits]));
+  assert.equal(price.headshot, 2); // Seedream default
+  assert.equal(price.product_white, 2); // mechanical cutout stays cheap
+  assert.equal(price.figurine, 11); // GPT Image 2 — generates blister-pack title text
+  assert.equal(price.product_hero, 11); // GPT Image 2 — premium marketplace card
+  assert.equal(price.pixar_me, 8); // Nano Banana Pro — heavy 3D stylization
+
+  // A premium preset renders on its pinned engine and charges that model's price.
+  // Dedicated user + owner-scoped poll so maker's shared balance is untouched.
+  const pm = { id: 782, username: "premu", first_name: "Prem" };
+  const ph = { Authorization: `tma ${signInitData(pm)}`, "Content-Type": "application/json" };
+  await apiMe(signInitData(pm));
+  await addCredits(pm.id, 20, "admin_grant", "test");
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: ph,
+    body: JSON.stringify({ source: "preset", id: "figurine", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(r.status, 200);
+  const body = (await r.json()) as { id: number; credits: number; balance: number };
+  assert.equal(body.credits, 11); // charged the GPT Image 2 price, not the 2🔫 default
+  assert.equal(body.balance, 9); // 20 − 11
+  let st = "pending";
+  for (let i = 0; i < 200 && st === "pending"; i++) {
+    const g = await fetch(`${base}/api/generations/${body.id}`, { headers: { Authorization: ph.Authorization } });
+    st = ((await g.json()) as { status: string }).status;
+    if (st === "pending") await new Promise((rr) => setTimeout(rr, 15));
+  }
+  assert.equal(st, "ok");
 });
 
 await step("campaign video upsell via API: minifilm renders on flagship Seedance 2.0 with audio (76 🔫)", async () => {

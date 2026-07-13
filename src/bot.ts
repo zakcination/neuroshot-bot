@@ -51,6 +51,7 @@ import {
   MODELS,
   packById,
   PRESET_MODEL,
+  presetModel,
   PRESETS,
   REFERRAL_MILESTONES,
   VIDEO_MODEL_PICKER,
@@ -141,7 +142,7 @@ function videoModelsKeyboard(): InlineKeyboard {
 function presetsKeyboard(category: Preset["category"]): InlineKeyboard {
   const kb = new InlineKeyboard();
   for (const p of PRESETS.filter((x) => x.category === category)) {
-    kb.text(`${p.label} (${PRESET_MODEL.credits} ${UNIT_EMOJI})`, `preset:${p.id}`).row();
+    kb.text(`${p.label} (${presetModel(p).credits} ${UNIT_EMOJI})`, `preset:${p.id}`).row();
   }
   kb.text(`✍️ Свой промпт (${MODELS.premium_edit.credits} ${UNIT_EMOJI})`, "act:premium_edit").row();
   kb.text("📋 Меню", "menu:main");
@@ -1195,7 +1196,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       await ctx.reply("Сначала пришлите фото 🙂");
       return;
     }
-    await runGeneration(ctx, u, PRESET_MODEL, preset.prompt, u.pending_file_id, {
+    await runGeneration(ctx, u, presetModel(preset), preset.prompt, u.pending_file_id, {
       crafted: true,
       allowFreeFirst: true,
     });

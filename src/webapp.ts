@@ -32,6 +32,7 @@ import {
   packById,
   PACKS,
   PRESET_MODEL,
+  presetModel,
   PRESETS,
   priceFor,
   sceneModel,
@@ -180,8 +181,10 @@ function packsPayload(): Array<Record<string, unknown>> {
  */
 function catalogPayload(): Record<string, unknown> {
   return {
-    presetCredits: PRESET_MODEL.credits,
-    presets: PRESETS.map((p) => ({ id: p.id, label: p.label, category: p.category })),
+    // "от X 🔫" headline = the cheapest look; each card carries its own price
+    // (premium/typography looks pin a stronger, pricier model — see presetModel).
+    presetCredits: Math.min(...PRESETS.map((p) => presetModel(p).credits)),
+    presets: PRESETS.map((p) => ({ id: p.id, label: p.label, category: p.category, credits: presetModel(p).credits })),
     campaigns: CAMPAIGNS.map((c) => ({
       id: c.id,
       label: c.label,
@@ -461,7 +464,7 @@ export async function generateResponse(
   if (source === "preset") {
     const p = PRESETS.find((x) => x.id === body?.id);
     if (!p || !imageUrl) return { status: 400, body: { error: "bad_request" } };
-    [model, prompt, crafted] = [PRESET_MODEL, p.prompt, true];
+    [model, prompt, crafted] = [presetModel(p), p.prompt, true];
     // Log WHICH preset was used — the web studio was the one tap surface that
     // didn't (bot logs preset: taps, the campaign branch below logs camp:preset),
     // so plain-preset usage by category (e.g. the product/маркетплейс presets)
