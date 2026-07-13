@@ -440,7 +440,8 @@ await step("POST /api/generate: preset charges, renders async, poll reaches ok",
 
 await step("prompt library: VeoSee-seeded presets are exposed in the catalog and one-tap applicable", async () => {
   const ids = (await apiMe(signInitData(maker))).body.catalog.presets.map((p) => p.id);
-  for (const id of ["candid_lux", "paris_rain", "pixar_me", "figurine", "retro90s"]) {
+  for (const id of ["candid_lux", "paris_rain", "pixar_me", "figurine", "retro90s",
+    "cafe_night", "yacht_lux", "photobooth_bw", "paper_doll", "low_battery", "product_editorial", "product_drama"]) {
     assert.ok(ids.includes(id), `catalog missing seeded preset ${id}`);
   }
   // One-tap apply: a seeded library preset renders through the same preset path.
@@ -476,6 +477,9 @@ await step("preset model routing: premium looks pin a stronger engine + price; c
   assert.equal(price.product_white, 2); // mechanical cutout stays cheap
   assert.equal(price.figurine, 11); // GPT Image 2 — generates blister-pack title text
   assert.equal(price.product_hero, 11); // GPT Image 2 — premium marketplace card
+  assert.equal(price.product_editorial, 11); // GPT Image 2 — editorial packshot w/ label text
+  assert.equal(price.product_drama, 11); // GPT Image 2 — cinematic packshot w/ label text
+  assert.equal(price.cafe_night, 2); // Seedream default (portrait look)
   assert.equal(price.pixar_me, 8); // Nano Banana Pro — heavy 3D stylization
 
   // A premium preset renders on its pinned engine and charges that model's price.

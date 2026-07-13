@@ -633,6 +633,54 @@ export const PRESETS: Preset[] = [
       "flash, period-accurate styling and hair, a nostalgic snapshot feel with subtle light leaks and true-to-film " +
       `skin tones, tack-sharp face. ${KEEP_ID}`,
   },
+  // More curated one-tap looks adapted from the VeoSee prompt-library research
+  // (docs/prompt-library.md): rewritten in NeuroShot's voice, identity-locked,
+  // brand/aspect stripped. Mix of aspirational editorial + viral shareables.
+  {
+    id: "cafe_night",
+    label: "🌃 Кафе ночью",
+    category: "photo",
+    prompt:
+      "Place the person in a cinematic cozy outdoor café at night: seated in a woven rattan chair looking up at the " +
+      "camera, warm luxury atmosphere, glowing skin, minimal dewy makeup, soft ambient light with gentle bokeh, an " +
+      `editorial magazine look, tack-sharp face. ${KEEP_ID}`,
+  },
+  {
+    id: "yacht_lux",
+    label: "🛥 Яхта-люкс",
+    category: "photo",
+    prompt:
+      "Place the person in an ultra-realistic luxury yacht editorial, waist-up crop, dramatic top-down camera angle " +
+      "over the stainless-steel railing toward the sea, confident posture and gaze, bright daylight on open water, " +
+      `aspirational fashion-magazine mood, tack-sharp face. ${KEEP_ID}`,
+  },
+  {
+    id: "photobooth_bw",
+    label: "🖤 Фотобудка Ч/Б",
+    category: "photo",
+    prompt:
+      "Restyle into a black-and-white photobooth strip: a vertical strip of four cinematic frames with natural " +
+      "editorial poses, luxurious voluminous hair, quiet-luxury styling, soft film grain, timeless monochrome " +
+      `aesthetic, tack-sharp face. ${KEEP_ID}`,
+  },
+  {
+    id: "paper_doll",
+    label: "✂️ Бумажная кукла",
+    category: "photo",
+    prompt:
+      "Turn the person into a realistic paper-doll cutout: keep the original face, hairstyle, outfit and pose, add a " +
+      "thick white paper outline around the whole figure with small folded paper tabs at the edges, a vintage " +
+      `scrapbook collage aesthetic, photorealistic, tack-sharp face. ${KEEP_ID}`,
+  },
+  {
+    id: "low_battery",
+    label: "🔋 На 1% зарядки",
+    category: "photo",
+    prompt:
+      "Turn the person into a funny 'low battery' portrait: a big-head small-body style with a highly recognizable " +
+      "face, a sleepy drained low-energy expression with heavy eyelids and slumped posture, a small red 1% battery " +
+      `icon above the head and a charging cable nearby, a clean playful background, tack-sharp face. ${KEEP_ID}`,
+  },
   {
     id: "product_hero",
     label: "🛍 Продающая карточка",
@@ -663,6 +711,29 @@ export const PRESETS: Preset[] = [
       "Place the product into a premium lifestyle scene that matches its category: natural materials, soft daylight, " +
       "shallow depth of field, aspirational magazine look, 4k quality. Keep the product's shape, colors and branding " +
       "exactly as in the photo.",
+  },
+  {
+    id: "product_editorial",
+    label: "🧴 Люкс-эдиториал",
+    category: "product",
+    // Editorial packshot keeps label text crisp — GPT Image 2 holds on-image text.
+    model: "premium_edit",
+    prompt:
+      "Turn this into a luxurious editorial product packshot: the item resting in dense plush faux fur in warm golden " +
+      "caramel and honey tones, a soft close-up still-life composition, glossy highlights, magazine-quality finish. " +
+      "Keep the product's shape, colors, label text and branding exactly as in the photo.",
+  },
+  {
+    id: "product_drama",
+    label: "💧 Драма-съёмка",
+    category: "product",
+    // Cinematic packshot with label typography — GPT Image 2 keeps text legible.
+    model: "premium_edit",
+    prompt:
+      "Turn this into dramatic low-angle cinematic product photography: the item on the sharp edge of a transparent " +
+      "glass podium shot from below, clear water elegantly dripping down the sides, a deep gradient background, strong " +
+      "highlights and deep shadows for a luxurious sensual mood, highly detailed. Keep the product's shape, colors, " +
+      "label text and branding exactly as in the photo.",
   },
 ];
 

@@ -30,6 +30,24 @@ Seeded looks added from this research:
   single-photo, identity-locked scenarios, adapted to our schema.
 - `figurine` 🧍, `retro90s` 📼 — original looks (NeuroShot's own wording, not
   copied) filling the top gaps the research flagged.
+- **Second curation batch** (aspirational editorial + viral shareables):
+  `cafe_night` 🌃, `yacht_lux` 🛥, `photobooth_bw` 🖤, `paper_doll` ✂️,
+  `low_battery` 🔋 (photo); `product_editorial` 🧴, `product_drama` 💧 (premium
+  product packshots). Each was hand-picked from the shortlist, translated to
+  English, compressed from a ~1–1.5k-char recipe to one flowing clause, had its
+  brand names / hard-coded aspect ratios stripped, and got the shared identity-
+  or product-lock guard appended.
+
+## Per-look model routing
+
+A preset renders on the cheap `PRESET_MODEL` (Seedream edit, 2🔫) unless it pins a
+stronger engine via the optional `model` key (`presetModel()` resolves it). Looks
+that depend on **on-image text** or heavy **stylization** route up automatically,
+with no extra user step — only the price the user sees changes:
+- `figurine`, `product_hero`, `product_editorial`, `product_drama` → GPT Image 2
+  (`premium_edit`, 11🔫) — blister-pack titles / product-label typography Seedream
+  garbles (see `docs/prompt-craft.md`).
+- `pixar_me` → Nano Banana Pro (`nbpro_edit`, 8🔫) — cleaner 3D-toon stylization.
 
 ## Expanding the library
 
