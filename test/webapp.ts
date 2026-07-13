@@ -131,6 +131,7 @@ interface MeResponse {
   onboardingSeen: boolean;
   roadmap: { firstPhoto: boolean; ownIdea: boolean; revivePhoto: boolean; scenario: boolean; invitedFriend: boolean };
   roadmapBonus: { amount: number; claimed: boolean };
+  referrals: Array<{ username: string | null; joinedAt: string; status: "inactive" | "used_free" | "paid" }>;
   packs: Array<{ id: string; title: string; credits: number; kzt: number; offer: boolean }>;
   catalog: {
     presetCredits: number;
@@ -720,6 +721,61 @@ await step("POST /api/claim-roadmap: only pays out once all 5 steps are real, ex
   const again = await fetch(`${base}/api/claim-roadmap`, { method: "POST", headers: { Authorization: `tma ${initData}` } });
   assert.deepEqual(await again.json(), { granted: 0 });
   assert.equal((await apiMe(initData)).body.dashboard.credits, 10);
+});
+
+await step("/me referrals: per-friend drill-down with inactive/used_free/paid status", async () => {
+  const { rewardReferralOnPurchase } = await import("../src/db.js");
+  const inviter = { id: 760, username: "inviter", first_name: "Ivan" };
+  const initData = signInitData(inviter);
+  await apiMe(initData); // onboard the inviter
+
+  // A brand-new inviter has invited nobody yet → empty list, not an error.
+  assert.deepEqual((await apiMe(initData)).body.referrals, []);
+
+  // Three friends, each in a different funnel stage:
+  await getOrCreateUser(761, "idlefriend", inviter.id, 3); // joined, never rendered → inactive
+  await getOrCreateUser(762, "tryerfriend", inviter.id, 3); // rendered on free patrons → used_free
+  await logGeneration(762, "photo_edit", "portrait", 3, "ok", "https://fal.test/out/ref.png");
+  await getOrCreateUser(763, "payerfriend", inviter.id, 3); // purchased → paid
+  await rewardReferralOnPurchase(763, 60, { percent: 0.1, firstPurchaseBonus: 10, milestones: [] });
+
+  const byId = new Map(
+    (await apiMe(initData)).body.referrals.map((r) => [r.username, r.status]),
+  );
+  assert.equal(byId.get("idlefriend"), "inactive");
+  assert.equal(byId.get("tryerfriend"), "used_free");
+  assert.equal(byId.get("payerfriend"), "paid");
+  assert.equal(byId.size, 3);
+});
+
+await step("/api/generate logs the preset id → seller-segment sizing counts only product presets", async () => {
+  const { sellerSegmentSizing } = await import("../src/db.js");
+  const productIds = ["product_hero", "product_white", "product_lifestyle"];
+  const hdrs = { ...makerHeaders(), "Content-Type": "application/json" };
+  await addCredits(maker.id, 50, "admin_grant", "test"); // ensure funds regardless of prior spend
+
+  const before = await sellerSegmentSizing(productIds); // maker hasn't touched a product preset yet
+
+  // A marketplace product shot counts toward the seller segment…
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: hdrs,
+    body: JSON.stringify({ source: "preset", id: "product_white", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(r.status, 200);
+  assert.equal((await pollGen(((await r.json()) as { id: number }).id)).status, "ok");
+
+  const after = await sellerSegmentSizing(productIds);
+  assert.equal(after.productPresetUsers, before.productPresetUsers + 1);
+  assert.ok(after.totalGenerators >= after.productPresetUsers);
+
+  // …a plain portrait preset does NOT — the segment tracks seller behaviour only.
+  const r2 = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: hdrs,
+    body: JSON.stringify({ source: "preset", id: "headshot", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(r2.status, 200);
+  assert.equal((await pollGen(((await r2.json()) as { id: number }).id)).status, "ok");
+  assert.equal((await sellerSegmentSizing(productIds)).productPresetUsers, after.productPresetUsers);
 });
 
 let videoGenId = 0; // captured for the video-as-source guard below

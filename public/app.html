@@ -107,6 +107,22 @@
     }
     .rmclaim:active { transform: scale(.97); }
     .rmclaim[disabled] { opacity: .55; pointer-events: none; }
+    /* Graduation state — once all 5 steps are done AND the bonus is settled, the
+       full checklist has done its job. Collapse the card to a single slim row so
+       a power user's studio isn't permanently topped by a dead 5-checkmark grid;
+       tapping it just drops into the shoot sheet to make something new. */
+    .roadmap.graduated { padding: 11px 13px; }
+    .roadmap.graduated .sec-h { display: none; }
+    .rmgrad {
+      width: 100%; display: flex; align-items: center; gap: 11px; text-align: left;
+      background: transparent; border: 0; padding: 0; font: inherit; color: var(--ink); cursor: pointer;
+    }
+    .rmgrad .rico {
+      flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      font-size: 15px; background: rgba(55,201,154,.16); border: 1px solid rgba(55,201,154,.4);
+    }
+    .rmgrad .rgtx { display: flex; flex-direction: column; gap: 1px; font-size: 13px; font-weight: 800; }
+    .rmgrad .rgtx small { font-size: 11px; font-weight: 600; color: var(--muted); }
 
     .btn {
       appearance: none; border: 0; cursor: pointer; border-radius: var(--radius-s);
@@ -220,6 +236,26 @@
       font-family: ui-monospace, Menlo, monospace;
     }
     .copy { flex: none; width: auto; padding: 11px 15px; }
+
+    /* Per-referral drill-down list (Друзья page) — one row per invited friend
+       with a funnel-stage status chip. Purely a read over data we already have. */
+    .refempty { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .reflist { display: flex; flex-direction: column; gap: 8px; }
+    .refrow {
+      display: flex; align-items: center; gap: 11px;
+      background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 11px 13px;
+    }
+    .rfic {
+      flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      background: var(--surface-2); border: 1px solid var(--line);
+    }
+    .rfmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .rfname { font-size: 13.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .rfmeta small { color: var(--muted); font-size: 11px; }
+    .rfchip { flex: 0 0 auto; font-size: 11px; font-weight: 700; padding: 4px 9px; border-radius: 999px; border: 1px solid transparent; }
+    .rfchip.paid { color: #37c99a; background: rgba(55,201,154,.14); border-color: rgba(55,201,154,.38); }
+    .rfchip.free { color: #b48dff; background: rgba(124,92,255,.14); border-color: rgba(124,92,255,.36); }
+    .rfchip.idle { color: var(--muted); background: var(--surface-2); border-color: var(--line); }
 
     /* "Ещё" tab — the About card + link groups (Друзья/Помощь/О проекте/Связаться). */
     .aboutcard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 19px; }
@@ -1473,10 +1509,34 @@
       }
       return `<p class="rmnote">Пройдите все 5 шагов — получите <b>${rb.amount} 🔫</b> в подарок</p>`;
     }
+    /** The onboarding path has served its purpose once every step is done AND the
+     *  completion bonus is claimed (or there was none) — nothing left to nudge. */
+    function roadmapGraduated(d, steps) {
+      const rb = d.roadmapBonus || { amount: 0, claimed: true };
+      return steps.every((s) => s.done) && (rb.claimed || rb.amount <= 0);
+    }
+    /** Inner markup of the .roadmap card. Two states so the same builder drives
+     *  the first paint and every live refresh: the full checklist while there's
+     *  still a step or bonus outstanding, and a slim graduated row once it's all
+     *  done — so the completed card stops hogging the top of the studio. */
+    function roadmapCardInner(d, steps) {
+      if (roadmapGraduated(d, steps)) {
+        return `<button class="rmgrad" data-go="shoot">
+            <span class="rico">🎉</span>
+            <span class="rgtx">Путь пройден — вы освоили студию<small>Нажмите, чтобы создать ещё</small></span>
+          </button>`;
+      }
+      return `
+          <div class="sec-h"><h2>Ваш путь в NeuroShot</h2></div>
+          <div class="rsteps">${roadmapStepsHtml(steps)}</div>
+          <div id="rmbonus">${roadmapBonusHtml(d, steps)}</div>`;
+    }
     function bindRoadmap() {
       document.querySelectorAll(".rstep[data-go]").forEach((b) => (b.onclick = () => {
         if (b.dataset.go === "friends") showPage("friends"); else studio(b.dataset.go);
       }));
+      const grad = document.querySelector(".roadmap .rmgrad");
+      if (grad) grad.onclick = () => studio("shoot");
       const claimBtn = document.getElementById("rmclaimbtn");
       if (claimBtn) claimBtn.onclick = async function () {
         this.disabled = true;
@@ -1497,10 +1557,11 @@
      *  active tab and any open sheet). */
     function renderRoadmap(d) {
       const steps = roadmapStepsFor(d);
-      const rsteps = document.querySelector(".roadmap .rsteps");
-      if (rsteps) rsteps.innerHTML = roadmapStepsHtml(steps);
-      const bonusHost = document.getElementById("rmbonus");
-      if (bonusHost) bonusHost.innerHTML = roadmapBonusHtml(d, steps);
+      const card = document.querySelector(".roadmap");
+      if (card) {
+        card.classList.toggle("graduated", roadmapGraduated(d, steps));
+        card.innerHTML = roadmapCardInner(d, steps);
+      }
       bindRoadmap();
       const small = document.getElementById("moreRoadmap")?.querySelector("small");
       if (small) small.textContent = `${steps.filter((s) => s.done).length} из ${steps.length} шагов пройдено`;
@@ -1514,6 +1575,8 @@
       setBalance(data.dashboard.credits);
       const s = document.getElementById("statsRow");
       if (s) s.innerHTML = statsHtml(data.dashboard);
+      const rl = document.getElementById("refList");
+      if (rl) rl.innerHTML = referralListHtml(data.referrals);
       renderRoadmap(data);
     }
     function statsHtml(dash) {
@@ -1522,6 +1585,33 @@
         <div class="stat"><div class="n">${dash.creditsSpent}</div><div class="l">потрачено</div></div>
         <div class="stat"><div class="n">${dash.referralEarned}</div><div class="l">заработано</div></div>
         <div class="stat"><div class="n">${dash.referralCount}</div><div class="l">друзей</div></div>`;
+    }
+    // Per-referral drill-down list for the Друзья page — who joined and where
+    // they are in the funnel (see referralList in db.ts for how status is set).
+    const REF_STATUS = {
+      paid: { cls: "paid", label: "покупает" },
+      used_free: { cls: "free", label: "пробует" },
+      inactive: { cls: "idle", label: "не активен" },
+    };
+    function refWhen(iso) {
+      const t = Date.parse(iso);
+      if (!t) return "";
+      return new Date(t).toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+    }
+    function referralListHtml(referrals) {
+      const list = referrals || [];
+      if (!list.length) {
+        return `<p class="refempty">Пока никто не присоединился — поделитесь ссылкой выше, и приглашённые друзья появятся здесь.</p>`;
+      }
+      return `<div class="reflist">${list.map((r) => {
+        const st = REF_STATUS[r.status] || REF_STATUS.inactive;
+        const name = r.username ? "@" + r.username : "Друг";
+        return `<div class="refrow">
+            <span class="rfic"><img class="appicon" src="/img/ic-gift.png" alt="" /></span>
+            <span class="rfmeta"><span class="rfname">${esc(name)}</span><small>${refWhen(r.joinedAt)}</small></span>
+            <span class="rfchip ${st.cls}">${st.label}</span>
+          </div>`;
+      }).join("")}</div>`;
     }
 
     // Live combo-offer countdown: ticks the 🔥 badge each second; when the
@@ -1646,11 +1736,7 @@
 
         <!-- ===== СТУДИЯ (create) ===== -->
         <div class="page on" data-page="studio">
-          <div class="roadmap reveal">
-            <div class="sec-h"><h2>Ваш путь в NeuroShot</h2></div>
-            <div class="rsteps">${roadmapStepsHtml(ROADMAP_STEPS)}</div>
-            <div id="rmbonus">${roadmapBonusHtml(d, ROADMAP_STEPS)}</div>
-          </div>
+          <div class="roadmap reveal${roadmapGraduated(d, ROADMAP_STEPS) ? " graduated" : ""}">${roadmapCardInner(d, ROADMAP_STEPS)}</div>
 
           <div class="news reveal">
             <div class="sec-h"><h2>🆕 Новые модели</h2></div>
@@ -1722,6 +1808,10 @@
               <div class="stat"><div class="n">${dash.referralPaying}</div><div class="l">покупают</div></div>
               <div class="stat"><div class="n">${dash.referralEarned}</div><div class="l">🔫 заработано</div></div>
             </div>
+          </section>
+          <section class="reveal">
+            <div class="sec-h"><h2>Ваши друзья</h2></div>
+            <div id="refList">${referralListHtml(d.referrals)}</div>
           </section>
         </div>
 

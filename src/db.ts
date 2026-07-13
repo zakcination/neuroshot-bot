@@ -1381,6 +1381,89 @@ export async function userDashboard(userId: number): Promise<{
   };
 }
 
+export interface ReferralEntry {
+  username: string | null; // Telegram @username if known (we don't store first_name)
+  joinedAt: string; // ISO — when they joined via the link
+  status: "inactive" | "used_free" | "paid";
+}
+
+/**
+ * Per-referral drill-down for the "Друзья" page — the inviter seeing which
+ * invited friends actually did something, not just an aggregate count (the
+ * aggregate lives in userDashboard). Status is derived entirely from signals
+ * already in the schema — NO new columns:
+ *  - paid: the friend has purchased at least once (ref_first_purchase_at is set
+ *    on the invitee at their 1st purchase — the same flag that fires the
+ *    inviter's first-purchase bonus), so the inviter is earning the lifetime share.
+ *  - used_free: no purchase yet, but ≥1 successful generation — they've actually
+ *    tried the studio on free/gifted patrons.
+ *  - inactive: joined via the link but never rendered anything.
+ * Newest-first and capped — this is a motivational list, not an analytics table.
+ */
+export async function referralList(userId: number, limit = 100): Promise<ReferralEntry[]> {
+  // Correlate the "has this friend rendered anything" check to each referred
+  // user rather than aggregating the whole generations table on every /api/me:
+  // we only need a boolean per friend, and EXISTS short-circuits on the first ok
+  // row (indexed by user_id). Cheap even as generations grows.
+  const rows = await q(
+    `SELECT u.username,
+            u.created_at,
+            u.ref_first_purchase_at,
+            EXISTS (
+              SELECT 1 FROM generations g WHERE g.user_id = u.id AND g.status = 'ok'
+            ) AS has_generation
+     FROM users u
+     WHERE u.referrer_id = $1
+     ORDER BY u.created_at DESC
+     LIMIT $2`,
+    [userId, limit],
+  );
+  return rows.map((r): ReferralEntry => ({
+    username: r.username == null ? null : String(r.username),
+    joinedAt: String(r.created_at),
+    status: r.ref_first_purchase_at != null ? "paid" : r.has_generation ? "used_free" : "inactive",
+  }));
+}
+
+export interface SegmentSizing {
+  productPresetUsers: number; // distinct users who generated with a product-category preset
+  totalGenerators: number; // distinct users with ≥1 generation of any kind
+  totalUsers: number; // all registered users
+  sharePct: number; // productPresetUsers / totalGenerators × 100 (0 if no generators)
+}
+
+/**
+ * Ad-hoc sizing of the "marketplace seller" segment — how many users actually
+ * reach for the product/маркетплейс presets, the behavioural proxy for the
+ * stated B2B/SMB seller ICP (docs/web-app.md). Read-only, run on demand from
+ * scripts/segment-sizing.mts; deliberately NOT a live dashboard (monitor.ts's
+ * philosophy: no cohorts/dashboards before ~1,000 users).
+ *
+ * ⚠️ Signal completeness: usage is counted from `preset` events. The bot has
+ * always logged preset taps; the web studio only started logging plain-preset
+ * taps in the same change that added this function — so numbers reflect web
+ * usage from that point forward (bot usage is fully historical). Treat an early
+ * reading as a floor, not a census.
+ */
+export async function sellerSegmentSizing(productPresetIds: string[]): Promise<SegmentSizing> {
+  const [seg, gens, users] = await Promise.all([
+    q(
+      "SELECT COUNT(DISTINCT user_id)::int AS c FROM events WHERE type = 'preset' AND meta = ANY($1::text[])",
+      [productPresetIds],
+    ),
+    q("SELECT COUNT(DISTINCT user_id)::int AS c FROM generations", []),
+    q("SELECT COUNT(*)::int AS c FROM users", []),
+  ]);
+  const productPresetUsers = Number(seg[0].c);
+  const totalGenerators = Number(gens[0].c);
+  return {
+    productPresetUsers,
+    totalGenerators,
+    totalUsers: Number(users[0].c),
+    sharePct: totalGenerators > 0 ? Math.round((productPresetUsers / totalGenerators) * 1000) / 10 : 0,
+  };
+}
+
 export interface RoadmapProgress {
   firstPhoto: boolean; // any successful generation
   ownIdea: boolean; // a text_to_image render (typed a prompt, no upload)
