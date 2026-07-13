@@ -400,6 +400,8 @@
     .tabbtn.on { color: var(--text); }
     .tabbtn.on span { filter: none; }
     .buyhint { color: var(--muted); font-size: 12px; margin: 12px 2px 0; line-height: 1.5; }
+    /* Exchange-rate transparency above the pack tiles: the patron↔₸ rate at a glance. */
+    .ratenote { color: var(--muted); font-size: 12.5px; margin: -4px 2px 13px; line-height: 1.45; font-variant-numeric: tabular-nums; }
 
     .skel { border-radius: var(--radius); height: 170px; background: linear-gradient(100deg, var(--surface) 40%, var(--surface-2) 50%, var(--surface) 60%); background-size: 200% 100%; animation: shimmer 1.3s infinite; }
     @keyframes shimmer { to { background-position: -200% 0; } }
@@ -1819,6 +1821,7 @@
         <div class="page" data-page="buy">
           <section class="reveal">
             <div class="sec-h"><h2>Пакеты патронов</h2></div>
+            <p class="ratenote" id="rateNote"></p>
             <div class="packs" id="p"></div>
             <p class="buyhint">Оплата картой Kaspi. После оплаты подтвердите в боте — патроны зачислятся.</p>
           </section>
@@ -1897,6 +1900,17 @@
             <span><span class="amount">🔫 ${pack.credits}</span><div class="per">≈ ${per} ₸ за патрон</div></span>
             <span class="stars">${pack.kzt.toLocaleString("ru-RU")} ₸</span>
           </button>`));
+      }
+      // Exchange-rate transparency: the patron↔tenge rate is a ladder (bigger
+      // pack = cheaper), so show its range up front rather than making the user
+      // reverse-engineer it from the pack tiles.
+      const rn = document.getElementById("rateNote");
+      if (rn) {
+        const rates = (d.packs || []).filter((p) => !p.offer).map((p) => p.kzt / p.credits);
+        if (rates.length) {
+          const minR = Math.round(Math.min(...rates)), maxR = Math.round(Math.max(...rates));
+          rn.textContent = `1 🔫 ≈ ${minR === maxR ? `${minR}` : `${minR}–${maxR}`} ₸ — чем больше пакет, тем дешевле`;
+        }
       }
       startCountdown();
 
