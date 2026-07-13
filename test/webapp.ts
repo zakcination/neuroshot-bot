@@ -135,7 +135,7 @@ interface MeResponse {
   packs: Array<{ id: string; title: string; credits: number; kzt: number; offer: boolean }>;
   catalog: {
     presetCredits: number;
-    presets: Array<{ id: string; label: string; category: string; credits: number }>;
+    presets: Array<{ id: string; label: string; category: string; credits: number; previewUrl: string; usageCount: number; trending: boolean }>;
     campaigns: Array<{
       id: string;
       label: string;
@@ -512,6 +512,48 @@ await step("preset model routing: premium looks pin a stronger engine + price; c
     if (st === "pending") await new Promise((rr) => setTimeout(rr, 15));
   }
   assert.equal(st, "ok");
+});
+
+await step("Style Gallery: catalog presets carry preview art + real (never fabricated) usage/trending", async () => {
+  const presetsBefore = (await apiMe(signInitData(maker))).body.catalog.presets;
+  // Every preset — old and newly-curated alike — resolves a deterministic
+  // preview URL (public/img/card-preset-<id>.jpg, see docs/prompt-library.md);
+  // usageCount/trending are always present and start real, not undefined.
+  for (const p of presetsBefore) {
+    assert.equal(p.previewUrl, `/img/card-preset-${p.id}.jpg`);
+    assert.equal(typeof p.usageCount, "number");
+    assert.equal(typeof p.trending, "boolean");
+  }
+  // kitten_editorial is untouched by every other test in this file — a clean
+  // signal to prove usageCount reflects a REAL tap (events log), not a guess.
+  const before = presetsBefore.find((p) => p.id === "kitten_editorial")!;
+  assert.equal(before.usageCount, 0);
+  assert.equal(before.trending, false);
+
+  const gu = { id: 783, username: "galleryuser", first_name: "Gal" };
+  const gh = { Authorization: `tma ${signInitData(gu)}`, "Content-Type": "application/json" };
+  await apiMe(signInitData(gu));
+  await addCredits(gu.id, 10, "admin_grant", "test");
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: gh,
+    body: JSON.stringify({ source: "preset", id: "kitten_editorial", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(r.status, 200);
+  const gid = ((await r.json()) as { id: number }).id;
+  // Owner-scoped polling (see "polling is owner-scoped" below) — pollGen()
+  // is hardcoded to `maker`'s auth, so poll with this test's own user headers.
+  let status = "pending";
+  for (let i = 0; i < 200 && status === "pending"; i++) {
+    const g = await fetch(`${base}/api/generations/${gid}`, { headers: { Authorization: gh.Authorization } });
+    assert.equal(g.status, 200);
+    status = ((await g.json()) as { status: string }).status;
+    if (status === "pending") await new Promise((rr) => setTimeout(rr, 15));
+  }
+  assert.equal(status, "ok");
+
+  const presetsAfter = (await apiMe(signInitData(maker))).body.catalog.presets;
+  const after = presetsAfter.find((p) => p.id === "kitten_editorial")!;
+  assert.equal(after.usageCount, 1); // exactly the one real tap above
 });
 
 await step("campaign video upsell via API: minifilm renders on flagship Seedance 2.0 with audio (76 🔫)", async () => {
