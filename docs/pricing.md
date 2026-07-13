@@ -145,6 +145,32 @@ friend spends real Stars.
 All amounts are env-tunable — see `.env.example` (`REFERRAL_*`) and
 `REFERRAL_MILESTONES` in `src/models.ts`.
 
+## Cost tracking (`generations.cost_usd`)
+
+The patron `credits` charge and the actual provider `cost_usd` are tracked
+separately per generation — they diverge on purpose (free/gifted renders
+charge 0 credits but still cost real money) and by rounding (patrons are
+whole numbers rounded up for margin; cost_usd is the real, un-rounded spend).
+
+- **`costUsdFor(model, opts)`** (`src/models.ts`) — the single source of truth,
+  mirroring `priceFor`'s duration/resolution scaling exactly but returning
+  USD. Every completed generation logs this + fal's `provider_request_id`
+  (`completeGeneration`/`markOk` in `src/generate.ts`) — an audit trail from a
+  delivered result back to the exact provider request, for support/dispute
+  and margin-accuracy purposes.
+- **`buildDigest`** (`src/monitor.ts`) sums real `cost_usd` where it's been
+  logged (every generation going forward) and only falls back to the old
+  flat per-model estimate for pre-migration rows (`cost_usd IS NULL`) — the
+  `/dash` margin number gets more accurate over time with no backfill needed.
+- **Deliberately NOT wired up yet:** `userCogsUsd` / `usersOverCogsThreshold`
+  (per-user spend + an alert threshold) and `rerollRateApprox` (a same-user/
+  same-model-within-N-minutes heuristic) exist in `src/db.ts` but aren't
+  called anywhere. They matter once a revenue-tied reward multiplier (referral
+  or top-up bonus %) is close to shipping — building the alerting/measurement
+  layer before that exists would be instrumenting a problem that isn't live
+  yet, which this project's own monitoring philosophy explicitly avoids (see
+  `monitor.ts`'s header comment). Wire them up when that day comes.
+
 ## Before changing prices
 
 - Keep `approxCostUsd` current with fal.ai's model pages — it's the anchor.

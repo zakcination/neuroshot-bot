@@ -23,7 +23,7 @@ process.env.KASPI_API_SECRET = "test-kaspi-secret"; // enable the auto-approval 
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, createOrder, getOrCreateUser, getOrder, logEvent, logGeneration, spendCredits } = await import("../src/db.js");
+const { addCredits, createOrder, getOrCreateUser, getOrder, logEvent, logGeneration, query, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
@@ -429,6 +429,12 @@ await step("POST /api/generate: preset charges, renders async, poll reaches ok",
   const call = falCalls.at(-1)!;
   assert.equal(call.endpoint, "fal-ai/bytedance/seedream/v4.5/edit");
   assert.match(call.input.prompt as string, /corporate headshot/);
+
+  // item-0 cost tracking: the real provider cost + fal request id land on the
+  // row, not just the patron charge — this is what COGS accounting reads.
+  const row = (await query("SELECT cost_usd, provider_request_id FROM generations WHERE id = $1", [d.id]))[0];
+  assert.equal(Number(row.cost_usd), 0.04); // seedream_edit approxCostUsd
+  assert.match(String(row.provider_request_id), /^req-\d+$/);
 });
 
 await step("campaign video upsell via API: minifilm renders on flagship Seedance 2.0 with audio (76 🔫)", async () => {
@@ -871,6 +877,11 @@ await step("video composer: duration scales the charge, ratio flows to fal, stor
   assert.match(call.input.prompt as string, /cinematic reveal as the subject steps into the light/);
   assert.match(call.input.prompt as string, /film-grade color/);
   assert.match(call.input.prompt as string, /любит футбол/); // sanitized personalization
+
+  // cost_usd scales with duration exactly like the patron charge (item 0's
+  // cost map is the same math, just in USD instead of rounded patrons).
+  const row = (await query("SELECT cost_usd FROM generations WHERE id = $1", [d.id]))[0];
+  assert.equal(Number(row.cost_usd), 1.68); // 0.168 perSecondUsd × 10s
 });
 
 await step("video composer validation: bad duration/ratio → 400 bad_opts, bad story id → bad_option", async () => {

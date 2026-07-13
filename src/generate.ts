@@ -16,7 +16,7 @@ import {
   spendCredits,
   type UserRow,
 } from "./db.js";
-import { MODELS, priceFor, type FreeScenario, type GenOpts, type ModelSpec } from "./models.js";
+import { costUsdFor, MODELS, priceFor, type FreeScenario, type GenOpts, type ModelSpec } from "./models.js";
 import { paywallKeyboard, paywallText } from "./payments.js";
 import { craftPrompt } from "./promptcraft.js";
 import { watermarkImage, watermarkVideo } from "./watermark.js";
@@ -55,10 +55,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * sustained DB outage still degrades to the reaper's customer-favourable refund;
  * the retry closes the realistic transient window.
  */
-async function markOk(genId: number, url: string): Promise<void> {
+async function markOk(genId: number, url: string, costUsd: number, requestId: string): Promise<void> {
   for (let i = 0; i < 3; i++) {
     try {
-      await completeGeneration(genId, "ok", url);
+      await completeGeneration(genId, "ok", url, costUsd, requestId);
       return;
     } catch (e) {
       if (i === 2) {
@@ -95,17 +95,17 @@ function extractResultUrl(data: unknown): string | null {
   return d?.images?.[0]?.url ?? d?.image?.url ?? d?.video?.url ?? null;
 }
 
-/** Run a model on fal and return the output URL (throws on provider failure). */
+/** Run a model on fal; returns the output URL + fal's request id (throws on provider failure). */
 async function falRun(
   model: ModelSpec,
   prompt: string,
   imageUrl?: string,
   opts?: GenOpts,
-): Promise<string> {
+): Promise<{ url: string; requestId: string }> {
   const result = await fal.subscribe(model.falEndpoint, { input: model.input(prompt, imageUrl, opts) });
   const url = extractResultUrl(result.data);
   if (!url) throw new Error(`No output URL in fal response for ${model.falEndpoint}`);
-  return url;
+  return { url, requestId: result.requestId };
 }
 
 /**
@@ -133,15 +133,29 @@ export async function startWebGeneration(
   await logEvent(userId, "gen_start", model.key);
   const id = await createPendingGeneration(userId, model.key, prompt, credits);
   void (async () => {
+    // Provider metadata hoisted so a failed tail can still record what fal
+    // actually billed us (populated only once falRun succeeds).
+    let costUsd: number | undefined;
+    let requestId: string | undefined;
     try {
-      const url = await falRun(model, prompt, imageUrl, opts);
-      await completeGeneration(id, "ok", url);
-      await logEvent(userId, "gen_ok", model.key);
+      const r = await falRun(model, prompt, imageUrl, opts);
+      costUsd = costUsdFor(model, opts);
+      requestId = r.requestId;
+      await completeGeneration(id, "ok", r.url, costUsd, requestId);
+      // Analytics must never be able to trigger compensation: swallow its errors
+      // so a post-'ok' logEvent blip can't fall into the catch and refund a
+      // render we already completed and delivered.
+      await logEvent(userId, "gen_ok", model.key).catch(() => {});
     } catch (err) {
       console.error(`web generation failed (${model.key}):`, err);
-      await addCredits(userId, credits, "refund", model.key);
-      await completeGeneration(id, "error");
-      await logEvent(userId, "gen_error", model.key);
+      // Refund ONLY if we win the pending→error CAS. If the 'ok' write already
+      // landed (e.g. this catch was reached by a later throw), the CAS loses and
+      // we must NOT refund a successful generation. Persist the provider cost we
+      // were billed onto the error row so COGS accounting stays accurate.
+      if (await completeGeneration(id, "error", undefined, costUsd, requestId)) {
+        await addCredits(userId, credits, "refund", model.key);
+      }
+      await logEvent(userId, "gen_error", model.key).catch(() => {});
     }
   })();
   return { ok: true, id, credits };
@@ -247,13 +261,21 @@ export async function runGeneration(
   track(
     (async () => {
       let delivered = false;
+      // Hoisted so a delivery failure AFTER a successful provider call can still
+      // record what fal billed us on the error row (accurate COGS). Populated
+      // only once falRun returns.
+      let costUsd: number | undefined;
+      let requestId: string | undefined;
       try {
         const imageUrl = fileId
           ? /^https?:\/\//.test(fileId)
             ? fileId
             : await telegramFileUrl(ctx, fileId)
           : undefined;
-        const url = await falRun(model, prompt, imageUrl);
+        const r = await falRun(model, prompt, imageUrl);
+        const url = r.url;
+        costUsd = costUsdFor(model);
+        requestId = r.requestId;
         const after = afterKeyboard(isUpload, opts.animate && !isVideo ? { campId: opts.animate, genId } : undefined);
         // Brand every deliverable by default (user can turn the watermark off).
         if (isVideo) {
@@ -269,7 +291,7 @@ export async function runGeneration(
         // Terminal transition first (the pending row IS the generation record —
         // no separate logGeneration, or the render would double-count). Post-
         // delivery bookkeeping below must never be able to trigger compensation.
-        await markOk(genId, url);
+        await markOk(genId, url, costUsd, requestId);
         if (free) {
           await ctx.api
             .sendMessage(chatId, "🎁 Первый результат — бесплатно, патроны не списаны! Дальше — за 🔫.")
@@ -281,7 +303,7 @@ export async function runGeneration(
         // Compensate ONLY if we never delivered, and ONLY if we win the pending→
         // error CAS — so a post-delivery error can't refund a delivered render and
         // the reaper can't double-refund. Exactly-once.
-        if (!delivered && (await completeGeneration(genId, "error"))) {
+        if (!delivered && (await completeGeneration(genId, "error", undefined, costUsd, requestId))) {
           if (!free) await addCredits(user.id, model.credits, "refund", model.key);
           else await restoreFreeResult(user.id);
           await ctx.api
@@ -346,11 +368,23 @@ export async function runFreeScenario(
   track(
     (async () => {
       let delivered = false;
+      // Hoisted so a delivery failure after BOTH provider legs succeed still
+      // records the combined chain cost + audit id on the error row.
+      let chainCostUsd: number | undefined;
+      let providerRequestId: string | undefined;
       try {
         const photoUrl = await telegramFileUrl(ctx, fileId);
         // 1) Photo → styled scene image (Seedream edit). 2) Scene → short video (Hailuo).
-        const sceneImg = await falRun(scenario.imageModel, scenario.imagePrompt, photoUrl);
-        const videoUrl = await falRun(scenario.videoModel, scenario.videoPrompt, sceneImg);
+        const scene = await falRun(scenario.imageModel, scenario.imagePrompt, photoUrl);
+        const videoResult = await falRun(scenario.videoModel, scenario.videoPrompt, scene.url);
+        const videoUrl = videoResult.url;
+        // This ONE generations row represents the whole free chain — the actual
+        // cost NeuroShot paid is both legs combined (the highest-COGS acquisition
+        // path in the product, hence the two-model chain being worth tracking
+        // precisely); the video leg's request id is the primary audit trail since
+        // it's the delivered artifact.
+        chainCostUsd = costUsdFor(scenario.imageModel) + costUsdFor(scenario.videoModel);
+        providerRequestId = videoResult.requestId;
         // Free scenarios are ALWAYS branded (the badge is the price of "free").
         const branded = await watermarkVideo(videoUrl);
         const video = branded ? new InputFile(branded, "neuroshot.mp4") : new InputFile({ url: videoUrl });
@@ -359,11 +393,11 @@ export async function runFreeScenario(
           reply_markup: afterKeyboard(true),
         });
         delivered = true;
-        await markOk(genId, videoUrl); // durable terminal write (retry through blips)
+        await markOk(genId, videoUrl, chainCostUsd, providerRequestId); // durable terminal write (retry through blips)
         await logEvent(user.id, "gen_ok", `free_${scenario.id}`).catch(() => {});
       } catch (err) {
         console.error(`free scenario failed (${scenario.id}):`, err);
-        if (!delivered && (await completeGeneration(genId, "error"))) {
+        if (!delivered && (await completeGeneration(genId, "error", undefined, chainCostUsd, providerRequestId))) {
           await restoreFreeScenario(user.id); // return the gift so they can retry
           await ctx.api
             .sendMessage(chatId, "⚠️ Не получилось снять сценарий — попробуйте ещё раз, бесплатная попытка сохранена.")

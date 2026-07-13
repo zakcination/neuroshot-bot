@@ -360,6 +360,27 @@ await step("provider failure: 🔫 auto-refunded, error logged", async () => {
   assert.equal(gen[0].status, "error");
 });
 
+await step("error completion persists provider cost + request id (provider billed, delivery failed)", async () => {
+  const id = await createPendingGeneration(alice.id, "photo_edit", "delivery blows up", 2);
+  // The provider call succeeded (we were billed) but the tail — watermark/send —
+  // failed. The 'error' row must still carry the cost/audit id so COGS isn't
+  // understated. completeGeneration wins the pending→error CAS the first time.
+  assert.equal(await completeGeneration(id, "error", undefined, 0.06, "req-deliv-fail"), true);
+  const row = await query("SELECT status, cost_usd, provider_request_id FROM generations WHERE id = $1", [id]);
+  assert.equal(row[0].status, "error");
+  assert.equal(Number(row[0].cost_usd), 0.06);
+  assert.equal(String(row[0].provider_request_id), "req-deliv-fail");
+  // Exactly-once: a second completion loses the CAS and cannot overwrite it — the
+  // guard that stops a post-'ok' logEvent blip from refunding a delivered render.
+  assert.equal(await completeGeneration(id, "error", undefined, 0.99, "req-second"), false);
+  const after = await query("SELECT cost_usd, provider_request_id FROM generations WHERE id = $1", [id]);
+  assert.equal(Number(after[0].cost_usd), 0.06); // unchanged
+  assert.equal(String(after[0].provider_request_id), "req-deliv-fail");
+  // This row is a bare fixture (no credit movement) — drop it so the cumulative
+  // shared-state counts later steps assert on (e.g. /stats) are unaffected.
+  await query("DELETE FROM generations WHERE id = $1", [id]);
+});
+
 await step("referral: link gives friend a join bonus; first purchase pays inviter bonus + 10%", async () => {
   await sendText(bob, `/start ${alice.id}`);
   assert.equal(await credits(bob.id), 0); // still parked — claim-gated same as any signup
@@ -827,6 +848,16 @@ await step("free scenario: princess renders the WHOLE chain free (Seedream → H
   assert.equal(await credits(zoe.id), 12); // whole scenario cost the user nothing
   const flag = await query("SELECT free_scenario_used FROM users WHERE id = $1", [zoe.id]);
   assert.equal(flag[0].free_scenario_used, true);
+
+  // Free to the USER, but item-0's cost tracking still logs what it actually
+  // cost NeuroShot: both legs of the chain (Seedream $0.04 + Hailuo $0.19),
+  // even though the row's patron `credits` charge is 0.
+  const genRow = await query(
+    "SELECT cost_usd, provider_request_id FROM generations WHERE user_id = $1 ORDER BY id DESC LIMIT 1",
+    [zoe.id],
+  );
+  assert.equal(Number(genRow[0].cost_usd), 0.23);
+  assert.match(String(genRow[0].provider_request_id), /^req-\d+$/);
 
   // One-time: a second attempt is refused, no provider call.
   await pressButton(zoe, "menu:free");
