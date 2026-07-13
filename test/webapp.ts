@@ -469,6 +469,14 @@ await step("prompt library: VeoSee-seeded presets are exposed in the catalog and
 await step("preset model routing: premium looks pin a stronger engine + price; cheap looks stay Seedream", async () => {
   const presets = (await apiMe(signInitData(maker))).body.catalog.presets;
   const price = Object.fromEntries(presets.map((p) => [p.id, p.credits]));
+  // TEMP DIAGNOSTIC (remove after CI parity confirmed)
+  const { MODELS, PRESETS, presetModel } = await import("../src/models.js");
+  const px = PRESETS.filter((p) => p.id === "pixar_me");
+  console.error("DIAG pixar_me count=" + px.length + " models=" + JSON.stringify(px.map((p) => p.model))
+    + " MODELS.nbpro_edit.credits=" + (MODELS.nbpro_edit && MODELS.nbpro_edit.credits)
+    + " resolved=" + px.map((p) => presetModel(p).credits).join(",")
+    + " catalog.pixar_me=" + price.pixar_me
+    + " nodever=" + process.version);
   assert.equal(price.headshot, 2); // Seedream default
   assert.equal(price.product_white, 2); // mechanical cutout stays cheap
   assert.equal(price.figurine, 11); // GPT Image 2 — generates blister-pack title text
