@@ -459,16 +459,17 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     const creatorBlock = await creatorCodesBlock(ctx, u.id);
 
     if (!acct.joined) {
-      const kb = new InlineKeyboard().text("🚀 Стать партнёром", "partner:join");
+      // Partnerships are ADMIN-SERVED — there is no self-serve join (an admin
+      // enrolls partners with /partner_grant). Non-partners see the pitch + how to
+      // apply, never a button that grants the welcome bonus to whoever taps it.
       await ctx.reply(
         creatorBlock +
           `🤝 <b>Партнёрская программа NeuroShot</b>\n\n` +
-          `• Персональная ссылка и приветственный бонус <b>≈$20</b> в токенах ${UNIT_EMOJI}\n` +
           `• <b>${pct}% кэшбэка</b> с каждой оплаты приглашённых пользователей\n` +
           `• Кэшбэк — в токенах: тратьте в NeuroShot или <b>выводите деньгами раз в 2 недели</b>\n` +
-          `• Без вложений — просто делитесь ссылкой и растите вместе с проектом\n\n` +
-          `До 10 персональных ссылок на аккаунт.`,
-        { parse_mode: "HTML", reply_markup: kb },
+          `• Персональные ссылки и приветственный бонус для подключённых партнёров\n\n` +
+          `Программа — <b>по приглашению</b>. Хотите участвовать? Напишите нам — подключим вручную.`,
+        { parse_mode: "HTML" },
       );
       return;
     }
@@ -505,17 +506,12 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   bot.command("partner", (ctx) => sendPartnerDash(ctx));
 
+  // Self-serve join is REMOVED — partnerships are admin-served (/partner_grant).
+  // This handler only catches stale "Стать партнёром" buttons from old chats and
+  // re-opens the dashboard (which now shows the by-invitation notice). It grants
+  // nothing.
   bot.callbackQuery("partner:join", async (ctx) => {
     await ctx.answerCallbackQuery();
-    const u = await user(ctx);
-    const res = await joinPartnerProgram(u.id, config.partnerWelcome);
-    // First code is minted on join so the partner leaves with a shareable link.
-    if (res.justJoined) await createPartnerCode(u.id, config.partnerPercent, config.partnerInviteeBonus, config.partnerMaxCodes);
-    if (res.justJoined && res.welcome > 0) {
-      await ctx.reply(`🎉 Добро пожаловать! Начислен бонус <b>${UNIT_EMOJI} ${nUnits(res.welcome)}</b>.`, {
-        parse_mode: "HTML",
-      });
-    }
     await sendPartnerDash(ctx);
   });
 
@@ -677,6 +673,33 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     } else {
       await ctx.reply(`↩️ Заявка №${id} отклонена.`);
     }
+  });
+
+  // Admin: enroll a user into the partner program. Partnerships are admin-served,
+  // never self-serve — this is the ONLY way the welcome bonus + first code are
+  // granted. The target must have started the bot first (/start).
+  // /partner_grant <tg_id>
+  bot.command("partner_grant", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const targetId = Number((ctx.match ?? "").trim());
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      await ctx.reply("Формат: /partner_grant <tg_id>. Пользователь должен сначала запустить бота (/start).");
+      return;
+    }
+    const res = await joinPartnerProgram(targetId, config.partnerWelcome);
+    if (!res.justJoined) {
+      await ctx.reply(`Пользователь ${targetId} уже партнёр — или ещё не запускал бота (/start).`);
+      return;
+    }
+    // Mint the partner's first shareable code, mirroring the old join flow.
+    await createPartnerCode(targetId, config.partnerPercent, config.partnerInviteeBonus, config.partnerMaxCodes);
+    await ctx.api
+      .sendMessage(
+        targetId,
+        `🎉 Вас подключили к партнёрской программе NeuroShot! Начислен бонус ${UNIT_EMOJI} ${nUnits(res.welcome)}. Откройте /partner — там ваша персональная ссылка.`,
+      )
+      .catch(() => {});
+    await ctx.reply(`✅ ${targetId} подключён к партнёрской программе (+${nUnits(res.welcome)}, ссылка создана).`);
   });
 
   // Admin: create/update a creator code with per-deal terms.
