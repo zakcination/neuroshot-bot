@@ -72,6 +72,13 @@ Telegram│  Bot (grammY)│        │ Mini App (webapp)│  ← same HTML late
   chat menu button, all gated on `WEBAPP_URL`. Dark until you deploy.
 - Result URLs are persisted (`generations.output_url`) so the app shows the
   exact images the bot produced.
+- **Currency mark is single-sourced.** The patron symbol (🔫) is defined once per
+  surface — `UNIT_EMOJI` in `src/text.ts` for the bot, `PATRON` in `app.html` for
+  the Mini App — and interpolated everywhere else, so a rebrand (a different emoji,
+  or an `<img>`) is a one-line change. `scripts/check-patron-emoji.mjs`
+  (`npm run check:patron`, wired into CI) fails the build if a raw 🔫 is
+  hard-coded in code/string context outside those definitions; `.ts` comments may
+  still use it as shorthand.
 
 Run the process-host server by setting `WEBAPP_URL` (public HTTPS), `WEBAPP_PORT`,
 `BOT_USERNAME`; or deploy the web layer to Vercel (see [`vercel.md`](./vercel.md)).

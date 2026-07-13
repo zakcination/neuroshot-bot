@@ -19,6 +19,7 @@ import {
 import { costUsdFor, MODELS, priceFor, type FreeScenario, type GenOpts, type ModelSpec } from "./models.js";
 import { paywallKeyboard, paywallText } from "./payments.js";
 import { craftPrompt } from "./promptcraft.js";
+import { UNIT_EMOJI } from "./text.js";
 import { brandForDelivery } from "./watermark.js";
 
 fal.config({ credentials: config.falKey });
@@ -295,7 +296,7 @@ export async function runGeneration(
         await markOk(genId, url, costUsd, requestId);
         if (free) {
           await ctx.api
-            .sendMessage(chatId, "🎁 Первый результат — бесплатно, патроны не списаны! Дальше — за 🔫.")
+            .sendMessage(chatId, `🎁 Первый результат — бесплатно, патроны не списаны! Дальше — за ${UNIT_EMOJI}.`)
             .catch(() => {});
         }
         await logEvent(user.id, "gen_ok", model.key).catch(() => {});
@@ -308,7 +309,7 @@ export async function runGeneration(
           if (!free) await addCredits(user.id, model.credits, "refund", model.key);
           else await restoreFreeResult(user.id);
           await ctx.api
-            .sendMessage(chatId, "⚠️ Не получилось — 🔫 патроны автоматически возвращены. Попробуйте ещё раз.")
+            .sendMessage(chatId, `⚠️ Не получилось — ${UNIT_EMOJI} патроны автоматически возвращены. Попробуйте ещё раз.`)
             .catch(() => {});
         }
         await logEvent(user.id, "gen_error", model.key).catch(() => {});
@@ -346,7 +347,7 @@ export async function runFreeScenario(
       return;
     }
     if (!(await claimFreePhone(user.phone, user.id))) {
-      await ctx.reply("Этот номер уже получал бесплатный подарок 🙂 Создайте всё за 🔫 — /menu");
+      await ctx.reply(`Этот номер уже получал бесплатный подарок 🙂 Создайте всё за ${UNIT_EMOJI} — /menu`);
       return;
     }
   }
@@ -354,7 +355,7 @@ export async function runFreeScenario(
   // is gated on winning it exactly once; restore it if the render fails (below),
   // so a failure never burns the gift (the same-owner phone claim allows a retry).
   if (!(await consumeFreeScenario(user.id))) {
-    await ctx.reply("🎁 Бесплатный сценарий уже использован. Дальше — за 🔫 (их хватает надолго).");
+    await ctx.reply(`🎁 Бесплатный сценарий уже использован. Дальше — за ${UNIT_EMOJI} (их хватает надолго).`);
     return;
   }
   await logEvent(user.id, "gen_start", `free_${scenario.id}`);

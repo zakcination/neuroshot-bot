@@ -570,6 +570,11 @@
 
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
+    // Patron currency mark — the one place to rebrand it. Swap to a different emoji
+    // or an <img> tag here and it updates everywhere in the Mini App (mirrors
+    // UNIT_EMOJI in src/text.ts). scripts/check-patron-emoji.mjs guards against
+    // raw patron-emoji literals sneaking back in outside this definition.
+    const PATRON = "\u{1F52B}";
     const $ = (h) => { const t = document.createElement("template"); t.innerHTML = h.trim(); return t.content.firstChild; };
     const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
     const plural = (n, one, few, many) => { const m100 = Math.abs(n) % 100, m10 = Math.abs(n) % 10;
@@ -685,12 +690,12 @@
 
           <div class="wslide" data-slide="1">
             ${heroHtml("/img/onboard-patron.jpg", 2, "Патрон — ваша валюта здесь")}
-            <p class="lead"><b>🔫 патрон</b> — внутренняя валюта NeuroShot. Им вы
+            <p class="lead"><b>${PATRON} патрон</b> — внутренняя валюта NeuroShot. Им вы
             платите за каждый результат. Патроны не сгорают и списываются, только
             когда вы сами запускаете генерацию — никаких скрытых списаний.</p>
             <div class="wcosts">
-              <div class="wcost"><span class="ic"><img class="appicon" src="/img/ic-frame.png" alt="" /></span><span class="tx">Фото<small>портрет, карточка товара, стиль</small></span><span class="px">от ${c.presetCredits} 🔫</span></div>
-              <div class="wcost"><span class="ic"><img class="appicon" src="/img/ic-film.png" alt="" /></span><span class="tx">Видео<small>сцена с движением и озвучкой</small></span><span class="px">от ${videoMin} 🔫</span></div>
+              <div class="wcost"><span class="ic"><img class="appicon" src="/img/ic-frame.png" alt="" /></span><span class="tx">Фото<small>портрет, карточка товара, стиль</small></span><span class="px">от ${c.presetCredits} ${PATRON}</span></div>
+              <div class="wcost"><span class="ic"><img class="appicon" src="/img/ic-film.png" alt="" /></span><span class="tx">Видео<small>сцена с движением и озвучкой</small></span><span class="px">от ${videoMin} ${PATRON}</span></div>
             </div>
             <div class="wnote"><span>ℹ️</span><span>Цена патрона зависит от пакета —
             дальше покажем на цифрах.</span></div>
@@ -704,8 +709,8 @@
               const per = Math.round(p.kzt / p.credits);
               const best = p.id === cheapestId;
               return `<div class="wrow ${best ? "best" : ""}">${best ? `<span class="tag">Выгоднее всего</span>` : ""}` +
-                `<div class="wt"><b>${esc(p.title.split(" — ")[0])}</b><small>${p.credits} 🔫 · ${p.kzt.toLocaleString("ru-RU")} ₸</small></div>` +
-                `<div class="wp"><b>${per} ₸</b><small>за 🔫</small></div></div>`;
+                `<div class="wt"><b>${esc(p.title.split(" — ")[0])}</b><small>${p.credits} ${PATRON} · ${p.kzt.toLocaleString("ru-RU")} ₸</small></div>` +
+                `<div class="wp"><b>${per} ₸</b><small>за ${PATRON}</small></div></div>`;
             }).join("")}</div>
             <div class="wnote"><span>💳</span><span>Оплата — картой через Kaspi,
             патроны зачисляются автоматически. Докупить можно в любой момент во
@@ -847,21 +852,21 @@
       if (st.tab === "shoot" || st.tab === "product") {
         const cat = st.tab === "shoot" ? "photo" : "product";
         inner = `<div class="choices">${c.presets.filter((p) => p.category === cat).map((p) =>
-          `<button class="choice" data-preset="${p.id}"><b>${esc(p.label)}</b><span class="price">${c.presetCredits} 🔫</span></button>`).join("")}</div>`;
+          `<button class="choice" data-preset="${p.id}"><b>${esc(p.label)}</b><span class="price">${c.presetCredits} ${PATRON}</span></button>`).join("")}</div>`;
       } else if (st.tab === "scenes") {
         inner = `<div class="choices">${c.campaigns.map((k) =>
-          `<button class="choice" data-camp="${k.id}"><b>${esc(k.label)}</b><span class="desc">+ видео за ${k.videoCredits} 🔫</span><span class="price">${k.imageCredits} 🔫</span></button>`).join("")}</div>`;
+          `<button class="choice" data-camp="${k.id}"><b>${esc(k.label)}</b><span class="desc">+ видео за ${k.videoCredits} ${PATRON}</span><span class="price">${k.imageCredits} ${PATRON}</span></button>`).join("")}</div>`;
       } else if (st.tab === "video") {
         inner = `
           <div class="sub">Оживите фото в видео. Выберите модель — дальше настроите формат, длительность и сюжет.</div>
           <div class="choices">${c.videoModels.map((m) =>
-            `<button class="choice" data-vmodel="${m.key}"><b>${esc(m.label)}</b><span class="price">от ${m.credits} 🔫</span></button>`).join("")}</div>`;
+            `<button class="choice" data-vmodel="${m.key}"><b>${esc(m.label)}</b><span class="price">от ${m.credits} ${PATRON}</span></button>`).join("")}</div>`;
       } else {
         inner = `
           <div class="sub">Опишите, что нарисовать — и выберите модель.</div>
           <textarea class="prompt" id="tprompt" placeholder="флакон духов на мокром чёрном мраморе…"></textarea>
           <div class="choices" style="margin-top:10px">${c.imageModels.map((m) =>
-            `<button class="choice" data-tmodel="${m.key}"><b>${esc(m.label)}</b><span class="price">${m.credits} 🔫</span></button>`).join("")}</div>`;
+            `<button class="choice" data-tmodel="${m.key}"><b>${esc(m.label)}</b><span class="price">${m.credits} ${PATRON}</span></button>`).join("")}</div>`;
       }
       sheetBody.innerHTML = `<h3>Студия</h3>${tabsHtml()}${inner}`;
       bindTabs();
@@ -891,7 +896,7 @@
         <h3>${esc(k.label)}</h3>
         <div class="sub">${esc(k.ask)}</div>
         <div class="choices">${k.presets.map((p) =>
-          `<button class="choice" data-cp="${p.id}"><b>${esc(p.label)}</b><span class="price">${k.imageCredits} 🔫</span></button>`).join("")}</div>
+          `<button class="choice" data-cp="${p.id}"><b>${esc(p.label)}</b><span class="price">${k.imageCredits} ${PATRON}</span></button>`).join("")}</div>
         <div class="row"><button class="btn ghost" id="backBtn">← Назад</button></div>`;
       sheetBody.querySelector("#backBtn").onclick = () => viewPick();
       sheetBody.querySelectorAll("[data-cp]").forEach((b) => (b.onclick = () => {
@@ -955,7 +960,7 @@
         <div class="chips" id="arRow">${ME.catalog.presetAspects.map((r) =>
           `<button class="chip ${r === (st.pick.aspect_ratio || "auto") ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>` : ""}
         <div class="stack">
-          <button class="btn primary" id="goBtn" disabled>Создать за ${st.pick.credits} 🔫</button>
+          <button class="btn primary" id="goBtn" disabled>Создать за ${st.pick.credits} ${PATRON}</button>
           <button class="btn ghost" id="backBtn">← Назад</button>
         </div>`;
       sheetBody.querySelectorAll("#arRow .chip").forEach((c) => (c.onclick = () => {
@@ -1090,7 +1095,7 @@
         }
         if (status === 200 && data.status === "error") {
           jobs.delete(job.id); updateJobsPill(); refreshMe(); haptic("error");
-          toast("Не получилось — 🔫 патроны возвращены");
+          toast(`Не получилось — ${PATRON} патроны возвращены`);
           if (viewedJob === job.id && sheet.classList.contains("on")) viewPick();
           return;
         }
@@ -1108,9 +1113,9 @@
       const isVideo = /\.(mp4|webm|mov)(\?|$)/i.test(g.output_url || "");
       const camp = job?.campaignId ? ME.catalog.campaigns.find((x) => x.id === job.campaignId) : null;
       const upsell = camp && !isVideo
-        ? `<button class="btn primary" id="animBtn">${esc(camp.animateLabel)} · ${camp.videoCredits} 🔫</button>`
+        ? `<button class="btn primary" id="animBtn">${esc(camp.animateLabel)} · ${camp.videoCredits} ${PATRON}</button>`
         : !isVideo
-          ? `<button class="btn primary" id="animBtn2">🎬 Оживить в видео · ${ME.catalog.videoModels[0].credits} 🔫</button>`
+          ? `<button class="btn primary" id="animBtn2">🎬 Оживить в видео · ${ME.catalog.videoModels[0].credits} ${PATRON}</button>`
           : "";
       sheetBody.innerHTML = `
         <h3>Готово ✨</h3>
@@ -1176,7 +1181,7 @@
           ? `<video src="${esc(item.output_url)}" controls autoplay muted loop playsinline></video>`
           : `<img src="${esc(item.output_url)}" alt="" />`}</div>
         <div class="stack">
-          ${!isVideo ? `<button class="btn primary" id="vAnim">🎬 Оживить в видео · от ${ME.catalog.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} 🔫</button>` : ""}
+          ${!isVideo ? `<button class="btn primary" id="vAnim">🎬 Оживить в видео · от ${ME.catalog.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} ${PATRON}</button>` : ""}
           <div class="row" style="margin-top:0">
             <button class="btn ghost" id="vSave">📥 Скачать</button>
             <button class="btn ghost" id="vChat">💬 В чат</button>
@@ -1200,7 +1205,7 @@
         <div class="result-media" style="max-height:26dvh;overflow:hidden"><img src="${esc(item.output_url)}" alt="" /></div>
         <div class="quiz-q">Выберите модель видео</div>
         <div class="choices">${ME.catalog.videoModels.map((m) =>
-          `<button class="choice" data-vm="${m.key}"><b>${esc(m.label)}</b><span class="price">от ${m.credits} 🔫</span></button>`).join("")}</div>
+          `<button class="choice" data-vm="${m.key}"><b>${esc(m.label)}</b><span class="price">от ${m.credits} ${PATRON}</span></button>`).join("")}</div>
         <div class="row"><button class="btn ghost" id="backBtn">← Назад</button></div>`;
       sheetBody.querySelector("#backBtn").onclick = () => openViewer(item);
       sheetBody.querySelectorAll("[data-vm]").forEach((b) => (b.onclick = () => {
@@ -1231,9 +1236,9 @@
           `<button class="chip ${r === pick.aspect_ratio ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>` : ""}
         ${resList.length ? `<div class="quiz-q">Качество</div>
         <div class="chips" id="resRow">${resList.map((r) =>
-          `<button class="chip ${r.id === pick.resolution ? "on" : ""}" data-res="${r.id}" data-rc="${r.credits}">${esc(r.label)} · ${r.credits} 🔫</button>`).join("")}</div>` : ""}
+          `<button class="chip ${r.id === pick.resolution ? "on" : ""}" data-res="${r.id}" data-rc="${r.credits}">${esc(r.label)} · ${r.credits} ${PATRON}</button>`).join("")}</div>` : ""}
         <div class="stack">
-          <button class="btn primary" id="goBtn"><span class="priceBadge">Создать · <span id="prN">${priceOf()}</span> 🔫</span></button>
+          <button class="btn primary" id="goBtn"><span class="priceBadge">Создать · <span id="prN">${priceOf()}</span> ${PATRON}</span></button>
           <button class="btn ghost" id="backBtn">← Назад</button>
         </div>`;
       sheetBody.querySelectorAll("#arRow .chip").forEach((c) => (c.onclick = () => {
@@ -1285,10 +1290,10 @@
         <h3>Настройки видео</h3>
         ${isCurated ? `<div class="quiz-q">Модель</div>
           <div class="chips" id="modRow">${ME.catalog.videoModels.map((v) =>
-            `<button class="chip ${v.key === m.key ? "on" : ""}" data-mod="${v.key}">${esc(v.label.replace("🎬 ", ""))} · ${v.credits}+ 🔫</button>`).join("")}</div>` : ""}
+            `<button class="chip ${v.key === m.key ? "on" : ""}" data-mod="${v.key}">${esc(v.label.replace("🎬 ", ""))} · ${v.credits}+ ${PATRON}</button>`).join("")}</div>` : ""}
         ${scenes.length ? `<div class="quiz-q">Сюжет — что происходит?</div>
           <div class="chips" id="sceneRow">${scenes.map((s) =>
-            `<button class="chip ${pick.scene === s.id ? "on" : ""}" data-scene="${s.id}" data-sctier="${s.tier || "simple"}" data-scmodel="${s.videoModelKey}">${esc(s.label)}${s.tier === "epic" ? ` · ⚡${s.videoCredits} 🔫` : ""}</button>`).join("")}</div>
+            `<button class="chip ${pick.scene === s.id ? "on" : ""}" data-scene="${s.id}" data-sctier="${s.tier || "simple"}" data-scmodel="${s.videoModelKey}">${esc(s.label)}${s.tier === "epic" ? ` · ⚡${s.videoCredits} ${PATRON}` : ""}</button>`).join("")}</div>
           ${scenes.some((s) => s.tier === "epic") ? `<div class="hint">⚡ — эпичная сцена на движке Seedance (звук и физика)</div>` : ""}` : ""}
         ${ratios.length > 1 ? `<div class="quiz-q">Формат кадра</div>
         <div class="chips" id="arRow">${ratios.map((r) =>
@@ -1299,7 +1304,7 @@
           `<button class="chip ${r.id === pick.resolution ? "on" : ""}" data-res="${r.id}">${esc(r.label)}</button>`).join("")}</div>` : ""}
         <div class="quiz-q">Длительность</div>
         <div class="chips" id="durRow">${durs.map((d) =>
-          `<button class="chip ${d.seconds === pick.duration ? "on" : ""}" data-dur="${d.seconds}">${d.seconds}с · ${priceOf(d.seconds)} 🔫</button>`).join("")}</div>
+          `<button class="chip ${d.seconds === pick.duration ? "on" : ""}" data-dur="${d.seconds}">${d.seconds}с · ${priceOf(d.seconds)} ${PATRON}</button>`).join("")}</div>
         ${hasEnd ? `<div class="quiz-q">Финальный кадр — переход к другому фото (необязательно)</div>
         <div id="endZone">
           <label class="drop"><input type="file" accept="image/*" id="endFile" />
@@ -1318,7 +1323,7 @@
         ${isCurated ? "" : `<div class="quiz-q">Движение (необязательно)</div>
           <textarea class="prompt" id="mp" placeholder="напр.: медленный наезд, волосы на ветру">${esc(pick.prompt || "")}</textarea>`}
         <div class="stack">
-          <button class="btn primary" id="goBtn"><span class="priceBadge">Создать · <span id="prN">${priceOf(pick.duration)}</span> 🔫</span></button>
+          <button class="btn primary" id="goBtn"><span class="priceBadge">Создать · <span id="prN">${priceOf(pick.duration)}</span> ${PATRON}</span></button>
           <button class="btn ghost" id="backBtn">← Назад</button>
         </div>`;
 
@@ -1407,7 +1412,7 @@
         <h3>${esc(n.title)}</h3>
         <div class="sub">Опишите, что нарисовать — модель ${esc(n.label)}.</div>
         <textarea class="prompt" id="tp" placeholder="напр.: флакон духов на мокром чёрном мраморе"></textarea>
-        <div class="stack"><button class="btn primary" id="goBtn">Создать за ${n.credits} 🔫</button></div>`;
+        <div class="stack"><button class="btn primary" id="goBtn">Создать за ${n.credits} ${PATRON}</button></div>`;
       sheetBody.querySelector("#goBtn").onclick = () => {
         const prompt = sheetBody.querySelector("#tp").value.trim();
         if (!prompt) { toast("Опишите, что нарисовать 🙂"); return; }
@@ -1440,7 +1445,7 @@
           <button class="newscard" data-i="${i}">
             <div class="chiprow"><span class="ntag">${esc(n.tag)}</span>${n.freeTrial ? '<span class="free">🎁 БЕСПЛАТНО</span>' : ""}</div>
             <b>${esc(n.title)}</b>
-            <span class="go">Попробовать · ${n.credits} 🔫 →</span>
+            <span class="go">Попробовать · ${n.credits} ${PATRON} →</span>
           </button>`);
         card.onclick = () => tryModel(n);
         rail.appendChild(card);
@@ -1469,11 +1474,11 @@
       haptic("warning");
       sheetBody.innerHTML = `
         <h3>Ещё один шаг до результата ✨</h3>
-        <div class="sub">Нужно ${data.need} 🔫, на балансе ${data.balance}. Пополните — и результат сразу продолжит создаваться.</div>
+        <div class="sub">Нужно ${data.need} ${PATRON}, на балансе ${data.balance}. Пополните — и результат сразу продолжит создаваться.</div>
         <div class="packs">${(data.packs || []).map((p, i) => `
           <button class="pack ${i === 1 ? "best" : ""}" data-pk="${p.id}">
             ${i === 1 ? '<span class="hot">Популярный</span>' : ""}
-            <span><span class="amount">🔫 ${p.credits}</span><div class="per">≈ ${(p.kzt / p.credits).toFixed(0)} ₸ за патрон</div></span>
+            <span><span class="amount">${PATRON} ${p.credits}</span><div class="per">≈ ${(p.kzt / p.credits).toFixed(0)} ₸ за патрон</div></span>
             <span class="stars">${p.kzt.toLocaleString("ru-RU")} ₸</span>
           </button>`).join("")}</div>
         <div class="row"><button class="btn ghost" id="backBtn">← Назад</button></div>`;
@@ -1519,9 +1524,9 @@
       const rb = d.roadmapBonus || { amount: 0, claimed: true };
       if (rb.claimed || rb.amount <= 0) return "";
       if (steps.every((s) => s.done)) {
-        return `<button class="rmclaim" id="rmclaimbtn">🎁 Забрать ${rb.amount} 🔫 — путь пройден!</button>`;
+        return `<button class="rmclaim" id="rmclaimbtn">🎁 Забрать ${rb.amount} ${PATRON} — путь пройден!</button>`;
       }
-      return `<p class="rmnote">Пройдите все 5 шагов — получите <b>${rb.amount} 🔫</b> в подарок</p>`;
+      return `<p class="rmnote">Пройдите все 5 шагов — получите <b>${rb.amount} ${PATRON}</b> в подарок</p>`;
     }
     /** The onboarding path has served its purpose once every step is done AND the
      *  completion bonus is claimed (or there was none) — nothing left to nudge. */
@@ -1558,7 +1563,7 @@
         if (status === 200 && data && data.granted > 0) {
           setBalance((ME?.dashboard.credits || 0) + data.granted);
           haptic("success");
-          toast(`🎁 +${data.granted} 🔫 за пройденный путь!`);
+          toast(`🎁 +${data.granted} ${PATRON} за пройденный путь!`);
           await refreshMe();
         } else {
           this.disabled = false;
@@ -1761,10 +1766,10 @@
           <section class="reveal">
             <div class="sec-h"><h2>Что создаём</h2></div>
             <div class="rail">
-              <a class="act" data-studio="shoot" style="background-image:url('/img/card-shoot.jpg')"><span class="em"><img class="appicon" src="/img/ic-camera.png" alt="" /></span><b>AI-фотосессия</b><span>от ${d.catalog.presetCredits} 🔫 · прямо здесь</span></a>
+              <a class="act" data-studio="shoot" style="background-image:url('/img/card-shoot.jpg')"><span class="em"><img class="appicon" src="/img/ic-camera.png" alt="" /></span><b>AI-фотосессия</b><span>от ${d.catalog.presetCredits} ${PATRON} · прямо здесь</span></a>
               <a class="act" data-studio="product" style="background-image:url('/img/card-product.jpg')"><span class="em"><img class="appicon" src="/img/ic-bag.png" alt="" /></span><b>Карточка товара</b><span>для маркетплейса</span></a>
-              <a class="act" data-studio="video" style="background-image:url('/img/card-video.jpg')"><span class="em"><img class="appicon" src="/img/ic-film.png" alt="" /></span><b>Оживить фото</b><span>видео от ${d.catalog.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} 🔫</span></a>
-              <a class="act" data-studio="text" style="background-image:url('/img/card-text.jpg')"><span class="em"><img class="appicon" src="/img/ic-sparkle.png" alt="" /></span><b>Из текста</b><span>от ${d.catalog.imageModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} 🔫</span></a>
+              <a class="act" data-studio="video" style="background-image:url('/img/card-video.jpg')"><span class="em"><img class="appicon" src="/img/ic-film.png" alt="" /></span><b>Оживить фото</b><span>видео от ${d.catalog.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} ${PATRON}</span></a>
+              <a class="act" data-studio="text" style="background-image:url('/img/card-text.jpg')"><span class="em"><img class="appicon" src="/img/ic-sparkle.png" alt="" /></span><b>Из текста</b><span>от ${d.catalog.imageModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} ${PATRON}</span></a>
             </div>
           </section>
 
@@ -1785,7 +1790,7 @@
                 const emHtml = art ? `<img class="appicon" src="/img/ic-${art.icon}.png" alt="" />` : esc(k.label.split(" ")[0]);
                 return `
                 <a class="act" data-camp-open="${k.id}"${bgStyle}><span class="em">${emHtml}</span>
-                  <b>${esc(k.label.slice(k.label.indexOf(" ") + 1))}</b><span>${k.imageCredits} 🔫 + видео ${k.videoCredits} 🔫</span></a>`;
+                  <b>${esc(k.label.slice(k.label.indexOf(" ") + 1))}</b><span>${k.imageCredits} ${PATRON} + видео ${k.videoCredits} ${PATRON}</span></a>`;
               }).join("")}
             </div>
           </section>
@@ -1824,7 +1829,7 @@
             <div class="sec-h"><h2>Приглашай друзей</h2></div>
             <div class="refcard">
               <h3>🎁 Приглашай — зарабатывай</h3>
-              <p>Друг получает бонусные 🔫 при входе, вы — награду за его первую покупку и 10% со всех его пакетов. Навсегда.</p>
+              <p>Друг получает бонусные ${PATRON} при входе, вы — награду за его первую покупку и 10% со всех его пакетов. Навсегда.</p>
               <div class="linkrow">
                 <div class="linkbox" id="refL">${esc(refLink)}</div>
                 <button class="btn primary copy" id="refC">Копировать</button>
@@ -1833,7 +1838,7 @@
             <div class="stats" style="margin-top:12px">
               <div class="stat"><div class="n">${dash.referralCount}</div><div class="l">друзей</div></div>
               <div class="stat"><div class="n">${dash.referralPaying}</div><div class="l">покупают</div></div>
-              <div class="stat"><div class="n">${dash.referralEarned}</div><div class="l">🔫 заработано</div></div>
+              <div class="stat"><div class="n">${dash.referralEarned}</div><div class="l">${PATRON} заработано</div></div>
             </div>
           </section>
           <section class="reveal">
@@ -1868,7 +1873,7 @@
                 <div class="ar">→</div>
                 <div class="s"><div class="ic"><img class="appicon" src="/img/ic-sparkle.png" alt="" /></div><small>Результат</small></div>
               </div>
-              <div class="valuebar"><span class="em"><img class="appicon" src="/img/ic-patron.png" alt="" /></span><p>Патрон — внутренняя валюта: от 2 🔫 за фото, от 10 🔫 за видео. Чем больше пакет — тем дешевле патрон.</p></div>
+              <div class="valuebar"><span class="em"><img class="appicon" src="/img/ic-patron.png" alt="" /></span><p>Патрон — внутренняя валюта: от 2 ${PATRON} за фото, от 10 ${PATRON} за видео. Чем больше пакет — тем дешевле патрон.</p></div>
               <div class="valuebar"><span class="em">🤝</span><p><b>Честные патроны.</b> Не сгорают, без подписок-ловушек и фейкового «безлимита» — платите только за готовый результат.</p></div>
               <button class="btn primary" id="aboutCta">✨ Начать создавать</button>
             </div>
@@ -1876,7 +1881,7 @@
 
           <section class="reveal">
             <div class="sec-h"><h2>Друзья</h2></div>
-            <div class="lnkrow" id="moreFriends"><span class="ic"><img class="appicon" src="/img/ic-gift.png" alt="" /></span><span class="tx">Реферальная программа<small>приглашено ${dash.referralCount} · заработано ${dash.referralEarned} 🔫</small></span><span class="chev">›</span></div>
+            <div class="lnkrow" id="moreFriends"><span class="ic"><img class="appicon" src="/img/ic-gift.png" alt="" /></span><span class="tx">Реферальная программа<small>приглашено ${dash.referralCount} · заработано ${dash.referralEarned} ${PATRON}</small></span><span class="chev">›</span></div>
           </section>
 
           <section class="reveal">
@@ -1923,7 +1928,7 @@
         p.appendChild($(`
           <button class="pack ${pack.offer || pack.id === bestPack ? "best" : ""}" data-buy="${pack.id}">
             ${badge}
-            <span><span class="amount">🔫 ${pack.credits}</span><div class="per">≈ ${per} ₸ за патрон</div></span>
+            <span><span class="amount">${PATRON} ${pack.credits}</span><div class="per">≈ ${per} ₸ за патрон</div></span>
             <span class="stars">${pack.kzt.toLocaleString("ru-RU")} ₸</span>
           </button>`));
       }
@@ -1935,7 +1940,7 @@
         const rates = (d.packs || []).filter((p) => !p.offer).map((p) => p.kzt / p.credits);
         if (rates.length) {
           const minR = Math.round(Math.min(...rates)), maxR = Math.round(Math.max(...rates));
-          rn.textContent = `1 🔫 ≈ ${minR === maxR ? `${minR}` : `${minR}–${maxR}`} ₸ — чем больше пакет, тем дешевле`;
+          rn.textContent = `1 ${PATRON} ≈ ${minR === maxR ? `${minR}` : `${minR}–${maxR}`} ₸ — чем больше пакет, тем дешевле`;
         }
       }
       startCountdown();

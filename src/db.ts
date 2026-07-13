@@ -126,7 +126,7 @@ const SCHEMA: string[] = [
   `CREATE TABLE IF NOT EXISTS withdrawals (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
-    amount INTEGER NOT NULL,        -- 🔫 requested (moved out of withdrawable)
+    amount INTEGER NOT NULL,        -- patrons requested (moved out of withdrawable)
     status TEXT NOT NULL DEFAULT 'pending', -- pending | paid | rejected
     requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     processed_at TIMESTAMPTZ

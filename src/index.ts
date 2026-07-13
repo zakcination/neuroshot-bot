@@ -4,6 +4,7 @@ import { initDb } from "./db.js";
 import { drainRenders } from "./generate.js";
 import { startMonitor } from "./monitor.js";
 import { startWebApp } from "./webapp.js";
+import { UNIT_EMOJI } from "./text.js";
 
 await initDb(); // create the Postgres schema before serving
 
@@ -16,7 +17,7 @@ bot.api.setMyCommands([
   { command: "menu", description: "📋 Меню — что создаём?" },
   { command: "app", description: "🌐 Открыть приложение" },
   { command: "premium", description: "💎 Премиум-картинка из текста" },
-  { command: "buy", description: "💰 Купить патроны 🔫" },
+  { command: "buy", description: `💰 Купить патроны ${UNIT_EMOJI}` },
   { command: "balance", description: "Мой баланс" },
   { command: "ref", description: "🎁 Реферальная ссылка (10%)" },
   { command: "partner", description: "🤝 Партнёрам и авторам" },

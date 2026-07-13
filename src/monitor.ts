@@ -19,6 +19,7 @@ import {
   type NudgeTarget,
 } from "./db.js";
 import { cheapestModel, CREDIT_COST_BASIS, MODELS } from "./models.js";
+import { UNIT_EMOJI } from "./text.js";
 
 const MODEL_COST = new Map(Object.values(MODELS).map((m) => [m.key, m.approxCostUsd]));
 
@@ -152,7 +153,7 @@ export function formatDigest(d: Digest): string {
     `📈 Выручка ≈ $${d.revenueUsd.toFixed(2)} · себестоимость ≈ $${d.costUsd.toFixed(2)} · ` +
       (d.marginPct == null ? "маржа: — (нет оплат)" : `маржа <b>${d.marginPct}%</b>`),
     `🎨 Генераций: ${d.genOk} ok / ${d.genError} err (${errRate}%) · возвратов: ${d.refunds}`,
-    `🏦 Обязательства: <b>${d.creditLiability} 🔫</b> продано и не потрачено`,
+    `🏦 Обязательства: <b>${d.creditLiability} ${UNIT_EMOJI}</b> продано и не потрачено`,
     cheapLine(),
   ].join("\n");
 }
@@ -165,10 +166,10 @@ export function formatDigest(d: Digest): string {
 function cheapLine(): string {
   const img = cheapestModel("image_edit");
   const vid = cheapestModel("image_to_video");
-  const trial = img.credits <= config.freeCredits ? "✅ бесплатной пробы хватает" : "⚠️ дороже бесплатных 🔫";
+  const trial = img.credits <= config.freeCredits ? "✅ бесплатной пробы хватает" : `⚠️ дороже бесплатных ${UNIT_EMOJI}`;
   return (
-    `💡 Дешёвый вход: фото — ${img.label} ${img.credits} 🔫 ($${img.approxCostUsd.toFixed(2)}, ${trial}) · ` +
-    `видео — ${vid.label} ${vid.credits} 🔫 ($${vid.approxCostUsd.toFixed(2)})`
+    `💡 Дешёвый вход: фото — ${img.label} ${img.credits} ${UNIT_EMOJI} ($${img.approxCostUsd.toFixed(2)}, ${trial}) · ` +
+    `видео — ${vid.label} ${vid.credits} ${UNIT_EMOJI} ($${vid.approxCostUsd.toFixed(2)})`
   );
 }
 
@@ -245,7 +246,7 @@ export function nudgeText(u: NudgeTarget): string {
     );
   }
   if (u.credits > 0) {
-    return "✨ Ваши 🔫 патроны ждут — создайте новый шедевр за пару тапов. Открыть меню — /menu";
+    return `✨ Ваши ${UNIT_EMOJI} патроны ждут — создайте новый шедевр за пару тапов. Открыть меню — /menu`;
   }
   return "🆕 В NeuroShot новые сценарии и модели — загляните и сделайте что-нибудь крутое: /menu";
 }
@@ -262,7 +263,7 @@ export async function runReaper(send: SendFn): Promise<number> {
   const stale = await reapStalePending(config.genStaleMinutes);
   for (const g of stale) {
     if (g.credits > 0) await addCredits(g.user_id, g.credits, "refund", g.model);
-    await send(g.user_id, "⚠️ Рендер не завершился — 🔫 патроны возвращены. Попробуйте ещё раз.").catch(() => {});
+    await send(g.user_id, `⚠️ Рендер не завершился — ${UNIT_EMOJI} патроны возвращены. Попробуйте ещё раз.`).catch(() => {});
   }
   return stale.length;
 }
