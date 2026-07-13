@@ -111,8 +111,14 @@
        full checklist has done its job. Collapse the card to a single slim row so
        a power user's studio isn't permanently topped by a dead 5-checkmark grid;
        tapping it just drops into the shoot sheet to make something new. */
-    .roadmap.graduated { padding: 11px 13px; }
-    .roadmap.graduated .sec-h { display: none; }
+    /* A completed onboarding path is removed from the studio entirely (it just
+       wasted prime space); the accomplishment becomes a profile achievement
+       badge (.ach) instead of a permanent row. */
+    .roadmap.graduated { display: none; }
+    .ach { display: flex; align-items: center; gap: 12px; background: var(--surface); border: 1px solid rgba(55,201,154,.38); border-radius: var(--radius); padding: 13px 15px; }
+    .ach .achic { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; background: rgba(55,201,154,.14); border: 1px solid rgba(55,201,154,.4); }
+    .ach .achtx { display: flex; flex-direction: column; gap: 2px; font-weight: 800; }
+    .ach .achtx small { color: var(--muted); font-size: 12px; font-weight: 600; }
     .rmgrad {
       width: 100%; display: flex; align-items: center; gap: 11px; text-align: left;
       background: transparent; border: 0; padding: 0; font: inherit; color: var(--ink); cursor: pointer;
@@ -406,6 +412,8 @@
     .tabbtn.on { color: var(--text); }
     .tabbtn.on span { filter: none; }
     .buyhint { color: var(--muted); font-size: 12px; margin: 12px 2px 0; line-height: 1.5; }
+    /* Exchange-rate transparency above the pack tiles: the patron↔₸ rate at a glance. */
+    .ratenote { color: var(--muted); font-size: 12.5px; margin: -4px 2px 13px; line-height: 1.45; font-variant-numeric: tabular-nums; }
 
     .skel { border-radius: var(--radius); height: 170px; background: linear-gradient(100deg, var(--surface) 40%, var(--surface-2) 50%, var(--surface) 60%); background-size: 200% 100%; animation: shimmer 1.3s infinite; }
     @keyframes shimmer { to { background-position: -200% 0; } }
@@ -1790,6 +1798,11 @@
             <div class="stats" id="statsRow">${statsHtml(dash)}</div>
           </section>
 
+          ${roadmapGraduated(d, ROADMAP_STEPS) ? `<section class="reveal">
+            <div class="sec-h"><h2>Достижения</h2></div>
+            <div class="ach"><span class="achic">🏆</span><span class="achtx">Студия освоена<small>вы прошли весь путь в NeuroShot</small></span></div>
+          </section>` : ""}
+
           <section class="reveal">
             <div class="sec-h"><h2>Мои работы</h2></div>
             <div class="gallery" id="g"></div>
@@ -1833,6 +1846,7 @@
         <div class="page" data-page="buy">
           <section class="reveal">
             <div class="sec-h"><h2>Пакеты патронов</h2></div>
+            <p class="ratenote" id="rateNote"></p>
             <div class="packs" id="p"></div>
             <p class="buyhint">Оплата картой Kaspi. После оплаты подтвердите в боте — патроны зачислятся.</p>
           </section>
@@ -1911,6 +1925,17 @@
             <span><span class="amount">🔫 ${pack.credits}</span><div class="per">≈ ${per} ₸ за патрон</div></span>
             <span class="stars">${pack.kzt.toLocaleString("ru-RU")} ₸</span>
           </button>`));
+      }
+      // Exchange-rate transparency: the patron↔tenge rate is a ladder (bigger
+      // pack = cheaper), so show its range up front rather than making the user
+      // reverse-engineer it from the pack tiles.
+      const rn = document.getElementById("rateNote");
+      if (rn) {
+        const rates = (d.packs || []).filter((p) => !p.offer).map((p) => p.kzt / p.credits);
+        if (rates.length) {
+          const minR = Math.round(Math.min(...rates)), maxR = Math.round(Math.max(...rates));
+          rn.textContent = `1 🔫 ≈ ${minR === maxR ? `${minR}` : `${minR}–${maxR}`} ₸ — чем больше пакет, тем дешевле`;
+        }
       }
       startCountdown();
 
