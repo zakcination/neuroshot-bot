@@ -553,6 +553,60 @@ export const PRESETS: Preset[] = [
       "Restyle into a cinematic movie-still portrait: a 35mm anamorphic film look, dramatic soft side lighting, a " +
       `gentle teal-and-amber grade that keeps skin tones natural, tack-sharp face. ${KEEP_ID}`,
   },
+  // Curated one-tap looks for the prompt library: high-recurrence, single-photo,
+  // identity-locked scenarios from a market that already pays for them (product +
+  // fashion). Provenance and how to expand the set: docs/prompt-library.md.
+  {
+    id: "candid_lux",
+    label: "🚗 Lux-селфи в авто",
+    category: "photo",
+    prompt:
+      "Restyle into an ultra-realistic luxury-fashion candid selfie taken inside a car, shot handheld from a slightly " +
+      "low side angle for a living-moment feel. Voluminous loose hair with natural texture, an expensive restrained " +
+      "look — a structured jacket with clean shoulders over a soft top, narrow dark sunglasses, thin jewellery, warm " +
+      `daylight through the window, tack-sharp face. ${KEEP_ID}`,
+  },
+  {
+    id: "paris_rain",
+    label: "🗼 Париж под дождём",
+    category: "photo",
+    prompt:
+      "Place the person in a cinematic quiet-luxury lifestyle photo in Paris near the Eiffel Tower in soft rainy " +
+      "weather: a long structured beige-brown coat with a clean silhouette, Parisian-chic styling, holding a light " +
+      "umbrella and a coffee cup, wet asphalt with soft reflections, diffused overcast daylight, calm and elegant " +
+      `mood, tack-sharp face. ${KEEP_ID}`,
+  },
+  {
+    id: "pixar_me",
+    label: "🧸 Pixar мини-я",
+    category: "photo",
+    prompt:
+      "Create a Pixar-style 3D mini-version of the person standing next to their realistic self on a minimalist " +
+      "light-gray studio background with soft shadows. One figure stays a realistic human, the other is a cute Pixar " +
+      "mini-character with a large head and small body, standing in front and closer to the camera; the realistic " +
+      `person rests a hand on the mini-character's head, both looking at the camera, playful modern aesthetic. ${KEEP_ID}`,
+  },
+  // Original, identity-locked looks written in NeuroShot's own voice, filling the
+  // two highest-recurrence gaps the VeoSee research flagged (collectible figurine,
+  // retro film) without copying competitor prompt text.
+  {
+    id: "figurine",
+    label: "🧍 Коллекционная фигурка",
+    category: "photo",
+    prompt:
+      "Turn the person into a highly detailed collectible action-figure version of themselves, posed inside clear " +
+      "blister packaging on a printed cardboard backer with a title header and small accessory items, studio product " +
+      `lighting, glossy plastic and vinyl textures, realistic toy proportions but a clearly recognizable face. ${KEEP_ID}`,
+  },
+  {
+    id: "retro90s",
+    label: "📼 Плёнка 90-х",
+    category: "photo",
+    prompt:
+      "Restyle into an authentic 1990s film-photo portrait: warm slightly-faded color, soft grain, gentle on-camera " +
+      "flash, period-accurate styling and hair, a nostalgic snapshot feel with subtle light leaks and true-to-film " +
+      `skin tones, tack-sharp face. ${KEEP_ID}`,
+  },
   {
     id: "product_hero",
     label: "🛍 Продающая карточка",
