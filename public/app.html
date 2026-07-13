@@ -464,6 +464,47 @@
     .choice .price { margin-top: auto; font-size: 12px; color: var(--amber); font-weight: 700; }
     .choice .desc { font-size: 11.5px; color: var(--muted); }
 
+    /* Style Gallery — marketplace-style preset cards (preview photo, price,
+       real usage/trending) replacing the plain text choice list for the
+       фото/товар tabs. See docs/prompt-library.md. */
+    .pcards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .pcard {
+      position: relative; border-radius: var(--radius-s); overflow: hidden; border: 1px solid var(--line);
+      aspect-ratio: 3/4; display: flex; flex-direction: column; justify-content: flex-end; padding: 10px 10px 9px;
+      text-align: left; color: var(--ink); font: inherit; cursor: pointer; background: var(--surface);
+      transition: transform .12s ease, border-color .15s ease;
+    }
+    .pcard:active { transform: scale(.97); }
+    .pcard:hover { border-color: rgba(124,92,255,.5); }
+    .pcard .pbg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; }
+    /* Same dark aurora-tinted gradient as .act — legible text over an
+       arbitrary/uncontrolled preview photo. */
+    .pcard::after {
+      content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+      background: linear-gradient(180deg, rgba(8,7,12,.05) 0%, rgba(8,7,12,.4) 50%, rgba(8,7,12,.92) 100%);
+    }
+    /* No-art fallback (preset shipped before its preview generation ran, or
+       the image failed to load) — flat brand gradient + the preset's own
+       emoji, never a broken image. */
+    .pcard.noart .pbg { display: none; }
+    .pcard.noart::after {
+      background: linear-gradient(160deg, rgba(124,92,255,.4), rgba(255,77,141,.3)), linear-gradient(180deg, rgba(8,7,12,0) 40%, rgba(8,7,12,.88) 100%);
+    }
+    .pcard .ptop { position: relative; z-index: 2; display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; margin-bottom: auto; }
+    .pcard .pemoji {
+      display: none; flex: none; width: 36px; height: 36px; border-radius: 11px; align-items: center; justify-content: center;
+      font-size: 17px; background: var(--bg); border: 1px solid rgba(255,255,255,.1); box-shadow: 0 4px 14px rgba(0,0,0,.35);
+    }
+    .pcard.noart .pemoji { display: flex; }
+    .pcard .ptrend {
+      margin-left: auto; font-size: 9.5px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase;
+      background: var(--amber); color: #08070c; padding: 3px 7px; border-radius: 999px; white-space: nowrap;
+    }
+    .pcard b { position: relative; z-index: 2; font-size: 13px; line-height: 1.3; }
+    .pcard .prow { position: relative; z-index: 2; display: flex; justify-content: space-between; align-items: baseline; gap: 6px; margin-top: 3px; }
+    .pcard .price { font-size: 12px; color: var(--amber); font-weight: 700; white-space: nowrap; }
+    .pcard .pcount { font-size: 10px; color: var(--muted); }
+
     /* news banner — sliding model headlines */
     .news { margin: 16px 0 4px; }
     .newsrail { display: grid; grid-auto-flow: column; grid-auto-columns: 86%; gap: 11px; overflow-x: auto; scroll-snap-type: x mandatory; margin: 0 -16px; padding: 0 16px 6px; scrollbar-width: none; }
@@ -549,7 +590,7 @@
     @media (prefers-reduced-motion: reduce) {
       .sky i, .orb { animation: none; }
       .reveal { opacity: 1; transform: none; transition: none; }
-      .btn, .act, .shot, .pack, .sheet, .sheet-bg { transition: none; }
+      .btn, .act, .shot, .pack, .sheet, .sheet-bg, .pcard { transition: none; }
     }
   </style>
 </head>
@@ -850,9 +891,28 @@
       const c = ME.catalog;
       let inner = "";
       if (st.tab === "shoot" || st.tab === "product") {
+        // Style Gallery: marketplace-style cards (preview photo, price, real
+        // usage/trending) — see docs/prompt-library.md. Trending (a genuine
+        // top-tap signal from the server, never fabricated) sorts first so the
+        // most-picked looks lead; ties keep the catalog's declared order.
         const cat = st.tab === "shoot" ? "photo" : "product";
-        inner = `<div class="choices">${c.presets.filter((p) => p.category === cat).map((p) =>
-          `<button class="choice" data-preset="${p.id}"><b>${esc(p.label)}</b><span class="price">${p.credits} ${PATRON}</span></button>`).join("")}</div>`;
+        const list = c.presets.filter((p) => p.category === cat)
+          .map((p, i) => ({ p, i }))
+          .sort((a, b) => (b.p.trending - a.p.trending) || (a.i - b.i))
+          .map(({ p }) => p);
+        inner = `<div class="pcards">${list.map((p) => `
+          <button class="pcard" data-preset="${p.id}">
+            <img class="pbg" src="${esc(p.previewUrl)}" alt="" loading="lazy" />
+            <div class="ptop">
+              <span class="pemoji">${esc(p.label.split(" ")[0] || "✨")}</span>
+              ${p.trending ? `<span class="ptrend">🔥 Тренд</span>` : ""}
+            </div>
+            <b>${esc(p.label)}</b>
+            <div class="prow">
+              <span class="price">${p.credits} ${PATRON}</span>
+              ${p.usageCount > 0 ? `<span class="pcount">${p.usageCount}×</span>` : ""}
+            </div>
+          </button>`).join("")}</div>`;
       } else if (st.tab === "scenes") {
         inner = `<div class="choices">${c.campaigns.map((k) =>
           `<button class="choice" data-camp="${k.id}"><b>${esc(k.label)}</b><span class="desc">+ видео за ${k.videoCredits} ${PATRON}</span><span class="price">${k.imageCredits} ${PATRON}</span></button>`).join("")}</div>`;
@@ -870,6 +930,10 @@
       }
       sheetBody.innerHTML = `<h3>Студия</h3>${tabsHtml()}${inner}`;
       bindTabs();
+      // Graceful degradation for a preset that ships before its preview art
+      // does (see docs/prompt-library.md) — falls back to the emoji tile
+      // instead of a broken image.
+      sheetBody.querySelectorAll(".pcard .pbg").forEach((img) => (img.onerror = () => img.closest(".pcard").classList.add("noart")));
 
       sheetBody.querySelectorAll("[data-preset]").forEach((b) => (b.onclick = () => {
         const p = c.presets.find((x) => x.id === b.dataset.preset);

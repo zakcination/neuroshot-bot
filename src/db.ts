@@ -1464,6 +1464,23 @@ export async function sellerSegmentSizing(productPresetIds: string[]): Promise<S
   };
 }
 
+/**
+ * Real per-preset tap counts from the events log — the "usage"/"trending"
+ * signal for the prompt-library gallery (docs/prompt-library.md). Reads the
+ * SAME `events` rows sellerSegmentSizing does (type='preset', bare id — no
+ * colon; colon-joined meta is a campaign-scenario tap, a different surface).
+ * Genuine usage, never a fabricated counter: a preset with zero taps just
+ * doesn't appear in the map, and the caller treats that as 0 — no "trending"
+ * badge shows until a look has actually been picked.
+ */
+export async function presetUsageCounts(): Promise<Record<string, number>> {
+  const rows = await q(
+    "SELECT meta AS id, COUNT(*)::int AS c FROM events WHERE type = 'preset' AND meta NOT LIKE '%:%' GROUP BY meta",
+    [],
+  );
+  return Object.fromEntries(rows.map((r) => [String(r.id), Number(r.c)]));
+}
+
 export interface RoadmapProgress {
   firstPhoto: boolean; // any successful generation
   ownIdea: boolean; // a text_to_image render (typed a prompt, no upload)
