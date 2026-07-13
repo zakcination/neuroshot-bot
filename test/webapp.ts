@@ -483,11 +483,13 @@ await step("preset model routing: premium looks pin a stronger engine + price; c
   assert.equal(price.product_drama, 11); // GPT Image 2 — cinematic packshot w/ label text
   assert.equal(price.cafe_night, 2); // Seedream default (portrait look)
   assert.equal(price.pixar_me, 8); // Nano Banana Pro — heavy 3D stylization
-  assert.equal(price.billionaire_heli, 2); // Seedream default (portrait look)
-  assert.equal(price.product_jewelry, 2); // Seedream default (no on-image text)
-  assert.equal(price.product_action, 2); // Seedream default (no on-image text)
-  assert.equal(price.sketch_journal, 11); // GPT Image 2 — hand-lettered doodle text
-  assert.equal(price.mini_squad, 8); // Nano Banana Pro — chibi/toon squad stylization
+  assert.equal(price.billionaire_heli, 4); // Nano Banana 2 — matches VeoSee's recipe engine
+  assert.equal(price.alpine_lux, 8); // Nano Banana Pro — matches VeoSee's recipe engine
+  assert.equal(price.kitten_editorial, 4); // Nano Banana 2 — matches VeoSee's recipe engine
+  assert.equal(price.mini_squad, 4); // Nano Banana 2 — matches VeoSee's recipe engine
+  assert.equal(price.sketch_journal, 8); // Nano Banana Pro — matches VeoSee's recipe engine
+  assert.equal(price.product_jewelry, 4); // Nano Banana 2 — matches VeoSee's recipe engine
+  assert.equal(price.product_action, 11); // GPT Image 2 — matches VeoSee's recipe engine
 
   // A premium preset renders on its pinned engine and charges that model's price.
   // Dedicated user + owner-scoped poll so maker's shared balance is untouched.
