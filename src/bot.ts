@@ -123,7 +123,7 @@ function imageModelsKeyboard(): InlineKeyboard {
   const kb = new InlineKeyboard();
   for (const key of IMAGE_MODEL_PICKER) {
     const m = MODELS[key];
-    kb.text(`${m.label} (${m.credits} 🔫)`, `txt:${key}`).row();
+    kb.text(`${m.label} (${m.credits} ${UNIT_EMOJI})`, `txt:${key}`).row();
   }
   return kb.text("🎬 Видео из фото →", "menu:animate").row().text("📋 Меню", "menu:main");
 }
@@ -133,7 +133,7 @@ function videoModelsKeyboard(): InlineKeyboard {
   const kb = new InlineKeyboard();
   for (const key of VIDEO_MODEL_PICKER) {
     const m = MODELS[key];
-    kb.text(`${m.label} (${m.credits} 🔫)`, `act:${key}`).row();
+    kb.text(`${m.label} (${m.credits} ${UNIT_EMOJI})`, `act:${key}`).row();
   }
   return kb.text("📋 Меню", "menu:main");
 }
@@ -141,9 +141,9 @@ function videoModelsKeyboard(): InlineKeyboard {
 function presetsKeyboard(category: Preset["category"]): InlineKeyboard {
   const kb = new InlineKeyboard();
   for (const p of PRESETS.filter((x) => x.category === category)) {
-    kb.text(`${p.label} (${PRESET_MODEL.credits} 🔫)`, `preset:${p.id}`).row();
+    kb.text(`${p.label} (${PRESET_MODEL.credits} ${UNIT_EMOJI})`, `preset:${p.id}`).row();
   }
-  kb.text(`✍️ Свой промпт (${MODELS.premium_edit.credits} 🔫)`, "act:premium_edit").row();
+  kb.text(`✍️ Свой промпт (${MODELS.premium_edit.credits} ${UNIT_EMOJI})`, "act:premium_edit").row();
   kb.text("📋 Меню", "menu:main");
   return kb;
 }
@@ -463,7 +463,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       await ctx.reply(
         creatorBlock +
           `🤝 <b>Партнёрская программа NeuroShot</b>\n\n` +
-          `• Персональная ссылка и приветственный бонус <b>≈$20</b> в токенах 🔫\n` +
+          `• Персональная ссылка и приветственный бонус <b>≈$20</b> в токенах ${UNIT_EMOJI}\n` +
           `• <b>${pct}% кэшбэка</b> с каждой оплаты приглашённых пользователей\n` +
           `• Кэшбэк — в токенах: тратьте в NeuroShot или <b>выводите деньгами раз в 2 недели</b>\n` +
           `• Без вложений — просто делитесь ссылкой и растите вместе с проектом\n\n` +
@@ -486,7 +486,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
     const kb = new InlineKeyboard();
     if (acct.activeCodes < config.partnerMaxCodes) kb.text("➕ Новая ссылка", "partner:newcode");
-    if (acct.withdrawable >= config.withdrawMin) kb.text(`💸 Вывести ${acct.withdrawable} 🔫`, "partner:withdraw");
+    if (acct.withdrawable >= config.withdrawMin) kb.text(`💸 Вывести ${acct.withdrawable} ${UNIT_EMOJI}`, "partner:withdraw");
     kb.row().text("📜 История выплат", "partner:history");
     if (codes.length) kb.text("⚙️ Управление ссылками", "partner:manage");
 
@@ -498,7 +498,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
         `💸 Доступно к выводу: <b>${UNIT_EMOJI} ${nUnits(acct.withdrawable)}</b> ` +
         `(мин. ${config.withdrawMin}, раз в 2 недели)\n\n` +
         `<b>Ваши ссылки</b> (${acct.activeCodes}/${config.partnerMaxCodes}):\n${codeBlocks}\n\n` +
-        `Условия: <b>${pct}%</b> кэшбэка с покупок · +${config.partnerInviteeBonus} 🔫 новым по вашей ссылке.`,
+        `Условия: <b>${pct}%</b> кэшбэка с покупок · +${config.partnerInviteeBonus} ${UNIT_EMOJI} новым по вашей ссылке.`,
       { parse_mode: "HTML", reply_markup: kb },
     );
   }
@@ -544,7 +544,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     if (!res.ok) {
       const msg =
         res.error === "too_small"
-          ? `Минимальная сумма вывода — ${config.withdrawMin} 🔫.`
+          ? `Минимальная сумма вывода — ${config.withdrawMin} ${UNIT_EMOJI}.`
           : res.error === "pending"
             ? "У вас уже есть заявка на вывод в обработке."
             : "Недостаточно средств к выводу.";
@@ -557,7 +557,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       { parse_mode: "HTML" },
     );
     for (const adminId of config.adminIds)
-      await ctx.api.sendMessage(adminId, `💸 Заявка на вывод №${res.id}: ${acct.withdrawable} 🔫 от ${u.id}. /payouts`).catch(() => {});
+      await ctx.api.sendMessage(adminId, `💸 Заявка на вывод №${res.id}: ${acct.withdrawable} ${UNIT_EMOJI} от ${u.id}. /payouts`).catch(() => {});
   });
 
   bot.callbackQuery("partner:manage", async (ctx) => {
@@ -634,7 +634,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       await ctx.reply(`Заявка №${id} не найдена или уже обработана.`);
       return;
     }
-    await ctx.reply(verdict === "ok" ? `✅ Заявка №${id} отмечена выплаченной.` : `↩️ Заявка №${id} отклонена, 🔫 возвращены.`);
+    await ctx.reply(verdict === "ok" ? `✅ Заявка №${id} отмечена выплаченной.` : `↩️ Заявка №${id} отклонена, ${UNIT_EMOJI} возвращены.`);
   });
 
   // Admin: pending Kaspi purchase orders + confirm. /orders | /order <id> ok|no
@@ -673,7 +673,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
         return;
       }
       await grantPurchase(ctx.api, order.user_id, pack); // credits + referral/partner payouts + notify
-      await ctx.reply(`✅ Заявка №${id} подтверждена — начислено ${pack.credits} 🔫 пользователю ${order.user_id}.`);
+      await ctx.reply(`✅ Заявка №${id} подтверждена — начислено ${pack.credits} ${UNIT_EMOJI} пользователю ${order.user_id}.`);
     } else {
       await ctx.reply(`↩️ Заявка №${id} отклонена.`);
     }
@@ -699,7 +699,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     const code = rawCode.toLowerCase();
     await upsertPartnerCode(code, ownerId, pct / 100, Math.floor(bonus), titleParts.join(" ") || null);
     await ctx.reply(
-      `✅ Код <code>c_${code}</code> → ${ownerId}: ${pct}% с покупок, +${Math.floor(bonus)} 🔫 новым.\n` +
+      `✅ Код <code>c_${code}</code> → ${ownerId}: ${pct}% с покупок, +${Math.floor(bonus)} ${UNIT_EMOJI} новым.\n` +
         `Ссылка: https://t.me/${ctx.me.username}?start=c_${code}`,
       { parse_mode: "HTML" },
     );
@@ -711,7 +711,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     const prompt = ctx.match?.trim();
     if (!prompt) {
       await ctx.reply(
-        `💎 Премиум-картинка (${MODELS.premium_image.credits} 🔫) — напишите запрос сразу после команды:\n/premium флакон духов на мокром чёрном мраморе`,
+        `💎 Премиум-картинка (${MODELS.premium_image.credits} ${UNIT_EMOJI}) — напишите запрос сразу после команды:\n/premium флакон духов на мокром чёрном мраморе`,
       );
       return;
     }
@@ -903,7 +903,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     if (gated) {
       if (await phoneClaimedFree(contact.phone_number)) {
         await setPending(u.id, null, null);
-        await ctx.reply("Этот номер уже получал бесплатный подарок 🙂 Но всё можно создать за 🔫 — /menu", {
+        await ctx.reply(`Этот номер уже получал бесплатный подарок 🙂 Но всё можно создать за ${UNIT_EMOJI} — /menu`, {
           reply_markup: { remove_keyboard: true },
         });
         return;
@@ -919,7 +919,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   function campaignPresetKeyboard(c: Campaign): InlineKeyboard {
     const kb = new InlineKeyboard();
-    for (const p of c.presets) kb.text(`${p.label} (${PRESET_MODEL.credits} 🔫)`, `cpre:${c.id}:${p.id}`).row();
+    for (const p of c.presets) kb.text(`${p.label} (${PRESET_MODEL.credits} ${UNIT_EMOJI})`, `cpre:${c.id}:${p.id}`).row();
     kb.text("📋 Меню", "menu:main");
     return kb;
   }
@@ -1054,7 +1054,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
     // One-tap share: opens Telegram's share sheet with the link + a prefilled pitch.
     const pitch =
-      `Держи ${nUnits(config.referralJoinBonus)} 🔫 в подарок на AI-фото и видео в NeuroShot 🎁 ` +
+      `Держи ${nUnits(config.referralJoinBonus)} ${UNIT_EMOJI} в подарок на AI-фото и видео в NeuroShot 🎁 ` +
       `Оживляй фото, делай карточки товара и аватары:`;
     const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(pitch)}`;
 
@@ -1124,7 +1124,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       .row()
       .text("🛍 Продающее фото товара", "pick:product")
       .row()
-      .text(`🖼 Редактировать по описанию (${MODELS.photo_edit.credits} 🔫)`, "act:photo_edit")
+      .text(`🖼 Редактировать по описанию (${MODELS.photo_edit.credits} ${UNIT_EMOJI})`, "act:photo_edit")
       .row()
       .text("🎬 Оживить в видео (Kling / Seedance)", "menu:videopick");
     await ctx.reply("Что сделать с этим фото?", { reply_markup: kb });
@@ -1156,7 +1156,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       return;
     }
     await setPending(u.id, model.key, null); // text model: no photo
-    await ctx.reply(`✍️ Напишите, что нарисовать — ${model.label} (${model.credits} 🔫):`);
+    await ctx.reply(`✍️ Напишите, что нарисовать — ${model.label} (${model.credits} ${UNIT_EMOJI}):`);
   });
 
   // One-tap presets: curated prompt through the premium model, no typing.

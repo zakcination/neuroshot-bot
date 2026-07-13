@@ -6,6 +6,8 @@
  * https://fal.ai/explore/models before deploying, and prefer updating here
  * over hardcoding IDs elsewhere.
  */
+import { UNIT_EMOJI } from "./text.js";
+
 export type ModelKind = "image_edit" | "text_to_image" | "image_to_video";
 
 /** Per-generation options the studio composer can set. */
@@ -475,12 +477,12 @@ export interface ModelNews {
   tag: string; // short chip: what's special
 }
 export const MODEL_NEWS: ModelNews[] = [
-  { key: "hailuo_fast", title: "Видео-сценарий за 10 🔫", tag: "⚡ дёшево" },
+  { key: "hailuo_fast", title: `Видео-сценарий за 10 ${UNIT_EMOJI}`, tag: "⚡ дёшево" },
   { key: "seedance", title: "Видео со звуком и физикой", tag: "🆕 звук" },
   { key: "seedance_fast", title: "Эпичные сцены на видео", tag: "🎞 эпик" },
   { key: "kling3", title: "Кино-движение и консистентность", tag: "🎬 видео" },
   { key: "nbpro_image", title: "Детализация уровня 2K", tag: "💎 2K" },
-  { key: "text_to_image", title: "Картинка из текста за 2 🔫", tag: "🎁 бесплатно" },
+  { key: "text_to_image", title: `Картинка из текста за 2 ${UNIT_EMOJI}`, tag: "🎁 бесплатно" },
 ];
 
 /**
@@ -1250,10 +1252,10 @@ export interface Pack {
 }
 
 export const PACKS: Pack[] = [
-  { id: "start", kzt: 3700, credits: 60, title: "Старт — 60 🔫" }, // ~62 ₸/🔫
-  { id: "popular", kzt: 11000, credits: 200, title: "Популярный — 200 🔫" }, // 55 ₸/🔫
-  { id: "pro", kzt: 25000, credits: 500, title: "Про — 500 🔫" }, // 50 ₸/🔫
-  { id: "studio", kzt: 42000, credits: 900, title: "Студия — 900 🔫" }, // 47 ₸/🔫
+  { id: "start", kzt: 3700, credits: 60, title: `Старт — 60 ${UNIT_EMOJI}` }, // ~62 ₸/🔫
+  { id: "popular", kzt: 11000, credits: 200, title: `Популярный — 200 ${UNIT_EMOJI}` }, // 55 ₸/🔫
+  { id: "pro", kzt: 25000, credits: 500, title: `Про — 500 ${UNIT_EMOJI}` }, // 50 ₸/🔫
+  { id: "studio", kzt: 42000, credits: 900, title: `Студия — 900 ${UNIT_EMOJI}` }, // 47 ₸/🔫
   // Launch special — the acquisition hook: 3 scenario-videos (Seedream + Hailuo,
   // 12 🔫 each) for 1000 ₸ = 36 🔫. Deliberately BELOW the ladder (28 ₸/🔫), so it
   // is flagged `offer` and shown only with a countdown — a limited-time tripwire,

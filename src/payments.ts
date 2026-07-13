@@ -164,7 +164,7 @@ export async function settleApprovedOrder(api: Api, orderId: number): Promise<Pa
 export function registerPayments(bot: Bot): void {
   bot.callbackQuery("show_packs", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply("Выберите пакет 🔫 патронов (оплата картой Kaspi):", { reply_markup: packsKeyboard() });
+    await ctx.reply(`Выберите пакет ${UNIT_EMOJI} патронов (оплата картой Kaspi):`, { reply_markup: packsKeyboard() });
   });
 
   // Buy → record a pending order and hand over the Kaspi payment link. While the
