@@ -25,7 +25,11 @@ import { nResults, nUnits, UNIT_EMOJI } from "./text.js";
 export function packsKeyboard(): InlineKeyboard {
   const kb = new InlineKeyboard();
   const active = comboActive();
-  const visible = PACKS.filter((p) => !p.offer || active);
+  // Course tiers are excluded here — they carry a cohort invite, not just
+  // patrons, and would confuse a plain credit top-up buyer. They're surfaced
+  // only via the dedicated /course command (bot.ts), reusing this same buy:<id>
+  // callback under the hood.
+  const visible = PACKS.filter((p) => (!p.offer || active) && !p.course);
   const ordered = [...visible].sort((a, b) => Number(b.offer ?? false) - Number(a.offer ?? false));
   for (const pack of ordered) {
     const left = pack.offer && active ? ` · ⏳ ${comboLeftText()}` : "";
@@ -92,6 +96,55 @@ export function paywallKeyboard(model: ModelSpec, user?: UserRow): InlineKeyboar
   return kb.text(`${pack.kzt} ₸ · ${packShort(pack)}: ${nResults(n)}`, `buy:${pack.id}`).row().text("💎 Все пакеты", "show_packs");
 }
 
+const COURSE_TIER_LABEL: Record<"fast" | "flagship", string> = {
+  fast: "«Быстрый старт»",
+  flagship: "«AI-контент под ключ»",
+};
+
+/**
+ * Grant cohort ACCESS for a course purchase: delivery is a private-channel
+ * invite (docs/course/README.md), not an in-chat dump. The owner creates the
+ * channel manually and sets COURSE_FAST_CHANNEL_ID / COURSE_FLAGSHIP_CHANNEL_ID
+ * (src/config.ts) once the bot is an admin there with "invite users via link".
+ *
+ * This function ONLY grants access — it deliberately has no opinion on who
+ * reviews homework inside the channel (that's manual today; a planned AI tutor
+ * will slot in later) — a clean, swappable seam by construction.
+ *
+ * Never throws into the caller: a missing/blank channel id or a Telegram API
+ * failure (e.g. the bot isn't actually an admin there) must NOT fail or roll
+ * back the purchase — credits are already granted by the time this runs.
+ */
+async function inviteToCourseCohort(api: Api, userId: number, tier: "fast" | "flagship"): Promise<void> {
+  const channelId = tier === "fast" ? config.courseFastChannelId : config.courseFlagshipChannelId;
+  const label = COURSE_TIER_LABEL[tier];
+  if (!channelId) {
+    console.error(
+      `[course] cohort channel unset for tier "${tier}" — cannot invite user ${userId} into ${label}. ` +
+        `Set COURSE_${tier === "fast" ? "FAST" : "FLAGSHIP"}_CHANNEL_ID once the private channel exists (.env.example).`,
+    );
+    return;
+  }
+  try {
+    const invite = await api.createChatInviteLink(channelId, { member_limit: 1, name: `course:${tier}:${userId}` });
+    await api
+      .sendMessage(
+        userId,
+        `🎓 Добро пожаловать в когорту ${label}!\n\n` +
+          `Ваша персональная ссылка на приватный канал курса (одноразовая):\n${invite.invite_link}`,
+      )
+      .catch(() => {});
+  } catch (err) {
+    console.error(`[course] createChatInviteLink failed for tier "${tier}" / user ${userId}:`, err);
+    await api
+      .sendMessage(
+        userId,
+        `🎓 Курс ${label} куплен — ссылку на приватный канал пришлём в течение дня, уже готовим доступ.`,
+      )
+      .catch(() => {});
+  }
+}
+
 /**
  * Grant a completed purchase: credit the patrons, journal it, fire the (abuse-safe,
  * purchase-gated) partner/referral payouts, and notify everyone. Shared by the
@@ -132,6 +185,8 @@ export async function grantPurchase(api: Api, userId: number, pack: Pack): Promi
   await api
     .sendMessage(userId, `✅ Начислено ${UNIT_EMOJI} ${nUnits(pack.credits)}. Пришлите фото или напишите идею!`)
     .catch(() => {});
+
+  if (pack.course) await inviteToCourseCohort(api, userId, pack.course);
 }
 
 /** Buttons under a pending Kaspi order: "I paid" (pings admins) + all packs. */

@@ -168,9 +168,21 @@ export function authResponse(headers: Headers): { status: number; body: Record<s
   };
 }
 
-/** Pack catalog payload — one source of truth with the bot's /buy. */
+/**
+ * Pack catalog payload — one source of truth with the bot's /buy. Course tiers
+ * (`course_fast`/`course_flagship`, src/models.ts) are excluded here too, same
+ * as payments.ts packsKeyboard() — they carry a cohort invite, not just
+ * patrons, and would confuse a plain credit top-up buyer in the Mini App.
+ * They're surfaced only via the bot's dedicated /course command.
+ */
 function packsPayload(): Array<Record<string, unknown>> {
-  return PACKS.map((p) => ({ id: p.id, title: p.title, credits: p.credits, kzt: p.kzt, offer: p.offer ?? false }));
+  return PACKS.filter((p) => !p.course).map((p) => ({
+    id: p.id,
+    title: p.title,
+    credits: p.credits,
+    kzt: p.kzt,
+    offer: p.offer ?? false,
+  }));
 }
 
 /**

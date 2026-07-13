@@ -13,12 +13,21 @@ and the viral campaigns that feed it. Campaigns are LIVE in the bot
 | Tier | Offer | Contents | Why it converts |
 |---|---|---|---|
 | **Free tripwire** | «10 готовых промптов + 5 🔫 в подарок» | Telegra.ph/PDF guide with 10 copy-paste prompts, each ending "или просто нажмите кнопку в боте"; a partner deep link (`?start=c_<code>`) grants +5 🔫 | Value up front (valuemaxxing); the gift lands them *inside* the bot with ammo to feel the magic |
-| **$9 «Быстрый старт»** | Mini-course, 5 short lessons + **60 🔫 included** | Lessons: 1) фото → 3 стиля, 2) карточка товара, 3) сказка с ребёнком (campaign!), 4) оживление фото, 5) как продавать результат. Delivered as a private TG channel | The included 🔫 pack alone ≈ the price — the course feels free (valuemaxxing) |
+| **$9 «Быстрый старт»** | Mini-course, 5 short lessons + **60 🔫 included** | Lessons: 1) фото → 3 стиля, 2) карточка товара, 3) сказка с ребёнком (campaign!), 4) оживление фото, 5) как продавать результат. Delivered as a private TG channel — invite is now automatic on purchase (see below) | The included 🔫 pack alone ≈ the price — the course feels free (valuemaxxing) |
 | **$50 «AI-контент под ключ»** | Flagship, 3 modules + **500 🔫** + cohort chat + certificate | M1: фото/аватары, M2: видео и оживление, M3: продажи — маркетплейсы, клиенты, прайсинг. Homework runs in the bot | Serious buyers get a business skill + practice budget; mentor co-brand carries trust |
 
-Payments: Stars today ($9 ≈ 500⭐, $50 ≈ 2800⭐ at user-facing rates); card
-checkout (Kaspi/YooKassa, roadmap §F) unlocks the course audience fully.
-Mentor sells it → his partner code earns his negotiated % automatically.
+Payments: Kaspi/KZT (`course_fast` / `course_flagship` packs, `src/models.ts`),
+bought via the same `/buy`-style flow as any pack, surfaced through the
+dedicated `/course` command (kept off the generic "все пакеты" menu so plain
+credit top-up buyers aren't confused by it). Mentor sells it → his partner
+code earns his negotiated % automatically.
+
+**Delivery is automated**: buying either course pack grants patrons AND DMs a
+one-time invite link into that tier's private Telegram cohort channel
+(`grantPurchase` → `inviteToCourseCohort`, `src/payments.ts`) — see
+`docs/course/README.md` for the full mechanism and the one manual prerequisite
+(the owner must create each private channel and add the bot as admin). Actual
+teaching/homework review inside the channel is still manual.
 
 ## Warming sequence (5 touches, repeatable per campaign)
 

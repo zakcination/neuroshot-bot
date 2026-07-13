@@ -116,7 +116,109 @@ export function mainMenu(
   kb.text("🎬 Сценарии: сказки • кумиры • кино", "menu:campaigns").row();
   // 4) The studio (create, gallery, pricing) — the full surface, one tap away.
   if (config.webappUrl) kb.webApp("🌐 Открыть студию NeuroShot", config.webappUrl).row();
+  // 5) One extra row for the course ladder (real revenue, low clutter cost) —
+  // everything else about the course lives behind /course, not the main menu.
+  kb.text("🎓 Курс по AI-контенту", "menu:course").row();
   return kb;
+}
+
+/** /course overview text: the free → $9 → $50 ladder (docs/course-funnel.md). */
+function courseText(): string {
+  const fast = packById("course_fast");
+  const flagship = packById("course_flagship");
+  return (
+    `🎓 <b>Курс по AI-контенту — от новичка до продаж</b>\n\n` +
+    `📖 <b>Бесплатно</b> — 10 готовых промптов, каждый уже "зашит" в кнопку бота.\n` +
+    (fast
+      ? `🚀 <b>«Быстрый старт» — ${fast.kzt} ₸</b> — 5 уроков + ${nUnits(fast.credits)} внутри (с запасом на весь курс).\n`
+      : "") +
+    (flagship
+      ? `🎓 <b>«AI-контент под ключ» — ${flagship.kzt} ₸</b> — 3 модуля + когорта + ${nUnits(flagship.credits)} + сертификат.\n\n`
+      : "\n") +
+    `Обучение — в приватном Telegram-канале вашей когорты; доступ к каналу открывается ` +
+    `автоматически сразу после оплаты.`
+  );
+}
+
+/** Buttons under /course: free guide + the two course packs (reuses buy:<id>). */
+function courseKeyboard(): InlineKeyboard {
+  const fast = packById("course_fast");
+  const flagship = packById("course_flagship");
+  const kb = new InlineKeyboard().text("📖 Бесплатный гайд: 10 промптов", "course:guide").row();
+  if (fast) kb.text(`🚀 «Быстрый старт» — ${fast.kzt} ₸`, "buy:course_fast").row();
+  if (flagship) kb.text(`🎓 «AI-контент под ключ» — ${flagship.kzt} ₸`, "buy:course_flagship").row();
+  return kb;
+}
+
+/**
+ * Free-guide content (docs/course/00-free-guide.md), condensed to Telegram
+ * HTML and split into chunks that stay well under the 4096-char message limit.
+ * Keeps the exact prompt text + bot-button pointers from the source; prose is
+ * condensed.
+ */
+function freeGuideMessages(): string[] {
+  const idKeep = "Keep the person's face and identity exactly as in the photo.";
+  const msg1 =
+    `📖 <b>10 готовых промптов, которые залетают</b>\n\n` +
+    `Каждый промпт уже "зашит" одним тапом в боте — можно скопировать его в любой генератор вручную, ` +
+    `а можно просто нажать кнопку и получить тот же результат за 10 секунд, без единого слова промпта.\n\n` +
+    `<b>1. 💼 Бизнес-портрет</b> — строгий деловой хедшот из обычной селфи.\n` +
+    `<i>Restyle into a professional corporate headshot: a tailored suit, soft studio key light with an 85mm ` +
+    `lens look, clean neutral-gray backdrop, shallow depth of field, a confident expression, tack-sharp face. ${idKeep}</i>\n` +
+    `→ 🖼 Редактирование фото → 💼 Бизнес-портрет\n\n` +
+    `<b>2. 🕶 Fashion-съёмка</b> — обложка глянцевого журнала из телефонной фотографии.\n` +
+    `<i>Restyle into a high-fashion editorial photo: a designer outfit, dramatic studio lighting, Vogue-style ` +
+    `composition, subtle film grain, bold styling, tack-sharp face. ${idKeep}</i>\n` +
+    `→ 🖼 Редактирование фото → 🕶 Fashion-съёмка\n\n` +
+    `<b>3. 🌅 Закат на Санторини</b> — сильный хук для сторис "а я такая на Санторини 😍", без билета на самолёт.\n` +
+    `<i>Place the person in a breathtaking golden-hour travel scene on a Santorini rooftop at sunset: warm rim ` +
+    `light, an editorial travel-magazine look, tack-sharp face. ${idKeep}</i>\n` +
+    `→ 🖼 Редактирование фото → 🌅 Закат на Санторини`;
+
+  const msg2 =
+    `<b>4. 🧍 Коллекционная фигурка</b> — вирусный формат "себя в виде игрушки в блистере".\n` +
+    `<i>Turn the person into a highly detailed collectible action-figure version of themselves, posed inside ` +
+    `clear blister packaging on a printed cardboard backer with a title header and small accessory items, ` +
+    `studio product lighting, glossy plastic and vinyl textures, realistic toy proportions but a clearly ` +
+    `recognizable face. ${idKeep}</i>\n` +
+    `→ 🖼 Редактирование фото → 🧍 Коллекционная фигурка\n\n` +
+    `<b>5. 🕰 Оживить старое фото</b> — самый эмоциональный хук: реставрация + раскраска + "как живые".\n` +
+    `<i>Restore and colorize this old photograph: remove scratches, dust and damage, then add natural realistic ` +
+    `colors true to the era — accurate skin tones, period-correct clothing colors, keep the authentic vintage ` +
+    `composition. Preserve every person's identity and facial features exactly.</i>\n` +
+    `→ 🎉 Кампании → 🕰 Оживить старое фото → 🎨 Реставрация + цвет (следующий тап оживляет фото в видео)\n\n` +
+    `<b>6. 🛍 Продающая карточка товара</b> — телефонная фотка товара становится продающим фото для маркетплейса.\n` +
+    `<i>Turn this into a premium e-commerce hero shot: the product on a clean seamless studio background with ` +
+    `soft shadows, professional three-point lighting, subtle reflection, marketplace-listing composition, 4k ` +
+    `quality. Keep the product's shape, colors and branding exactly as in the photo.</i>\n` +
+    `→ 🖼 Сцена по фото → 🛍 Продающая карточка`;
+
+  const msg3 =
+    `<b>7. ⬜️ Белый фон для маркетплейса</b> — обязательный формат для Wildberries/Ozon/Kaspi.\n` +
+    `<i>Cut out the product and place it on a pure seamless white studio background (#FFFFFF) with a soft ` +
+    `natural shadow underneath, centered marketplace-listing composition, even professional lighting, 4k ` +
+    `quality. Keep the product's shape, colors and branding exactly as in the photo.</i>\n` +
+    `→ 🖼 Сцена по фото → ⬜️ Белый фон (маркетплейс)\n\n` +
+    `<b>8. 📖 Сказка с вашим ребёнком</b> — фото ребёнка становится героем сказки.\n` +
+    `<i>Place the child as the hero of a fairy tale in an enchanted glowing forest at golden hour: drifting ` +
+    `fireflies, soft god-rays through the trees, wonder on their face, storybook-cinematic detail. Keep the ` +
+    `child's face and identity exactly as in the photo.</i>\n` +
+    `→ 🎉 Кампании → 📖 Сказка с вашим ребёнком → 🌲 Волшебный лес\n\n` +
+    `<b>9. 🎬 Постер с тобой</b> — кинопостер главного героя из одной селфи.\n` +
+    `<i>Turn the person into the star of a blockbuster action movie poster: a commanding hero pose, explosions ` +
+    `and a city skyline behind, high-contrast cinematic grade, dramatic one-sheet composition with clean ` +
+    `negative space at the top for a title. ${idKeep}</i>\n` +
+    `→ 🎉 Кампании → 🎬 Постер с тобой → 💥 Боевик\n\n` +
+    `<b>10. 🎬 Оживление фото</b> — любой результат выше превращается в 5-секундное видео одним тапом.\n` +
+    `<i>Slow cinematic push-in as the subject's hair and clothing shift gently in the light, a soft natural ` +
+    `gaze shift and the trace of a smile forming — one calm, lifelike beat, cinematic film-grade color.</i>\n` +
+    `→ под любым результатом: 🎬 Оживить фото\n\n` +
+    `Все 10 промптов доступны бесплатно в боте, без единой строчки текста — это и есть NeuroShot: результат, а ` +
+    `не промпт-инжиниринг.\n\n` +
+    `Хотите не только жать кнопки, но и научиться собирать из этого продающий контент, серии и кино — ` +
+    `5-урочный курс «Быстрый старт» (3700 ₸, ${nUnits(60)} внутри) ждёт вас: /course`;
+
+  return [msg1, msg2, msg3];
 }
 
 /** Picker of the top text-to-image models (famous names, priced). */
@@ -433,6 +535,25 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   bot.command("buy", async (ctx) => sendBalance(ctx, (await user(ctx)).credits));
 
   bot.command("ref", async (ctx) => sendRefLink(ctx));
+
+  bot.command("course", async (ctx) => {
+    await user(ctx);
+    await ctx.reply(courseText(), { parse_mode: "HTML", reply_markup: courseKeyboard() });
+  });
+
+  bot.callbackQuery("menu:course", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(courseText(), { parse_mode: "HTML", reply_markup: courseKeyboard() });
+  });
+
+  // Free tripwire (docs/course/00-free-guide.md), condensed to Telegram HTML and
+  // split to stay well under the 4096-char message limit.
+  bot.callbackQuery("course:guide", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    for (const msg of freeGuideMessages()) {
+      await ctx.reply(msg, { parse_mode: "HTML" });
+    }
+  });
 
   // Self-serve partner program (docs/partner-program.md): join → get welcome
   // bonus + personal codes → 15% cashback → withdraw. Admin creator deals (c_)
