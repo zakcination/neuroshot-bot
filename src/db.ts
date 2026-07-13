@@ -175,8 +175,11 @@ const SCHEMA: string[] = [
   // Real provider cost (models.costUsdFor) + the fal request id, captured on
   // successful completion — the COGS accounting / per-user cost cap this data
   // layer didn't have before (only the patron CHARGE was tracked, never the
-  // actual $ cost). NULL on rows from before this column existed and on
-  // 'error' rows (never billed by the provider).
+  // actual $ cost). NULL on rows from before this column existed and on 'error'
+  // rows where the provider was never reached; but an 'error' row CAN carry a
+  // cost when the provider call succeeded (we were billed) and only the tail —
+  // watermarking / delivery — failed, so failed-delivery spend is still counted
+  // (see the error-completion paths in src/generate.ts).
   `ALTER TABLE generations ADD COLUMN IF NOT EXISTS cost_usd NUMERIC`,
   `ALTER TABLE generations ADD COLUMN IF NOT EXISTS provider_request_id TEXT`,
   `CREATE TABLE IF NOT EXISTS events (
