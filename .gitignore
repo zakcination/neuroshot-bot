@@ -4,3 +4,8 @@ data/
 .env
 *.log
 brand-assets/
+.DS_Store
+
+# Personal Telegram chat export used as source material for docs/course/;
+# contains other people's photos, names, and phone numbers — privacy-sensitive, local-only, never commit.
+raw_data/
