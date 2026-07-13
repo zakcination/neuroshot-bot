@@ -681,6 +681,61 @@ export const PRESETS: Preset[] = [
       "face, a sleepy drained low-energy expression with heavy eyelids and slumped posture, a small red 1% battery " +
       `icon above the head and a charging cable nearby, a clean playful background, tack-sharp face. ${KEEP_ID}`,
   },
+  // Third curation batch, adapted from the VeoSee prompt-library research
+  // (docs/prompt-library.md): rewritten in NeuroShot's voice, identity-locked,
+  // brand/aspect stripped. Mix of billionaire-lifestyle aspirational editorial
+  // and viral shareables (pet cameo, chibi squad, sketchbook doodle).
+  {
+    id: "billionaire_heli",
+    label: "🚁 Миллиардер-лайфстайл",
+    category: "photo",
+    prompt:
+      "Place the person in an ultra-realistic billionaire-lifestyle editorial exiting a glossy black helicopter on a " +
+      "private rooftop helipad: a confident dominant pose with wind-blown hair, an expensive quiet-luxury linen suit, " +
+      `bright daylight with a city skyline and distant mountains behind, Vogue-campaign mood, tack-sharp face. ${KEEP_ID}`,
+  },
+  {
+    id: "alpine_lux",
+    label: "🏔 Альпийский люкс",
+    category: "photo",
+    prompt:
+      "Place the person in an ultra-realistic alpine-luxury editorial, lying relaxed in a dry mountain meadow among " +
+      "tall grass with snow-capped peaks and a deep cobalt sky behind, a beige trench jacket and lace top with loose " +
+      `sunlit hair, quiet-luxury Swiss-vacation styling, warm cinematic color grading, tack-sharp face. ${KEEP_ID}`,
+  },
+  {
+    id: "kitten_editorial",
+    label: "🐱 Съёмка с котятами",
+    category: "photo",
+    prompt:
+      "Place the person in a minimalist luxury fashion editorial seated cross-legged on a soft beige-grey studio " +
+      "background, several small kittens playfully interacting on their shoulders, arms and around them, relaxed " +
+      `premium styling with soft diffused studio lighting and warm cinematic grading, tack-sharp face. ${KEEP_ID}`,
+  },
+  {
+    id: "mini_squad",
+    label: "👥 Мини-я команда",
+    category: "photo",
+    // Chibi/toon squad — Nano Banana Pro renders the multi-character stylization cleaner than Seedream.
+    model: "nbpro_edit",
+    prompt:
+      "Surround the person with several small chibi-style mini versions of themselves — big heads, expressive faces " +
+      "— each doing a different playful activity: one sitting on their head, one cheering with arms raised, one " +
+      "lifting a dumbbell, one drinking from a shaker bottle, one lying down on a phone, one climbing up their leg, " +
+      `a clean playful background, tack-sharp face. ${KEEP_ID}`,
+  },
+  {
+    id: "sketch_journal",
+    label: "✏️ Скетчбук",
+    category: "photo",
+    // Hand-lettered doodles ('WOW', 'COOL!') are on-image text — route to GPT Image 2.
+    model: "premium_edit",
+    prompt:
+      "Turn the photo into a hand-drawn sketchbook illustration on lined notepad paper: detailed colored-pencil and " +
+      "ink linework with cross-hatching and shading, playful comic-style doodles and notes scattered around the " +
+      "character (arrows, 'WOW', 'COOL!'), a warm-toned designer-sketchbook aesthetic, keeping the same pose and " +
+      `full-body proportions as the original photo, tack-sharp face. ${KEEP_ID}`,
+  },
   {
     id: "product_hero",
     label: "🛍 Продающая карточка",
@@ -734,6 +789,29 @@ export const PRESETS: Preset[] = [
       "glass podium shot from below, clear water elegantly dripping down the sides, a deep gradient background, strong " +
       "highlights and deep shadows for a luxurious sensual mood, highly detailed. Keep the product's shape, colors, " +
       "label text and branding exactly as in the photo.",
+  },
+  {
+    id: "product_jewelry",
+    label: "💎 Ювелирная съёмка",
+    category: "product",
+    // Museum-style macro lighting only — no on-image text, stays on cheap Seedream.
+    prompt:
+      "Turn this into a luxury jewelry product shot: the piece centered on polished black stone in a dark premium " +
+      "studio, a soft champagne key light with a thin rim light, deep shadows, controlled sparkle and expensive " +
+      "reflections on the metal and stones, museum-quality high-jewelry campaign look, 4k quality. Keep the " +
+      "product's shape, colors and branding exactly as in the photo.",
+  },
+  {
+    id: "product_action",
+    label: "💥 Экшн-съёмка",
+    category: "product",
+    // Realistic action-splash lighting only — no on-image text, stays on cheap Seedream.
+    prompt:
+      "Turn this into a dynamic cinematic product advertisement: the product dominant and off-center in a low " +
+      "macro-angle, a dramatic action moment frozen in time with water splashes, sparks or drifting dust particles " +
+      "matching the product's category, strong key and rim lighting with deep contrast and glowing highlights, " +
+      "high-end global-campaign quality, 4k quality. Keep the product's shape, colors and branding exactly as in " +
+      "the photo.",
   },
 ];
 
