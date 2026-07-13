@@ -502,8 +502,10 @@ export interface Preset {
    * pin a stronger engine here — Seedream garbles text (see docs/prompt-craft.md).
    * The model stays implicit in the look — no extra user step — but the credit
    * price the user sees follows the chosen model. Mirrors CampaignPreset.tier.
+   * A KEY into MODELS (not a captured ModelSpec ref) so it resolves at call time,
+   * never at module-init — robust to any evaluation-order quirk.
    */
-  model?: ModelSpec;
+  model?: keyof typeof MODELS;
 }
 
 /**
@@ -521,7 +523,7 @@ export const PRESET_MODEL: ModelSpec = MODELS.seedream_edit;
  * the credit price the user sees follows it. Mirrors sceneModel() for video.
  */
 export function presetModel(p: Preset): ModelSpec {
-  return p.model ?? PRESET_MODEL;
+  return p.model ? MODELS[p.model] : PRESET_MODEL;
 }
 
 // --- Curated-prompt guards (shared by presets, campaigns and free scenarios) ---
@@ -601,7 +603,7 @@ export const PRESETS: Preset[] = [
     label: "🧸 Pixar мини-я",
     category: "photo",
     // Heavy 3D-toon stylization — Nano Banana Pro renders it far cleaner than Seedream.
-    model: MODELS.nbpro_edit,
+    model: "nbpro_edit",
     prompt:
       "Create a Pixar-style 3D mini-version of the person standing next to their realistic self on a minimalist " +
       "light-gray studio background with soft shadows. One figure stays a realistic human, the other is a cute Pixar " +
@@ -616,7 +618,7 @@ export const PRESETS: Preset[] = [
     label: "🧍 Коллекционная фигурка",
     category: "photo",
     // Blister-pack title header = on-image text — route to GPT Image 2 (Seedream garbles text).
-    model: MODELS.premium_edit,
+    model: "premium_edit",
     prompt:
       "Turn the person into a highly detailed collectible action-figure version of themselves, posed inside clear " +
       "blister packaging on a printed cardboard backer with a title header and small accessory items, studio product " +
@@ -636,7 +638,7 @@ export const PRESETS: Preset[] = [
     label: "🛍 Продающая карточка",
     category: "product",
     // Marketplace card keeps packaging labels/branding crisp — GPT Image 2 holds text.
-    model: MODELS.premium_edit,
+    model: "premium_edit",
     prompt:
       "Turn this into a premium e-commerce hero shot: the product on a clean seamless studio background with soft " +
       "shadows, professional three-point lighting, subtle reflection, marketplace-listing composition, 4k quality. " +
