@@ -20,7 +20,7 @@ import { modelByKey, startWebGeneration } from "./generate.js";
 import { grantPurchase } from "./payments.js";
 import { comboEndsAt } from "./offer.js";
 import { sanitizePrompt } from "./promptcraft.js";
-import { watermarkImage, watermarkVideo } from "./watermark.js";
+import { brandForDelivery } from "./watermark.js";
 import {
   campaignById,
   CAMPAIGNS,
@@ -591,14 +591,13 @@ export async function sendResponse(
   const field = isVideo ? "video" : "photo";
   const caption = "✨ Из вашей студии NeuroShot";
 
-  // Brand the shared file unless the user turned the watermark off. When branded,
-  // upload the bytes (multipart); otherwise pass the source URL to Telegram.
+  // Every shared file carries the mandatory AI-generated disclosure (badge +
+  // metadata); the promo CTA is added only when the user's watermark setting is
+  // on. When branded, upload the bytes (multipart); otherwise pass the source URL.
   const u = await getUser(userId);
-  const branded = u?.watermark_enabled
-    ? isVideo
-      ? await watermarkVideo(g.output_url)
-      : await watermarkImage(g.output_url)
-    : null;
+  const branded = await brandForDelivery(g.output_url, isVideo ? "video" : "image", {
+    promo: !!u?.watermark_enabled,
+  });
 
   let res: Response;
   if (branded) {
