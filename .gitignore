@@ -9,3 +9,10 @@ brand-assets/
 # Personal Telegram chat export used as source material for docs/course/;
 # contains other people's photos, names, and phone numbers — privacy-sensitive, local-only, never commit.
 raw_data/
+
+# Claude Code local machine state — permission grants and background-agent
+# worktree checkouts, both machine-specific. .claude/skills/ IS committed
+# (agent-discoverable skills live in source control) — only these two paths
+# under .claude/ are excluded.
+.claude/settings.local.json
+.claude/worktrees/
