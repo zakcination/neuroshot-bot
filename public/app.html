@@ -139,6 +139,12 @@
     .btn[disabled] { opacity: .55; pointer-events: none; }
 
     section { margin-top: 30px; }
+    /* Outcome-led hero at the top of the studio — sells the result, not the tool. */
+    .hero { margin: 2px 0 18px; }
+    .heroh { margin: 0; font-size: 25px; line-height: 1.12; font-weight: 800; letter-spacing: -.01em; }
+    .herosub { margin: 6px 0 0; font-size: 13.5px; line-height: 1.45; color: var(--muted); }
+    /* The wedge rail is the hero content, so it hugs the headline (no big top gap). */
+    .hero + section { margin-top: 14px; }
     .sec-h { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 13px; }
     .sec-h h2 { margin: 0; font-size: 11.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); font-weight: 800; }
 
@@ -1736,12 +1742,12 @@
 
         <!-- ===== СТУДИЯ (create) ===== -->
         <div class="page on" data-page="studio">
-          <div class="roadmap reveal${roadmapGraduated(d, ROADMAP_STEPS) ? " graduated" : ""}">${roadmapCardInner(d, ROADMAP_STEPS)}</div>
-
-          <div class="news reveal">
-            <div class="sec-h"><h2>🆕 Новые модели</h2></div>
-            <div class="newsrail" id="newsrail"></div>
-            <div class="newsdots" id="newsdots"></div>
+          <!-- Outcome-led hero: lead with the RESULT and the one-tap wedges. The
+               onboarding roadmap is demoted below the actionable content (it's
+               scaffolding for new users, not the draw for returning ones). -->
+          <div class="hero reveal">
+            <h1 class="heroh">Одно фото — целая студия</h1>
+            <p class="herosub">Выберите результат — ИИ сделает остальное.</p>
           </div>
 
           <section class="reveal">
@@ -1753,6 +1759,14 @@
               <a class="act" data-studio="text" style="background-image:url('/img/card-text.jpg')"><span class="em"><img class="appicon" src="/img/ic-sparkle.png" alt="" /></span><b>Из текста</b><span>от ${d.catalog.imageModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} 🔫</span></a>
             </div>
           </section>
+
+          <div class="news reveal">
+            <div class="sec-h"><h2>🆕 Новые модели</h2></div>
+            <div class="newsrail" id="newsrail"></div>
+            <div class="newsdots" id="newsdots"></div>
+          </div>
+
+          <div class="roadmap reveal${roadmapGraduated(d, ROADMAP_STEPS) ? " graduated" : ""}">${roadmapCardInner(d, ROADMAP_STEPS)}</div>
 
           <section class="reveal">
             <div class="sec-h"><h2>Сценарии</h2></div>
