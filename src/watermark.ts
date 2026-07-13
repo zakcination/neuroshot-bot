@@ -180,9 +180,14 @@ function runFfmpeg(args: string[]): Promise<boolean> {
  */
 async function brand(url: string, kind: MediaKind, styles: WatermarkStyle[]): Promise<Buffer | null> {
   if (!(await hasFfmpeg())) return null;
-  // Keep only styles whose asset is actually on disk; drop the rest.
+  // Keep styles whose asset is on disk. The "ai" disclosure is MANDATORY: if its
+  // asset is missing we must NOT ship a promo-only (undisclosed) output — bail
+  // entirely so the caller sends the raw source rather than a non-compliant one.
   const specs: StyleSpec[] = [];
-  for (const s of styles) if (await hasAsset(s)) specs.push(styleSpec(s));
+  for (const s of styles) {
+    if (await hasAsset(s)) specs.push(styleSpec(s));
+    else if (s === "ai") return null;
+  }
   if (!specs.length) return null; // nothing to apply → let caller send the source
 
   let dir: string | null = null;
@@ -191,7 +196,10 @@ async function brand(url: string, kind: MediaKind, styles: WatermarkStyle[]): Pr
     if (!res.ok) return null;
     const src = Buffer.from(await res.arrayBuffer());
     dir = await mkdtemp(join(tmpdir(), "nswm-"));
-    const inPath = join(dir, "in");
+    // Keep a video extension on the input: some ffmpeg builds pick the demuxer
+    // by extension rather than probing content, so a bare "in" can intermittently
+    // fail to open an mp4.
+    const inPath = join(dir, kind === "video" ? "in.mp4" : "in");
     const outPath = join(dir, kind === "video" ? "out.mp4" : "out.png");
     await writeFile(inPath, src);
 
