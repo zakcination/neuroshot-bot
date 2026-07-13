@@ -947,15 +947,15 @@ await step("partner v2: join → welcome (spend-only) + code; invitee pays → 1
   const prt: From = { id: 8001, is_bot: false, first_name: "Prt", username: "prt" };
   await sendText(prt, "/start"); // 12 free
   await pressButton(prt, "claim:welcome"); // claim-gated
-  await pressButton(prt, "partner:join");
+  await sendText(admin, `/partner_grant ${prt.id}`); // admin-served enrollment (no self-serve join)
   const acct0 = await partnerAccount(prt.id);
   assert.equal(acct0.joined, true);
   assert.equal(acct0.activeCodes, 1); // first code minted on join
   assert.equal(await credits(prt.id), 12 + 180); // free + welcome bonus
   assert.equal(acct0.withdrawable, 0); // welcome is NOT withdrawable
 
-  // a second join press must NOT double-grant
-  await pressButton(prt, "partner:join");
+  // a second admin grant must NOT double-grant
+  await sendText(admin, `/partner_grant ${prt.id}`);
   assert.equal(await credits(prt.id), 192);
   assert.equal((await partnerAccount(prt.id)).activeCodes, 1);
 
@@ -979,6 +979,22 @@ await step("partner v2: join → welcome (spend-only) + code; invitee pays → 1
   assert.equal(await credits(prt.id), 192 + 30); // also spendable
   const notify = calls("sendMessage").filter((c) => c.payload.chat_id === prt.id).at(-1)!;
   assert.match(notify.payload.text as string, new RegExp(`кэшбэка.*p_${code}`));
+});
+
+await step("partner: self-serve join is disabled — only admin /partner_grant enrolls", async () => {
+  const rando: From = { id: 8009, is_bot: false, first_name: "Rando", username: "rando" };
+  await sendText(rando, "/start");
+  const before = await credits(rando.id);
+  // a stale/self-serve "Стать партнёром" button must NOT enroll or grant the bonus
+  await pressButton(rando, "partner:join");
+  assert.equal((await partnerAccount(rando.id)).joined, false);
+  assert.equal(await credits(rando.id), before);
+  // a non-admin cannot enroll anyone (including themselves)
+  await sendText(rando, `/partner_grant ${rando.id}`);
+  assert.equal((await partnerAccount(rando.id)).joined, false);
+  // admin enrollment is the only path in
+  await sendText(admin, `/partner_grant ${rando.id}`);
+  assert.equal((await partnerAccount(rando.id)).joined, true);
 });
 
 await step("partner v2: withdrawal drains only withdrawable+credits; admin resolves; reject refunds", async () => {
@@ -1012,7 +1028,7 @@ await step("partner v2: withdrawal drains only withdrawable+credits; admin resol
 await step("partner v2: 10-code cap enforced; deactivation frees a slot", async () => {
   const cap: From = { id: 8002, is_bot: false, first_name: "Cap", username: "cap" };
   await sendText(cap, "/start");
-  await pressButton(cap, "partner:join"); // 1 code
+  await sendText(admin, `/partner_grant ${cap.id}`); // admin-served: 1 code minted
   for (let i = 0; i < 9; i++) await pressButton(cap, "partner:newcode"); // → 10
   assert.equal((await partnerAccount(cap.id)).activeCodes, 10);
   await pressButton(cap, "partner:newcode"); // 11th blocked

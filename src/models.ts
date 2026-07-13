@@ -495,6 +495,17 @@ export interface Preset {
   /** Which use-case menu the preset belongs to. */
   category: "photo" | "product";
   prompt: string;
+  /**
+   * Optional per-look model override. Most presets render on the cheap
+   * PRESET_MODEL (Seedream edit); looks that DEPEND on on-image text/typography
+   * or heavy stylization (blister-pack titles, marketplace labels, 3D toon)
+   * pin a stronger engine here — Seedream garbles text (see docs/prompt-craft.md).
+   * The model stays implicit in the look — no extra user step — but the credit
+   * price the user sees follows the chosen model. Mirrors CampaignPreset.tier.
+   * A KEY into MODELS (not a captured ModelSpec ref) so it resolves at call time,
+   * never at module-init — robust to any evaluation-order quirk.
+   */
+  model?: keyof typeof MODELS;
 }
 
 /**
@@ -505,6 +516,15 @@ export interface Preset {
  * «Свой промпт» and the top-models picker for typography-heavy instructions.
  */
 export const PRESET_MODEL: ModelSpec = MODELS.seedream_edit;
+
+/**
+ * Which model renders a given preset: its own override if it pins one, else the
+ * shared cheap default. One implicit choice per look — no extra user step — and
+ * the credit price the user sees follows it. Mirrors sceneModel() for video.
+ */
+export function presetModel(p: Preset): ModelSpec {
+  return p.model ? MODELS[p.model] : PRESET_MODEL;
+}
 
 // --- Curated-prompt guards (shared by presets, campaigns and free scenarios) ---
 // Positive phrasing per Higgsfield's prompt guide — "keep exactly", "one single
@@ -582,6 +602,8 @@ export const PRESETS: Preset[] = [
     id: "pixar_me",
     label: "🧸 Pixar мини-я",
     category: "photo",
+    // Heavy 3D-toon stylization — Nano Banana Pro renders it far cleaner than Seedream.
+    model: "nbpro_edit",
     prompt:
       "Create a Pixar-style 3D mini-version of the person standing next to their realistic self on a minimalist " +
       "light-gray studio background with soft shadows. One figure stays a realistic human, the other is a cute Pixar " +
@@ -595,6 +617,8 @@ export const PRESETS: Preset[] = [
     id: "figurine",
     label: "🧍 Коллекционная фигурка",
     category: "photo",
+    // Blister-pack title header = on-image text — route to GPT Image 2 (Seedream garbles text).
+    model: "premium_edit",
     prompt:
       "Turn the person into a highly detailed collectible action-figure version of themselves, posed inside clear " +
       "blister packaging on a printed cardboard backer with a title header and small accessory items, studio product " +
@@ -643,6 +667,8 @@ export const PRESETS: Preset[] = [
     id: "product_hero",
     label: "🛍 Продающая карточка",
     category: "product",
+    // Marketplace card keeps packaging labels/branding crisp — GPT Image 2 holds text.
+    model: "premium_edit",
     prompt:
       "Turn this into a premium e-commerce hero shot: the product on a clean seamless studio background with soft " +
       "shadows, professional three-point lighting, subtle reflection, marketplace-listing composition, 4k quality. " +
@@ -652,6 +678,8 @@ export const PRESETS: Preset[] = [
     id: "product_white",
     label: "⬜️ Белый фон (маркетплейс)",
     category: "product",
+    // Highest-volume, most utilitarian op: a mechanical cutout that PRESERVES the
+    // existing label (no new text generated) — Seedream handles it, kept cheap.
     prompt:
       "Cut out the product and place it on a pure seamless white studio background (#FFFFFF) with a soft natural " +
       "shadow underneath, centered marketplace-listing composition, even professional lighting, 4k quality. " +
