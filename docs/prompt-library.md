@@ -37,6 +37,17 @@ Seeded looks added from this research:
   English, compressed from a ~1–1.5k-char recipe to one flowing clause, had its
   brand names / hard-coded aspect ratios stripped, and got the shared identity-
   or product-lock guard appended.
+- **Third curation batch** (billionaire-lifestyle editorial + viral shareables):
+  `billionaire_heli` 🚁, `alpine_lux` 🏔, `kitten_editorial` 🐱, `mini_squad` 👥,
+  `sketch_journal` ✏️ (photo); `product_jewelry` 💎, `product_action` 💥
+  (product). Same checklist as the prior batches — hand-picked from the
+  product/fashion shortlist, translated to English, compressed to one flowing
+  clause, brand names and hard-coded aspect ratios stripped, identity- or
+  product-lock guard appended. Departure from batches 1–2: instead of routing
+  only on the on-image-text/stylization heuristic, each look is pinned to the
+  SAME engine VeoSee's own tutorial used for that recipe — the model the result
+  was authored/tested against — so the one-tap result matches what the source
+  actually demonstrated. See model routing below.
 
 ## Per-look model routing
 
@@ -44,10 +55,16 @@ A preset renders on the cheap `PRESET_MODEL` (Seedream edit, 2🔫) unless it pi
 stronger engine via the optional `model` key (`presetModel()` resolves it). Looks
 that depend on **on-image text** or heavy **stylization** route up automatically,
 with no extra user step — only the price the user sees changes:
-- `figurine`, `product_hero`, `product_editorial`, `product_drama` → GPT Image 2
-  (`premium_edit`, 11🔫) — blister-pack titles / product-label typography Seedream
-  garbles (see `docs/prompt-craft.md`).
+- `figurine`, `product_hero`, `product_editorial`, `product_drama`, `product_action`
+  → GPT Image 2 (`premium_edit`, 11🔫) — blister-pack titles / product-label
+  typography Seedream garbles (see `docs/prompt-craft.md`), or (for
+  `product_action`) matching the GPT Image 2 engine VeoSee's own recipe used.
 - `pixar_me` → Nano Banana Pro (`nbpro_edit`, 8🔫) — cleaner 3D-toon stylization.
+- **Third-batch VeoSee-engine matches**: `alpine_lux`, `sketch_journal` → Nano
+  Banana Pro (`nbpro_edit`, 8🔫); `billionaire_heli`, `kitten_editorial`,
+  `mini_squad`, `product_jewelry` → Nano Banana 2 (`nb2_edit`, 4🔫). These pin
+  the exact engine the VeoSee tutorial specified for that recipe, not the
+  text/stylization heuristic above.
 
 ## Expanding the library
 
