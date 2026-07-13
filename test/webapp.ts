@@ -458,7 +458,7 @@ await step("prompt library: VeoSee-seeded presets are exposed in the catalog and
   const gid = ((await r.json()) as { id: number }).id;
   let status = "pending";
   for (let i = 0; i < 200 && status === "pending"; i++) {
-    const g = await fetch(`${base}/api/generations/${gid}`, { headers: { Authorization: `tma ${signInitData(lib)}` } });
+    const g = await fetch(`${base}/api/generations/${gid}`, { headers: { Authorization: lh.Authorization } });
     assert.equal(g.status, 200);
     status = ((await g.json()) as { status: string }).status;
     if (status === "pending") await new Promise((rr) => setTimeout(rr, 15));

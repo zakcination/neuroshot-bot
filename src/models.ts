@@ -553,9 +553,9 @@ export const PRESETS: Preset[] = [
       "Restyle into a cinematic movie-still portrait: a 35mm anamorphic film look, dramatic soft side lighting, a " +
       `gentle teal-and-amber grade that keeps skin tones natural, tack-sharp face. ${KEEP_ID}`,
   },
-  // Seeded from the VeoSee prompt-library research (dark_kitchen
-  // research/saas-ideas): the highest-recurring single-photo, identity-locked
-  // scenarios from a market that already pays for them (82% product+fashion).
+  // Curated one-tap looks for the prompt library: high-recurrence, single-photo,
+  // identity-locked scenarios from a market that already pays for them (product +
+  // fashion). Provenance and how to expand the set: docs/prompt-library.md.
   {
     id: "candid_lux",
     label: "🚗 Lux-селфи в авто",

@@ -33,8 +33,9 @@ Seeded looks added from this research:
 
 ## Expanding the library
 
-The full scrape (`data/veosee_prompts_clean.json`, 395 recipes `{id, date, model,
-prompt}`) is a **curated-expansion source, not a bulk import**: the raw set is
+The full scrape (395 recipes `{id, date, model, prompt}`) lives in the **external
+research repo** (`zakcination/dark_kitchen`, `research/saas-ideas/data/`), not in
+this repository. It is a **curated-expansion source, not a bulk import**: the raw set is
 noisy (video recipes, one-line Russian instructions, brand-specific asks), so new
 presets should be hand-picked from the product/fashion/avatar subsets and
 **adapted** — rewritten in NeuroShot's voice, identity/product-locked, cleaned of
