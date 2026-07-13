@@ -438,6 +438,34 @@ await step("POST /api/generate: preset charges, renders async, poll reaches ok",
   assert.match(String(row.provider_request_id), /^req-\d+$/);
 });
 
+await step("prompt library: VeoSee-seeded presets are exposed in the catalog and one-tap applicable", async () => {
+  const ids = (await apiMe(signInitData(maker))).body.catalog.presets.map((p) => p.id);
+  for (const id of ["candid_lux", "paris_rain", "pixar_me", "figurine", "retro90s"]) {
+    assert.ok(ids.includes(id), `catalog missing seeded preset ${id}`);
+  }
+  // One-tap apply: a seeded library preset renders through the same preset path.
+  // Use a dedicated user (and an owner-scoped inline poll) so maker's balance —
+  // which later shared-state assertions depend on — is left untouched.
+  const lib = { id: 781, username: "libuser", first_name: "Lib" };
+  const lh = { Authorization: `tma ${signInitData(lib)}`, "Content-Type": "application/json" };
+  await apiMe(signInitData(lib)); // onboard
+  await addCredits(lib.id, 10, "admin_grant", "test");
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: lh,
+    body: JSON.stringify({ source: "preset", id: "candid_lux", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(r.status, 200);
+  const gid = ((await r.json()) as { id: number }).id;
+  let status = "pending";
+  for (let i = 0; i < 200 && status === "pending"; i++) {
+    const g = await fetch(`${base}/api/generations/${gid}`, { headers: { Authorization: `tma ${signInitData(lib)}` } });
+    assert.equal(g.status, 200);
+    status = ((await g.json()) as { status: string }).status;
+    if (status === "pending") await new Promise((rr) => setTimeout(rr, 15));
+  }
+  assert.equal(status, "ok");
+});
+
 await step("campaign video upsell via API: minifilm renders on flagship Seedance 2.0 with audio (76 🔫)", async () => {
   const r = await fetch(`${base}/api/generate`, {
     method: "POST",
