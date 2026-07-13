@@ -14,7 +14,7 @@
 #   # then @BotFather → Configure Mini App → https://<app>.fly.dev
 #
 # App name is global on Fly — change it (or let `fly launch` generate one).
-app = "neuroshot-bot"
+app = "maidanzakaryanov"
 primary_region = "fra" # Frankfurt — close to RU/KZ users; pick your own (waw/Warsaw is deprecated on Fly)
 # Give graceful shutdown time to drain in-flight renders (1–3 min) before SIGKILL,
 # so a routine deploy/recycle delivers or refunds them (matches drainRenders in index.ts).
