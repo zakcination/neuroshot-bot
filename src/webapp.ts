@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { claimRoadmapBonus, claimWelcomeBonus, createOrder, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, logEvent, markOnboardingSeen, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { claimRoadmapBonus, claimWelcomeBonus, createOrder, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { grantPurchase } from "./payments.js";
 import { comboEndsAt } from "./offer.js";
@@ -190,13 +190,36 @@ function packsPayload(): Array<Record<string, unknown>> {
  * with prices — presets, campaigns (incl. their video upsell) and the top-model
  * pickers. Ids are validated server-side on /api/generate, so the client never
  * supplies prompts for curated flows.
+ *
+ * `usage` is real per-preset tap counts (db.presetUsageCounts — the events log,
+ * see docs/prompt-library.md's "Style Gallery" section) — never fabricated.
+ * The top 5 tapped presets (with ≥1 real tap) are flagged `trending`; a fresh
+ * deploy with no taps yet simply shows no trending badges, not fake ones.
  */
-function catalogPayload(): Record<string, unknown> {
+function catalogPayload(usage: Record<string, number>): Record<string, unknown> {
+  const trending = new Set(
+    PRESETS.map((p) => ({ id: p.id, count: usage[p.id] ?? 0 }))
+      .filter((p) => p.count > 0)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5)
+      .map((p) => p.id),
+  );
   return {
     // "от X 🔫" headline = the cheapest look; each card carries its own price
     // (premium/typography looks pin a stronger, pricier model — see presetModel).
     presetCredits: Math.min(...PRESETS.map((p) => presetModel(p).credits)),
-    presets: PRESETS.map((p) => ({ id: p.id, label: p.label, category: p.category, credits: presetModel(p).credits })),
+    // previewUrl is deterministic from the id (public/img/card-preset-<id>.jpg —
+    // generated via Higgsfield, see docs/prompt-library.md); the client falls
+    // back to an emoji tile if a future preset ships before its art does.
+    presets: PRESETS.map((p) => ({
+      id: p.id,
+      label: p.label,
+      category: p.category,
+      credits: presetModel(p).credits,
+      previewUrl: `/img/card-preset-${p.id}.jpg`,
+      usageCount: usage[p.id] ?? 0,
+      trending: trending.has(p.id),
+    })),
     campaigns: CAMPAIGNS.map((c) => ({
       id: c.id,
       label: c.label,
@@ -296,13 +319,14 @@ function catalogPayload(): Record<string, unknown> {
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations, refCode, row, roadmap, referrals] = await Promise.all([
+  const [dashboard, generations, refCode, row, roadmap, referrals, usage] = await Promise.all([
     userDashboard(user.id),
     recentGenerations(user.id, 30),
     ensureRefCode(user.id),
     getUser(user.id),
     roadmapProgress(user.id),
     referralList(user.id),
+    presetUsageCounts(),
   ]);
   return {
     // No raw tg id in ref_code — an opaque link the client builds the share URL from.
@@ -312,7 +336,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     bot_username: config.webappBotUsername,
     // Pack catalog for the app's pricing section — same source as the bot.
     packs: packsPayload(),
-    catalog: catalogPayload(),
+    catalog: catalogPayload(usage),
     // Combo offer deadline (ms epoch) for the live countdown.
     comboOffer: { endsAt: comboEndsAt() },
     // Welcome bonus (signup + join bonus) is claim-gated — see claimWelcomeBonus
