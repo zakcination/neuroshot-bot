@@ -1192,7 +1192,7 @@ await step("AI disclosure: mandatory badge is always applied; promo CTA only whe
   // the source can't be fetched/encoded — this holds whether or not the runner
   // has ffmpeg (no ffmpeg → null early; ffmpeg present → the dead URL fails →
   // null), so the assertion isn't tied to the CI host's toolchain.
-  assert.equal(await brandForDelivery("http://127.0.0.1:1/nope.png", "image", { promo: false }), null);
+  assert.equal(await brandForDelivery(`${base}/nope.png`, "image", { promo: false }), null);
 });
 
 await new Promise<void>((r) => server.close(() => r()));

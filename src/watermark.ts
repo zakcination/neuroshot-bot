@@ -196,10 +196,11 @@ async function brand(url: string, kind: MediaKind, styles: WatermarkStyle[]): Pr
     if (!res.ok) return null;
     const src = Buffer.from(await res.arrayBuffer());
     dir = await mkdtemp(join(tmpdir(), "nswm-"));
-    // Keep a video extension on the input: some ffmpeg builds pick the demuxer
-    // by extension rather than probing content, so a bare "in" can intermittently
-    // fail to open an mp4.
-    const inPath = join(dir, kind === "video" ? "in.mp4" : "in");
+    // Keep the SOURCE's video extension on the input: some ffmpeg builds pick the
+    // demuxer by extension rather than probing content, so a bare "in" (or a
+    // wrong ".mp4" for webm/mov bytes) can intermittently fail to open the file.
+    const videoExt = (url.match(/\.(mp4|webm|mov)(?:\?|$)/i)?.[1] ?? "mp4").toLowerCase();
+    const inPath = join(dir, kind === "video" ? `in.${videoExt}` : "in");
     const outPath = join(dir, kind === "video" ? "out.mp4" : "out.png");
     await writeFile(inPath, src);
 
