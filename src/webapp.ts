@@ -462,6 +462,13 @@ export async function generateResponse(
     const p = PRESETS.find((x) => x.id === body?.id);
     if (!p || !imageUrl) return { status: 400, body: { error: "bad_request" } };
     [model, prompt, crafted] = [PRESET_MODEL, p.prompt, true];
+    // Log WHICH preset was used — the web studio was the one tap surface that
+    // didn't (bot logs preset: taps, the campaign branch below logs camp:preset),
+    // so plain-preset usage by category (e.g. the product/ maркетплейс presets)
+    // was previously invisible to analytics. Meta is the bare preset id with NO
+    // colon, matching the bot's preset: convention and deliberately staying out
+    // of the roadmap "scenario" signal, which requires a colon (see db.ts).
+    await logEvent(userId, "preset", p.id);
   } else if (source === "campaign") {
     const [campId, presetId] = String(body?.id ?? "").split(":");
     const c = campaignById(campId);

@@ -1338,6 +1338,45 @@ export async function referralList(userId: number, limit = 100): Promise<Referra
   }));
 }
 
+export interface SegmentSizing {
+  productPresetUsers: number; // distinct users who generated with a product-category preset
+  totalGenerators: number; // distinct users with ≥1 generation of any kind
+  totalUsers: number; // all registered users
+  sharePct: number; // productPresetUsers / totalGenerators × 100 (0 if no generators)
+}
+
+/**
+ * Ad-hoc sizing of the "marketplace seller" segment — how many users actually
+ * reach for the product/маркетплейс presets, the behavioural proxy for the
+ * stated B2B/SMB seller ICP (docs/web-app.md). Read-only, run on demand from
+ * scripts/segment-sizing.mts; deliberately NOT a live dashboard (monitor.ts's
+ * philosophy: no cohorts/dashboards before ~1,000 users).
+ *
+ * ⚠️ Signal completeness: usage is counted from `preset` events. The bot has
+ * always logged preset taps; the web studio only started logging plain-preset
+ * taps in the same change that added this function — so numbers reflect web
+ * usage from that point forward (bot usage is fully historical). Treat an early
+ * reading as a floor, not a census.
+ */
+export async function sellerSegmentSizing(productPresetIds: string[]): Promise<SegmentSizing> {
+  const [seg, gens, users] = await Promise.all([
+    q(
+      "SELECT COUNT(DISTINCT user_id)::int AS c FROM events WHERE type = 'preset' AND meta = ANY($1::text[])",
+      [productPresetIds],
+    ),
+    q("SELECT COUNT(DISTINCT user_id)::int AS c FROM generations", []),
+    q("SELECT COUNT(*)::int AS c FROM users", []),
+  ]);
+  const productPresetUsers = Number(seg[0].c);
+  const totalGenerators = Number(gens[0].c);
+  return {
+    productPresetUsers,
+    totalGenerators,
+    totalUsers: Number(users[0].c),
+    sharePct: totalGenerators > 0 ? Math.round((productPresetUsers / totalGenerators) * 1000) / 10 : 0,
+  };
+}
+
 export interface RoadmapProgress {
   firstPhoto: boolean; // any successful generation
   ownIdea: boolean; // a text_to_image render (typed a prompt, no upload)

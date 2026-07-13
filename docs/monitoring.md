@@ -47,6 +47,19 @@ First-touch, immutable (`users.source`):
   own link — `t.me/<bot>?start=src_tiktok1`, `?start=vk_post3` — and /dash
   splits the funnel by it. Slug = lowercase `[a-z0-9_-]`, 32 chars max.
 
+## Ad-hoc analyses (one-off, not dashboards)
+
+Kept as scripts you run on demand, so we get a number without violating the
+"no cohorts/dashboards before ~1,000 users" rule above.
+
+- **Seller-segment sizing** — `DATABASE_URL=... npx tsx scripts/segment-sizing.mts`.
+  Answers "how many of our generators actually reach for the product/маркетплейс
+  presets" — the behavioural proxy for the stated B2B/SMB seller ICP
+  (`docs/web-app.md`) and the gate for backlog #49 (do NOT build B2B workspace
+  features until this shows real usage). Reads `preset` events; `sellerSegmentSizing`
+  in `src/db.ts`. ⚠️ The web studio only began logging plain-preset taps recently
+  (bot always did), so an early reading is a **floor** — re-run after a few weeks.
+
 ## The 3-month gate
 
 Calendar it the day you launch paid traffic: **>10 sales in 3 months = pour

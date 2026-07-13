@@ -742,6 +742,36 @@ await step("/me referrals: per-friend drill-down with inactive/used_free/paid st
   assert.equal(byId.size, 3);
 });
 
+await step("/api/generate logs the preset id → seller-segment sizing counts only product presets", async () => {
+  const { sellerSegmentSizing } = await import("../src/db.js");
+  const productIds = ["product_hero", "product_white", "product_lifestyle"];
+  const hdrs = { ...makerHeaders(), "Content-Type": "application/json" };
+  await addCredits(maker.id, 50, "admin_grant", "test"); // ensure funds regardless of prior spend
+
+  const before = await sellerSegmentSizing(productIds); // maker hasn't touched a product preset yet
+
+  // A marketplace product shot counts toward the seller segment…
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: hdrs,
+    body: JSON.stringify({ source: "preset", id: "product_white", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(r.status, 200);
+  assert.equal((await pollGen(((await r.json()) as { id: number }).id)).status, "ok");
+
+  const after = await sellerSegmentSizing(productIds);
+  assert.equal(after.productPresetUsers, before.productPresetUsers + 1);
+  assert.ok(after.totalGenerators >= after.productPresetUsers);
+
+  // …a plain portrait preset does NOT — the segment tracks seller behaviour only.
+  const r2 = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: hdrs,
+    body: JSON.stringify({ source: "preset", id: "headshot", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(r2.status, 200);
+  assert.equal((await pollGen(((await r2.json()) as { id: number }).id)).status, "ok");
+  assert.equal((await sellerSegmentSizing(productIds)).productPresetUsers, after.productPresetUsers);
+});
+
 let videoGenId = 0; // captured for the video-as-source guard below
 
 await step("reusable works: generation_id feeds a video render without re-upload", async () => {
