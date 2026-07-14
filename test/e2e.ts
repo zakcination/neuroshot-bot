@@ -25,7 +25,7 @@ process.env.WITHDRAW_MIN = "20"; // low so the withdrawal path is exercisable
 process.env.COURSE_FAST_CHANNEL_ID = "-100123456789";
 
 const { fal } = await import("@fal-ai/client");
-const { createBot } = await import("../src/bot.js");
+const { createBot, fastStartLessonMessages, flagshipModuleMessages } = await import("../src/bot.js");
 const { drainRenders, inFlightRenders } = await import("../src/generate.js");
 const { funnel, query, getUser, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay, createPendingGeneration, completeGeneration, claimFreePhone, phoneClaimedFree, setUserPhone } = await import("../src/db.js");
 const { buildDigest, checkAlerts, nudgeText, runReengagement, runReaper } = await import("../src/monitor.js");
@@ -226,6 +226,43 @@ async function ledgerCount(reason: string): Promise<number> {
   return Number(rows[0].c);
 }
 
+/**
+ * Course-post content is delivered with `parse_mode: "HTML"` straight into a
+ * real channel — a stray unclosed tag or unescaped `<`/`>`/`&` passes every
+ * length/wiring assertion here but throws a Telegram 400 at real send time
+ * (bot.ts's course_post catch would then report "❌ Не удалось опубликовать"
+ * and the channel stays exactly as empty as before this feature). So beyond
+ * "is there content", validate the markup itself: only Telegram's allowed
+ * inline tags, every open tag closed (in order), and no raw `<`/`>`/bare `&`
+ * outside recognized tags/entities.
+ */
+const TELEGRAM_HTML_TAGS = ["b", "i", "code", "pre", "s", "u", "tg-spoiler"];
+function assertValidTelegramHtml(text: string, label: string): void {
+  const tagRe = /<\/?([a-zA-Z-]+)(?:\s+[^<>]*)?>/g;
+  const stack: string[] = [];
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = tagRe.exec(text))) {
+    const outside = text.slice(lastIndex, m.index);
+    assert.ok(!/[<>]/.test(outside), `${label}: raw < or > outside a tag near ${JSON.stringify(outside.slice(-40))}`);
+    assert.ok(
+      !/&(?!lt;|gt;|amp;|quot;|#\d+;|#x[0-9a-fA-F]+;)/.test(outside),
+      `${label}: bare & (not an entity) near ${JSON.stringify(outside.slice(-40))}`,
+    );
+    lastIndex = tagRe.lastIndex;
+    const tag = m[1].toLowerCase();
+    assert.ok(TELEGRAM_HTML_TAGS.includes(tag), `${label}: disallowed tag <${m[0]}>`);
+    if (m[0].startsWith("</")) {
+      assert.equal(stack.pop(), tag, `${label}: mismatched closing tag </${tag}>`);
+    } else {
+      stack.push(tag);
+    }
+  }
+  const tail = text.slice(lastIndex);
+  assert.ok(!/[<>]/.test(tail), `${label}: raw < or > in trailing text ${JSON.stringify(tail.slice(0, 40))}`);
+  assert.equal(stack.length, 0, `${label}: unclosed tag(s): ${stack.join(", ")}`);
+}
+
 // ---------- scenario ----------
 
 let passed = 0;
@@ -373,6 +410,75 @@ await step("/course: overview + free guide render; course packs are hidden from 
     .flat()
     .map((b) => b.callback_data);
   assert.ok(!buyButtons.includes("buy:course_fast") && !buyButtons.includes("buy:course_flagship"));
+});
+
+await step("/course_post content: every lesson/module renders valid, non-empty Telegram-HTML under the 4096-char limit", () => {
+  // COURSE_FLAGSHIP_CHANNEL_ID is deliberately unset in this run (see env setup
+  // above), so /course_post never actually posts flagship content below — assert
+  // the content directly instead, so all 3 modules are still exercised. Markup
+  // validity matters as much as length: parse_mode:"HTML" means a stray unclosed
+  // tag would 400 at real send time (see assertValidTelegramHtml above).
+  for (const n of [1, 2, 3, 4, 5] as const) {
+    const msgs = fastStartLessonMessages(n);
+    assert.ok(msgs.length >= 1, `fast lesson ${n} must render at least one message`);
+    msgs.forEach((m, i) => {
+      assert.ok(m.length > 0 && m.length <= 4096, `fast lesson ${n} message ${i} out of bounds`);
+      assertValidTelegramHtml(m, `fast lesson ${n} message ${i}`);
+    });
+  }
+  for (const n of [1, 2, 3] as const) {
+    const msgs = flagshipModuleMessages(n);
+    assert.ok(msgs.length >= 1, `flagship module ${n} must render at least one message`);
+    msgs.forEach((m, i) => {
+      assert.ok(m.length > 0 && m.length <= 4096, `flagship module ${n} message ${i} out of bounds`);
+      assertValidTelegramHtml(m, `flagship module ${n} message ${i}`);
+    });
+  }
+});
+
+await step("/course_post: admin-only, validates args, posts into the configured cohort channel, no partial send when unset", async () => {
+  const FAST_CHANNEL = "-100123456789"; // process.env.COURSE_FAST_CHANNEL_ID, set at the top of this file
+
+  // Non-admin: total silence, exactly like /grant, /stats etc. — nothing posted anywhere.
+  const before = calls("sendMessage").length;
+  await sendText(alice, "/course_post fast 1");
+  assert.equal(calls("sendMessage").length, before, "non-admin /course_post must be a no-op");
+
+  // Bad/missing args → a usage reply, never a crash or a silent no-op for an admin.
+  await sendText(admin, "/course_post");
+  assert.match(lastText(), /Формат: \/course_post/);
+  await sendText(admin, "/course_post fast 9"); // out-of-range lesson number
+  assert.match(lastText(), /Формат: \/course_post/);
+  await sendText(admin, "/course_post flagship 4"); // out-of-range module number
+  assert.match(lastText(), /Формат: \/course_post/);
+  await sendText(admin, "/course_post nonsense 1"); // bad tier
+  assert.match(lastText(), /Формат: \/course_post/);
+
+  // fast: channel IS configured — posts land there, then the admin gets a DM confirmation.
+  const channelBefore = calls("sendMessage").filter((c) => c.payload.chat_id === FAST_CHANNEL).length;
+  await sendText(admin, "/course_post fast 1");
+  const channelMsgs = calls("sendMessage")
+    .filter((c) => c.payload.chat_id === FAST_CHANNEL)
+    .slice(channelBefore);
+  assert.ok(channelMsgs.length >= 1, "fast 1 should post at least one message to the fast channel");
+  assert.match(channelMsgs[0].payload.text as string, /Урок 1/);
+  assert.equal(channelMsgs[0].payload.parse_mode, "HTML");
+  const dm = calls("sendMessage")
+    .filter((c) => c.payload.chat_id === admin.id)
+    .at(-1)!.payload.text as string;
+  assert.match(dm, /✅/);
+  assert.match(dm, /Урок 1/);
+  assert.match(dm, /Быстрый старт/);
+  assert.match(dm, /COURSE_FAST/);
+
+  // flagship: channel is UNSET — must NOT crash, must NOT attempt any send, and
+  // must tell the admin to configure it first. Exactly one new sendMessage (the
+  // admin's own "not configured" reply) — no partial channel post.
+  const sendCountBefore = calls("sendMessage").length;
+  await sendText(admin, "/course_post flagship 1");
+  assert.equal(calls("sendMessage").length, sendCountBefore + 1, "unset channel must not attempt any send");
+  assert.match(lastText(), /COURSE_FLAGSHIP_CHANNEL_ID/);
+  assert.match(lastText(), /не настроен/);
 });
 
 await step("pending action survives the paywall: motion prompt now renders Kling video (25 🔫)", async () => {
