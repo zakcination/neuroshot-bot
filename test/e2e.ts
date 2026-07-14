@@ -1304,8 +1304,10 @@ await step("course purchase: buying course_fast credits patrons AND DMs a one-ti
 
 await step("course purchase guarantee: buying course_flagship with NO channel configured still succeeds", async () => {
   // COURSE_FLAGSHIP_CHANNEL_ID is deliberately left unset in this test run — the
-  // purchase (credits + confirmation) must NOT fail, roll back, or throw; it just
-  // skips the invite (payments.ts inviteToCourseCohort logs and returns).
+  // purchase (credits + confirmation) must NOT fail, roll back, or throw; it
+  // just skips the invite attempt (payments.ts inviteToCourseCohort logs and
+  // falls back to a user-facing "we're still setting this up" DM instead of
+  // going silent — a buyer must never see NOTHING beyond the credit grant).
   const gia: From = { id: 6102, is_bot: false, first_name: "Gia", username: "gia" };
   await sendText(gia, "/start");
   const invitesBefore = calls("createChatInviteLink").length;
@@ -1316,12 +1318,11 @@ await step("course purchase guarantee: buying course_flagship with NO channel co
   assert.equal(await ledgerCount("purchase"), purchasesBefore + 1); // purchase still journaled normally
   assert.equal(calls("createChatInviteLink").length, invitesBefore); // no invite attempt — channel unset
 
-  // The existing "✅ Начислено" confirmation must stay intact regardless (it's
-  // the last DM gia receives), and no fallback/course DM follows it — since
-  // inviteToCourseCohort only logs+returns when the channel id is unset instead
-  // of sending anything further.
+  // gia gets TWO DMs: the credit confirmation, then the graceful fallback
+  // (channel not configured yet) — never left with only the credit grant.
   const dms = calls("sendMessage").filter((c) => c.payload.chat_id === gia.id);
-  assert.match(dms.at(-1)!.payload.text as string, /Начислено/, "credits confirmation must be gia's last DM");
+  assert.match(dms.at(-2)!.payload.text as string, /Начислено/, "credits confirmation");
+  assert.match(dms.at(-1)!.payload.text as string, /AI-контент под ключ.*куплен/, "fallback DM — never silent");
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL || "embedded (pglite)"})`);
