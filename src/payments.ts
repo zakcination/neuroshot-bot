@@ -123,6 +123,15 @@ async function inviteToCourseCohort(api: Api, userId: number, tier: "fast" | "fl
       `[course] cohort channel unset for tier "${tier}" — cannot invite user ${userId} into ${label}. ` +
         `Set COURSE_${tier === "fast" ? "FAST" : "FLAGSHIP"}_CHANNEL_ID once the private channel exists (.env.example).`,
     );
+    // A paying buyer must never see NOTHING beyond the credit confirmation —
+    // same graceful fallback as the createChatInviteLink-failure path below,
+    // just for "not configured yet" instead of a Telegram API error.
+    await api
+      .sendMessage(
+        userId,
+        `🎓 Курс ${label} куплен — ссылку на приватный канал пришлём в течение дня, уже готовим доступ.`,
+      )
+      .catch(() => {});
     return;
   }
   try {
