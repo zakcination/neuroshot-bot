@@ -22,6 +22,18 @@ Mini App, and an installed home-screen app.
 The functions are thin wrappers over the same handlers the Node server uses, so
 there is one implementation and the test suite (`npm run test:webapp`) covers it.
 
+**This is a shrinking fraction of the Mini App's actual API surface.**
+`src/webapp.ts` has grown well beyond auth/me — it now also serves
+`/api/generate`, `/api/order`, `/api/kaspi/callback`, `/api/claim-welcome`,
+`/api/settings`, `/api/send`, and more (see `docs/web-app.md`) — and **none of
+those have Vercel wrappers**. They only run on the Fly-hosted `src/webapp.ts`
+Node process (see [`deploy.md`](./deploy.md)), which is also why the bot
+itself can't live on Vercel (long polling + multi-minute generations don't fit
+serverless). So a Vercel-only deployment cannot serve the full Mini App today —
+generation, payments, and settings all require the process host. Vercel is
+useful today for the PWA shell + auth handshake, not as a full alternative
+backend.
+
 ## Auth model (why an installed app works)
 
 - **Inside Telegram**, every launch carries fresh `initData`; the client posts it

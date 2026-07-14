@@ -1,70 +1,95 @@
-# Watermark (CTA badge + corner mark)
+# Watermark (mandatory AI disclosure + promo CTA badge)
 
-A pre-designed **CTA badge** — `Хочешь так же? Бесплатно: ✈️ @neuroshot_ai_bot`
-— is overlaid at the bottom of deliverables. Each shared clip/photo is both an ad
-and a conversion path: a viewer sees exactly where to make their own, for free.
+`src/watermark.ts` composites overlays onto every delivered image/video in ONE
+ffmpeg pass. Two independent concerns live here:
 
-## Two styles (`WatermarkStyle`)
+1. **The mandatory AI-disclosure mark** (`"ai"` style) — Kazakhstan's Law
+   No. 230-VIII "On Artificial Intelligence" (Art. 21, in force 2026-01-18)
+   requires every distributed AI-generated ("synthetic") output to carry both
+   a machine-readable marking **and** a human-perceptible warning. This is now
+   the module's primary purpose: it is applied to **every single delivery**,
+   independent of the user's promo-watermark setting — see
+   [`docs/compliance.md`](./compliance.md) for the full legal framing.
+2. **The promo CTA badge** (`"cta"` style) — the original purpose of this
+   module: `Хочешь так же? Бесплатно: ✈️ @neuroshot_ai_bot` overlaid at the
+   bottom of free/shared deliverables, turning a shared clip into an ad.
 
-`watermarkVideo` / `watermarkImage` take a `style` argument (`"cta"` default):
+## Styles (`WatermarkStyle`)
 
-- **`cta`** — the full-width bottom banner above, 640px, 95% opacity. Loud on
-  purpose: the free-scenario gift is where an explicit call-to-action belongs.
-  Always used for free deliverables and the default per-user toggle.
-- **`corner`** — a small (150px), low-opacity (70%) mark in the bottom-right, from
-  `public/corner_watermark.png` — logo/@handle only, no CTA sentence. For content
-  a creator posts to their **own** feed (the UGC bounty): attributable without
-  reading like a third-party ad, which would suppress the organic reach the bounty
-  pays for. **Note:** a *visible* mark is croppable, so it's for attribution — the
-  actual bounty payout proof is the generation-id, not the badge (see the strategy
-  doc). Until `public/corner_watermark.png` is added, the corner style is a safe
-  no-op (returns null → source sent unbranded).
+Three styles are defined; only two are actually selected by `deliveryStyles()`:
+
+- **`ai`** — the mandatory legal disclosure badge (`public/ai_generated.png`),
+  top-left, 400px wide (`AI_WIDTH`), 95% opacity (`AI_OPACITY`). **Always**
+  included — non-optional, independent of any user setting.
+- **`cta`** — the full-width bottom promo banner (`public/watermark.png`),
+  centered, 640px wide (`CTA_WIDTH`), 95% opacity (`CTA_OPACITY`). Included
+  only when the caller asks for it (free scenarios always; paid renders when
+  the user's watermark toggle is on).
+- **`corner`** — a small (150px, `CORNER_WIDTH`), low-opacity (70%,
+  `CORNER_OPACITY`) logo/@handle mark for bottom-right placement, from
+  `public/corner_watermark.png` (the asset **exists** in the repo today). This
+  style is defined and has a working `styleSpec`/asset, but **`deliveryStyles()`
+  never selects it** — nothing in the codebase currently calls `brand()` with
+  `"corner"` in its style list. It's an unwired/backlog style (intended for
+  UGC-bounty content a creator posts to their own feed), not a shipped one.
+
+`deliveryStyles(promo: boolean)` returns `["ai"]` normally, or `["ai", "cta"]`
+when `promo` is true — so the AI disclosure is always first/non-optional and
+the CTA is the only style toggled by caller intent.
 
 ## Scope
 
 - **Every generation** (bot images + videos via `runGeneration`, and web
-  share-to-Telegram via `/api/send`) is branded **by default**.
+  share-to-Telegram via `/api/send`) gets the mandatory `"ai"` disclosure —
+  no exceptions, no per-user toggle.
 - **Per-user toggle:** `users.watermark_enabled` (default `true`), flipped from
-  the app's «Настройки» via `POST /api/settings` (`watermarkVideo`/`watermarkImage`
-  are simply skipped when off).
-- **Free scenarios are always branded** (the princess/football onboarding gift) —
-  the badge is the price of "free", so the toggle doesn't apply there.
-
-Both `watermarkVideo` and `watermarkImage` are safe no-ops (return null → the
-source URL is sent) when ffmpeg or the badge file is missing.
+  the app's «Настройки» via `POST /api/settings`, controls only whether the
+  `"cta"` promo banner is added on top — it never turns off the `"ai"` mark.
+- **Free scenarios are always branded with both** `"ai"` and `"cta"` (the
+  princess/football onboarding gift) — the promo badge is the price of "free".
 
 ## How it works
 
-`src/watermark.ts` runs after the free video is rendered:
+`brandForDelivery(url, kind, { promo })` → `brand()` in `src/watermark.ts`:
 
-1. downloads the fal video,
-2. overlays `public/watermark.png` (the CTA badge) **bottom-centre**, ~640px
-   wide, at **95% opacity** (`MARK_OPACITY`), `32px` from the bottom edge,
-3. sends the branded MP4 to the user.
+1. downloads the source image/video from its fal URL,
+2. builds one `filter_complex` (`buildOverlayFilter`) chaining every style's
+   badge over the base media in a single ffmpeg pass,
+3. embeds a machine-readable AI-generated marker via `-metadata` (`comment` +
+   `ai_generated=true`) — the container comment on video, best-effort PNG
+   text-chunk metadata on images,
+4. returns the branded bytes, or `null` if branding is unavailable/failed —
+   the caller then sends the raw source unchanged.
 
-The copy, the Telegram glyph, and the `@handle` are **baked into the badge
-artwork**, so there is no text rendering here — hence no font dependency. It uses
-**ffmpeg** (added to the Docker image). The whole thing is a **safe no-op**: if
-ffmpeg *or* the badge file is missing, `watermarkVideo` returns null and the
-un-watermarked source video is sent instead. The free flow never breaks, and paid
-renders are never touched.
+**The `"ai"` disclosure is a hard requirement, not a soft one**: if its asset
+is missing, `brand()` bails entirely (returns `null`) rather than shipping a
+promo-only, undisclosed output. `disclosureAvailable()` reports whether ffmpeg
++ the `ai` asset are both present, for anything that wants to check this
+up-front. In production ffmpeg and all badge assets are always present (see
+`Dockerfile`), so the disclosure ships on every real delivery.
 
-## Changing the watermark
+## Changing the artwork
 
-Replace the artwork at:
+- **AI disclosure** — `public/ai_generated.png` (the legal warning badge). Do
+  not remove or disable this without a compliance review (see
+  `docs/compliance.md`).
+- **Promo CTA** — `public/watermark.png`. RGBA PNG, wide and low (a bottom
+  banner; the current asset is 2620×400). Everything the viewer reads — the
+  CTA line, the Telegram glyph, the `@handle` — is baked into the image (no
+  text is drawn on top), so change the copy/handle by exporting a new badge.
+- **Corner mark** — `public/corner_watermark.png` exists in the repo, but
+  since nothing wires the `"corner"` style into `deliveryStyles()` yet,
+  replacing this file has no visible effect until that wiring is added.
 
-```
-public/watermark.png
-```
+## Tunables (constants in `src/watermark.ts`)
 
-- **RGBA PNG**, wide and low (a bottom banner). Transparent corners stay
-  transparent through the overlay. The current asset is 2620×400.
-- Everything the viewer reads — the CTA line, the Telegram glyph, the `@handle`
-  — must be **in the image** (we overlay one picture; no text is drawn on top).
-  So to change the copy or the handle, export a new badge and drop it here.
+- `PADDING` (32px) — edge padding shared by all styles.
+- `AI_WIDTH` (400px), `CTA_WIDTH` (640px), `CORNER_WIDTH` (150px) — rendered
+  badge widths (fixed-px, not proportional to the source resolution).
+- `AI_OPACITY` (0.95), `CTA_OPACITY` (0.95), `CORNER_OPACITY` (0.7).
+- `FFMPEG_TIMEOUT_MS` (60s) — hard cap so a stuck ffmpeg can't wedge a request.
 
-That's it. Once `public/watermark.png` exists and the container has ffmpeg, free
-videos are branded automatically — no code change needed.
-
-Tunables (constants in `src/watermark.ts`): `BOTTOM_PADDING` (32px), `MARK_WIDTH`
-(640px), `MARK_OPACITY` (0.95), `FFMPEG_TIMEOUT_MS`.
+The whole thing is a **safe no-op on failure**: if ffmpeg or a required badge
+file is missing, the affected overlay is skipped (or, for the mandatory `ai`
+style, the whole branding pass is skipped) and the caller sends the
+un-branded source URL instead — a branding hiccup never blocks a result.

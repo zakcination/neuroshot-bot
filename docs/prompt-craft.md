@@ -53,8 +53,10 @@ awful".
 
 ## Model levers (beyond prompts)
 
-Prompts are one lever; the model is the bigger one. For face-anchored scene
-edits the quality ladder is `seedream_edit (v4)` → **Seedream 4.5 edit** →
-**Nano Banana Pro edit**, and true identity fidelity is a trained face model
-(Higgsfield Soul-ID / a fal LoRA) — the proper fix when a preset keeps losing
-the face. Those are tracked separately from this prompt pass.
+Prompts are one lever; the model is the bigger one. `seedream_edit`
+(`PRESET_MODEL`) already runs on **Seedream 4.5 edit** — that upgrade has
+shipped, it's not aspirational. The next rung up the quality ladder for
+face-anchored scene edits is **Nano Banana Pro edit**, and true identity
+fidelity beyond that is a trained face model (Higgsfield Soul-ID / a fal
+LoRA) — the proper fix when a preset keeps losing the face. That LoRA/
+trained-face piece is still nothing, tracked separately from this prompt pass.

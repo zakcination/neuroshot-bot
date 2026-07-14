@@ -22,9 +22,10 @@ procrastination dressed as diligence.
    source/creative gets tomorrow's budget)
 2. **Активация** — of the new users, how many reached a first generation
 3. **Пейволл** — views + distinct users
-4. **Оплат** — count + ⭐ revenue, split by source (payers vs freeloaders)
-5. **Выручка / себестоимость / маржа** — stars × `STAR_USD` (conservative
-   $0.01) vs per-model provider cost from `models.ts`
+4. **Оплат** — count + ₸ (Kaspi) revenue, split by source (payers vs freeloaders)
+5. **Выручка / себестоимость / маржа** — ₸ revenue ÷ `config.kztPerUsd`
+   (`KZT_PER_USD`, for the margin estimate only, never pricing) vs per-model
+   provider cost from `models.ts`
 6. **Генерации + ошибки + возвраты · обязательства** — sold-but-unspent 🔫
    are future API costs you've already been paid for
 
@@ -68,4 +69,5 @@ budget; 0 = kill.** No dashboards required for that decision.
 ## Env
 
 - `DIGEST_HOUR_UTC` (default 6) — daily digest hour, UTC
-- `STAR_USD` (default 0.01) — conservative payout per ⭐ for margin math only
+- `KZT_PER_USD` (default 480) — ₸ per USD, used only to convert Kaspi revenue
+  to USD for the digest's gross-margin estimate, never for pricing

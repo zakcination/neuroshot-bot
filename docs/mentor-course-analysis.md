@@ -81,7 +81,7 @@ Flow as deployed (bot @neuroshot_ai_bot, code refs in `src/bot.ts`):
 6. Result arrives with next-step keyboard («Ещё стиль» / Меню); campaigns
    immediately offer the one-tap video upsell (25 🔫) on the generated image
 7. Second attempt → **sales-page paywall**: outcome headline, the model they
-   tried, «Старт» pack anchored as «N результатов за ⭐720», one dominant CTA
+   tried, «Старт» pack anchored as «N результатов за 3 700 ₸», one dominant CTA
 8. Returning `/start` → «🆕 Новинка недели» (weekly-rotating campaign) +
    «📸 Продолжить с вашим фото»
 
@@ -120,10 +120,11 @@ Six RU Telegram bots + five global apps = the landscape our users compare us to.
    «первый результат за наш счёт» — в рынке, но с уникальным отличием: у нас
    первая проба — **премиум-качество с лицом пользователя**, а не урезанная
    модель. Это и есть наш «результат до пейволла» (приём Remini).
-2. **RU-якорь входа: 290–890₽/мес.** Наш «Старт» (720⭐ ≈ 1200–1400₽ разово)
-   выше входного якоря. Тест: «Проба» 180⭐/15 🔫 как **paywall-only** оффер
-   (1 премиум-фото + ощущение прогресса) — импульсная цена в зоне 290₽-нормы,
-   маржа держится (12⭐/🔫 = верх нашей лестницы).
+2. **RU-якорь входа: 290–890₽/мес.** Наш «Старт» (3 700 ₸ ≈ 1200–1400₽ разово)
+   выше входного якоря. Тест (иллюстративно, не реализовано): «Проба» ≈930 ₸/15 🔫
+   как **paywall-only** оффер (1 премиум-фото + ощущение прогресса) — цена
+   получена по ставке текущего «Старт»-пакета (62 ₸/🔫, самая высокая ₸/🔫-ставка
+   нашей лестницы), импульсная зона 290₽-нормы, маржа держится.
 3. **Потребителю продают исходы, не кредиты** (50 аватаров, 48 фото, «фотосессия»).
    Пакеты в /buy подписать исходами: «Старт — 5 фотосессий или 2 оживления»,
    как уже сделано на пейволле («до N результатов»).
@@ -138,9 +139,12 @@ Six RU Telegram bots + five global apps = the landscape our users compare us to.
    приоритет/параллельность, топ-модели, разрешение. Дешевле всего добавить:
    **приоритетную очередь для пакетов 500+ 🔫 и 4K-апскейл за доплату**.
 7. **Подписка — отдельный трек**: недельные микро-цены (консюмер) или годовые
-   −50% (просьюмер). Telegram Stars поддерживает подписки — «PRO-проходка»
-   (например 250⭐/мес: приоритет + скидка на пакеты) — кандидат в роадмап, но
-   только после того, как пакетная экономика покажет стабильный LTV.
+   −50% (просьюмер). Наш текущий платёжный рельс (Kaspi) не даёт нативного
+   recurring-биллинга «из коробки», так что подписка потребует отдельного
+   механизма (периодические ссылки/напоминания или сторонний биллинг) —
+   «PRO-проходка» (приоритет + скидка на пакеты, точная цена ₸/мес не выбрана)
+   — кандидат в роадмап, но только после того, как пакетная экономика покажет
+   стабильный LTV.
 8. **UX-приёмы, которые стоит забрать**: имя бота как билборд моделей
    («NeuroShot \| Kling 3 \| Nano Banana»), живой счётчик генераций в вебапп,
    счётчик «фото до конца пакета» после каждого результата. Приём, который
@@ -158,10 +162,11 @@ Six RU Telegram bots + five global apps = the landscape our users compare us to.
    приоритетная очередь for 500+ pack holders, «серия кадров» (4 consistent
    shots, one tap); commercial-license wording in pack descriptions (free =
    personal use — the PhotoRoom lever, costs nothing to state).
-4. **Pricing tests from the anchor scan**: paywall-only «Проба» pack 180⭐/15 🔫
-   (impulse zone of the 290₽ RU entry norm, margin intact at 12⭐/🔫);
-   outcome-subtitles on all packs («≈ N фотосессий»); Stars-subscription
-   PRO-проходка parked until pack LTV is proven.
+4. **Pricing tests from the anchor scan**: paywall-only «Проба» pack ≈930 ₸/15 🔫
+   (illustrative — priced at our «Старт» pack's 62 ₸/🔫 rate; impulse zone of
+   the 290₽ RU entry norm, margin intact); outcome-subtitles on all packs
+   («≈ N фотосессий»); subscription-tier PRO-проходка parked until pack LTV is
+   proven.
 5. **Positioning copy vs free big-tech**: onboarding and channel posts lead
    with what Шедеврум/Kandinsky can't do — ваше лицо 1:1, топ-модели, без
    вотермарки и очереди, приватно. Never compete on price with free.
