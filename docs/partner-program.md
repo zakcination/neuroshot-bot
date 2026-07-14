@@ -32,7 +32,7 @@ money that real invitees actually paid).
 
 - **Only real cashback is withdrawable.** `partner_withdrawable` is incremented
   *only* by `rewardPartnerOnPurchase` for `kind='partner'` codes — i.e. funded by
-  an invitee's actual Stars purchase. The welcome bonus, purchased, and free 🔫
+  an invitee's actual Kaspi purchase. The welcome bonus, purchased, and free 🔫
   are spend-only. So a cash-out is always backed by revenue that already came in.
 - The withdrawal request drains `credits` **and** `partner_withdrawable` in one
   atomic guarded statement (`WHERE partner_withdrawable >= amt AND credits >= amt`),

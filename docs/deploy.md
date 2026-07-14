@@ -58,6 +58,12 @@ Open the bot → `/start` shows the 🌐 button; `/app` opens the cabinet.
 Fits the app as-is: one always-on Docker VM (state in Postgres); Fly provides
 the HTTPS URL (no Caddy). Config is in `fly.toml`.
 
+**Production deploys are automatic**: the `deploy` job in
+`.github/workflows/ci.yml` runs `flyctl deploy --remote-only` (using the
+`FLY_API_TOKEN` repo secret) on every push to `main` that passes CI — merging
+a PR to `main` ships it. The manual steps below are the one-time app bootstrap
+and the fallback for local testing / deploying without going through `main`.
+
 ```bash
 fly launch --no-deploy                       # or: fly apps create <name>
 fly secrets set BOT_TOKEN=... FAL_KEY=... BOT_USERNAME=neuroshot_ai_bot \

@@ -22,7 +22,7 @@ makes a deal live the same day it's agreed.
 Purchased patrons run 4.5–6× margin over AI cost (see `pricing.md`). A creator
 share comes out of revenue, so:
 
-| Creator share | Worst-case margin (9⭐ pack) | Verdict |
+| Creator share | Worst-case margin (base 4.5× pack) | Verdict |
 |---|---|---|
 | 10% (organic referral default) | ~4.0× | always fine |
 | 20% | ~3.6× | **recommended ceiling for year-1 deals** |
@@ -62,9 +62,12 @@ can reuse, and their feedback channel (course students are a live QA panel).
 - **Signature preset packs** with per-generation attribution & payout (offer 3).
 - **Promo codes** (one-off bonus drops for launches/streams) — distinct from
   partner codes: no revenue share, just a gift + attribution window.
-- **Wholesale pack invoicing** for course bundles (Stars invoices to one buyer,
-  patrons distributed to a list).
+- **Wholesale pack invoicing** for course bundles (one bulk invoice to the
+  course author, patrons distributed to a list) — backlog, not implemented;
+  payment rail TBD.
 - **Partner web dashboard** in the Mini App (same numbers as `/partner`, plus
   charts) — part of the premium web redesign.
-- **Card paywalls** beyond Stars (Crypto → Kaspi → YooKassa, roadmap §F) — many
-  course audiences pay by card, not Stars.
+- **Card paywalls beyond Kaspi** — Kaspi (KZT) already shipped as the live
+  card-payment rail (see `docs/kaspi.md`); remaining backlog is
+  Crypto/YooKassa/other rails for cross-border reach beyond Kazakhstan
+  (roadmap §F).
