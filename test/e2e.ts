@@ -30,6 +30,7 @@ const { drainRenders, inFlightRenders } = await import("../src/generate.js");
 const { funnel, query, getUser, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay, createPendingGeneration, completeGeneration, claimFreePhone, phoneClaimedFree, setUserPhone } = await import("../src/db.js");
 const { buildDigest, checkAlerts, nudgeText, runReengagement, runReaper } = await import("../src/monitor.js");
 const { nUnits, nResults } = await import("../src/text.js");
+const { PRESETS, presetModel } = await import("../src/models.js");
 
 // ---------- Telegram API stub (transformer: intercepts every outgoing call) ----------
 
@@ -605,6 +606,45 @@ await step("photoshoot preset: photo → menu:photoshoot → one tap renders via
   };
   const after = delivered.inline_keyboard.flat().map((b) => b.callback_data);
   assert.deepEqual(after, ["menu:styles", "menu:main"]);
+});
+
+await step("«Удиви меня»: random preset renders and reveals which style was picked", async () => {
+  // Own user — the credit charge is random (2-11 🔫 depending on which preset
+  // is picked), so this must NOT share alice's running balance with the
+  // deterministic tests around it.
+  const uma: From = { id: 6103, is_bot: false, first_name: "Uma", username: "uma" };
+  await sendText(uma, "/start");
+  await pressButton(uma, "claim:welcome");
+  await sendPhoto(uma, "photo-surprise");
+  await pressButton(uma, "menu:styles");
+  const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data: string }>>;
+  };
+  assert.ok(
+    kb.inline_keyboard.flat().some((b) => b.callback_data === "preset:surprise"),
+    "surprise button missing from the style keyboard",
+  );
+
+  const before = await credits(uma.id);
+  const falBefore = falCalls.length;
+  const revealBefore = apiCalls.length;
+  await pressButton(uma, "preset:surprise");
+  assert.equal(falCalls.length, falBefore + 1, "surprise tap must render exactly one result");
+
+  const reveal = calls("sendMessage", revealBefore).find((c) => /🎲 Выпало:/.test(c.payload.text as string));
+  assert.ok(reveal, "must reveal which style was randomly picked");
+  const revealedLabel = (reveal!.payload.text as string).replace("🎲 Выпало: ", "");
+  const picked = PRESETS.find((p) => p.label === revealedLabel);
+  assert.ok(picked, `revealed label "${revealedLabel}" must be a real preset`);
+
+  assert.equal(await credits(uma.id), before - presetModel(picked!).credits);
+});
+
+await step("«Удиви меня» without a photo asks for one first", async () => {
+  const finn2: From = { id: 6104, is_bot: false, first_name: "Finn2", username: "finn2" };
+  await sendText(finn2, "/start");
+  await pressButton(finn2, "preset:surprise");
+  assert.match(lastText(), /Сначала пришлите фото/);
 });
 
 await step("«ещё стиль»: the photo is remembered after a generation", async () => {

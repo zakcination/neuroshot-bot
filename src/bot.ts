@@ -25,6 +25,7 @@ import {
   myWithdrawals,
   partnerAccount,
   pendingOrders,
+  presetUsageCounts,
   resolveOrder,
   partnerStats,
   pendingWithdrawals,
@@ -468,6 +469,8 @@ function presetsKeyboard(category: Preset["category"]): InlineKeyboard {
   for (const p of PRESETS.filter((x) => x.category === category)) {
     kb.text(`${p.label} (${presetModel(p).credits} ${UNIT_EMOJI})`, `preset:${p.id}`).row();
   }
+  const prices = PRESETS.map((p) => presetModel(p).credits);
+  kb.text(`🎲 Удиви меня (${Math.min(...prices)}–${Math.max(...prices)} ${UNIT_EMOJI})`, "preset:surprise").row();
   kb.text(`✍️ Свой промпт (${MODELS.premium_edit.credits} ${UNIT_EMOJI})`, "act:premium_edit").row();
   kb.text("📋 Меню", "menu:main");
   return kb;
@@ -1586,6 +1589,32 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     }
     await setPending(u.id, model.key, null); // text model: no photo
     await ctx.reply(`✍️ Напишите, что нарисовать — ${model.label} (${model.credits} ${UNIT_EMOJI}):`);
+  });
+
+  // "Удиви меня" — one random on-trend preset (docs/product-roadmap.md Tier 1
+  // item #2). Registered BEFORE the general /^preset:(.+)$/ handler below so
+  // this exact-string match wins for "preset:surprise" (grammY stops at the
+  // first matching callbackQuery handler). Weighted toward the top-5 tapped
+  // presets when real usage data exists (same trending set the Mini App's
+  // Style Gallery badges — presetUsageCounts, src/db.ts); a fresh deploy with
+  // zero taps falls back to fully random across the whole catalog, same
+  // graceful "no fake trending" fallback the Style Gallery itself uses.
+  bot.callbackQuery("preset:surprise", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await user(ctx);
+    if (!u.pending_file_id) {
+      await ctx.reply("Сначала пришлите фото 🙂");
+      return;
+    }
+    const usage = await presetUsageCounts();
+    const trending = [...PRESETS].sort((a, b) => (usage[b.id] ?? 0) - (usage[a.id] ?? 0)).slice(0, 5);
+    const pool = trending.some((p) => (usage[p.id] ?? 0) > 0) ? trending : PRESETS;
+    const preset = pool[Math.floor(Math.random() * pool.length)];
+    await ctx.reply(`🎲 Выпало: ${preset.label}`);
+    await runGeneration(ctx, u, presetModel(preset), preset.prompt, u.pending_file_id, {
+      crafted: true,
+      allowFreeFirst: true,
+    });
   });
 
   // One-tap presets: curated prompt through the premium model, no typing.
