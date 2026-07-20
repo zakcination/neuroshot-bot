@@ -17,7 +17,7 @@ import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
 import { claimRoadmapBonus, claimWelcomeBonus, createOrder, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
-import { grantPurchase } from "./payments.js";
+import { claimOrderPaid, grantPurchase } from "./payments.js";
 import { comboEndsAt } from "./offer.js";
 import { sanitizePrompt } from "./promptcraft.js";
 import { brandForDelivery } from "./watermark.js";
@@ -691,6 +691,29 @@ export async function orderResponse(
   };
 }
 
+/**
+ * POST /api/order/paid — the Mini App's "✅ Я оплатил", mirroring the bot button.
+ * The order must belong to the caller. Runs the SAME claimOrderPaid path as the
+ * bot: server-side Kaspi verify → auto-grant, else ping admins for `/order N ok`.
+ * Returns the claim outcome + the (possibly updated) balance so the app refreshes.
+ */
+export async function orderPaidResponse(
+  userId: number,
+  username: string | null,
+  body: Record<string, unknown> | null,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const orderId = Number(body?.orderId);
+  if (!Number.isInteger(orderId) || orderId <= 0) return { status: 400, body: { error: "bad_request" } };
+  const order = await getOrder(orderId);
+  if (!order || order.user_id !== userId) return { status: 404, body: { error: "not_found" } };
+  const who = `${username ? `@${username}` : "id"} (${userId}) · Mini App`;
+  const claim = await claimOrderPaid(new Api(config.botToken), orderId, who);
+  const balance = (await getUser(userId))?.credits ?? 0;
+  const extra =
+    claim.kind === "granted" ? { credits: claim.credits } : claim.kind === "pending" ? { failed: claim.failed } : {};
+  return { status: 200, body: { result: claim.kind, balance, ...extra } };
+}
+
 /** Success statuses in a Kaspi callback (case-insensitive). Confirm on integration. */
 const KASPI_PAID_STATUSES = new Set(["paid", "success", "completed", "approved", "processed", "captured"]);
 
@@ -865,6 +888,15 @@ export function createWebApp(): Server {
         if (!user) return json(res, 401, { error: "unauthorized" });
         await getOrCreateUser(user.id, user.username, null, config.freeCredits);
         const { status, body } = await orderResponse(user.id, await readJsonBody(req, 4 * 1024));
+        return json(res, status, body);
+      }
+
+      // POST /api/order/paid — the Mini App "✅ Я оплатил" (same path as the bot).
+      if (url.pathname === "/api/order/paid") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const { status, body } = await orderPaidResponse(user.id, user.username ?? null, await readJsonBody(req, 4 * 1024));
         return json(res, status, body);
       }
 

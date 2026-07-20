@@ -225,6 +225,38 @@ export async function settleApprovedOrder(api: Api, orderId: number): Promise<Pa
   return pack;
 }
 
+/** Outcome of an "✅ Я оплатил" claim — mapped to bot replies AND Mini App JSON. */
+export type PaidClaim =
+  | { kind: "not_found" }
+  | { kind: "already" }
+  | { kind: "granted"; credits: number | null }
+  | { kind: "pending"; failed: boolean }
+  | { kind: "admin" };
+
+/**
+ * Shared "✅ Я оплатил" handler for BOTH the bot button and the Mini App, so the
+ * two surfaces behave identically. Verifies the order against Kaspi server-side
+ * and grants automatically when the merchant API confirms it paid; when that API
+ * isn't wired (or hasn't seen the payment yet), pings admins for the manual
+ * `/order N ok` approval — the same interim path the bot has always used.
+ */
+export async function claimOrderPaid(api: Api, orderId: number, who: string): Promise<PaidClaim> {
+  const order = await getOrder(orderId);
+  if (!order) return { kind: "not_found" };
+  if (order.status === "paid") return { kind: "already" };
+  const status = await kaspiVerifyOrder(order);
+  if (status === "paid") {
+    const pack = await settleApprovedOrder(api, orderId);
+    return { kind: "granted", credits: pack ? pack.credits : null };
+  }
+  if (config.kaspiApiBase) return { kind: "pending", failed: status === "failed" };
+  for (const adminId of config.adminIds)
+    await api
+      .sendMessage(adminId, `💸 Заявка №${orderId}: ${who} отметил оплату. Проверьте Kaspi → /order ${orderId} ok|no`)
+      .catch(() => {});
+  return { kind: "admin" };
+}
+
 export function registerPayments(bot: Bot): void {
   bot.callbackQuery("show_packs", async (ctx) => {
     await ctx.answerCallbackQuery();
@@ -261,42 +293,28 @@ export function registerPayments(bot: Bot): void {
   bot.callbackQuery(/^paid:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const orderId = Number(ctx.match[1]);
-    const order = await getOrder(orderId);
-    if (!order) {
+    const who = ctx.from ? `${ctx.from.first_name} (@${ctx.from.username ?? ctx.from.id})` : "?";
+    const claim = await claimOrderPaid(ctx.api, orderId, who);
+    if (claim.kind === "not_found") {
       await ctx.reply("Заявка не найдена. Откройте /buy и попробуйте снова.");
-      return;
-    }
-    if (order.status === "paid") {
+    } else if (claim.kind === "already") {
       await ctx.reply(`✅ Эта оплата уже подтверждена — ${UNIT_EMOJI} патроны начислены.`);
-      return;
-    }
-    // Server-side check: query Kaspi for the real status of this order.
-    const status = await kaspiVerifyOrder(order);
-    if (status === "paid") {
-      const pack = await settleApprovedOrder(ctx.api, orderId);
+    } else if (claim.kind === "granted") {
       await ctx.reply(
-        pack
-          ? `✅ Оплата подтверждена автоматически! Начислено ${UNIT_EMOJI} ${nUnits(pack.credits)}.`
+        claim.credits != null
+          ? `✅ Оплата подтверждена автоматически! Начислено ${UNIT_EMOJI} ${nUnits(claim.credits)}.`
           : `✅ Оплата подтверждена — ${UNIT_EMOJI} патроны начислены.`,
       );
-      return;
-    }
-    if (config.kaspiApiBase) {
-      // API is live but hasn't seen the payment yet → let the user retry shortly.
+    } else if (claim.kind === "pending") {
       await ctx.reply(
-        status === "failed"
+        claim.failed
           ? "❌ Оплата не найдена или отклонена. Проверьте платёж в Kaspi и попробуйте ещё раз."
           : "⏳ Пока не видим оплату. Если вы только что оплатили — подождите минуту и нажмите «✅ Я оплатил» снова.",
       );
-      return;
+    } else {
+      // No merchant API configured → interim admin approval (admins were pinged).
+      await ctx.reply("Спасибо! Проверяем оплату — начислим патроны в ближайшее время ⏳");
     }
-    // No merchant API configured → interim admin approval.
-    await ctx.reply("Спасибо! Проверяем оплату — начислим патроны в ближайшее время ⏳");
-    const who = ctx.from ? `${ctx.from.first_name} (@${ctx.from.username ?? ctx.from.id})` : "?";
-    for (const adminId of config.adminIds)
-      await ctx.api
-        .sendMessage(adminId, `💸 Заявка №${orderId}: ${who} отметил оплату. Проверьте Kaspi → /order ${orderId} ok|no`)
-        .catch(() => {});
   });
 }
 
