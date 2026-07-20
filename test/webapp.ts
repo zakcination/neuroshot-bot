@@ -599,6 +599,42 @@ await step("POST /api/order: a per-pack fixed-amount link overrides the fallback
   assert.equal(d.amount, 1000); // combo = 1000 ₸
 });
 
+await step("POST /api/order/paid: in-app 'I paid' mirrors the bot; ownership enforced", async () => {
+  // Create a pending order as maker.
+  const o = await fetch(`${base}/api/order`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ pack: "start" }),
+  });
+  const { orderId } = (await o.json()) as { orderId: number };
+
+  // Bad order id → 400.
+  const bad = await fetch(`${base}/api/order/paid`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ orderId: 0 }),
+  });
+  assert.equal(bad.status, 400);
+
+  // A different user cannot confirm maker's order → 404 (no info leak, no grant).
+  const other = { id: 701, username: "mallory", first_name: "Mal" };
+  await apiMe(signInitData(other)); // onboard
+  const steal = await fetch(`${base}/api/order/paid`, {
+    method: "POST", headers: { Authorization: `tma ${signInitData(other)}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ orderId }),
+  });
+  assert.equal(steal.status, 404);
+
+  // Owner confirms: no merchant API wired in test → interim admin-approval path
+  // (same as the bot). The order stays pending until an admin runs /order N ok.
+  const paid = await fetch(`${base}/api/order/paid`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ orderId }),
+  });
+  assert.equal(paid.status, 200);
+  const pd = (await paid.json()) as { result: string; balance: number };
+  assert.equal(pd.result, "admin");
+  assert.ok(Number.isInteger(pd.balance));
+});
+
 await step("Kaspi callback: valid signature auto-approves the order and grants patrons exactly once", async () => {
   // A pending order to approve.
   const buyer = 99001;

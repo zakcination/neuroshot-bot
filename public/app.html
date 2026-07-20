@@ -1487,16 +1487,43 @@
       sheetBody.querySelectorAll("[data-pk]").forEach((b) => (b.onclick = () => buyPack(b.dataset.pk)));
     }
 
-    // Kaspi purchase: create a pending order, open the Kaspi pay link, and send
-    // the user to the bot to confirm ("Я оплатил"); an admin approves → credits
-    // appear on the next refresh. (Async by design — no in-app auto-resume.)
+    // Kaspi purchase — handled entirely IN the app (same flow as the bot): create
+    // a pending order, open the Kaspi pay link, then show an in-app «✅ Я оплатил»
+    // button. Tapping it hits /api/order/paid → server verifies with Kaspi and
+    // auto-credits, or pings an admin to approve — no need to switch to the bot.
     async function buyPack(packId) {
       const { status, data } = await api("/api/order", { method: "POST", body: JSON.stringify({ pack: packId }) });
-      if (status !== 200) { toast("Не удалось создать заявку — попробуйте в боте"); return; }
+      if (status !== 200) { toast("Не удалось создать заявку — попробуйте ещё раз"); return; }
       if (!data.available) { toast("💳 Оплата Kaspi скоро откроется 🙌"); return; }
       if (tg?.openLink) tg.openLink(data.link); else window.open(data.link, "_blank");
-      toast(`Оплатите ${data.amount.toLocaleString("ru-RU")} ₸ в Kaspi, затем нажмите «Я оплатил» в боте`);
-      openBot(BOT, "buy");
+      viewPaid(data);
+    }
+
+    // Post-order confirm screen: reopen the Kaspi link or confirm payment in-app.
+    function viewPaid(order) {
+      sheetBody.innerHTML = `
+        <h3>Оплата заказа №${order.orderId}</h3>
+        <div class="sub">Оплатите <b>${order.amount.toLocaleString("ru-RU")} ₸</b> в Kaspi (ссылка открыта), затем нажмите «✅ Я оплатил» — мы проверим платёж и начислим ${PATRON} патроны.</div>
+        <div class="stack" style="margin-top:14px">
+          <button class="btn primary" id="paidBtn">✅ Я оплатил</button>
+          <button class="btn ghost" id="reopenBtn">↗ Открыть оплату Kaspi снова</button>
+          <button class="btn ghost" id="backBtn">← К пакетам</button>
+        </div>`;
+      sheetBody.querySelector("#reopenBtn").onclick = () =>
+        tg?.openLink ? tg.openLink(order.link) : window.open(order.link, "_blank");
+      sheetBody.querySelector("#backBtn").onclick = () => viewPick();
+      const pb = sheetBody.querySelector("#paidBtn");
+      pb.onclick = async () => {
+        pb.disabled = true; pb.textContent = "Проверяем оплату…";
+        const { status, data } = await api("/api/order/paid", { method: "POST", body: JSON.stringify({ orderId: order.orderId }) });
+        pb.disabled = false; pb.textContent = "✅ Я оплатил";
+        if (status !== 200) { toast("Не получилось проверить — попробуйте ещё раз"); return; }
+        if (data.result === "granted") { haptic("success"); toast(`✅ Оплата подтверждена! +${data.credits ?? ""} ${PATRON}`); refreshMe(); viewPick(); }
+        else if (data.result === "already") { toast("✅ Уже подтверждено — патроны начислены"); refreshMe(); viewPick(); }
+        else if (data.result === "pending") { toast(data.failed ? "❌ Оплату не видим — проверьте платёж в Kaspi" : "⏳ Пока не видим оплату — подождите минуту и попробуйте снова"); }
+        else if (data.result === "admin") { toast("Спасибо! Проверяем оплату — начислим патроны в ближайшее время ⏳"); }
+        else { toast("Заявка не найдена — откройте пакеты заново"); }
+      };
     }
 
     // ————— "Ваш путь в NeuroShot" roadmap — shared by the initial render and
