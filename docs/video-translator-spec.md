@@ -115,7 +115,10 @@ Record the real per-minute price. **Output: GO / NO-GO + cost number.**
 One flow, both surfaces (bot + Mini App): **upload video → confirm (detected
 source lang + duration + price) → dub to Kazakh → deliver dubbed video.**
 - Audio dub + timing alignment; background music kept. **No lip-sync.**
-- Length cap (e.g. ≤ 2–3 min v1) to bound cost/latency.
+- **Length cap ≤ 60s (v1)**, plus a **15s "demo" mode** — a short, cheap first
+  try that (a) lets a user see the quality before paying full price, (b) is the
+  cheapest Phase-0 test-clip length, and (c) mirrors our free-first acquisition
+  pattern (a demo dub could be the hook, like the free scenario video).
 - Async job on our existing pending→ok/error model.
 - Per-minute pricing in патроны; charge on submit, refund on failure.
 - Consent attestation at upload + AI-generated disclosure on output.
@@ -129,7 +132,7 @@ tuning; component pipeline for per-segment control; subtitle export; editing/re-
 ## 6. Key decisions needed (from you, before/at Phase 1)
 
 1. **Target languages v1:** → Kazakh only? (recommended) or also RU/EN targets?
-2. **Length cap v1:** ≤ 2 min? ≤ 3 min? (bounds cost, latency, abuse). Recommend ≤ 2 min.
+2. **Length cap v1:** ✅ **DECIDED — ≤ 60s**, with a **15s demo** mode (cheap first try / Phase-0 test length).
 3. **Voice cloning of the original speaker:** allow (best result, higher ToS risk)
    vs. use a **stock Kazakh voice matched by gender** (safer, lower fidelity)?
    Recommend: clone **with an explicit consent attestation** (see §8).
@@ -181,7 +184,8 @@ tuning; component pipeline for per-segment control; subtitle export; editing/re-
   ≥3.5× margin basis (`CREDIT_COST_BASIS`), same as every model in `src/models.ts`.
 - **Charge on submit; refund on failure** — reuse the exactly-once compensation
   (`completeGeneration` CAS + reaper) so a failed dub always refunds, once.
-- Length cap enforces a predictable max cost per job.
+- The **60s cap** (15s demo) enforces a small, predictable max cost per job — a
+  60s dub is cheap enough that a demo/first-try can even be free or near-free.
 
 ---
 
@@ -252,8 +256,9 @@ New build required:
 ## 12. Definition of Done (Phase 1)
 
 - [ ] Phase 0 passed (documented GO + measured per-minute cost).
-- [ ] A user can, from **bot and Mini App**, upload a ≤ cap video and receive it
-      **dubbed into Kazakh** with the speaker's voice mapped and background music kept.
+- [ ] A user can, from **bot and Mini App**, upload a **≤ 60s** video (or pick the
+      **15s demo**) and receive it **dubbed into Kazakh** with the speaker's voice
+      mapped and background music kept.
 - [ ] Job is async: charged on submit, **refunded exactly once** on failure, delivered on success.
 - [ ] Detected source language + duration + price shown **before** charging.
 - [ ] Consent attestation captured; **AI-disclosure** on every output; ToS clause shipped.
@@ -271,8 +276,8 @@ New build required:
   language, duration, and exact patron price; no charge happens before confirm.
 - **AC3 — failure refund:** a forced provider failure leaves the user **fully
   refunded exactly once** (no double refund, no stranded charge) — asserted in e2e.
-- **AC4 — over-cap:** a video over the length cap (or wrong format) is rejected
-  **before** charging, with a clear message.
+- **AC4 — over-cap:** a video over **60s** (or wrong format) is rejected
+  **before** charging, with a clear message; a ≤15s clip can run in demo mode.
 - **AC5 — disclosure:** the delivered dub carries the AI-generated badge + metadata.
 - **AC6 — consent:** submitting without accepting the consent attestation is blocked.
 - **AC7 — multi-speaker (soft):** a 2-speaker clip produces distinct voices per
