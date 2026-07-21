@@ -23,11 +23,16 @@ process.env.WITHDRAW_MIN = "20"; // low so the withdrawal path is exercisable
 // COURSE_FLAGSHIP_CHANNEL_ID stays UNSET so the same run also exercises the
 // "purchase still succeeds with no channel configured" guarantee.
 process.env.COURSE_FAST_CHANNEL_ID = "-100123456789";
+process.env.ELEVENLABS_API_KEY = "test-eleven-key"; // enable the dubbing engine
+process.env.DUB_KAZAKH_ENABLED = "true"; // exercise the KK target too (gated in prod)
+process.env.DUB_MAX_SECONDS = "60";
+process.env.DUB_USD_PER_SEC = "0.02";
 
 const { fal } = await import("@fal-ai/client");
 const { createBot, fastStartLessonMessages, flagshipModuleMessages } = await import("../src/bot.js");
 const { drainRenders, inFlightRenders } = await import("../src/generate.js");
-const { funnel, query, getUser, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay, createPendingGeneration, completeGeneration, claimFreePhone, phoneClaimedFree, setUserPhone } = await import("../src/db.js");
+const { funnel, query, getUser, getOrCreateUser, addCredits, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay, createPendingGeneration, completeGeneration, claimFreePhone, phoneClaimedFree, setUserPhone } = await import("../src/db.js");
+const { startDubbing, dubCredits, availableDubTargets } = await import("../src/dubbing.js");
 const { buildDigest, checkAlerts, nudgeText, runReengagement, runReaper } = await import("../src/monitor.js");
 const { nUnits, nResults } = await import("../src/text.js");
 const { PRESETS, presetModel } = await import("../src/models.js");
@@ -1469,6 +1474,61 @@ await step("course purchase guarantee: buying course_flagship with NO channel co
   const dms = calls("sendMessage").filter((c) => c.payload.chat_id === gia.id);
   assert.match(dms.at(-2)!.payload.text as string, /Начислено/, "credits confirmation");
   assert.match(dms.at(-1)!.payload.text as string, /AI-контент под ключ.*куплен/, "fallback DM — never silent");
+});
+
+await step("dubbing engine: charge → dub job → deliver; failure refunds exactly once; guards", async () => {
+  const poll = async (id: number): Promise<{ status: string; output_url: string | null }> => {
+    for (let i = 0; i < 300; i++) {
+      const r = await query("SELECT status, output_url FROM generations WHERE id = $1", [id]);
+      if (r[0] && r[0].status !== "pending") return r[0] as { status: string; output_url: string | null };
+      await new Promise((res) => setTimeout(res, 5));
+    }
+    throw new Error(`dub gen ${id} still pending`);
+  };
+
+  const u = { id: 7201 };
+  await getOrCreateUser(u.id, "dubber", null, 0);
+  await addCredits(u.id, 100, "admin_grant", "test");
+
+  // Pricing: durationSec × $0.02/s ÷ $0.02 basis = durationSec credits here.
+  assert.equal(dubCredits(15), 15);
+  assert.equal(dubCredits(60), 60);
+  assert.equal(dubCredits(0), 1); // floor of 1
+  // KK flag is ON in this test env → all three targets offered.
+  assert.deepEqual(availableDubTargets().map((t) => t.id), ["kk", "ru", "en"]);
+
+  // Happy path: a mock runner returns a dubbed url; job completes 'ok', charged.
+  const ok = await startDubbing(u.id, "https://fal.test/in/a.mp4", "ru", 15, async () => ({
+    url: "https://dub.test/out-ru.mp4",
+    costUsd: 0.3,
+  }));
+  assert.ok(ok.ok && ok.credits === 15);
+  assert.equal(await credits(u.id), 85); // 100 − 15
+  const okGen = await poll((ok as { id: number }).id);
+  assert.equal(okGen.status, "ok");
+  assert.equal(okGen.output_url, "https://dub.test/out-ru.mp4");
+
+  // Failure path: runner throws → refunded EXACTLY once (net-zero for this job).
+  const before = await credits(u.id);
+  const fail = await startDubbing(u.id, "https://fal.test/in/b.mp4", "kk", 30, async () => {
+    throw new Error("provider boom");
+  });
+  assert.ok(fail.ok);
+  const failGen = await poll((fail as { id: number }).id);
+  assert.equal(failGen.status, "error");
+  assert.equal(await credits(u.id), before); // charged 30, refunded 30
+
+  // Guard: over the length cap is rejected BEFORE any charge.
+  const balBefore = await credits(u.id);
+  assert.deepEqual(await startDubbing(u.id, "x", "ru", 999), { ok: false, error: "too_long" });
+  assert.equal(await credits(u.id), balBefore); // untouched
+
+  // Guard: insufficient balance is rejected before charge.
+  const poor = { id: 7202 };
+  await getOrCreateUser(poor.id, "poor", null, 0);
+  await addCredits(poor.id, 5, "admin_grant", "test");
+  assert.deepEqual(await startDubbing(poor.id, "x", "en", 60), { ok: false, error: "insufficient" });
+  assert.equal(await credits(poor.id), 5); // not charged
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL || "embedded (pglite)"})`);
