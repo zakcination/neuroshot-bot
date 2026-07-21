@@ -59,9 +59,15 @@ and packaging it as one tap in a product people already use.
 | Educator / course-maker | Dub a lesson into Kazakh | EN / RU → KK |
 | Casual user | Watch a foreign clip I like, in Kazakh | any → KK |
 
-**v1 target direction:** **→ Kazakh** only (one target). Source auto-detected.
-Best quality expected for **EN/RU source** (well-supported ASR + translation);
-Kazakh-source and rarer languages are lower-confidence (flag, don't block).
+**v1 directions:** **any source → one of three targets: Russian, English, or
+Kazakh** (user picks). Source auto-detected.
+- **RU and EN targets are proven-quality today** (ElevenLabs Multilingual v2
+  supports both) — the feature can launch on these two with confidence.
+- **Kazakh is the differentiator and the only risky target** (TTS on v3-alpha
+  only) — it ships gated behind Phase 0. If KK isn't ready at launch, RU/EN still
+  make a complete product; KK follows.
+- Best results when source ≠ target and source is a well-supported language
+  (EN/RU); rarer sources are lower-confidence (flag, don't block).
 
 ---
 
@@ -105,15 +111,18 @@ and hits the same Kazakh TTS ceiling. It is the escape hatch, not the plan.
 
 ## 5. Phased scope
 
-### Phase 0 — Validation spike (BLOCKING, no product code)
-Manually dub 3–5 representative clips (EN→KK and RU→KK, 1 and ~2 speakers, ~30–90s)
-via the ElevenLabs Dubbing dashboard/API. Native-Kazakh listening test scoring:
-translation accuracy, TTS naturalness, **voice-clone fidelity into Kazakh**, timing.
-Record the real per-minute price. **Output: GO / NO-GO + cost number.**
+### Phase 0 — Kazakh validation spike (BLOCKING for the KK target only)
+RU/EN targets are proven (Multilingual v2) and do **not** need this gate. For
+**Kazakh**: manually dub 3–5 short clips (EN→KK and RU→KK, 1 and ~2 speakers,
+15–60s) via ElevenLabs. Native-Kazakh listening test scoring: translation
+accuracy, TTS naturalness, **voice-clone fidelity into Kazakh**, timing. Record
+the real per-minute price. **Output: GO / NO-GO on KK + cost number.** (Build can
+proceed on RU/EN in parallel; KK stays feature-flagged off until GO.)
 
 ### Phase 1 — MVP (the build, only if Phase 0 = GO)
-One flow, both surfaces (bot + Mini App): **upload video → confirm (detected
-source lang + duration + price) → dub to Kazakh → deliver dubbed video.**
+One flow, both surfaces (bot + Mini App): **upload video → pick target (RU / EN /
+KK) → confirm (detected source lang + duration + price) → dub → deliver dubbed
+video.** (RU/EN targets shippable immediately; KK enabled once Phase 0 passes.)
 - Audio dub + timing alignment; background music kept. **No lip-sync.**
 - **Length cap ≤ 60s (v1)**, plus a **15s "demo" mode** — a short, cheap first
   try that (a) lets a user see the quality before paying full price, (b) is the
@@ -131,7 +140,8 @@ tuning; component pipeline for per-segment control; subtitle export; editing/re-
 
 ## 6. Key decisions needed (from you, before/at Phase 1)
 
-1. **Target languages v1:** → Kazakh only? (recommended) or also RU/EN targets?
+1. **Target languages v1:** ✅ **DECIDED — any source → 3 targets: RU / EN / KK**
+   (user picks). RU/EN proven now; KK gated on Phase 0.
 2. **Length cap v1:** ✅ **DECIDED — ≤ 60s**, with a **15s demo** mode (cheap first try / Phase-0 test length).
 3. **Voice cloning of the original speaker:** allow (best result, higher ToS risk)
    vs. use a **stock Kazakh voice matched by gender** (safer, lower fidelity)?
@@ -148,8 +158,8 @@ tuning; component pipeline for per-segment control; subtitle export; editing/re-
 
 | # | Risk | Severity | Mitigation |
 |---|---|---|---|
-| R1 | **Kazakh TTS quality unproven; only on v3 (alpha).** Multilingual v2 (Dubbing's clone model) has no Kazakh. | **Critical** | Phase 0 gate. Azure/CAMB.AI fallback. |
-| R2 | Voice-clone fidelity may **degrade into Kazakh** (generic voice). | **Critical** | Phase 0 listening test. |
+| R1 | **Kazakh TTS quality unproven; only on v3 (alpha).** Multilingual v2 (Dubbing's clone model) has no Kazakh. **RU/EN targets are NOT affected** (v2 supports both). | **Critical — KK target only** | Phase 0 gate KK; ship RU/EN meanwhile. Azure/CAMB.AI fallback for KK. |
+| R2 | Voice-clone fidelity may **degrade into Kazakh** (generic voice). RU/EN unaffected. | **Critical — KK only** | Phase 0 listening test (KK). |
 | R3 | No DeepL Kazakh → MT via LLM/Google; names/idioms weak. | High | LLM length-aware translation + optional review. |
 | R4 | **Timing overrun** (Kazakh agglutinative, longer than EN) → audible speed-up or lost meaning. | High | Dubbing handles internally; cap length; accept minor stretch. |
 | R5 | **Voice-clone consent/ToS** — cloning arbitrary uploaded people = impersonation risk; ElevenLabs pro-clone is self-only. | **Critical (legal)** | Consent attestation + ToS clause + AI disclosure (§8). |
@@ -234,8 +244,8 @@ New build required:
 - T2.3 Probe duration + reject over the length cap + unsupported formats, with clear errors.
 
 **E3. Product flow (both surfaces)**
-- T3.1 Bot command/flow: send video → confirm screen (detected source lang, duration, price, consent) → dub → deliver.
-- T3.2 Mini App: a "Перевести видео на казахский" entry → upload → confirm → progress → result in gallery.
+- T3.1 Bot command/flow: send video → **pick target (RU/EN/KK)** → confirm screen (detected source lang, target, duration, price, consent) → dub → deliver.
+- T3.2 Mini App: a "Перевести видео" entry → upload → **target picker (RU/EN/KK)** → confirm → progress → result in gallery. (KK option hidden/disabled until Phase 0 GO.)
 - T3.3 Progress/latency UX (job is minutes): pending state, "готовим озвучку…", notify on done (reuse async delivery).
 
 **E4. Compliance**
@@ -257,8 +267,9 @@ New build required:
 
 - [ ] Phase 0 passed (documented GO + measured per-minute cost).
 - [ ] A user can, from **bot and Mini App**, upload a **≤ 60s** video (or pick the
-      **15s demo**) and receive it **dubbed into Kazakh** with the speaker's voice
-      mapped and background music kept.
+      **15s demo**), **choose a target (RU / EN / KK)**, and receive it **dubbed
+      into that language** with the speaker's voice mapped and background music kept.
+      (RU/EN required for DoD; KK gated on Phase 0 GO.)
 - [ ] Job is async: charged on submit, **refunded exactly once** on failure, delivered on success.
 - [ ] Detected source language + duration + price shown **before** charging.
 - [ ] Consent attestation captured; **AI-disclosure** on every output; ToS clause shipped.
@@ -269,9 +280,12 @@ New build required:
 
 ## 13. Acceptance criteria (behavioral)
 
-- **AC1 — happy path:** EN (or RU) 60–90s single-speaker video → Kazakh dub;
-  output is a playable video, Kazakh audio, timing plausibly aligned, background
-  music present, voice recognizably matched. Native reviewer rates ≥ "usable".
+- **AC1 — happy path:** a ≤60s single-speaker video dubbed into the **chosen
+  target (RU / EN / KK)**; output is a playable video, target-language audio,
+  timing plausibly aligned, background music present, voice recognizably matched.
+  A native reviewer of that target rates ≥ "usable". (KK held to this bar via Phase 0.)
+- **AC1b — target selection:** the user picks one of RU / EN / KK before dubbing;
+  the request dubs into exactly that target.
 - **AC2 — pre-charge transparency:** the confirm screen shows detected source
   language, duration, and exact patron price; no charge happens before confirm.
 - **AC3 — failure refund:** a forced provider failure leaves the user **fully
