@@ -88,7 +88,8 @@ The Studio is one view (`viewStudio(ctx)`) rendered into the existing sheet. It 
 - Reuse `viewPhoto()` wholesale: **📷 С устройства** (file → `downscale` → data-URL → `/api/upload`) and **🖼 Из моих работ** (`myImages()` → `generation_id`).
 - The block is **input-aware**: it knows if the current mode+model *needs* an image (video always; image-edit models yes; text→image no) and shows the right prompt ("нужно фото" vs "фото по желанию").
 - End-frame (video, for `endFrame` models) is a secondary input revealed by ⑥ when relevant (as today, `app.html:1099-1104`).
-- v1 stays **single source image + optional end-frame** (today's shape). Multi-reference is a future note (§9).
+- v1 stays **single source image + optional end-frame** (today's shape). **Multi-image input** (all edit models accept an `image_urls` *list* — compositing; Seedream up to 15) is a grounded, low-cost fast-follow — our `input()` already emits the list form. See `docs/cinema-studio-model-params.md` §6a.
+- **Audio / video *input*** (lip-sync, talking-avatar, video-to-video, upscale) exist on fal but are **new feature tracks, not Studio v1** — and the video-in→video-out translation case is already covered by the dubbing feature (ElevenLabs). Params doc §6a.
 
 ### ④ Mode chip selector — 🖼 Фото / 🎬 Видео (retro-iOS segmented)
 - A two-segment control. Switching mode re-filters ⑤ and ⑥.
