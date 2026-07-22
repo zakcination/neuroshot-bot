@@ -118,6 +118,24 @@ The Studio is one view (`viewStudio(ctx)`) rendered into the existing sheet. It 
 
 ---
 
+## 4.1 Persistent in-progress generations (reload-safe status)
+
+**Problem.** The "generating…" state lives only in the browser's in-memory `jobs` map (`app.html:868,1128,1151`). A page reload (or reopening the Mini App) empties it, so an in-flight render **vanishes from the UI** even though it's still running server-side — the user can't tell if it's working, done, or failed. This is a top confusion source.
+
+**Grounding — the durable part already exists.** Every render's lifecycle is persisted in the `generations` table `status` column (`pending → ok | error`), written by the detached server tail and backstopped by the stale-generation reaper (`GEN_STALE_MINUTES`). `recentGenerations(userId, 30)` (`db.ts:1270`) returns **all** statuses, and `/api/me` already ships those 30 rows to the client (`webapp.ts:322`). **No fal webhook is needed** — the DB is the source of truth; the client simply ignores the pending rows today. `galleryPage` (the paginated «Мои работы») is intentionally ok-only (`db.ts:1284`) so page numbers stay stable, so pending must be surfaced *alongside* it, not inside it.
+
+**Design.**
+1. **Resume polling on load.** After `load()`, scan `ME.generations` for `status === 'pending'` and re-register each via `startJob(id, isVideo)` so the poll loop + jobs pill come back exactly as if the page never reloaded. (Pure client change; reuses `pollJob`.)
+2. **Show pending in the gallery.** A small **"⏳ Генерируется…"** strip pinned above the finished «Мои работы» grid, fed from `ME.generations` (the pending subset), each card showing the model label + a spinner. When a poll transitions an item to `ok`, it moves into the grid; the strip auto-hides when empty. No pagination churn (the strip is separate from `galleryPage`).
+3. **Surface recent failures, briefly.** A just-failed render renders once as **"⚠️ Не получилось · патроны возвращены"** (dismissible), so "it failed and you were refunded" is explicit rather than a silent disappearance. (Refund already happens via the pending→error CAS.)
+4. **Timeout ≠ lost.** The client poll's 6-min timeout only stops *this tab's* polling; the DB still resolves the row, so it appears correctly on the next load. Nothing can hang forever (reaper guarantees terminal state + refund).
+
+**Optional push (v2, the real "webhook").** When a **web-initiated** generation completes, also send the user a Telegram message ("✅ Готово — открыть") — mirroring how the bot path already delivers to chat — so they're notified even with the Mini App closed. Polling-on-resume covers the reload case without it; this is an additive nicety, gated behind a per-user notify toggle to avoid noise.
+
+**Backend delta:** essentially none for the reload fix (data already flows). The optional push adds a `bot.api.sendMessage` on web-render completion in the detached tail (`generate.ts` web branch), behind a setting.
+
+---
+
 ## 5. Home → Studio (the marketing→conversion contract)
 
 The home page keeps every current rail (`Что создаём`, `Сценарии`, `🆕 Новые модели`, roadmap). We change only the **deep-link target**: instead of routing to a fragmented sub-view, each entry calls **`openStudio(ctx)`** with a context object that pre-fills the composer.
@@ -214,7 +232,8 @@ Each phase = its own green `typecheck / lint / check:patron / test:e2e / test:we
 6. **Prompt Enhancer** charges per D2, shows before/after, loops, and never charges on provider failure.
 7. **Total** always equals the server's `priceFor`; 402 handled; refunds still exactly-once.
 8. Home theme + preset gallery **visibly unchanged**.
-9. All CI gates green; `viewPick` and orphaned composer code removed.
+9. **In-progress generations survive reload** — a pending render re-appears as "⏳ Генерируется…" and resumes to completion; a failure shows the refunded state (spec §4.1).
+10. All CI gates green; `viewPick` and orphaned composer code removed.
 
 ---
 
@@ -227,3 +246,4 @@ Each phase = its own green `typecheck / lint / check:patron / test:e2e / test:we
 - **AC6** The catalog exposes 7 image + 7 video models with valid capability blocks; `test:webapp` iterates and asserts each renders a valid param set and a positive price.
 - **AC7** The preset gallery content and app theme are byte-identical to pre-change (diff shows no CSS/preset-copy edits).
 - **AC8** `viewPick` is gone; a grep for the old tab-strip generation menu returns nothing.
+- **AC9** After starting a render and reloading the page, the pending render re-appears as "⏳ Генерируется…" and completes live (poll resumes from `/api/me` pending rows, not in-memory state); a failed render shows "патроны возвращены" with the balance already refunded.

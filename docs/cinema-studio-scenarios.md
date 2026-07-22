@@ -77,6 +77,12 @@ Legend: 🔫 = patron · block refs ①–⑦ = spec §4 · "server" = `/api/*` 
 ### E8 — Video source rejected
 - If a user selects a **video** from "мои работы" as an image source, the server rejects it (`webapp.ts:495`); the picker also filters videos out client-side (`myImages()` is non-video only). Belt-and-suspenders.
 
+### E13 — Reload / reopen during a generation (persistent in-progress) — spec §4.1
+- Айгуль starts a 10s video, then accidentally reloads (or Telegram evicts the web view). On reload, `load()` reads `ME.generations`, finds the row `status:"pending"`, and **auto-resumes polling** — the jobs pill and a **"⏳ Генерируется…"** card reappear at the top of «Мои работы». When it finishes, the card becomes the finished video. She is never left wondering.
+- Variant: it *failed* while she was away → on load she sees **"⚠️ Не получилось · патроны возвращены"** once (dismissible), and her balance already reflects the refund. No silent disappearance.
+- Variant: she closes the app entirely → next open, the finished render is simply in the gallery (DB is truth). If the optional Telegram push (v2) is on, she also got "✅ Готово" in chat.
+- **Asserts:** pending rows from `/api/me` re-hydrate poll jobs; pending strip renders and clears; failed row shows the refunded state; no dependence on in-memory `jobs` surviving reload.
+
 ### E9 — Concurrency: generate while another job runs
 - Studio submit registers an independent poll job (`jobs` Map, `pollJob`); a second generation can be started (balance permitting) without blocking the first. Each has its own pending row / lifecycle. (Unchanged from today.)
 
