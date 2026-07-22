@@ -23,7 +23,7 @@ process.env.KASPI_API_SECRET = "test-kaspi-secret"; // enable the auto-approval 
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, createOrder, getOrCreateUser, getOrder, logEvent, logGeneration, query, spendCredits } = await import("../src/db.js");
+const { addCredits, completeGeneration, createOrder, createPendingGeneration, getOrCreateUser, getOrder, logEvent, logGeneration, query, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
@@ -436,6 +436,20 @@ await step("POST /api/generate: preset charges, renders async, poll reaches ok",
   const row = (await query("SELECT cost_usd, provider_request_id FROM generations WHERE id = $1", [d.id]))[0];
   assert.equal(Number(row.cost_usd), 0.04); // seedream_edit approxCostUsd
   assert.match(String(row.provider_request_id), /^req-\d+$/);
+});
+
+await step("/api/me exposes PENDING generations — the reload-safe resume contract", async () => {
+  // The Mini App re-hydrates in-flight renders after a reload from these rows
+  // (spec §4.1 resumePending) — if pending rows ever stop flowing through
+  // /api/me, in-progress work silently vanishes on refresh. Pin the contract.
+  const id = await createPendingGeneration(maker.id, "text_to_image", "resume contract", 2);
+  const gens = (await apiMe(signInitData(maker))).body.generations as unknown as Array<{ id: number; status: string; model: string }>;
+  const row = gens.find((x) => x.id === id);
+  assert.ok(row, "pending row missing from /api/me generations");
+  assert.equal(row!.status, "pending");
+  assert.equal(row!.model, "text_to_image");
+  // Clean up: terminal-state the row (no charge was made, so no refund needed).
+  assert.equal(await completeGeneration(id, "error"), true);
 });
 
 await step("marketplace-spec cards: preset pins 3:4 server-side; explicit user ratio wins", async () => {

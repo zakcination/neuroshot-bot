@@ -208,6 +208,12 @@
     .shot:hover { transform: scale(1.03); }
     .shot img, .shot video { width: 100%; height: 100%; object-fit: cover; display: block; }
     .shot .tag { position: absolute; left: 7px; bottom: 7px; font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; background: rgba(0,0,0,.55); backdrop-filter: blur(6px); padding: 3px 7px; border-radius: 999px; }
+    /* In-progress render card: expanding violet ripple rings over the surface. */
+    .shot.pending { pointer-events: none; background: var(--surface-2); }
+    .shot.pending .rip { position: absolute; inset: 0; margin: auto; width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--violet); opacity: 0; animation: ripple 2s ease-out infinite; }
+    .shot.pending .rip:nth-child(2) { animation-delay: .66s; border-color: #b44dff; }
+    .shot.pending .rip:nth-child(3) { animation-delay: 1.33s; border-color: var(--magenta); }
+    @keyframes ripple { 0% { transform: scale(.35); opacity: .9; } 100% { transform: scale(3.4); opacity: 0; } }
     .empty {
       grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 34px 18px;
       border: 1px dashed rgba(255,255,255,.14); border-radius: var(--radius-s); font-size: 13.5px; line-height: 1.6;
@@ -588,7 +594,8 @@
     .toast.on { opacity: 1; transform: translateX(-50%); }
 
     @media (prefers-reduced-motion: reduce) {
-      .sky i, .orb { animation: none; }
+      .sky i, .orb, .shot.pending .rip { animation: none; }
+      .shot.pending .rip { opacity: .5; transform: scale(1.6); } /* static ring instead of ripple */
       .reveal { opacity: 1; transform: none; transition: none; }
       .btn, .act, .shot, .pack, .sheet, .sheet-bg, .pcard { transition: none; }
     }
@@ -1136,6 +1143,32 @@
       jobs.set(id, job); updateJobsPill();
       viewedJob = id; viewProgress(isVideo, id);
       pollJob(job);
+      renderGallery(1); // pending ripple card appears in «Мои работы» immediately
+    }
+
+    /**
+     * Reload-safe in-progress renders (docs/cinema-studio-spec.md §4.1): the
+     * jobs map dies with the page, but the DB doesn't — /api/me ships the last
+     * 30 generations including status:'pending'. Re-register a silent poll job
+     * for each so the jobs pill + the gallery's ripple cards come back exactly
+     * as if the reload never happened. No sheet is opened (silent resume);
+     * completion lands via the normal pollJob path (toast + gallery refresh),
+     * a failure shows the refunded toast. The 6-min client window restarts —
+     * the server reaper still guarantees a terminal state for true zombies.
+     */
+    function resumePending() {
+      let added = 0;
+      for (const g of ME.generations || []) {
+        if (g.status === "pending" && !jobs.has(g.id)) {
+          const isVideo = (ME.catalog.videoModels || []).some((m) => m.key === g.model) || /^dub_/.test(g.model || "");
+          const job = { id: g.id, isVideo, campaignId: null, started: Date.now(), resumed: true };
+          jobs.set(g.id, job);
+          pollJob(job);
+          added++;
+        }
+      }
+      updateJobsPill();
+      return added;
     }
 
     function viewProgress(isVideo, jobId) {
@@ -1165,13 +1198,13 @@
           return;
         }
         if (status === 200 && data.status === "error") {
-          jobs.delete(job.id); updateJobsPill(); refreshMe(); haptic("error");
+          jobs.delete(job.id); updateJobsPill(); refreshMe(); renderGallery(1); haptic("error");
           toast(`Не получилось — ${PATRON} патроны возвращены`);
           if (viewedJob === job.id && sheet.classList.contains("on")) viewPick();
           return;
         }
         if (Date.now() - job.started > 6 * 60 * 1000) {
-          jobs.delete(job.id); updateJobsPill();
+          jobs.delete(job.id); updateJobsPill(); renderGallery(1);
           toast("Долгий рендер — результат появится в «Мои работы»");
           if (viewedJob === job.id && sheet.classList.contains("on")) closeSheet();
           return;
@@ -1720,6 +1753,9 @@
       const { status, data } = await api("/api/me");
       if (status !== 200) return;
       ME = data;
+      // Pick up renders started elsewhere (e.g. in the bot chat) while the app
+      // is open — they join the jobs pill + ripple cards like local ones.
+      if (resumePending() > 0) renderGallery(1);
       setBalance(data.dashboard.credits);
       const s = document.getElementById("statsRow");
       if (s) s.innerHTML = statsHtml(data.dashboard);
@@ -1799,7 +1835,17 @@
       } catch (e) { /* keep the last rendered page on a transient error */ }
       GAL_PAGE = cur;
       g.innerHTML = "";
-      if (!items.length) {
+      // In-flight renders lead the grid (page 1) as ripple cards — reload-safe
+      // (jobs is re-hydrated from /api/me pending rows), so a render in progress
+      // is never invisible: no more "did it break?" after a page refresh.
+      if (cur === 1) {
+        for (const job of [...jobs.values()].reverse()) {
+          g.appendChild($(`<div class="shot pending" role="status" aria-label="Генерируется">
+            <span class="rip"></span><span class="rip"></span><span class="rip"></span>
+            <span class="tag">⏳ ${job.isVideo ? "видео" : "создаётся"}</span></div>`));
+        }
+      }
+      if (!items.length && !(cur === 1 && jobs.size)) {
         g.appendChild($(`<div class="empty">Пока пусто.<br>Создайте первую работу — она появится здесь ✨</div>`));
       }
       for (const item of items) {
@@ -2039,6 +2085,7 @@
         </nav>
       </div>`));
 
+      resumePending(); // re-hydrate in-flight renders BEFORE the first gallery paint
       renderGallery();
       renderNews();
 
