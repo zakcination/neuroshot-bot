@@ -202,6 +202,7 @@ function studioModelsOf(mode: "image" | "video"): Array<Record<string, unknown>>
             resolutions: (m.image.resolutions ?? []).map((t) => ({
               id: t.id,
               label: t.label,
+              mult: t.mult, // exact multiplier — client mirrors priceFor with it
               credits: priceFor(m, { resolution: t.id }),
             })),
           }
@@ -214,6 +215,7 @@ function studioModelsOf(mode: "image" | "video"): Array<Record<string, unknown>>
             resolutions: (m.video.resolutions ?? []).map((t) => ({
               id: t.id,
               label: t.label,
+              mult: t.mult, // exact multiplier — client mirrors priceFor with it
               credits: priceFor(m, { resolution: t.id }),
             })),
           }
@@ -262,6 +264,9 @@ function catalogPayload(usage: Record<string, number>): Record<string, unknown> 
       label: p.label,
       category: p.category,
       credits: presetModel(p).credits,
+      // The preset's default engine — the Studio preselects/highlights this row
+      // in its model picker (visible + swappable, spec G2). Price already follows it.
+      model: presetModel(p).key,
       previewUrl: `/img/card-preset-${p.id}.jpg`,
       usageCount: usage[p.id] ?? 0,
       trending: trending.has(p.id),
@@ -560,7 +565,22 @@ export async function generateResponse(
   if (source === "preset") {
     const p = PRESETS.find((x) => x.id === body?.id);
     if (!p || !imageUrl) return { status: 400, body: { error: "bad_request" } };
-    [model, prompt, crafted] = [presetModel(p), p.prompt, true];
+    // Studio ⑤: the preset's default model is preselected but SWAPPABLE — an
+    // optional override must be an image-capable registry model (a video model
+    // can't render a styled photo). Price follows the resolved model (priceFor).
+    let m = presetModel(p);
+    if (typeof body?.model === "string" && body.model) {
+      const o = modelByKey(body.model);
+      if (!o || o.kind === "image_to_video") return { status: 400, body: { error: "bad_request" } };
+      m = o;
+    }
+    // Studio ① (D1): a personalization layer on top of the curated prompt —
+    // same sanitized free-words treatment as the campaign story builder. The
+    // curated prompt itself still never leaves the server.
+    let composed = p.prompt;
+    const custom = sanitizePrompt(typeof body?.custom === "string" ? body.custom : "").slice(0, 200);
+    if (custom) composed += ` Extra details from the user: ${custom}.`;
+    [model, prompt, crafted] = [m, composed, true];
     presetAspect = p.aspect;
     // Log WHICH preset was used — the web studio was the one tap surface that
     // didn't (bot logs preset: taps, the campaign branch below logs camp:preset),

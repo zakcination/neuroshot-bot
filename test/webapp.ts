@@ -494,6 +494,39 @@ await step("Studio catalog: FULL registry by mode, patron-only prices; every mod
   assert.equal(bogus.status, 400);
 });
 
+await step("Studio preset: personalization is sanitized+appended; model override swaps engine; video override rejected", async () => {
+  await addCredits(maker.id, 10, "admin_grant", "test"); // 2 + 8 spent below (net-zero)
+  // Personalization (D1): sanitized free words ride on the curated prompt.
+  const pers = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "preset", id: "headshot", image_url: "https://fal.test/storage/u-1.jpg", custom: "  в синем  пиджаке " }),
+  });
+  assert.equal(pers.status, 200);
+  await pollGen(((await pers.json()) as { id: number }).id);
+  assert.match(falCalls.at(-1)!.input.prompt as string, /corporate headshot/);
+  assert.match(falCalls.at(-1)!.input.prompt as string, /Extra details from the user: в синем пиджаке/);
+  // Model override (G2): the preset renders on the swapped engine at ITS price;
+  // the catalog exposes each preset's default model key for the picker highlight.
+  const cat = (await apiMe(signInitData(maker))).body.catalog;
+  const hs = cat.presets.find((p: { id: string }) => p.id === "headshot") as unknown as { model: string };
+  assert.equal(hs.model, "seedream_edit");
+  const ovr = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "preset", id: "headshot", image_url: "https://fal.test/storage/u-1.jpg", model: "nbpro_edit" }),
+  });
+  assert.equal(ovr.status, 200);
+  const od = (await ovr.json()) as { id: number; credits: number };
+  assert.equal(od.credits, 8); // nbpro_edit price, not the preset default's 2
+  await pollGen(od.id);
+  assert.equal(falCalls.at(-1)!.endpoint, "fal-ai/nano-banana-pro/edit");
+  // A VIDEO model can't render a styled photo — override rejected, no charge.
+  const bad = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "preset", id: "headshot", image_url: "https://fal.test/storage/u-1.jpg", model: "kling3" }),
+  });
+  assert.equal(bad.status, 400);
+});
+
 await step("/api/me exposes PENDING generations — the reload-safe resume contract", async () => {
   // The Mini App re-hydrates in-flight renders after a reload from these rows
   // (spec §4.1 resumePending) — if pending rows ever stop flowing through
