@@ -10,9 +10,9 @@ Legend: 🔫 = patron · block refs ①–⑦ = spec §4 · "server" = `/api/*` 
 
 ### S1 — Айгуль, a parent: "child as princess" (preset → image)
 1. Home → "Сценарии" → taps **🎀 Принцесса**. `openStudio(ctx)` fires (spec §5).
-2. Studio opens **prefilled**: ① block = "🎀 Принцесса" (editable), ④ mode = **🖼 Фото**, ⑤ **Сцена по фото (2 🔫 · ≈100 ₸)** preselected and highlighted, ③ says **"нужно фото"**.
+2. Studio opens **prefilled**: ① block = "🎀 Принцесса" (editable), ④ mode = **🖼 Фото**, ⑤ **Сцена по фото (2 🔫)** preselected and highlighted, ③ says **"нужно фото"**.
 3. She taps ③ **📷 С устройства**, picks her daughter's photo → downscaled → uploaded → thumbnail shows.
-4. ⑦ now reads **"Создать за 2 🔫 (≈100 ₸)"**, balance 4 🔫. She taps it.
+4. ⑦ now reads **"Создать за 2 🔫"**, balance 4 🔫. She taps it.
 5. `POST /api/generate {source:"preset", id, image_url, opts}` → pending id → poll → `viewResult` with the princess image. Balance 2 🔫.
 6. She sees ④ still there and taps **🎬 Видео** → "оживить" → picks **⚡ Видео — эконом (10 🔫)** → but balance is 2 → CTA becomes **"Пополнить"** (→ S9).
 
@@ -21,16 +21,16 @@ Legend: 🔫 = patron · block refs ①–⑦ = spec §4 · "server" = `/api/*` 
 ### S2 — Данияр, a creator: text→image with the enhancer (free-text → image)
 1. Home → "Из текста". Studio opens: ① empty `<textarea>`, ④ 🖼, ⑤ **✨ Картинка из текста (2 🔫)** primary (no photo).
 2. Types a rough prompt: *"кот в очках, неон"*.
-3. Taps ② **✨ Улучшить промпт** → −0.5 🔫 → before/after sheet shows an upgraded, directable prompt (lighting, lens, mood). Taps **Применить**.
+3. Taps ② **✨ Улучшить промпт** → first enhance of this generation is FREE (further ones 1 🔫, D2) → before/after sheet shows an upgraded, directable prompt (lighting, lens, mood). Taps **Применить**.
 4. Wants more punch → picks ⑤ **🎨 Картинка — детально (2K) — 8 🔫**, then ⑥ sets aspect **9:16** and quality **4K** → ⑦ live-updates to the multiplied price (`priceFor` with `resolution` mult).
-5. Generates. Result in ⑦-flow; balance reflects 0.5 (enhance) + render.
+5. Generates. Result in ⑦-flow; balance reflects the render (first enhance was free).
 
 *Covers: free-text prompt, enhancer charge + apply, model swap changes params, resolution multiplier pricing.*
 
 ### S3 — Мадина, a marketplace seller: product shot (preset "product" → edit model)
 1. Home → "Что создаём" → **🛍 Товар** → taps **product_hero**. Studio prefilled: ① product preset, ④ 🖼, ⑤ preset's pinned edit model preselected (e.g. `nbpro_edit`, 8 🔫), ③ "нужно фото".
 2. Uploads her product photo. Taps ✎ **Изменить** → personalization "белый фон, мягкий свет".
-3. ⑥ aspect **1:1** (marketplace). ⑦ "Создать за 8 🔫 (≈400 ₸)". Generates.
+3. ⑥ aspect **1:1** (marketplace). ⑦ "Создать за 8 🔫". Generates.
 
 *Covers: product category, edit-model default, personalization layer, aspect for a use-case.*
 
@@ -89,8 +89,8 @@ Legend: 🔫 = patron · block refs ①–⑦ = spec §4 · "server" = `/api/*` 
 ### E10 — Balance changes mid-session
 - ⑦ recomputes affordability against the **live** `ME.balance` after any charge (enhance or a completed sibling job). A user who just spent their last patrons on an enhance sees ⑦ flip to "Пополнить" before generate.
 
-### E11 — 0.5 🔫 accounting (D2-B, if chosen)
-- With the "1 🔫 = 2 enhances" counter: first enhance decrements a half-credit counter; the ledger shows a whole-🔫 debit only on the 2nd enhance. UI copy stays "≈0.5 🔫" and the running balance is consistent with the counter. Test the odd/even boundary.
+### E11 — Enhancer accounting (D2 = first free, then 1 🔫)
+- The FIRST enhance of each generation is free (a per-generation flag, no charge, no ledger row); every further enhance is a normal 1 🔫 `spendCredits`. Test: first tap free → second tap charges 1 → a new generation resets the free flag → provider failure never consumes the free flag nor charges.
 
 ### E12 — Theme/gallery untouched (regression guard)
 - A visual/diff check that home CSS, preset copy, and preset art references are unchanged (DoD #8 / AC7). Any diff to `PRESETS` copy or theme tokens fails review.

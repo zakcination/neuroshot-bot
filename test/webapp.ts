@@ -438,26 +438,24 @@ await step("POST /api/generate: preset charges, renders async, poll reaches ok",
   assert.match(String(row.provider_request_id), /^req-\d+$/);
 });
 
-await step("Studio catalog: FULL registry by mode with capabilities + honest ≈₸; every model generable", async () => {
+await step("Studio catalog: FULL registry by mode, patron-only prices; every model generable", async () => {
   const cat = (await apiMe(signInitData(maker))).body.catalog as unknown as {
     studio: {
-      approxKztPerCredit: number;
-      image: Array<{ key: string; kind: string; credits: number; approxKzt: number; needsImage: boolean; image: unknown; video: unknown }>;
-      video: Array<{ key: string; kind: string; credits: number; approxKzt: number; needsImage: boolean; video: { durations: Array<{ seconds: number; credits: number }> } | null }>;
+      image: Array<{ key: string; kind: string; credits: number; needsImage: boolean; image: unknown; video: unknown }>;
+      video: Array<{ key: string; kind: string; credits: number; needsImage: boolean; video: { durations: Array<{ seconds: number; credits: number }> } | null }>;
     };
   };
   const s = cat.studio;
-  // The ₸ hint derives from the PACK ladder (D4), never the 480 ₸/$ margin rate:
-  // popular = 11000₸/200🔫 = 55 ₸ per patron.
-  assert.equal(s.approxKztPerCredit, 55);
   // Full registry: 9 image (edit + t2i) and 5 video models — the display pickers
   // hide some of these; the Studio never does (spec G5 "ALL models").
   assert.equal(s.image.length, 9);
   assert.equal(s.video.length, 5);
   for (const m of [...s.image, ...s.video]) {
     assert.ok(m.credits >= 1, `${m.key} zero price`);
-    assert.equal(m.approxKzt, m.credits * s.approxKztPerCredit, `${m.key} kzt hint drift`);
     assert.equal(m.needsImage, m.kind !== "text_to_image", `${m.key} needsImage wrong`);
+    // Patrons are the ONLY price language for generations (D4-revised): no ₸
+    // conversion fields may ride on a studio model entry.
+    assert.ok(!("approxKzt" in m), `${m.key} carries a ₸ estimate — patron-only pricing`);
   }
   // Cheapest-first ladder, and previously picker-hidden models are present.
   assert.ok(s.image.some((m) => m.key === "seedream_edit") && s.image.some((m) => m.key === "nb2_edit"), "picker-hidden edit models missing");

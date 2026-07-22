@@ -176,26 +176,14 @@ export function authResponse(headers: Headers): { status: number; body: Record<s
  * They're surfaced only via the bot's dedicated /course command.
  */
 /**
- * ₸ per patron for the Studio's "≈ M ₸" price hints — the POPULAR pack's real
- * per-patron rate (what most buyers actually pay), rounded. Decision D4: price
- * hints always derive from the pack ladder, never from the 480 ₸/$ margin rate
- * (that one exists only for the CEO digest). Falls back to the cheapest
- * non-offer pack if "popular" is ever renamed.
- */
-const STUDIO_KZT_PER_CREDIT = Math.round(
-  (() => {
-    const p = PACKS.find((x) => x.id === "popular") ?? PACKS.filter((x) => !x.offer && !x.course)[0];
-    return p ? p.kzt / p.credits : 0;
-  })(),
-);
-
-/**
  * One Studio catalog entry per registry model of the given mode — the full
  * curated registry (never the display-picker subsets), with everything the
  * composer needs to render a model row + its parameter block: capabilities
  * (only what the model declares — spec §4 ⑥), the default-settings patron
- * price, an ≈₸ hint at the pack rate, and whether a source image is required
- * (image_edit / image_to_video) vs optional-none (text_to_image).
+ * price, and whether a source image is required (image_edit / image_to_video)
+ * vs optional-none (text_to_image). ALL generation prices are in PATRONS only
+ * (decision D4-revised): the patron is the app's single price language; real ₸
+ * appears solely on pack purchase prices, where actual money changes hands.
  */
 function studioModelsOf(mode: "image" | "video"): Array<Record<string, unknown>> {
   const kinds = mode === "video" ? ["image_to_video"] : ["image_edit", "text_to_image"];
@@ -207,7 +195,6 @@ function studioModelsOf(mode: "image" | "video"): Array<Record<string, unknown>>
       label: m.label,
       kind: m.kind,
       credits: m.credits,
-      approxKzt: m.credits * STUDIO_KZT_PER_CREDIT,
       needsImage: m.kind !== "text_to_image",
       image: m.image
         ? {
@@ -314,12 +301,11 @@ function catalogPayload(usage: Record<string, number>): Record<string, unknown> 
     // Cinema Studio catalog (docs/cinema-studio-spec.md §4 ⑤): the FULL curated
     // registry grouped by mode — unlike the imageModels/videoModels pickers
     // below, which are display-curated subsets for the legacy tabs. Every model
-    // carries its capability block, patron price, and an honest ≈₸ figure at
-    // the pack rate (the price patrons are actually bought at — never the
-    // digest's 480 ₸/$ margin rate; decision D4). needsImage drives the
-    // adaptive input gating in the composer (D6).
+    // carries its capability block and its PATRON price — patrons are the app's
+    // single price language for generations (decision D4-revised: no ₸
+    // conversions on estimates; real ₸ only on pack purchases). needsImage
+    // drives the adaptive input gating in the composer (D6).
     studio: {
-      approxKztPerCredit: STUDIO_KZT_PER_CREDIT,
       image: studioModelsOf("image"),
       video: studioModelsOf("video"),
     },

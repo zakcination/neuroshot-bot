@@ -20,7 +20,7 @@ We replace it with **one page — the Studio** — a single, prefilled, top-to-b
   │  ④ [ 🖼 Фото  |  🎬 Видео ]  ← mode chips  │
   │  ⑤ Model picker   (ALL models · price ea) │
   │  ⑥ Parameters   (ratio/res/duration/count)│
-  │  ⑦ Создать за N 🔫 (≈ M ₸)   ← total+CTA  │
+  │  ⑦ Создать за N 🔫       ← total + CTA    │
   └─────────────────────────────────────────┘
 ```
 
@@ -37,7 +37,7 @@ The **home page stays a marketing surface** (presets, scenarios, gallery, news).
 - **G2 — Model is visible and swappable everywhere,** with transparent price on every option. No more silent model selection.
 - **G3 — Preset prompt as a "plugged-in" editable block** — swap the preset, or personalize it, without leaving the page.
 - **G4 — Mode = a retro-iOS segmented chip** (🖼 Фото / 🎬 Видео) that re-filters the model list.
-- **G5 — All models per mode,** each with inline approximate price (🔫 + ≈₸).
+- **G5 — All models per mode,** each with its inline price **in patrons (🔫) — the app's single price language** (D4-revised: no ₸ on estimates).
 - **G6 — Prompt Enhancer loop** — one tap, **0.5 🔫**, upgrades the prompt; before/after; loopable.
 - **G7 — Marketing home → prefilled Studio.** Every home entry point deep-links into the Studio with context.
 - **G8 — Zero economic regression.** Same charge-once / refund-exactly-once lifecycle; server stays the pricing authority.
@@ -100,7 +100,7 @@ The Studio is one view (`viewStudio(ctx)`) rendered into the existing sheet. It 
 - Iterate the **full registry by kind**, not the curated pickers:
   - **🖼 Фото mode:** `kind ∈ {text_to_image, image_edit}` → 7 models.
   - **🎬 Видео mode:** `kind === image_to_video` → 7 models.
-- Each row = **friendly label · one-line benefit · inline price**: `🎨 Картинка — быстро · 4 🔫 · ≈200 ₸`. Price from `priceFor(model)` at default opts; ≈₸ from the **pack rate** (~50 ₸/🔫), *not* the 480 ₸/$ margin rate (**Decision D4**).
+- Each row = **friendly label · one-line benefit · inline price in patrons**: `🎨 Картинка — быстро · 4 🔫`. Price from `priceFor(model)` at default opts — **patrons only** (Decision D4 = B; no ₸ conversions).
 - **Adaptive to inputs** (resolves today's "hidden edit models" mess): with a photo attached, edit models (`image_edit`) are primary and `text_to_image` is shown as "создаст с нуля (без фото)"; with no photo, `text_to_image` is primary and edit models show "нужно фото". Everything is *visible* (your "ALL models" requirement) but incompatible ones are clearly gated, not silently dropped → **Decision D6** on exact treatment (disabled vs "показать все" reveal).
 - **Preset default preselected & visible:** the preset's resolved model (`presetModel(p)`) is the initial selection — so preset flows still "just work" — but now it's a highlighted, swappable row with its price shown. This is the heart of G2.
 
@@ -116,7 +116,7 @@ The Studio is one view (`viewStudio(ctx)`) rendered into the existing sheet. It 
 - **Depends on the registry drift-fix** (add `count` + reconcile enums to fal's live schemas) — tracked as its own build task; see the params doc §6.
 
 ### ⑦ Transparent total + Generate
-- Sticky CTA: **"Создать за N 🔫 (≈ M ₸)"**, live-updating from `priceFor(model, opts)`; shows current balance; if `need > balance`, the button becomes **"Пополнить"** (opens paywall — today's 402 → `viewPaywall`, `app.html:1538`).
+- Sticky CTA: **"Создать за N 🔫"**, live-updating from `priceFor(model, opts)`; shows current balance; if `need > balance`, the button becomes **"Пополнить"** (opens paywall — today's 402 → `viewPaywall`, `app.html:1538`).
 - If the enhancer was used, its 0.5 🔫 is shown as a separate already-charged line ("промпт улучшен: −0.5 🔫"), so the generate total stays the render price only.
 - Submit → same `run()` → `/api/generate` → pending id → poll → `viewResult`.
 
@@ -159,7 +159,7 @@ Result: the home stays a pure **conversion funnel**; the Studio is the single **
 ## 6. Backend / data changes (small, enumerated)
 
 1. **Widen the `/api/generate` `model` allow-list** (`webapp.ts:559-571`) from the curated pickers to the **full registry, validated by `kind` + input requirement + `normalizeOpts`.** Currently a user can't pick, e.g., `nb2_edit` or `seedream_edit` via the model path. Guard rules: text→image requires prompt; edit/video requires image; opts validated as today. *(This is the only backend change that gates the "ALL models" requirement.)*
-2. **Extend the catalog payload** (`catalogPayload`, `webapp.ts:200-222`; delivered by `/api/me`) to expose, per mode, the **full model list** with `{key, label, benefit, credits, approxKzt, kind, image?, video?}` so the client renders picker + params without hardcoding. Most fields exist; add `benefit` copy, `approxKzt`, and ensure capability blocks ride along.
+2. **Extend the catalog payload** (`catalogPayload`, `webapp.ts:200-222`; delivered by `/api/me`) to expose, per mode, the **full model list** with `{key, label, credits, kind, needsImage, image?, video?}` so the client renders picker + params without hardcoding — **patron prices only** (D4 = B, no ₸ fields). *(Shipped as `catalog.studio` in Phase 1a.)*
 3. **Prompt Enhancer endpoint** `POST /api/enhance` — auth, rate-limit, charge 0.5 🔫 (per D2), call the enhancer (per D3), return `{prompt, charged}`. Log `enhance` event for COGS/monitoring. On provider failure: **no charge** (refund/again-exactly-once, same discipline as generation).
 4. **(D2-dependent) fractional charge support** — either a numeric credit path or an enhance-counter micro-ledger. Scoped in the decision.
 5. **No schema change to `generations`** — enhancer is a pre-generation step, not a render row.
@@ -175,7 +175,7 @@ Everything else — `startWebGeneration`, `createPendingGeneration`, `completeGe
 | **D1** | Prompt block editability | **(A)** Curated prompt stays server-side; user edits a *personalization* layer + swaps preset (keeps trend-safe, secure). **(B)** Expose raw prompt text for full editing (client sends raw prompt → must re-sanitize; loses curation guarantee). | **A** — keeps the security invariant; personalization + swap already feels like "editing". |
 | **D2** | How to charge **0.5 🔫** | **(A)** Make the credit ledger fractional (numeric) — clean, enables future sub-credit ops, needs a migration + audit of integer assumptions. **(B)** Zero-migration: **1 🔫 = 2 enhances** via a per-user enhance counter. **(C)** First enhance free, then 1 🔫 each. | **B** for v1 (no migration, ships fast), revisit A if sub-credit ops proliferate. |
 | **D3** | Enhancer LLM provider | fal text model · OpenAI · Anthropic. COGS ~fractions of a ¢ either way (0.5 🔫 ≈ $0.01 basis → healthy margin). | Cheapest reliable text model already reachable from the stack; confirm on integration (same "confirm-on-integration" note style as Kaspi/ElevenLabs). |
-| **D4** | "≈₸" display basis | **(A)** Pack rate (~50 ₸/🔫), rounded — the honest retail number. **(B)** Patrons only, no ₸. | **A** — matches how packs are actually sold; `KZT_PER_USD=480` is margin-reporting only and must NOT be used here. |
+| **D4** | "≈₸" display basis | **(A)** Pack rate (~50 ₸/🔫), rounded. **(B)** Patrons only, no ₸. | **DECIDED = B (user, 2026-07-22): ALL generation price estimates are shown in PATRONS only.** No ₸ conversions on model rows, params, or totals — the patron is the app's single price language. Real ₸ appears solely on pack purchase prices (actual money). The earlier ≈₸ mentions elsewhere in this doc are superseded by this. |
 | **D5** | Video mode from a preset with no image yet | **(A)** Require attach/generate-image-first (explicit). **(B)** Auto two-step: render image then animate (two charges, one tap). | **A** for v1 (clear, one charge at a time); B is a nice v2 "one-tap film". |
 | **D6** | "ALL models" vs input compatibility | **(A)** Show compatible-first; incompatible collapsed under "показать все" with a requirement hint. **(B)** Show all always; incompatible visibly disabled. | **A** — satisfies "all models" while keeping the list scannable. |
 | **D7** | Bot path parity | Mirror the visible model picker in the Telegram-chat flow now, or Mini App only for v1. | Mini App only for v1; bot pass later. |
@@ -184,7 +184,7 @@ Everything else — `startWebGeneration`, `createPendingGeneration`, `completeGe
 - **D1 = A** — Personalize + swap. Curated prompt stays server-side; user edits an "extra details" layer and can swap the preset. Security invariant kept.
 - **D2 = "first free, then 1 🔫"** — First enhance of each generation is free; further enhances cost 1 🔫 each. No fractional ledger. (See block ②.)
 - **D5 = A** — Explicit "image first" for v1: flipping to 🎬 Видео without a source image asks the user to add a photo or generate the image first. One-tap film deferred to v2.
-- **D4 (default, confirm)** — "≈₸" shown from the pack rate (~50 ₸/🔫), rounded — never the 480 ₸/$ margin rate. Proceeding on this default unless overridden.
+- **D4 = B (user-decided 2026-07-22)** — **patron-only pricing on ALL generation estimates**; no ₸ conversions anywhere in the composer. Real ₸ only on pack purchases.
 - **D6 → reframed as the fal-platform question (§7.2).** The UI-treatment default (compatible-first + reveal) stands **unless overridden**; the substantive ask was catalog *breadth/accuracy*, addressed next.
 
 ### 7.2 fal platform integration — the "all models" ask, properly scoped
@@ -214,7 +214,7 @@ You asked to **add a fal MCP for direct access to the full fal platform** (searc
 - **Phase 0 — Docs (this).** This spec + `cinema-studio-scenarios.md`. Sign-off on §7 decisions. *(No code.)*
 - **Phase 1 — Unified Studio composer (no enhancer).** New `viewStudio(ctx)` + `openStudio` deep-links; mode chip; full-registry model picker (D6); params from capability blocks; live total; wire to existing `/api/generate` with the widened allow-list (§6.1) + catalog extension (§6.2). Delete/retire `viewPick` and fold the standalone composers in. **Testable now:** `npm run test:webapp` asserts the catalog exposes all models per kind + valid opts; add composer-state assertions. No new economics.
 - **Phase 2 — Prompt Enhancer loop.** `/api/enhance` + charge mechanism (D2) + provider (D3) + before/after UI + loop. e2e test: charge path, provider-failure no-charge, loop idempotency.
-- **Phase 3 — Polish & unification.** ≈₸ everywhere, animate-via-mode-switch (D5 v2 if chosen), optional bot parity (D7), model-compare affordance.
+- **Phase 3 — Polish & unification.** animate-via-mode-switch (D5 v2 if chosen), optional bot parity (D7), model-compare affordance.
 
 Each phase = its own green `typecheck / lint / check:patron / test:e2e / test:webapp` and its own PR.
 
@@ -231,7 +231,7 @@ Each phase = its own green `typecheck / lint / check:patron / test:e2e / test:we
 
 ## 10. Definition of Done (feature-complete, all phases)
 1. Every home generation entry lands in **one** Studio view, prefilled per §5.
-2. On every path the **selected model is visible, swappable, and priced inline** (🔫 + ≈₸).
+2. On every path the **selected model is visible, swappable, and priced inline in patrons (🔫)**.
 3. The **prompt block is editable/swappable** without leaving the Studio (per D1).
 4. **Mode chip** switches image↔video and re-filters models/params correctly.
 5. **All models** of a mode are reachable (per D6); params render only where supported.
