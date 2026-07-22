@@ -19,7 +19,7 @@ We replace it with **one page — the Studio** — a single, prefilled, top-to-b
   │  ③ Inputs         (device / my gallery)   │
   │  ④ [ 🖼 Фото  |  🎬 Видео ]  ← mode chips  │
   │  ⑤ Model picker   (ALL models · price ea) │
-  │  ⑥ Parameters     (ratio/res/duration…)   │
+  │  ⑥ Parameters   (ratio/res/duration/count)│
   │  ⑦ Создать за N 🔫 (≈ M ₸)   ← total+CTA  │
   └─────────────────────────────────────────┘
 ```
@@ -104,12 +104,15 @@ The Studio is one view (`viewStudio(ctx)`) rendered into the existing sheet. It 
 - **Preset default preselected & visible:** the preset's resolved model (`presetModel(p)`) is the initial selection — so preset flows still "just work" — but now it's a highlighted, swappable row with its price shown. This is the heart of G2.
 
 ### ⑥ Parameters — per selected model, from its capability block
+> **Grounded against fal's live schemas — full matrix + drift table in `docs/cinema-studio-model-params.md`.** Render only the selectors each model actually supports:
 - Rendered entirely from `MODELS[key].image` / `.video`:
-  - **Aspect ratio** chips (`aspectRatios`, e.g. `IMAGE_ASPECTS`).
-  - **Quality/resolution** tiers when present (`NB_RES` 1K/2K/4K, `NBPRO_RES` 2K/4K, `SEEDANCE_RES` 720p/1080p) — each labeled with its price effect.
-  - **Duration** chips for video (`durations`, default first) with **live per-duration price** (`priceFor` mirror, exactly today's `priceOf`).
-  - **End-frame** upload for `endFrame` video models.
+  - **Aspect ratio** chips (`aspectRatios`, e.g. `IMAGE_ASPECTS`; Seedream uses named `image_size` presets).
+  - **Quality/resolution** tiers when present (`NB_RES`, `NBPRO_RES`, `SEEDANCE_RES`) — each labeled with its price effect. *(Note: fal grounding found drift — Seedance is 480p/720p not 720p/1080p; nano-banana-pro includes a 1K base tier. See params doc P1/P3.)*
+  - **Duration** chips for video (`durations`, default first) with **live per-duration price** (`priceFor` mirror, exactly today's `priceOf`). *(Seedance actually supports 4–15s/auto — params doc P2.)*
+  - **Count** (`num_images`) chips/stepper for **image** models (1–4 nano / 1–6 Seedream) — **new**; multiplies the price ×N. Not encoded in the registry today (params doc P5); hidden for video (single output).
+  - **End-frame** upload for `endFrame` video models (kling3, seedance*).
 - Unsupported params simply don't render (driven by the data). No model-specific `if`-ladder in the UI.
+- **Depends on the registry drift-fix** (add `count` + reconcile enums to fal's live schemas) — tracked as its own build task; see the params doc §6.
 
 ### ⑦ Transparent total + Generate
 - Sticky CTA: **"Создать за N 🔫 (≈ M ₸)"**, live-updating from `priceFor(model, opts)`; shows current balance; if `need > balance`, the button becomes **"Пополнить"** (opens paywall — today's 402 → `viewPaywall`, `app.html:1538`).
