@@ -175,6 +175,65 @@ export function authResponse(headers: Headers): { status: number; body: Record<s
  * patrons, and would confuse a plain credit top-up buyer in the Mini App.
  * They're surfaced only via the bot's dedicated /course command.
  */
+/**
+ * ₸ per patron for the Studio's "≈ M ₸" price hints — the POPULAR pack's real
+ * per-patron rate (what most buyers actually pay), rounded. Decision D4: price
+ * hints always derive from the pack ladder, never from the 480 ₸/$ margin rate
+ * (that one exists only for the CEO digest). Falls back to the cheapest
+ * non-offer pack if "popular" is ever renamed.
+ */
+const STUDIO_KZT_PER_CREDIT = Math.round(
+  (() => {
+    const p = PACKS.find((x) => x.id === "popular") ?? PACKS.filter((x) => !x.offer && !x.course)[0];
+    return p ? p.kzt / p.credits : 0;
+  })(),
+);
+
+/**
+ * One Studio catalog entry per registry model of the given mode — the full
+ * curated registry (never the display-picker subsets), with everything the
+ * composer needs to render a model row + its parameter block: capabilities
+ * (only what the model declares — spec §4 ⑥), the default-settings patron
+ * price, an ≈₸ hint at the pack rate, and whether a source image is required
+ * (image_edit / image_to_video) vs optional-none (text_to_image).
+ */
+function studioModelsOf(mode: "image" | "video"): Array<Record<string, unknown>> {
+  const kinds = mode === "video" ? ["image_to_video"] : ["image_edit", "text_to_image"];
+  return Object.values(MODELS as Record<string, ModelSpec>)
+    .filter((m) => kinds.includes(m.kind))
+    .sort((a, b) => a.credits - b.credits) // cheapest first — honest ladder
+    .map((m) => ({
+      key: m.key,
+      label: m.label,
+      kind: m.kind,
+      credits: m.credits,
+      approxKzt: m.credits * STUDIO_KZT_PER_CREDIT,
+      needsImage: m.kind !== "text_to_image",
+      image: m.image
+        ? {
+            aspectRatios: m.image.aspectRatios,
+            resolutions: (m.image.resolutions ?? []).map((t) => ({
+              id: t.id,
+              label: t.label,
+              credits: priceFor(m, { resolution: t.id }),
+            })),
+          }
+        : null,
+      video: m.video
+        ? {
+            durations: m.video.durations.map((d) => ({ seconds: d, credits: priceFor(m, { duration: d }) })),
+            aspectRatios: m.video.aspectRatios,
+            endFrame: !!m.video.endFrame,
+            resolutions: (m.video.resolutions ?? []).map((t) => ({
+              id: t.id,
+              label: t.label,
+              credits: priceFor(m, { resolution: t.id }),
+            })),
+          }
+        : null,
+    }));
+}
+
 function packsPayload(): Array<Record<string, unknown>> {
   return PACKS.filter((p) => !p.course).map((p) => ({
     id: p.id,
@@ -252,6 +311,18 @@ function catalogPayload(usage: Record<string, number>): Record<string, unknown> 
     })),
     // Aspect ratios offered for preset/campaign images (rendered by PRESET_MODEL).
     presetAspects: PRESET_MODEL.image?.aspectRatios ?? [],
+    // Cinema Studio catalog (docs/cinema-studio-spec.md §4 ⑤): the FULL curated
+    // registry grouped by mode — unlike the imageModels/videoModels pickers
+    // below, which are display-curated subsets for the legacy tabs. Every model
+    // carries its capability block, patron price, and an honest ≈₸ figure at
+    // the pack rate (the price patrons are actually bought at — never the
+    // digest's 480 ₸/$ margin rate; decision D4). needsImage drives the
+    // adaptive input gating in the composer (D6).
+    studio: {
+      approxKztPerCredit: STUDIO_KZT_PER_CREDIT,
+      image: studioModelsOf("image"),
+      video: studioModelsOf("video"),
+    },
     imageModels: IMAGE_MODEL_PICKER.map((k) => {
       const spec = MODELS[k] as ModelSpec;
       return {
@@ -561,9 +632,14 @@ export async function generateResponse(
     if (composed === null) return { status: 400, body: { error: "bad_option" } };
     [model, prompt, crafted] = [vmodel, composed, true];
   } else if (source === "model") {
+    // The WHOLE curated registry is selectable (Cinema Studio: every model
+    // visible with its price — docs/cinema-studio-spec.md G2/G5). Validation is
+    // by capability, not by a picker subset: the registry itself is the
+    // allow-list (only vetted, priced models live in MODELS), kind decides
+    // whether a source image is required, and normalizeOpts below rejects any
+    // option the model doesn't declare.
     const m = modelByKey(String(body?.model ?? ""));
-    const allowed = new Set<string>([...IMAGE_MODEL_PICKER, ...VIDEO_MODEL_PICKER, "photo_edit", "premium_edit"]);
-    if (!m || !allowed.has(m.key)) return { status: 400, body: { error: "bad_request" } };
+    if (!m) return { status: 400, body: { error: "bad_request" } };
     if (m.kind !== "text_to_image" && !imageUrl) return { status: 400, body: { error: "bad_request" } };
     let raw = typeof body?.prompt === "string" ? body.prompt : "";
     // Video: fold in the composer story/personalization before craft mapping.

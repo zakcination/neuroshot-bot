@@ -438,6 +438,64 @@ await step("POST /api/generate: preset charges, renders async, poll reaches ok",
   assert.match(String(row.provider_request_id), /^req-\d+$/);
 });
 
+await step("Studio catalog: FULL registry by mode with capabilities + honest ≈₸; every model generable", async () => {
+  const cat = (await apiMe(signInitData(maker))).body.catalog as unknown as {
+    studio: {
+      approxKztPerCredit: number;
+      image: Array<{ key: string; kind: string; credits: number; approxKzt: number; needsImage: boolean; image: unknown; video: unknown }>;
+      video: Array<{ key: string; kind: string; credits: number; approxKzt: number; needsImage: boolean; video: { durations: Array<{ seconds: number; credits: number }> } | null }>;
+    };
+  };
+  const s = cat.studio;
+  // The ₸ hint derives from the PACK ladder (D4), never the 480 ₸/$ margin rate:
+  // popular = 11000₸/200🔫 = 55 ₸ per patron.
+  assert.equal(s.approxKztPerCredit, 55);
+  // Full registry: 9 image (edit + t2i) and 5 video models — the display pickers
+  // hide some of these; the Studio never does (spec G5 "ALL models").
+  assert.equal(s.image.length, 9);
+  assert.equal(s.video.length, 5);
+  for (const m of [...s.image, ...s.video]) {
+    assert.ok(m.credits >= 1, `${m.key} zero price`);
+    assert.equal(m.approxKzt, m.credits * s.approxKztPerCredit, `${m.key} kzt hint drift`);
+    assert.equal(m.needsImage, m.kind !== "text_to_image", `${m.key} needsImage wrong`);
+  }
+  // Cheapest-first ladder, and previously picker-hidden models are present.
+  assert.ok(s.image.some((m) => m.key === "seedream_edit") && s.image.some((m) => m.key === "nb2_edit"), "picker-hidden edit models missing");
+  assert.deepEqual([...s.image.map((m) => m.credits)].sort((a, b) => a - b), s.image.map((m) => m.credits));
+  // Every video entry prices each duration (the composer's live badge source).
+  for (const v of s.video) for (const d of v.video!.durations) assert.ok(d.credits >= 1, `${v.key}@${d.seconds}s unpriced`);
+
+  // The widened allow-list: a model the old pickers HID is now directly generable…
+  await addCredits(maker.id, 6, "admin_grant", "test"); // exactly the 4+2 spent below (net-zero step)
+  const edit = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "nb2_edit", image_url: "https://fal.test/storage/u-1.jpg", prompt: "улучши свет" }),
+  });
+  assert.equal(edit.status, 200);
+  const ed = (await edit.json()) as { id: number; credits: number };
+  assert.equal(ed.credits, 4);
+  await pollGen(ed.id);
+  assert.equal(falCalls.at(-1)!.endpoint, "fal-ai/nano-banana-2/edit");
+  const seed = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "seedream_edit", image_url: "https://fal.test/storage/u-1.jpg", prompt: "сцена у моря" }),
+  });
+  assert.equal(seed.status, 200);
+  await pollGen(((await seed.json()) as { id: number }).id);
+  // …but capability rules still hold: an edit model with NO image is rejected,
+  // and a garbage key is not in the registry.
+  const noImg = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "nb2_edit", prompt: "x" }),
+  });
+  assert.equal(noImg.status, 400);
+  const bogus = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "dub_ru", image_url: "https://fal.test/storage/u-1.jpg", prompt: "x" }),
+  });
+  assert.equal(bogus.status, 400);
+});
+
 await step("/api/me exposes PENDING generations — the reload-safe resume contract", async () => {
   // The Mini App re-hydrates in-flight renders after a reload from these rows
   // (spec §4.1 resumePending) — if pending rows ever stop flowing through
@@ -645,12 +703,14 @@ await step("insufficient 🔫 → 402 with the pack catalog (in-app paywall)", a
   assert.equal(d.packs.length, 5); // 4 ladder + combo offer
 });
 
-await step("generate validation: unknown ids, missing photo, off-catalog models, empty prompt → 400", async () => {
+await step("generate validation: unknown ids, missing photo, unknown model keys, empty prompt → 400", async () => {
   const cases = [
     { source: "preset", id: "nope", image_url: "https://x.test/a.jpg" },
     { source: "preset", id: "headshot" }, // photo required
     { source: "campaign", id: "minifilm:nope", image_url: "https://x.test/a.jpg" },
-    { source: "model", model: "nbpro_edit", prompt: "hi", image_url: "https://x.test/a.jpg" }, // not in pickers
+    // The registry IS the allow-list now (Studio: all vetted models generable),
+    // so only keys outside MODELS are rejected — see the Studio-catalog step.
+    { source: "model", model: "definitely_not_a_model", prompt: "hi", image_url: "https://x.test/a.jpg" },
     { source: "model", model: "text_to_image", prompt: "   " }, // empty after sanitize
     { source: "hack" },
   ];
