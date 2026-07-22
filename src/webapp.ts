@@ -497,10 +497,14 @@ export async function generateResponse(
   }
   let model: ModelSpec, prompt: string, crafted;
 
+  // Aspect a preset PINS (marketplace cards must be 3:4) — used as the default
+  // ratio below when the user didn't pick one themselves (explicit choice wins).
+  let presetAspect: string | undefined;
   if (source === "preset") {
     const p = PRESETS.find((x) => x.id === body?.id);
     if (!p || !imageUrl) return { status: 400, body: { error: "bad_request" } };
     [model, prompt, crafted] = [presetModel(p), p.prompt, true];
+    presetAspect = p.aspect;
     // Log WHICH preset was used — the web studio was the one tap surface that
     // didn't (bot logs preset: taps, the campaign branch below logs camp:preset),
     // so plain-preset usage by category (e.g. the product/маркетплейс presets)
@@ -591,9 +595,11 @@ export async function generateResponse(
     }
   }
   // Composer options (duration / aspect ratio / quality / end frame) — validated.
+  // A preset-pinned aspect (marketplace 3:4 cards) is the default; the user's
+  // explicit choice always wins over the pin.
   const opts = normalizeOpts(model, {
     duration: body?.duration != null ? Number(body.duration) : undefined,
-    aspectRatio: typeof body?.aspect_ratio === "string" ? body.aspect_ratio : undefined,
+    aspectRatio: typeof body?.aspect_ratio === "string" ? body.aspect_ratio : presetAspect,
     resolution: typeof body?.resolution === "string" ? body.resolution : undefined,
     endImageUrl,
   } as GenOpts);

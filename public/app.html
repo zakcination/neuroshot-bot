@@ -858,7 +858,13 @@
     const jobs = new Map(); // genId -> {id, isVideo, campaignId}
     let viewedJob = null; // job id currently displayed in the sheet (or null)
     function openSheet() { sheet.classList.add("on"); sheetBg.classList.add("on"); }
-    function closeSheet() { sheet.classList.remove("on"); sheetBg.classList.remove("on"); viewedJob = null; }
+    // One-shot interceptor for the NEXT sheet close (paywall exit-offer). The
+    // hook is cleared before it runs so a second close always really closes.
+    let sheetCloseHook = null;
+    function closeSheet() {
+      if (sheetCloseHook) { const h = sheetCloseHook; sheetCloseHook = null; h(); return; }
+      sheet.classList.remove("on"); sheetBg.classList.remove("on"); viewedJob = null;
+    }
     sheetBg.onclick = closeSheet;
     document.getElementById("sheetX").onclick = closeSheet; // persistent exit for the viewer + every sub-view
 
@@ -1535,8 +1541,17 @@
     }
 
     // ————— paywall: buy Stars packs WITHOUT leaving the app —————
+    // Exit-offer shown at most once per app session (growth doctrine #683: the
+    // moment the paywall is dismissed is the highest-intent instant to make the
+    // best offer). The offer IS the existing combo pack — already ~half the
+    // ladder's per-patron price, with a real Kaspi link — no fake discount.
+    let exitOfferShown = false;
     function viewPaywall(data) {
       haptic("warning");
+      // Arm the exit-offer: closing the paywall (✕ / backdrop) shows the combo
+      // once, instead of silently losing the buyer. "Назад" arms it too.
+      const combo = (data.packs || []).find((p) => p.offer);
+      if (combo && !exitOfferShown) sheetCloseHook = () => viewExitOffer(combo, data);
       sheetBody.innerHTML = `
         <h3>Ещё один шаг до результата ✨</h3>
         <div class="sub">Нужно ${data.need} ${PATRON}, на балансе ${data.balance}. Пополните — и результат сразу продолжит создаваться.</div>
@@ -1547,8 +1562,30 @@
             <span class="stars">${p.kzt.toLocaleString("ru-RU")} ₸</span>
           </button>`).join("")}</div>
         <div class="row"><button class="btn ghost" id="backBtn">← Назад</button></div>`;
-      sheetBody.querySelector("#backBtn").onclick = () => viewPick();
-      sheetBody.querySelectorAll("[data-pk]").forEach((b) => (b.onclick = () => buyPack(b.dataset.pk)));
+      sheetBody.querySelector("#backBtn").onclick = () => { if (sheetCloseHook) { closeSheet(); } else viewPick(); };
+      sheetBody.querySelectorAll("[data-pk]").forEach((b) => (b.onclick = () => { sheetCloseHook = null; buyPack(b.dataset.pk); }));
+    }
+
+    /** The paywall exit-offer: the combo pack, one choice, honest math. */
+    function viewExitOffer(combo, paywallData) {
+      exitOfferShown = true;
+      haptic("warning");
+      const ladder = (paywallData.packs || []).filter((p) => !p.offer);
+      const ladderPer = ladder.length ? Math.min(...ladder.map((p) => p.kzt / p.credits)) : 0;
+      const per = combo.kzt / combo.credits;
+      const saving = ladderPer ? Math.round((1 - per / ladderPer) * 100) : 0;
+      openSheet();
+      sheetBody.innerHTML = `
+        <h3>Подождите — спецпредложение 🎁</h3>
+        <div class="sub">Только для новых покупок: <b>${combo.credits} ${PATRON} за ${combo.kzt.toLocaleString("ru-RU")} ₸</b>
+        — ≈${per.toFixed(0)} ₸ за патрон${saving > 0 ? ` (выгода ${saving}% к обычной цене)` : ""}.
+        Хватит на ${Math.floor(combo.credits / Math.max(1, paywallData.need)) || 1}× ваш текущий запрос.</div>
+        <div class="stack">
+          <button class="btn primary" id="exGo">🔥 Забрать за ${combo.kzt.toLocaleString("ru-RU")} ₸</button>
+          <button class="btn ghost" id="exNo">Не сейчас</button>
+        </div>`;
+      sheetBody.querySelector("#exGo").onclick = () => buyPack(combo.id);
+      sheetBody.querySelector("#exNo").onclick = () => closeSheet();
     }
 
     // Kaspi purchase — handled entirely IN the app (same flow as the bot): create

@@ -438,6 +438,46 @@ await step("POST /api/generate: preset charges, renders async, poll reaches ok",
   assert.match(String(row.provider_request_id), /^req-\d+$/);
 });
 
+await step("marketplace-spec cards: preset pins 3:4 server-side; explicit user ratio wins", async () => {
+  // Exactly the 6 🔫 this step spends (3 × 2🔫 Seedream) — later steps assert
+  // absolute balances, so the step must be net-zero on the wallet.
+  await addCredits(maker.id, 6, "admin_grant", "test");
+  // Both spec cards are in the product category of the catalog.
+  const cat = (await apiMe(signInitData(maker))).body.catalog;
+  for (const id of ["kaspi_card", "wb_apparel_card"]) {
+    const p = cat.presets.find((x: { id: string }) => x.id === id);
+    assert.ok(p, `${id} missing from catalog`);
+    assert.equal(p.category, "product");
+  }
+  // One tap, NO ratio from the client → the preset's pinned 3:4 flows to fal
+  // (Seedream named size portrait_4_3) — the "upload-ready card" guarantee.
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "preset", id: "kaspi_card", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(r.status, 200);
+  await pollGen(((await r.json()) as { id: number }).id);
+  const pinned = falCalls.at(-1)!;
+  assert.equal(pinned.input.image_size, "portrait_4_3");
+  assert.match(pinned.input.prompt as string, /seamless white/);
+  // The apparel card pins the same ratio with the #f2f3f5 background.
+  const r2 = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "preset", id: "wb_apparel_card", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(r2.status, 200);
+  await pollGen(((await r2.json()) as { id: number }).id);
+  assert.match(falCalls.at(-1)!.input.prompt as string, /#f2f3f5/);
+  // An EXPLICIT user ratio overrides the pin (choice wins over default).
+  const r3 = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "preset", id: "kaspi_card", image_url: "https://fal.test/storage/u-1.jpg", aspect_ratio: "1:1" }),
+  });
+  assert.equal(r3.status, 200);
+  await pollGen(((await r3.json()) as { id: number }).id);
+  assert.equal(falCalls.at(-1)!.input.image_size, "square_hd");
+});
+
 await step("prompt library: VeoSee-seeded presets are exposed in the catalog and one-tap applicable", async () => {
   const ids = (await apiMe(signInitData(maker))).body.catalog.presets.map((p) => p.id);
   for (const id of ["candid_lux", "paris_rain", "pixar_me", "figurine", "retro90s",

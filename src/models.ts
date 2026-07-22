@@ -514,6 +514,14 @@ export interface Preset {
    * never at module-init — robust to any evaluation-order quirk.
    */
   model?: keyof typeof MODELS;
+  /**
+   * Optional aspect ratio the look PINS (e.g. marketplace cards must be 3:4 —
+   * docs/growth-campaign-2026-07.md "killer feature"). Applied server-side as
+   * the DEFAULT when the user didn't pick a ratio themselves, so one tap yields
+   * a spec-correct result while an explicit user choice still wins. Must be a
+   * ratio the preset's model actually supports (checked by normalizeOpts).
+   */
+  aspect?: string;
 }
 
 /**
@@ -763,6 +771,35 @@ export const PRESETS: Preset[] = [
       "Turn this into a premium e-commerce hero shot: the product on a clean seamless studio background with soft " +
       "shadows, professional three-point lighting, subtle reflection, marketplace-listing composition, 4k quality. " +
       "Keep the product's shape, colors and branding exactly as in the photo.",
+  },
+  // --- Marketplace-spec cards (the growth plan's killer feature): one tap →
+  // an upload-READY listing card at the real marketplace spec — 3:4 portrait
+  // (900×1200 class), correct background per category (white for general goods,
+  // #f2f3f5 light-gray for apparel). Spec grounded in docs/growth-campaign-2026-07.md.
+  // Cheap Seedream (2 🔫) on purpose: this is the first-session hook for sellers.
+  {
+    id: "kaspi_card",
+    label: "🛒 Карточка Kaspi/WB",
+    category: "product",
+    aspect: "3:4",
+    prompt:
+      "Create a marketplace product listing card: cut out the product and place it on a pure seamless white " +
+      "studio background (#FFFFFF), vertical 3:4 portrait composition sized like a 900x1200 marketplace card, " +
+      "product centered and filling about 85% of the frame, soft natural shadow underneath, even professional " +
+      "e-commerce lighting, crisp focus, 4k quality. Keep the product's shape, colors, labels and branding " +
+      "exactly as in the photo — one single instance of the product.",
+  },
+  {
+    id: "wb_apparel_card",
+    label: "👕 Карточка одежды (WB)",
+    category: "product",
+    aspect: "3:4",
+    prompt:
+      "Create an apparel marketplace listing card: place the clothing item on a seamless light-gray studio " +
+      "background (#f2f3f5), vertical 3:4 portrait composition sized like a 900x1200 marketplace card, garment " +
+      "neatly presented and centered filling most of the frame, soft even studio lighting with a subtle floor " +
+      "shadow, fabric texture crisp and true to life, 4k quality. Keep the garment's cut, colors, patterns, " +
+      "prints and brand tags exactly as in the photo — one single instance of the garment.",
   },
   {
     id: "product_white",
