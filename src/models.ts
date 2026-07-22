@@ -15,7 +15,7 @@ export interface GenOpts {
   duration?: number; // video length in seconds
   aspectRatio?: string; // "auto" | "1:1" | "9:16" | "16:9" | "4:3" | "3:4"
   endImageUrl?: string; // video END frame (Kling 3.0 / Seedance) — start frame is the source image
-  resolution?: string; // quality-tier id (model-specific: "1K"/"2K"/"4K", "720p"/"1080p")
+  resolution?: string; // quality-tier id (model-specific: "1K"/"2K"/"4K", "480p"/"720p")
 }
 
 /** A quality/resolution tier the composer can offer; `mult` scales credits AND cost. */
@@ -86,18 +86,26 @@ function endParam(opts: GenOpts | undefined): { end_image_url?: string } {
 }
 
 /** Quality ladders (credit multiplier covers the higher provider cost with margin). */
+// Nano Banana 2 native multi-resolution: 1K base, 2K = 1.5× rate, 4K = 2× rate
+// (fal schema, verified 2026-07-22 — docs/cinema-studio-model-params.md P6).
 const NB_RES: ResTier[] = [
   { id: "1K", label: "1K", mult: 1 },
   { id: "2K", label: "2K ✨", mult: 1.5 },
-  { id: "4K", label: "4K 💎", mult: 2.5 },
+  { id: "4K", label: "4K 💎", mult: 2 },
 ];
+// Nano Banana Pro: 1K/2K same rate, 4K = double rate (fal schema). We default/floor
+// at 2K for quality (1K costs the same on fal, so it's a free quality win — P3).
 const NBPRO_RES: ResTier[] = [
   { id: "2K", label: "2K", mult: 1 },
-  { id: "4K", label: "4K 💎", mult: 1.8 },
+  { id: "4K", label: "4K 💎", mult: 2 },
 ];
+// Seedance 2.0 resolution enum is 480p/720p (NOT 1080p — that tier doesn't exist on
+// the 2.0 endpoint and a "1080p" request is rejected; fal schema, P1). 720p is the
+// balanced default (base price); 480p is faster, priced the same until its real
+// per-second cost is measured (then it can be discounted).
 const SEEDANCE_RES: ResTier[] = [
   { id: "720p", label: "720p", mult: 1 },
-  { id: "1080p", label: "1080p 💎", mult: 1.6 },
+  { id: "480p", label: "480p ⚡", mult: 1 },
 ];
 
 export const MODELS = {

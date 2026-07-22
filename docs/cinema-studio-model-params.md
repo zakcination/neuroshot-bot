@@ -33,7 +33,7 @@ The four Studio selectors and what each maps to in a fal schema:
 | model (our key) | fal endpoint | duration (default) | resolution (default) | aspect | end-frame |
 |---|---|---|---|---|---|
 | `animate` | `fal-ai/kling-video/v2.5-turbo/standard/i2v` | **`5,10`** (5) | — | — (none on standard) | no |
-| `kling3` | `fal-ai/kling-video/v3/pro/i2v` | `5,10` (5) | — | **`16:9,9:16,1:1`** (default 16:9) | **yes** (`end_image_url`) |
+| `kling3` | `fal-ai/kling-video/v3/pro/i2v` | `5,10` (5) | — | — (i2v inherits from start frame; the 16:9/9:16/1:1 enum is the *t2v* tab only) | **yes** (`end_image_url`) |
 | `seedance_fast` | `bytedance/seedance-2.0/fast/i2v` | **`4–15` or `auto`** (auto) | **`480p,720p`** (720p) | `auto,21:9,16:9,4:3,1:1,3:4,9:16` | yes |
 | `seedance` | `bytedance/seedance-2.0/i2v` | **`4–15` or `auto`** (auto) | **`480p,720p`** (720p) | `auto,21:9,16:9,4:3,1:1,3:4,9:16` | yes |
 | `hailuo_fast` | `fal-ai/minimax/hailuo-2.3-fast/standard/i2v` | ⚠️ **not in fal docs** (docs show `fal-ai/minimax-video`) | ? | ? | **confirm endpoint + duration + pricing** |
@@ -49,7 +49,7 @@ These are places where `src/models.ts` disagrees with the current fal schema. Se
 | **P1** | `seedance_fast` / `seedance` | `SEEDANCE_RES = 720p, 1080p` | resolution enum is **`480p, 720p`** (no 1080p) | **HIGH — pricing** | Replace 1080p with 480p (cheaper tier); re-derive `perSecondUsd`. A 1080p charge for a tier that doesn't exist = failed renders or wrong price. |
 | **P2** | `seedance_fast` / `seedance` | `durations = [5,10]` | **4–15s or `auto`** | MED | Offer wider duration (e.g. 5/8/10/15); pricing already scales via `perSecondUsd`. |
 | **P3** | `nbpro_image` / `nbpro_edit` | `NBPRO_RES = 2K, 4K` (floored at 2K) | **`1K, 2K, 4K`**, default **1K** | MED — pricing | Add the **1K** tier (cheaper, and it's the model default) so we're not overcharging/over-defaulting to 2K. |
-| **P4** | `kling3` | `aspectRatios = ["auto"]` | **`16:9, 9:16, 1:1`** (default 16:9) | LOW | Expose the three real ratios instead of a single auto. |
+| ~~P4~~ | `kling3` | `aspectRatios = ["auto"]` | ~~16:9/9:16/1:1~~ **WITHDRAWN** — that enum belongs to Kling v3's *text-to-video* tab; the **image-to-video** variant (ours) has no `aspect_ratio` (ratio inherits from the start frame). Registry is correct. | — | No change. |
 | **P5** | all image models | no `num_images` | **1–4** (nano) / **1–6** (Seedream) | **HIGH — feature** | Add a `count` param + linear price multiplier (below). |
 | **P6** | `nb2_image` / `nb2_edit` | `NB_RES = 1K,2K,4K` | also **`0.5K`** (0.75× rate) | LOW | Optional cheaper 0.5K tier for price-sensitive users. |
 | **P7** | `premium_*`, `hailuo_fast` | endpoints assumed live | **absent from fal docs** | **HIGH — reliability** | Verify endpoints still resolve + confirm pricing; the docs now show `gpt-image-1.5` and `minimax-video`. Possible model retirement/rename. |
@@ -82,17 +82,19 @@ Unsupported selectors simply don't render.
 
 ---
 
-## 6. Proposed registry changes (additive; for the drift-fix build task)
+## 6. Registry changes — status after the drift-fix pass (2026-07-22)
 
-1. `GenOpts += { count?: number }`; `ImageParams += { maxImages?: number }` (nano=4, seedream=6).
-2. `priceFor` / `costUsdFor` multiply by `max(1, min(count, maxImages))`.
-3. Fix `SEEDANCE_RES → [480p(1×), 720p(≈1.4×)]` with re-derived `perSecondUsd` (P1).
-4. `NBPRO_RES` prepend **1K** as the base tier; keep 2K/4K multipliers (P3).
-5. `kling3.video.aspectRatios → ["auto","16:9","9:16","1:1"]` (P4) — keep `auto` as a friendly default that maps to 16:9.
-6. Optional: `NB_RES` prepend **0.5K** at 0.75× (P6).
-7. Verify `premium_*` + `hailuo_fast` endpoints; if retired, migrate to `gpt-image-1.5` / a current MiniMax i2v and re-price (P7).
+**Applied (in `src/models.ts` + tests updated):**
+- ✅ **P1** `SEEDANCE_RES → [720p(1×, default), 480p(1×, "faster")]` — the phantom 1080p tier removed (it doesn't exist on the 2.0 endpoint; a request for it would fail). 480p priced same as 720p until its real per-second rate is measured, then it can be discounted.
+- ✅ **NB 4K price fix** — `NB_RES` 4K multiplier corrected 2.5→**2×** (fal charges double rate, we were overcharging beyond the standard margin).
+- ✅ ~~P4~~ **withdrawn** — kling3 (i2v) genuinely has no aspect param; the 16:9/9:16/1:1 enum is Kling v3's *t2v* variant. Registry was already correct.
 
-All changes are **backward-compatible** (new optional fields, wider enums) and each is independently testable in `test:webapp` (assert every model's declared opts validate through `normalizeOpts` and price via `priceFor`).
+**Deliberately deferred (bigger than a drift fix):**
+- **P5 count (`num_images`)** — NOT just pricing: `falRun` keeps only `images[0]` (`generate.ts:96`) and a generation row stores a single `output_url`, so N>1 needs multi-output handling (result storage, gallery, delivery). Own task, do with/before the Studio composer.
+- **P2 Seedance 4–15s durations** — the widening is trivial but the current 5/10 chips are fine for v1; widen alongside the composer's duration UI.
+- **P3 nbpro 1K tier** — 1K/2K cost the SAME on fal (only 4K is double), so exposing 1K would be a strictly-worse-quality same-price option; keeping the 2K floor is a better default. Revisit only if a "faster" tier is wanted.
+- **P6 nb2 0.5K tier** — optional cheap tier; low value while credits floor at 1.
+- **P7 endpoint verification** (`premium_*`, `hailuo_fast`) — needs a live `FAL_KEY` probe (one $0.19–0.22 render each) or fal support confirmation; docs-only checking can't prove a legacy endpoint is dead. Flagged confirm-on-integration.
 
 ---
 

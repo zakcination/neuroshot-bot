@@ -1052,7 +1052,9 @@ await step("catalog: model news banner + video composer params (durations priced
   // Seedance actually honors ratio + a resolution ladder.
   const seed = c.videoModels.find((m) => m.key === "seedance_fast")!;
   assert.ok(seed.video!.aspectRatios.includes("9:16"), "Seedance missing vertical ratio");
-  assert.ok(seed.video!.resolutions.some((r) => r.id === "1080p"), "Seedance missing 1080p tier");
+  // Seedance 2.0 resolution enum is 480p/720p (fal schema) — 1080p is NOT a real tier there.
+  assert.ok(seed.video!.resolutions.some((r) => r.id === "480p"), "Seedance missing 480p tier");
+  assert.ok(!seed.video!.resolutions.some((r) => r.id === "1080p"), "Seedance 1080p is not a real fal 2.0 tier — must be removed");
   // Images now expose aspect ratio (fixes square-by-default) + Nano Banana quality tiers.
   const t2i = c.imageModels.find((m) => m.key === "text_to_image")!;
   assert.ok(t2i.image!.aspectRatios.includes("9:16"), "image model missing vertical ratio");
@@ -1128,14 +1130,14 @@ await step("input params: image aspect ratio → image_size, quality tier prices
   await pollGen(((await img.json()) as { id: number }).id);
   assert.equal(falCalls.at(-1)!.input.image_size, "portrait_16_9");
 
-  // Quality tier: Nano Banana 2 at 4K costs the 2.5× multiplier and passes resolution through.
+  // Quality tier: Nano Banana 2 at 4K costs the 2× multiplier (fal schema) and passes resolution through.
   const hi = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({ source: "model", model: "nb2_image", prompt: "рисунок кота", resolution: "4K" }),
   });
   assert.equal(hi.status, 200);
   const hid = (await hi.json()) as { id: number; credits: number };
-  assert.equal(hid.credits, 10); // 4 base × 2.5
+  assert.equal(hid.credits, 8); // 4 base × 2 (4K = 2× rate)
   await pollGen(hid.id);
   assert.equal(falCalls.at(-1)!.input.resolution, "4K");
 
@@ -1144,16 +1146,16 @@ await step("input params: image aspect ratio → image_size, quality tier prices
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({
       source: "model", model: "seedance_fast", image_url: "https://fal.test/storage/u-1.jpg",
-      prompt: "motion", aspect_ratio: "9:16", resolution: "1080p",
+      prompt: "motion", aspect_ratio: "9:16", resolution: "480p",
     }),
   });
   assert.equal(sv.status, 200);
   const svd = (await sv.json()) as { id: number; credits: number };
-  assert.equal(svd.credits, 98); // 61 base (5s 720p) × 1.6 (1080p), ceil
+  assert.equal(svd.credits, 61); // 61 base (5s 720p); 480p priced same as 720p (mult 1) until measured
   await pollGen(svd.id);
   const scall = falCalls.at(-1)!;
   assert.equal(scall.input.aspect_ratio, "9:16");
-  assert.equal(scall.input.resolution, "1080p");
+  assert.equal(scall.input.resolution, "480p");
 });
 
 await step("end frame is validated as strictly as the source: video url or foreign id → 400", async () => {
