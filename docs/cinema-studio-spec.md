@@ -15,7 +15,7 @@ We replace it with **one page — the Studio** — a single, prefilled, top-to-b
 ```
   ┌─────────────────────────────────────────┐
   │  ① Prompt block   (preset, editable/swap) │
-  │  ② ✨ Улучшить промпт   — 0.5 🔫  (loop)   │
+  │  ② ✨ Улучшить промпт  1-е бесплатно/1🔫  │
   │  ③ Inputs         (device / my gallery)   │
   │  ④ [ 🖼 Фото  |  🎬 Видео ]  ← mode chips  │
   │  ⑤ Model picker   (ALL models · price ea) │
@@ -78,11 +78,11 @@ The Studio is one view (`viewStudio(ctx)`) rendered into the existing sheet. It 
 - **Free-text context** (the "from text" / news-banner path): a plain `<textarea>` is the prompt block.
 - **Security invariant kept:** curated prompts never travel from the client — the client sends validated **preset/campaign ids + quiz fragment ids + a sanitized personalization string**, exactly as today (`webapp.ts:500-558`, `craftPrompt`/`sanitizePrompt`). See **Decision D1** for whether we ever expose the *raw* prompt text for editing.
 
-### ② Prompt Enhancer loop — 0.5 🔫
+### ② Prompt Enhancer loop — first free, then 1 🔫 *(DECIDED: D2 = "first free, then 1🔫")*
 - Button **"✨ Улучшить промпт"** under the prompt block. On tap: send the current effective prompt (free-text and/or personalization) to a small LLM that rewrites it into a richer, more directable prompt; show **before → after** with **Применить / Вернуть**; **loopable** (each press is another enhance).
-- **Charge: 0.5 🔫 per enhance**, server-authoritative, logged as its own event. Credits are integers everywhere today (`spendCredits`, ledger) — so 0.5 needs a mechanism → **Decision D2**.
-- Provider for the rewrite → **Decision D3**.
-- Copy sets expectations: "≈0.5 🔫 · делает промпт детальнее, результат — лучше".
+- **Charge: the first enhance of each generation is FREE; every further enhance costs 1 🔫**, server-authoritative, logged as its own event. This needs no fractional-ledger change — just a per-generation "free enhance used?" flag + normal `spendCredits(1)` thereafter. (Supersedes the earlier "0.5 🔫" framing throughout this doc.)
+- Provider for the rewrite → **Decision D3** (still open).
+- Copy: "Первое улучшение — бесплатно, дальше 1 🔫 · делает промпт детальнее, результат — лучше".
 
 ### ③ Inputs — device or gallery
 - Reuse `viewPhoto()` wholesale: **📷 С устройства** (file → `downscale` → data-URL → `/api/upload`) and **🖼 Из моих работ** (`myImages()` → `generation_id`).
@@ -157,6 +157,31 @@ Everything else — `startWebGeneration`, `createPendingGeneration`, `completeGe
 | **D5** | Video mode from a preset with no image yet | **(A)** Require attach/generate-image-first (explicit). **(B)** Auto two-step: render image then animate (two charges, one tap). | **A** for v1 (clear, one charge at a time); B is a nice v2 "one-tap film". |
 | **D6** | "ALL models" vs input compatibility | **(A)** Show compatible-first; incompatible collapsed under "показать все" with a requirement hint. **(B)** Show all always; incompatible visibly disabled. | **A** — satisfies "all models" while keeping the list scannable. |
 | **D7** | Bot path parity | Mirror the visible model picker in the Telegram-chat flow now, or Mini App only for v1. | Mini App only for v1; bot pass later. |
+
+### 7.1 Decisions locked (2026-07-22)
+- **D1 = A** — Personalize + swap. Curated prompt stays server-side; user edits an "extra details" layer and can swap the preset. Security invariant kept.
+- **D2 = "first free, then 1 🔫"** — First enhance of each generation is free; further enhances cost 1 🔫 each. No fractional ledger. (See block ②.)
+- **D5 = A** — Explicit "image first" for v1: flipping to 🎬 Видео without a source image asks the user to add a photo or generate the image first. One-tap film deferred to v2.
+- **D4 (default, confirm)** — "≈₸" shown from the pack rate (~50 ₸/🔫), rounded — never the 480 ₸/$ margin rate. Proceeding on this default unless overridden.
+- **D6 → reframed as the fal-platform question (§7.2).** The UI-treatment default (compatible-first + reveal) stands **unless overridden**; the substantive ask was catalog *breadth/accuracy*, addressed next.
+
+### 7.2 fal platform integration — the "all models" ask, properly scoped
+You asked to **add a fal MCP for direct access to the full fal platform** (search models, read schemas, run inference, upload files, browse docs). That splits into two very different things, and the distinction is load-bearing:
+
+**(a) Dev-time grounding — YES, high value, low risk.** A fal MCP (or fal's REST/docs) lets *us during development* look up the exact input schema, parameter ranges, output shape, and current price of any fal model, then **add/verify models in `src/models.ts` accurately** — correct `aspectRatios`, `resolutions`, `durations`, `perSecondUsd`, and COGS-based credit pricing. This directly powers "more models in the Studio", vetted, with correct params and margins. It's the right way to grow the 14-model registry to 20/30/… fast and correctly.
+
+**(b) Runtime exposure of the *entire* fal catalog to end users — NO for v1 (breaks the business model).** Counter-argument first: NeuroShot's economics *depend on a curated registry with known per-model COGS* (`approxCostUsd`/`perSecondUsd` → `credits = ceil(usd / 0.02)` → sold at 47–62 ₸/🔫, ≥4× margin). If users could run *any* fal model:
+  - **Pricing/margin breaks** — every fal model has a different, changing cost; we'd be charging fixed patrons for unknown COGS → we could sell renders at a loss.
+  - **Quality/curation breaks** — the preset gallery's whole value is *hand-tuned* model+prompt pairings; raw model soup regresses the "one-tap, high-quality" promise you set for this redesign.
+  - **Safety/ToS** — an open model runner invites NSFW/abuse surface we currently avoid by curation.
+  - **Params variance** — arbitrary schemas can't all map to the fixed selector set (ratio/res/duration); the Studio UI would degrade to a raw JSON form.
+
+**Recommended architecture — curated-but-expandable, MCP as an *admin/dev* tool:**
+- Keep the **runtime** Studio catalog **curated** (the registry), so pricing/quality/safety stay controlled — this is what the phased build targets.
+- Use the **fal MCP at dev time** to research + add models correctly, and (optionally, later) behind an **admin-only "Model Lab"** to trial a new fal model, capture its schema + measured COGS, set its credit price, and *promote* it into the registry. End users still only ever see vetted, priced models.
+- **Practical note on adding the MCP:** I can't add MCP connectors to your Claude Code config myself (same limitation we hit with the Higgsfield MCP) — you enable it on your side (Settings → Connectors / `claude mcp add …` with fal's MCP endpoint + your `FAL_KEY`). Once it's connected and enabled for the chat, I can use it immediately to expand the registry. **In the meantime this is not blocking** — I can ground new models from fal's public model pages via WebFetch and the models we already run.
+
+*If you actually want end users to browse/run the raw fal catalog (an "advanced/pro" surface), that's a separate, larger initiative — say so and I'll spec it with a dynamic-pricing + safety design; it should not gate the Studio v1.*
 
 ---
 
