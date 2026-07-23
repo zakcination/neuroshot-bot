@@ -108,6 +108,20 @@ export const config = {
   // purchase (payments.ts inviteToCourseCohort).
   courseFastChannelId: process.env.COURSE_FAST_CHANNEL_ID ?? "",
   courseFlagshipChannelId: process.env.COURSE_FLAGSHIP_CHANNEL_ID ?? "",
+
+  // --- AI Video Translator / dubbing (docs/video-translator-spec.md) ---
+  // ElevenLabs Dubbing API key. BLANK → the dubbing feature is disabled entirely
+  // (the entry points return "disabled"), same guard style as KASPI_API_SECRET.
+  elevenLabsKey: process.env.ELEVENLABS_API_KEY ?? "",
+  // Kazakh target is gated behind Phase-0 validation (Kazakh TTS is v3-alpha only;
+  // see the spec). RU/EN targets ship without this flag. Flip to true once a
+  // native-speaker test dub passes.
+  dubKazakhEnabled: (process.env.DUB_KAZAKH_ENABLED ?? "false") === "true",
+  // Max source length (seconds) accepted for a dub. v1 = 60s (15s demo).
+  dubMaxSeconds: Number(process.env.DUB_MAX_SECONDS ?? 60),
+  // Provider cost per source-SECOND (USD) — PLACEHOLDER until the real ElevenLabs
+  // per-minute price is measured in Phase 0. Drives per-second patron pricing.
+  dubUsdPerSec: Number(process.env.DUB_USD_PER_SEC ?? 0.02),
 };
 
 /**

@@ -208,6 +208,24 @@
     .shot:hover { transform: scale(1.03); }
     .shot img, .shot video { width: 100%; height: 100%; object-fit: cover; display: block; }
     .shot .tag { position: absolute; left: 7px; bottom: 7px; font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; background: rgba(0,0,0,.55); backdrop-filter: blur(6px); padding: 3px 7px; border-radius: 999px; }
+    /* In-progress render card: expanding violet ripple rings over the surface. */
+    .shot.pending { pointer-events: none; background: var(--surface-2); }
+    .shot.pending .rip { position: absolute; inset: 0; margin: auto; width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--violet); opacity: 0; animation: ripple 2s ease-out infinite; }
+    .shot.pending .rip:nth-child(2) { animation-delay: .66s; border-color: #b44dff; }
+    .shot.pending .rip:nth-child(3) { animation-delay: 1.33s; border-color: var(--magenta); }
+    @keyframes ripple { 0% { transform: scale(.35); opacity: .9; } 100% { transform: scale(3.4); opacity: 0; } }
+    /* Cinema Studio composer: retro-segmented mode chip + model rows. */
+    .seg { display: flex; background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 3px; margin: 12px 0 4px; }
+    .seg button { flex: 1; border: 0; background: transparent; color: var(--muted); font-weight: 700; font-size: 13.5px; padding: 9px 0; border-radius: 999px; cursor: pointer; }
+    .seg button.on { background: var(--aurora); color: #fff; }
+    .mlist { display: flex; flex-direction: column; gap: 8px; }
+    .mrow { display: flex; justify-content: space-between; align-items: center; gap: 8px; text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 11px 12px; color: var(--ink); cursor: pointer; }
+    .mrow.on { border-color: var(--violet); box-shadow: 0 0 0 1px var(--violet); }
+    .mrow .price { white-space: nowrap; color: var(--amber); font-weight: 700; font-size: 13px; }
+    .mnote { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .stublock { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 10px 12px; margin-bottom: 4px; }
+    .stuchip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .stuchip > span { font-weight: 700; }
     .empty {
       grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 34px 18px;
       border: 1px dashed rgba(255,255,255,.14); border-radius: var(--radius-s); font-size: 13.5px; line-height: 1.6;
@@ -588,7 +606,8 @@
     .toast.on { opacity: 1; transform: translateX(-50%); }
 
     @media (prefers-reduced-motion: reduce) {
-      .sky i, .orb { animation: none; }
+      .sky i, .orb, .shot.pending .rip { animation: none; }
+      .shot.pending .rip { opacity: .5; transform: scale(1.6); } /* static ring instead of ripple */
       .reveal { opacity: 1; transform: none; transition: none; }
       .btn, .act, .shot, .pack, .sheet, .sheet-bg, .pcard { transition: none; }
     }
@@ -858,7 +877,13 @@
     const jobs = new Map(); // genId -> {id, isVideo, campaignId}
     let viewedJob = null; // job id currently displayed in the sheet (or null)
     function openSheet() { sheet.classList.add("on"); sheetBg.classList.add("on"); }
-    function closeSheet() { sheet.classList.remove("on"); sheetBg.classList.remove("on"); viewedJob = null; }
+    // One-shot interceptor for the NEXT sheet close (paywall exit-offer). The
+    // hook is cleared before it runs so a second close always really closes.
+    let sheetCloseHook = null;
+    function closeSheet() {
+      if (sheetCloseHook) { const h = sheetCloseHook; sheetCloseHook = null; h(); return; }
+      sheet.classList.remove("on"); sheetBg.classList.remove("on"); viewedJob = null;
+    }
     sheetBg.onclick = closeSheet;
     document.getElementById("sheetX").onclick = closeSheet; // persistent exit for the viewer + every sub-view
 
@@ -876,6 +901,9 @@
 
     function studio(tab) {
       st.tab = tab || st.tab; st.pick = null; st.photo = null; st.photoUrl = null;
+      // The video/text tabs ARE the Studio now — one composer, model picker inside.
+      if (st.tab === "video") { openStudio({ mode: "video" }); return; }
+      if (st.tab === "text") { openStudio({ mode: "image", origin: "text" }); return; }
       openSheet(); viewPick();
     }
 
@@ -884,12 +912,20 @@
         `<button class="tab ${id === st.tab ? "on" : ""}" data-tab="${id}">${l}</button>`).join("")}</div>`;
     }
     function bindTabs() {
-      sheetBody.querySelectorAll("[data-tab]").forEach((b) => (b.onclick = () => { st.tab = b.dataset.tab; st.pick = null; viewPick(); }));
+      sheetBody.querySelectorAll("[data-tab]").forEach((b) => (b.onclick = () => {
+        st.tab = b.dataset.tab; st.pick = null;
+        if (st.tab === "video") { openStudio({ mode: "video" }); return; }
+        if (st.tab === "text") { openStudio({ mode: "image", origin: "text" }); return; }
+        viewPick();
+      }));
     }
 
     function viewPick() {
       const c = ME.catalog;
       let inner = "";
+      // viewPick is now the GALLERY surface only (presets + scenarios) — the
+      // video/text tabs route straight into the Studio composer (see bindTabs).
+      if (st.tab === "video" || st.tab === "text") st.tab = "shoot";
       if (st.tab === "shoot" || st.tab === "product") {
         // Style Gallery: marketplace-style cards (preview photo, price, real
         // usage/trending) — see docs/prompt-library.md. Trending (a genuine
@@ -916,17 +952,6 @@
       } else if (st.tab === "scenes") {
         inner = `<div class="choices">${c.campaigns.map((k) =>
           `<button class="choice" data-camp="${k.id}"><b>${esc(k.label)}</b><span class="desc">+ видео за ${k.videoCredits} ${PATRON}</span><span class="price">${k.imageCredits} ${PATRON}</span></button>`).join("")}</div>`;
-      } else if (st.tab === "video") {
-        inner = `
-          <div class="sub">Оживите фото в видео. Выберите модель — дальше настроите формат, длительность и сюжет.</div>
-          <div class="choices">${c.videoModels.map((m) =>
-            `<button class="choice" data-vmodel="${m.key}"><b>${esc(m.label)}</b><span class="price">от ${m.credits} ${PATRON}</span></button>`).join("")}</div>`;
-      } else {
-        inner = `
-          <div class="sub">Опишите, что нарисовать — и выберите модель.</div>
-          <textarea class="prompt" id="tprompt" placeholder="флакон духов на мокром чёрном мраморе…"></textarea>
-          <div class="choices" style="margin-top:10px">${c.imageModels.map((m) =>
-            `<button class="choice" data-tmodel="${m.key}"><b>${esc(m.label)}</b><span class="price">${m.credits} ${PATRON}</span></button>`).join("")}</div>`;
       }
       sheetBody.innerHTML = `<h3>Студия</h3>${tabsHtml()}${inner}`;
       bindTabs();
@@ -937,22 +962,12 @@
 
       sheetBody.querySelectorAll("[data-preset]").forEach((b) => (b.onclick = () => {
         const p = c.presets.find((x) => x.id === b.dataset.preset);
-        st.pick = { source: "preset", id: b.dataset.preset, credits: p.credits, needPhoto: true };
-        viewPhoto();
+        // Preset tap → the Studio, prefilled. A ⇄-swap re-entry keeps the photo (E7).
+        const keep = !!(stu && stu.swap);
+        if (stu) stu.swap = false;
+        openStudio({ preset: p, origin: "preset", modelKey: p.model, keep });
       }));
       sheetBody.querySelectorAll("[data-camp]").forEach((b) => (b.onclick = () => viewCampaign(b.dataset.camp)));
-      sheetBody.querySelectorAll("[data-vmodel]").forEach((b) => (b.onclick = () => {
-        const m = c.videoModels.find((x) => x.key === b.dataset.vmodel);
-        st.pick = { source: "model", model: m.key, credits: m.credits, needPhoto: true, options: [], custom: "", prompt: "" };
-        viewVideoComposer(m);
-      }));
-      sheetBody.querySelectorAll("[data-tmodel]").forEach((b) => (b.onclick = () => {
-        const m = c.imageModels.find((x) => x.key === b.dataset.tmodel);
-        const prompt = sheetBody.querySelector("#tprompt").value.trim();
-        if (!prompt) { toast("Опишите, что нарисовать 🙂"); return; }
-        st.pick = { source: "model", model: m.key, credits: m.credits, needPhoto: false, prompt };
-        viewImageComposer(m);
-      }));
     }
 
     function viewCampaign(id) {
@@ -1130,6 +1145,32 @@
       jobs.set(id, job); updateJobsPill();
       viewedJob = id; viewProgress(isVideo, id);
       pollJob(job);
+      renderGallery(1); // pending ripple card appears in «Мои работы» immediately
+    }
+
+    /**
+     * Reload-safe in-progress renders (docs/cinema-studio-spec.md §4.1): the
+     * jobs map dies with the page, but the DB doesn't — /api/me ships the last
+     * 30 generations including status:'pending'. Re-register a silent poll job
+     * for each so the jobs pill + the gallery's ripple cards come back exactly
+     * as if the reload never happened. No sheet is opened (silent resume);
+     * completion lands via the normal pollJob path (toast + gallery refresh),
+     * a failure shows the refunded toast. The 6-min client window restarts —
+     * the server reaper still guarantees a terminal state for true zombies.
+     */
+    function resumePending() {
+      let added = 0;
+      for (const g of ME.generations || []) {
+        if (g.status === "pending" && !jobs.has(g.id)) {
+          const isVideo = (ME.catalog.videoModels || []).some((m) => m.key === g.model) || /^dub_/.test(g.model || "");
+          const job = { id: g.id, isVideo, campaignId: null, started: Date.now(), resumed: true };
+          jobs.set(g.id, job);
+          pollJob(job);
+          added++;
+        }
+      }
+      updateJobsPill();
+      return added;
     }
 
     function viewProgress(isVideo, jobId) {
@@ -1159,13 +1200,13 @@
           return;
         }
         if (status === 200 && data.status === "error") {
-          jobs.delete(job.id); updateJobsPill(); refreshMe(); haptic("error");
+          jobs.delete(job.id); updateJobsPill(); refreshMe(); renderGallery(1); haptic("error");
           toast(`Не получилось — ${PATRON} патроны возвращены`);
           if (viewedJob === job.id && sheet.classList.contains("on")) viewPick();
           return;
         }
         if (Date.now() - job.started > 6 * 60 * 1000) {
-          jobs.delete(job.id); updateJobsPill();
+          jobs.delete(job.id); updateJobsPill(); renderGallery(1);
           toast("Долгий рендер — результат появится в «Мои работы»");
           if (viewedJob === job.id && sheet.classList.contains("on")) closeSheet();
           return;
@@ -1207,11 +1248,7 @@
         viewVideoComposer(m);
       };
       const animBtn2 = sheetBody.querySelector("#animBtn2");
-      if (animBtn2) animBtn2.onclick = () => {
-        const m = ME.catalog.videoModels[0]; // default: Kling 3.0
-        st.pick = { source: "model", model: m.key, credits: m.credits, needPhoto: false, generation_id: g.id, options: [], custom: "", prompt: "" };
-        viewVideoComposer(m);
-      };
+      if (animBtn2) animBtn2.onclick = () => openStudio({ mode: "video", generationId: g.id, srcPreview: g.output_url });
       sheetBody.querySelector("#saveBtn").onclick = () => saveMedia(g.output_url, g.id);
       sheetBody.querySelector("#chatBtn").onclick = () => sendToChat(g.id);
       sheetBody.querySelector("#moreBtn").onclick = () => { st.pick = null; viewPick(); };
@@ -1263,60 +1300,273 @@
       sheetBody.querySelector("#vMore").onclick = () => { st.pick = null; viewPick(); };
     }
 
-    /** Animate a previous work: pick a video model → composer, source = gen id. */
+    /** Animate a previous work: straight into the Studio, video mode, source = gen id. */
     function viewAnimateFrom(item) {
-      sheetBody.innerHTML = `
-        <h3>Оживить работу</h3>
-        <div class="result-media" style="max-height:26dvh;overflow:hidden"><img src="${esc(item.output_url)}" alt="" /></div>
-        <div class="quiz-q">Выберите модель видео</div>
-        <div class="choices">${ME.catalog.videoModels.map((m) =>
-          `<button class="choice" data-vm="${m.key}"><b>${esc(m.label)}</b><span class="price">от ${m.credits} ${PATRON}</span></button>`).join("")}</div>
-        <div class="row"><button class="btn ghost" id="backBtn">← Назад</button></div>`;
-      sheetBody.querySelector("#backBtn").onclick = () => openViewer(item);
-      sheetBody.querySelectorAll("[data-vm]").forEach((b) => (b.onclick = () => {
-        const m = ME.catalog.videoModels.find((x) => x.key === b.dataset.vm);
-        st.pick = { source: "model", model: m.key, credits: m.credits, needPhoto: false, generation_id: item.id, options: [], custom: "", prompt: "" };
-        viewVideoComposer(m);
-      }));
+      openStudio({ mode: "video", generationId: item.id, srcPreview: item.output_url });
     }
 
     const RATIO_LABEL = { auto: "Как фото", "9:16": "9:16 ↕", "16:9": "16:9 ↔", "1:1": "1:1 ◻", "4:3": "4:3 ▭", "3:4": "3:4 ▯" };
 
-    /**
-     * Image composer: aspect ratio (no more square-by-default) + optional quality
-     * ladder (Nano Banana 2K/4K), live price. Text→image models run straight after.
-     */
-    function viewImageComposer(m) {
-      const pick = st.pick;
-      const ratios = (m.image && m.image.aspectRatios) || ["auto"];
-      const resList = (m.image && m.image.resolutions) || [];
-      pick.aspect_ratio = pick.aspect_ratio || ratios[0];
-      if (resList.length && !resList.some((r) => r.id === pick.resolution)) pick.resolution = resList[0].id;
-      if (!resList.length) pick.resolution = undefined;
-      const priceOf = () => (pick.resolution && resList.length ? (resList.find((r) => r.id === pick.resolution) || resList[0]).credits : m.credits);
+    // ————————————————————————————————————————————————————————————————————
+    // Cinema Studio — the ONE generation page (docs/cinema-studio-spec.md §4).
+    // Every entry lands here PREFILLED: ① prompt block (preset chip w/
+    // personalization, or free text) → ③ inputs (device / my works) → ④ mode
+    // chip 🖼/🎬 → ⑤ the FULL model registry with patron prices → ⑥ params only
+    // the selected model declares → ⑦ live patron total. Server stays the
+    // pricing authority (402 paywall); this mirrors priceFor exactly.
+    // ————————————————————————————————————————————————————————————————————
+    let stu = null;
+    function openStudio(ctx) {
+      ctx = ctx || {};
+      const prev = ctx.keep && stu ? stu : null; // ⇄ preset swap keeps inputs (E7)
+      stu = {
+        origin: ctx.origin || (ctx.preset ? "preset" : "model"),
+        preset: ctx.preset || null,
+        custom: prev ? prev.custom : "",
+        prompt: prev ? prev.prompt : "",
+        options: {}, // video story picks: stepId -> optionId
+        mode: ctx.mode || (prev ? prev.mode : "image"),
+        modelKey: ctx.modelKey || null,
+        photo: prev ? prev.photo : null,
+        photoUrl: prev ? prev.photoUrl : null,
+        generationId: ctx.generationId || (prev ? prev.generationId : null),
+        srcPreview: ctx.srcPreview || (prev ? prev.srcPreview : null),
+        endPhoto: null, endGenerationId: null,
+        duration: undefined, aspect: undefined, resolution: undefined,
+        showAll: false, editOpen: prev ? prev.editOpen : false, swap: false,
+      };
+      if (!stu.modelKey) stu.modelKey = defaultStudioModel();
+      clampStudioOpts();
+      openSheet(); viewStudio();
+    }
+    function studioList() { return (ME.catalog.studio && ME.catalog.studio[stu.mode]) || []; }
+    function studioModel() { return studioList().find((m) => m.key === stu.modelKey) || studioList()[0]; }
+    function stuHasSource() { return !!(stu.photo || stu.generationId); }
+    function defaultStudioModel() {
+      const list = studioList();
+      if (!list.length) return null;
+      if (stu.mode === "image") {
+        const pref = stuHasSource() ? list.filter((m) => m.needsImage) : list.filter((m) => !m.needsImage);
+        return (pref[0] || list[0]).key;
+      }
+      return list[0].key; // video: cheapest first
+    }
+    /** Clamp opts to the selected model's declared capabilities (E6). */
+    function clampStudioOpts() {
+      const m = studioModel();
+      if (!m) return;
+      stu.modelKey = m.key;
+      const caps = stu.mode === "video" ? m.video : m.image;
+      if (stu.aspect && !((caps && caps.aspectRatios) || []).includes(stu.aspect)) stu.aspect = undefined;
+      if (stu.resolution && !((caps && caps.resolutions) || []).some((r) => r.id === stu.resolution)) stu.resolution = undefined;
+      if (stu.mode === "video" && m.video) {
+        if (!m.video.durations.some((d) => d.seconds === stu.duration)) stu.duration = m.video.durations[0].seconds;
+        if (!m.video.endFrame) { stu.endPhoto = null; stu.endGenerationId = null; }
+      } else { stu.duration = undefined; stu.endPhoto = null; stu.endGenerationId = null; }
+    }
+    /** Live patron total — exact client mirror of the server's priceFor. */
+    function studioPrice() {
+      const m = studioModel();
+      if (!m) return 0;
+      let credits = m.credits;
+      if (stu.mode === "video" && m.video) {
+        const d = m.video.durations.find((x) => x.seconds === stu.duration);
+        if (d) credits = d.credits;
+        const t = stu.resolution ? (m.video.resolutions || []).find((r) => r.id === stu.resolution) : null;
+        if (t && t.mult !== 1) credits = Math.ceil(credits * t.mult);
+      } else if (m.image) {
+        const t = stu.resolution ? (m.image.resolutions || []).find((r) => r.id === stu.resolution) : null;
+        if (t) credits = t.credits;
+      }
+      return credits;
+    }
+
+    function viewStudio() {
+      const m = studioModel();
+      if (!m) { st.tab = "shoot"; viewPick(); return; }
+      const isVideo = stu.mode === "video";
+      const caps = isVideo ? m.video : m.image;
+      const list = studioList();
+      const has = stuHasSource();
+      // D6-A: compatible models lead; the rest stay reachable under «показать все».
+      // The SELECTED model is always visible even before its photo arrives —
+      // a preset's default edit-engine must never be hidden by the split.
+      let primary = list, hidden = [];
+      if (!isVideo && !has) {
+        primary = list.filter((x) => !x.needsImage || x.key === stu.modelKey);
+        hidden = list.filter((x) => x.needsImage && x.key !== stu.modelKey);
+      }
+      const works = myImages().slice(0, 8);
+      const srcUrl = stu.srcPreview || (stu.generationId ? ((myImages().find((g) => g.id === stu.generationId) || {}).output_url || "") : "");
+      const story = isVideo ? (ME.catalog.videoStory || []) : [];
+      const modelRow = (x) => `
+        <button class="mrow ${x.key === stu.modelKey ? "on" : ""}" data-mk="${x.key}">
+          <span><b>${esc(x.label)}</b>
+            ${!isVideo && has && !x.needsImage ? `<div class="mnote">создаст с нуля — фото не использует</div>` : ""}
+            ${!isVideo && !has && x.needsImage ? `<div class="mnote">нужно фото</div>` : ""}
+            ${stu.preset && x.key === stu.preset.model ? `<div class="mnote">рекомендовано для этого стиля</div>` : ""}
+          </span>
+          <span class="price">${isVideo ? "от " : ""}${x.credits} ${PATRON}</span>
+        </button>`;
+
       sheetBody.innerHTML = `
-        <h3>Настройки картинки</h3>
-        ${ratios.length > 1 ? `<div class="quiz-q">Формат кадра</div>
-        <div class="chips" id="arRow">${ratios.map((r) =>
-          `<button class="chip ${r === pick.aspect_ratio ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>` : ""}
-        ${resList.length ? `<div class="quiz-q">Качество</div>
-        <div class="chips" id="resRow">${resList.map((r) =>
-          `<button class="chip ${r.id === pick.resolution ? "on" : ""}" data-res="${r.id}" data-rc="${r.credits}">${esc(r.label)} · ${r.credits} ${PATRON}</button>`).join("")}</div>` : ""}
+        <h3>Студия</h3>
+        ${stu.preset && !isVideo ? `
+          <div class="stublock"><div class="stuchip">
+            <span>${esc(stu.preset.label)}</span>
+            <button class="chip ${stu.editOpen ? "on" : ""}" id="stuEdit">✎ Изменить</button>
+            <button class="chip" id="stuSwap">⇄ Сменить стиль</button>
+          </div>
+          ${stu.editOpen ? `<input class="words" id="stuCustom" maxlength="200" placeholder="допишите детали: имя, цвет, настроение…" value="${esc(stu.custom)}" style="margin-top:8px" />` : ""}</div>` : ""}
+        ${stu.preset && isVideo ? `<div class="sub">Стиль применяется к фото. Для видео опишите движение ниже.</div>` : ""}
+        ${!stu.preset || isVideo ? `
+          <div class="quiz-q">${isVideo ? "Движение (необязательно)" : "Что нарисовать?"}</div>
+          <textarea class="prompt" id="stuPrompt" placeholder="${isVideo ? "камера медленно приближается, ветер в волосах…" : "флакон духов на мокром чёрном мраморе…"}">${esc(stu.prompt)}</textarea>` : ""}
+        <div class="quiz-q">Фото ${!isVideo && !m.needsImage ? "(не используется этой моделью)" : ""}</div>
+        <div id="stuPhotoZone">
+          ${stu.photo ? `<div class="photo-preview"><img src="${stu.photo}" alt="" /><button class="redo" id="stuRedo">↺ Другое</button></div>`
+            : stu.generationId ? `<div class="photo-preview"><img src="${esc(srcUrl)}" alt="" /><button class="redo" id="stuRedo">↺ Другое</button></div>`
+            : `<label class="drop"><input type="file" accept="image/*" id="stuFile" />
+                 <span class="em">📸</span><b>Выбрать фото</b><span>с устройства или из галереи</span></label>
+               ${works.length ? `<div class="quiz-q">…или из моих работ</div>
+               <div class="mini" id="stuMini">${works.map((g) => `<img src="${esc(g.output_url)}" data-gid="${g.id}" loading="lazy" alt="" />`).join("")}</div>` : ""}`}
+        </div>
+        <div class="seg" id="stuSeg">
+          <button data-md="image" class="${!isVideo ? "on" : ""}">🖼 Фото</button>
+          <button data-md="video" class="${isVideo ? "on" : ""}">🎬 Видео</button>
+        </div>
+        ${isVideo && !has ? `<div class="sub">Для видео нужно исходное фото — добавьте его выше или сначала создайте картинку.</div>` : ""}
+        <div class="quiz-q">Модель</div>
+        <div class="mlist">
+          ${primary.map(modelRow).join("")}
+          ${hidden.length && !stu.showAll ? `<button class="btn ghost" id="stuMore">Показать все модели (${hidden.length}) — нужно фото</button>` : ""}
+          ${hidden.length && stu.showAll ? hidden.map(modelRow).join("") : ""}
+        </div>
+        ${caps && caps.aspectRatios && caps.aspectRatios.length > 1 ? `
+          <div class="quiz-q">Формат кадра</div>
+          <div class="chips" id="stuAr">${caps.aspectRatios.map((r) =>
+            `<button class="chip ${r === (stu.aspect || caps.aspectRatios[0]) ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>` : ""}
+        ${caps && caps.resolutions && caps.resolutions.length ? `
+          <div class="quiz-q">Качество</div>
+          <div class="chips" id="stuRes">${caps.resolutions.map((r) =>
+            `<button class="chip ${r.id === (stu.resolution || caps.resolutions[0].id) ? "on" : ""}" data-res="${r.id}">${esc(r.label)} · ${r.credits} ${PATRON}</button>`).join("")}</div>` : ""}
+        ${isVideo && m.video ? `
+          <div class="quiz-q">Длительность</div>
+          <div class="chips" id="stuDur">${m.video.durations.map((d) =>
+            `<button class="chip ${d.seconds === stu.duration ? "on" : ""}" data-dur="${d.seconds}">${d.seconds} сек · ${d.credits} ${PATRON}</button>`).join("")}</div>` : ""}
+        ${isVideo && m.video && m.video.endFrame ? `
+          <div class="quiz-q">Финальный кадр (необязательно)</div>
+          <div id="stuEndZone">${stu.endPhoto ? `<div class="photo-preview"><img src="${stu.endPhoto}" alt="" /><button class="redo" id="stuEndRedo">✕ Убрать</button></div>`
+            : `<label class="drop"><input type="file" accept="image/*" id="stuEndFile" />
+                 <span class="em">🏁</span><b>Кадр-финал</b><span>видео плавно придёт к нему</span></label>`}</div>` : ""}
+        ${story.length ? `${story.map((s) => `
+          <div class="quiz-q">${esc(s.question)}</div>
+          <div class="chips" data-story="${s.id}">${s.options.map((o) =>
+            `<button class="chip ${stu.options[s.id] === o.id ? "on" : ""}" data-opt="${o.id}">${esc(o.label)}</button>`).join("")}</div>`).join("")}` : ""}
         <div class="stack">
-          <button class="btn primary" id="goBtn"><span class="priceBadge">Создать · <span id="prN">${priceOf()}</span> ${PATRON}</span></button>
-          <button class="btn ghost" id="backBtn">← Назад</button>
+          <button class="btn primary" id="stuGo"></button>
+          <button class="btn ghost" id="stuBack">← Галерея стилей</button>
         </div>`;
-      sheetBody.querySelectorAll("#arRow .chip").forEach((c) => (c.onclick = () => {
-        sheetBody.querySelectorAll("#arRow .chip").forEach((x) => x.classList.remove("on"));
-        c.classList.add("on"); pick.aspect_ratio = c.dataset.ar;
+
+      const goBtn = sheetBody.querySelector("#stuGo");
+      const cta = () => {
+        const p = studioPrice();
+        if ((isVideo || m.needsImage) && !stuHasSource()) { goBtn.textContent = "Добавьте фото ↑"; goBtn.disabled = true; return; }
+        if (!isVideo && !stu.preset && !(stu.prompt || "").trim()) { goBtn.textContent = "Опишите, что нарисовать ↑"; goBtn.disabled = true; return; }
+        goBtn.disabled = false;
+        goBtn.textContent = p > ME.dashboard.credits ? `Пополнить · нужно ${p} ${PATRON}` : `Создать за ${p} ${PATRON}`;
+      };
+      cta();
+      const bind = (sel, fn) => { const el = sheetBody.querySelector(sel); if (el) fn(el); };
+      bind("#stuBack", (el) => (el.onclick = () => { st.tab = stu.preset && stu.preset.category === "product" ? "product" : "shoot"; viewPick(); }));
+      bind("#stuEdit", (el) => (el.onclick = () => { stu.editOpen = !stu.editOpen; viewStudio(); }));
+      bind("#stuSwap", (el) => (el.onclick = () => { stu.swap = true; st.tab = stu.preset.category === "product" ? "product" : "shoot"; viewPick(); }));
+      bind("#stuCustom", (el) => (el.oninput = () => { stu.custom = el.value; }));
+      bind("#stuPrompt", (el) => (el.oninput = () => { stu.prompt = el.value; cta(); }));
+      sheetBody.querySelectorAll("#stuSeg button").forEach((b) => (b.onclick = () => {
+        if (b.dataset.md === stu.mode) return;
+        stu.mode = b.dataset.md; stu.modelKey = defaultStudioModel();
+        stu.aspect = undefined; stu.resolution = undefined; stu.duration = undefined; stu.showAll = false;
+        clampStudioOpts(); viewStudio();
       }));
-      sheetBody.querySelectorAll("#resRow .chip").forEach((c) => (c.onclick = () => {
-        sheetBody.querySelectorAll("#resRow .chip").forEach((x) => x.classList.remove("on"));
-        c.classList.add("on"); pick.resolution = c.dataset.res;
-        sheetBody.querySelector("#prN").textContent = c.dataset.rc;
+      sheetBody.querySelectorAll("[data-mk]").forEach((b) => (b.onclick = () => { stu.modelKey = b.dataset.mk; clampStudioOpts(); viewStudio(); }));
+      bind("#stuMore", (el) => (el.onclick = () => { stu.showAll = true; viewStudio(); }));
+      sheetBody.querySelectorAll("#stuAr .chip").forEach((c) => (c.onclick = () => { stu.aspect = c.dataset.ar; viewStudio(); }));
+      sheetBody.querySelectorAll("#stuRes .chip").forEach((c) => (c.onclick = () => { stu.resolution = c.dataset.res; viewStudio(); }));
+      sheetBody.querySelectorAll("#stuDur .chip").forEach((c) => (c.onclick = () => { stu.duration = Number(c.dataset.dur); viewStudio(); }));
+      sheetBody.querySelectorAll("[data-story]").forEach((row) => {
+        row.querySelectorAll(".chip").forEach((chip) => (chip.onclick = () => {
+          const id = row.dataset.story;
+          if (stu.options[id] === chip.dataset.opt) delete stu.options[id];
+          else stu.options[id] = chip.dataset.opt;
+          viewStudio();
+        }));
+      });
+      bind("#stuFile", (el) => (el.onchange = async (e) => {
+        const f = e.target.files[0];
+        if (!f) return;
+        const data = await downscale(f);
+        if (!data) { toast("Не получилось прочитать фото"); return; }
+        stu.photo = data; stu.photoUrl = null; stu.generationId = null; stu.srcPreview = null;
+        clampStudioOpts(); viewStudio();
       }));
-      sheetBody.querySelector("#backBtn").onclick = () => viewPick();
-      sheetBody.querySelector("#goBtn").onclick = () => (pick.needPhoto && !pick.generation_id ? viewPhoto() : run());
+      sheetBody.querySelectorAll("#stuMini img").forEach((im) => (im.onclick = () => {
+        stu.photo = null; stu.photoUrl = null;
+        stu.generationId = Number(im.dataset.gid); stu.srcPreview = im.getAttribute("src");
+        clampStudioOpts(); viewStudio();
+      }));
+      bind("#stuRedo", (el) => (el.onclick = () => { stu.photo = null; stu.photoUrl = null; stu.generationId = null; stu.srcPreview = null; viewStudio(); }));
+      bind("#stuEndFile", (el) => (el.onchange = async (e) => {
+        const f = e.target.files[0];
+        if (!f) return;
+        const data = await downscale(f);
+        if (data) { stu.endPhoto = data; viewStudio(); }
+      }));
+      bind("#stuEndRedo", (el) => (el.onclick = () => { stu.endPhoto = null; stu.endGenerationId = null; viewStudio(); }));
+      goBtn.onclick = () => {
+        const p = studioPrice();
+        // E1: never fire a doomed request — the CTA itself becomes the top-up path.
+        if (p > ME.dashboard.credits) { viewPaywall({ need: p, balance: ME.dashboard.credits, packs: ME.packs }); return; }
+        runStudio();
+      };
+    }
+
+    /** Submit the composer: upload sources → one /api/generate → poll job. */
+    async function runStudio() {
+      const m = studioModel();
+      const isVideo = stu.mode === "video";
+      viewProgress(isVideo);
+      if (stu.photo && !stu.photoUrl) {
+        stu.photoUrl = await uploadData(stu.photo);
+        if (!stu.photoUrl) { toast("Не удалось загрузить фото — попробуйте ещё раз"); viewStudio(); return; }
+      }
+      let end_image_url;
+      if (stu.endPhoto) {
+        end_image_url = await uploadData(stu.endPhoto);
+        if (!end_image_url) { toast("Не удалось загрузить финальный кадр"); viewStudio(); return; }
+      }
+      const opts = {
+        image_url: stu.photoUrl || undefined,
+        generation_id: stu.generationId || undefined,
+        aspect_ratio: stu.aspect && stu.aspect !== "auto" ? stu.aspect : undefined,
+        resolution: stu.resolution || undefined,
+      };
+      const body = stu.preset && !isVideo
+        ? { source: "preset", id: stu.preset.id,
+            // Only send a model when the user actually SWAPPED off the preset default.
+            model: stu.modelKey !== stu.preset.model ? stu.modelKey : undefined,
+            custom: (stu.custom || "").trim() || undefined, ...opts }
+        : { source: "model", model: stu.modelKey, prompt: stu.prompt || "",
+            options: Object.values(stu.options).length ? Object.values(stu.options) : undefined,
+            custom: isVideo ? (stu.custom || "").trim() || undefined : undefined,
+            duration: stu.duration || undefined,
+            end_image_url, end_generation_id: stu.endGenerationId || undefined, ...opts };
+      const { status, data } = await api("/api/generate", { method: "POST", body: JSON.stringify(body) });
+      if (status === 402) { viewPaywall(data); return; }
+      if (status !== 200) { toast("Что-то пошло не так — попробуйте ещё раз"); viewStudio(); return; }
+      ME.dashboard.credits = data.balance;
+      setBalance(data.balance);
+      startJob(data.id, isVideo, null);
     }
 
     /**
@@ -1470,33 +1720,9 @@
       };
     }
 
-    /** Focused text-to-image with one chosen model (from the news banner). */
-    function viewTextModel(n) {
-      openSheet();
-      sheetBody.innerHTML = `
-        <h3>${esc(n.title)}</h3>
-        <div class="sub">Опишите, что нарисовать — модель ${esc(n.label)}.</div>
-        <textarea class="prompt" id="tp" placeholder="напр.: флакон духов на мокром чёрном мраморе"></textarea>
-        <div class="stack"><button class="btn primary" id="goBtn">Создать за ${n.credits} ${PATRON}</button></div>`;
-      sheetBody.querySelector("#goBtn").onclick = () => {
-        const prompt = sheetBody.querySelector("#tp").value.trim();
-        if (!prompt) { toast("Опишите, что нарисовать 🙂"); return; }
-        st.pick = { source: "model", model: n.key, credits: n.credits, needPhoto: false, prompt };
-        run();
-      };
-    }
-
-    /** Try a model from the news banner — routes to the right composer by kind. */
+    /** Try a model from the news banner — the Studio opens with it preselected. */
     function tryModel(n) {
-      if (n.kind === "text_to_image") { viewTextModel(n); return; }
-      if (n.kind === "image_to_video") {
-        openSheet();
-        const m = ME.catalog.videoModels.find((x) => x.key === n.key) || { key: n.key, credits: n.credits, video: null, label: n.title };
-        st.pick = { source: "model", model: n.key, credits: n.credits, needPhoto: true, options: [], custom: "", prompt: "" };
-        viewVideoComposer(m);
-        return;
-      }
-      studio("shoot"); // image_edit / fallback
+      openStudio({ mode: n.kind === "image_to_video" ? "video" : "image", modelKey: n.key, origin: "news" });
     }
 
     /** Sliding model-news banner: cards + auto-advance + dots. */
@@ -1535,8 +1761,17 @@
     }
 
     // ————— paywall: buy Stars packs WITHOUT leaving the app —————
+    // Exit-offer shown at most once per app session (growth doctrine #683: the
+    // moment the paywall is dismissed is the highest-intent instant to make the
+    // best offer). The offer IS the existing combo pack — already ~half the
+    // ladder's per-patron price, with a real Kaspi link — no fake discount.
+    let exitOfferShown = false;
     function viewPaywall(data) {
       haptic("warning");
+      // Arm the exit-offer: closing the paywall (✕ / backdrop) shows the combo
+      // once, instead of silently losing the buyer. "Назад" arms it too.
+      const combo = (data.packs || []).find((p) => p.offer);
+      if (combo && !exitOfferShown) sheetCloseHook = () => viewExitOffer(combo, data);
       sheetBody.innerHTML = `
         <h3>Ещё один шаг до результата ✨</h3>
         <div class="sub">Нужно ${data.need} ${PATRON}, на балансе ${data.balance}. Пополните — и результат сразу продолжит создаваться.</div>
@@ -1547,8 +1782,30 @@
             <span class="stars">${p.kzt.toLocaleString("ru-RU")} ₸</span>
           </button>`).join("")}</div>
         <div class="row"><button class="btn ghost" id="backBtn">← Назад</button></div>`;
-      sheetBody.querySelector("#backBtn").onclick = () => viewPick();
-      sheetBody.querySelectorAll("[data-pk]").forEach((b) => (b.onclick = () => buyPack(b.dataset.pk)));
+      sheetBody.querySelector("#backBtn").onclick = () => { if (sheetCloseHook) { closeSheet(); } else viewPick(); };
+      sheetBody.querySelectorAll("[data-pk]").forEach((b) => (b.onclick = () => { sheetCloseHook = null; buyPack(b.dataset.pk); }));
+    }
+
+    /** The paywall exit-offer: the combo pack, one choice, honest math. */
+    function viewExitOffer(combo, paywallData) {
+      exitOfferShown = true;
+      haptic("warning");
+      const ladder = (paywallData.packs || []).filter((p) => !p.offer);
+      const ladderPer = ladder.length ? Math.min(...ladder.map((p) => p.kzt / p.credits)) : 0;
+      const per = combo.kzt / combo.credits;
+      const saving = ladderPer ? Math.round((1 - per / ladderPer) * 100) : 0;
+      openSheet();
+      sheetBody.innerHTML = `
+        <h3>Подождите — спецпредложение 🎁</h3>
+        <div class="sub">Только для новых покупок: <b>${combo.credits} ${PATRON} за ${combo.kzt.toLocaleString("ru-RU")} ₸</b>
+        — ≈${per.toFixed(0)} ₸ за патрон${saving > 0 ? ` (выгода ${saving}% к обычной цене)` : ""}.
+        Хватит на ${Math.floor(combo.credits / Math.max(1, paywallData.need)) || 1}× ваш текущий запрос.</div>
+        <div class="stack">
+          <button class="btn primary" id="exGo">🔥 Забрать за ${combo.kzt.toLocaleString("ru-RU")} ₸</button>
+          <button class="btn ghost" id="exNo">Не сейчас</button>
+        </div>`;
+      sheetBody.querySelector("#exGo").onclick = () => buyPack(combo.id);
+      sheetBody.querySelector("#exNo").onclick = () => closeSheet();
     }
 
     // Kaspi purchase — handled entirely IN the app (same flow as the bot): create
@@ -1683,6 +1940,9 @@
       const { status, data } = await api("/api/me");
       if (status !== 200) return;
       ME = data;
+      // Pick up renders started elsewhere (e.g. in the bot chat) while the app
+      // is open — they join the jobs pill + ripple cards like local ones.
+      if (resumePending() > 0) renderGallery(1);
       setBalance(data.dashboard.credits);
       const s = document.getElementById("statsRow");
       if (s) s.innerHTML = statsHtml(data.dashboard);
@@ -1762,7 +2022,17 @@
       } catch (e) { /* keep the last rendered page on a transient error */ }
       GAL_PAGE = cur;
       g.innerHTML = "";
-      if (!items.length) {
+      // In-flight renders lead the grid (page 1) as ripple cards — reload-safe
+      // (jobs is re-hydrated from /api/me pending rows), so a render in progress
+      // is never invisible: no more "did it break?" after a page refresh.
+      if (cur === 1) {
+        for (const job of [...jobs.values()].reverse()) {
+          g.appendChild($(`<div class="shot pending" role="status" aria-label="Генерируется">
+            <span class="rip"></span><span class="rip"></span><span class="rip"></span>
+            <span class="tag">⏳ ${job.isVideo ? "видео" : "создаётся"}</span></div>`));
+        }
+      }
+      if (!items.length && !(cur === 1 && jobs.size)) {
         g.appendChild($(`<div class="empty">Пока пусто.<br>Создайте первую работу — она появится здесь ✨</div>`));
       }
       for (const item of items) {
@@ -2002,6 +2272,7 @@
         </nav>
       </div>`));
 
+      resumePending(); // re-hydrate in-flight renders BEFORE the first gallery paint
       renderGallery();
       renderNews();
 

@@ -175,6 +175,54 @@ export function authResponse(headers: Headers): { status: number; body: Record<s
  * patrons, and would confuse a plain credit top-up buyer in the Mini App.
  * They're surfaced only via the bot's dedicated /course command.
  */
+/**
+ * One Studio catalog entry per registry model of the given mode — the full
+ * curated registry (never the display-picker subsets), with everything the
+ * composer needs to render a model row + its parameter block: capabilities
+ * (only what the model declares — spec §4 ⑥), the default-settings patron
+ * price, and whether a source image is required (image_edit / image_to_video)
+ * vs optional-none (text_to_image). ALL generation prices are in PATRONS only
+ * (decision D4-revised): the patron is the app's single price language; real ₸
+ * appears solely on pack purchase prices, where actual money changes hands.
+ */
+function studioModelsOf(mode: "image" | "video"): Array<Record<string, unknown>> {
+  const kinds = mode === "video" ? ["image_to_video"] : ["image_edit", "text_to_image"];
+  return Object.values(MODELS as Record<string, ModelSpec>)
+    .filter((m) => kinds.includes(m.kind))
+    .sort((a, b) => a.credits - b.credits) // cheapest first — honest ladder
+    .map((m) => ({
+      key: m.key,
+      label: m.label,
+      kind: m.kind,
+      credits: m.credits,
+      needsImage: m.kind !== "text_to_image",
+      image: m.image
+        ? {
+            aspectRatios: m.image.aspectRatios,
+            resolutions: (m.image.resolutions ?? []).map((t) => ({
+              id: t.id,
+              label: t.label,
+              mult: t.mult, // exact multiplier — client mirrors priceFor with it
+              credits: priceFor(m, { resolution: t.id }),
+            })),
+          }
+        : null,
+      video: m.video
+        ? {
+            durations: m.video.durations.map((d) => ({ seconds: d, credits: priceFor(m, { duration: d }) })),
+            aspectRatios: m.video.aspectRatios,
+            endFrame: !!m.video.endFrame,
+            resolutions: (m.video.resolutions ?? []).map((t) => ({
+              id: t.id,
+              label: t.label,
+              mult: t.mult, // exact multiplier — client mirrors priceFor with it
+              credits: priceFor(m, { resolution: t.id }),
+            })),
+          }
+        : null,
+    }));
+}
+
 function packsPayload(): Array<Record<string, unknown>> {
   return PACKS.filter((p) => !p.course).map((p) => ({
     id: p.id,
@@ -216,6 +264,9 @@ function catalogPayload(usage: Record<string, number>): Record<string, unknown> 
       label: p.label,
       category: p.category,
       credits: presetModel(p).credits,
+      // The preset's default engine — the Studio preselects/highlights this row
+      // in its model picker (visible + swappable, spec G2). Price already follows it.
+      model: presetModel(p).key,
       previewUrl: `/img/card-preset-${p.id}.jpg`,
       usageCount: usage[p.id] ?? 0,
       trending: trending.has(p.id),
@@ -252,6 +303,17 @@ function catalogPayload(usage: Record<string, number>): Record<string, unknown> 
     })),
     // Aspect ratios offered for preset/campaign images (rendered by PRESET_MODEL).
     presetAspects: PRESET_MODEL.image?.aspectRatios ?? [],
+    // Cinema Studio catalog (docs/cinema-studio-spec.md §4 ⑤): the FULL curated
+    // registry grouped by mode — unlike the imageModels/videoModels pickers
+    // below, which are display-curated subsets for the legacy tabs. Every model
+    // carries its capability block and its PATRON price — patrons are the app's
+    // single price language for generations (decision D4-revised: no ₸
+    // conversions on estimates; real ₸ only on pack purchases). needsImage
+    // drives the adaptive input gating in the composer (D6).
+    studio: {
+      image: studioModelsOf("image"),
+      video: studioModelsOf("video"),
+    },
     imageModels: IMAGE_MODEL_PICKER.map((k) => {
       const spec = MODELS[k] as ModelSpec;
       return {
@@ -497,10 +559,29 @@ export async function generateResponse(
   }
   let model: ModelSpec, prompt: string, crafted;
 
+  // Aspect a preset PINS (marketplace cards must be 3:4) — used as the default
+  // ratio below when the user didn't pick one themselves (explicit choice wins).
+  let presetAspect: string | undefined;
   if (source === "preset") {
     const p = PRESETS.find((x) => x.id === body?.id);
     if (!p || !imageUrl) return { status: 400, body: { error: "bad_request" } };
-    [model, prompt, crafted] = [presetModel(p), p.prompt, true];
+    // Studio ⑤: the preset's default model is preselected but SWAPPABLE — an
+    // optional override must be an image-capable registry model (a video model
+    // can't render a styled photo). Price follows the resolved model (priceFor).
+    let m = presetModel(p);
+    if (typeof body?.model === "string" && body.model) {
+      const o = modelByKey(body.model);
+      if (!o || o.kind === "image_to_video") return { status: 400, body: { error: "bad_request" } };
+      m = o;
+    }
+    // Studio ① (D1): a personalization layer on top of the curated prompt —
+    // same sanitized free-words treatment as the campaign story builder. The
+    // curated prompt itself still never leaves the server.
+    let composed = p.prompt;
+    const custom = sanitizePrompt(typeof body?.custom === "string" ? body.custom : "").slice(0, 200);
+    if (custom) composed += ` Extra details from the user: ${custom}.`;
+    [model, prompt, crafted] = [m, composed, true];
+    presetAspect = p.aspect;
     // Log WHICH preset was used — the web studio was the one tap surface that
     // didn't (bot logs preset: taps, the campaign branch below logs camp:preset),
     // so plain-preset usage by category (e.g. the product/маркетплейс presets)
@@ -557,9 +638,14 @@ export async function generateResponse(
     if (composed === null) return { status: 400, body: { error: "bad_option" } };
     [model, prompt, crafted] = [vmodel, composed, true];
   } else if (source === "model") {
+    // The WHOLE curated registry is selectable (Cinema Studio: every model
+    // visible with its price — docs/cinema-studio-spec.md G2/G5). Validation is
+    // by capability, not by a picker subset: the registry itself is the
+    // allow-list (only vetted, priced models live in MODELS), kind decides
+    // whether a source image is required, and normalizeOpts below rejects any
+    // option the model doesn't declare.
     const m = modelByKey(String(body?.model ?? ""));
-    const allowed = new Set<string>([...IMAGE_MODEL_PICKER, ...VIDEO_MODEL_PICKER, "photo_edit", "premium_edit"]);
-    if (!m || !allowed.has(m.key)) return { status: 400, body: { error: "bad_request" } };
+    if (!m) return { status: 400, body: { error: "bad_request" } };
     if (m.kind !== "text_to_image" && !imageUrl) return { status: 400, body: { error: "bad_request" } };
     let raw = typeof body?.prompt === "string" ? body.prompt : "";
     // Video: fold in the composer story/personalization before craft mapping.
@@ -591,9 +677,11 @@ export async function generateResponse(
     }
   }
   // Composer options (duration / aspect ratio / quality / end frame) — validated.
+  // A preset-pinned aspect (marketplace 3:4 cards) is the default; the user's
+  // explicit choice always wins over the pin.
   const opts = normalizeOpts(model, {
     duration: body?.duration != null ? Number(body.duration) : undefined,
-    aspectRatio: typeof body?.aspect_ratio === "string" ? body.aspect_ratio : undefined,
+    aspectRatio: typeof body?.aspect_ratio === "string" ? body.aspect_ratio : presetAspect,
     resolution: typeof body?.resolution === "string" ? body.resolution : undefined,
     endImageUrl,
   } as GenOpts);

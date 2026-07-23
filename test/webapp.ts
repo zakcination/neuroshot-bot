@@ -23,7 +23,7 @@ process.env.KASPI_API_SECRET = "test-kaspi-secret"; // enable the auto-approval 
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, createOrder, getOrCreateUser, getOrder, logEvent, logGeneration, query, spendCredits } = await import("../src/db.js");
+const { addCredits, completeGeneration, createOrder, createPendingGeneration, getOrCreateUser, getOrder, logEvent, logGeneration, query, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
@@ -438,6 +438,149 @@ await step("POST /api/generate: preset charges, renders async, poll reaches ok",
   assert.match(String(row.provider_request_id), /^req-\d+$/);
 });
 
+await step("Studio catalog: FULL registry by mode, patron-only prices; every model generable", async () => {
+  const cat = (await apiMe(signInitData(maker))).body.catalog as unknown as {
+    studio: {
+      image: Array<{ key: string; kind: string; credits: number; needsImage: boolean; image: unknown; video: unknown }>;
+      video: Array<{ key: string; kind: string; credits: number; needsImage: boolean; video: { durations: Array<{ seconds: number; credits: number }> } | null }>;
+    };
+  };
+  const s = cat.studio;
+  // Full registry: 9 image (edit + t2i) and 5 video models — the display pickers
+  // hide some of these; the Studio never does (spec G5 "ALL models").
+  assert.equal(s.image.length, 9);
+  assert.equal(s.video.length, 5);
+  for (const m of [...s.image, ...s.video]) {
+    assert.ok(m.credits >= 1, `${m.key} zero price`);
+    assert.equal(m.needsImage, m.kind !== "text_to_image", `${m.key} needsImage wrong`);
+    // Patrons are the ONLY price language for generations (D4-revised): no ₸
+    // conversion fields may ride on a studio model entry.
+    assert.ok(!("approxKzt" in m), `${m.key} carries a ₸ estimate — patron-only pricing`);
+  }
+  // Cheapest-first ladder, and previously picker-hidden models are present.
+  assert.ok(s.image.some((m) => m.key === "seedream_edit") && s.image.some((m) => m.key === "nb2_edit"), "picker-hidden edit models missing");
+  assert.deepEqual([...s.image.map((m) => m.credits)].sort((a, b) => a - b), s.image.map((m) => m.credits));
+  // Every video entry prices each duration (the composer's live badge source).
+  for (const v of s.video) for (const d of v.video!.durations) assert.ok(d.credits >= 1, `${v.key}@${d.seconds}s unpriced`);
+
+  // The widened allow-list: a model the old pickers HID is now directly generable…
+  await addCredits(maker.id, 6, "admin_grant", "test"); // exactly the 4+2 spent below (net-zero step)
+  const edit = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "nb2_edit", image_url: "https://fal.test/storage/u-1.jpg", prompt: "улучши свет" }),
+  });
+  assert.equal(edit.status, 200);
+  const ed = (await edit.json()) as { id: number; credits: number };
+  assert.equal(ed.credits, 4);
+  await pollGen(ed.id);
+  assert.equal(falCalls.at(-1)!.endpoint, "fal-ai/nano-banana-2/edit");
+  const seed = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "seedream_edit", image_url: "https://fal.test/storage/u-1.jpg", prompt: "сцена у моря" }),
+  });
+  assert.equal(seed.status, 200);
+  await pollGen(((await seed.json()) as { id: number }).id);
+  // …but capability rules still hold: an edit model with NO image is rejected,
+  // and a garbage key is not in the registry.
+  const noImg = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "nb2_edit", prompt: "x" }),
+  });
+  assert.equal(noImg.status, 400);
+  const bogus = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "dub_ru", image_url: "https://fal.test/storage/u-1.jpg", prompt: "x" }),
+  });
+  assert.equal(bogus.status, 400);
+});
+
+await step("Studio preset: personalization is sanitized+appended; model override swaps engine; video override rejected", async () => {
+  await addCredits(maker.id, 10, "admin_grant", "test"); // 2 + 8 spent below (net-zero)
+  // Personalization (D1): sanitized free words ride on the curated prompt.
+  const pers = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "preset", id: "headshot", image_url: "https://fal.test/storage/u-1.jpg", custom: "  в синем  пиджаке " }),
+  });
+  assert.equal(pers.status, 200);
+  await pollGen(((await pers.json()) as { id: number }).id);
+  assert.match(falCalls.at(-1)!.input.prompt as string, /corporate headshot/);
+  assert.match(falCalls.at(-1)!.input.prompt as string, /Extra details from the user: в синем пиджаке/);
+  // Model override (G2): the preset renders on the swapped engine at ITS price;
+  // the catalog exposes each preset's default model key for the picker highlight.
+  const cat = (await apiMe(signInitData(maker))).body.catalog;
+  const hs = cat.presets.find((p: { id: string }) => p.id === "headshot") as unknown as { model: string };
+  assert.equal(hs.model, "seedream_edit");
+  const ovr = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "preset", id: "headshot", image_url: "https://fal.test/storage/u-1.jpg", model: "nbpro_edit" }),
+  });
+  assert.equal(ovr.status, 200);
+  const od = (await ovr.json()) as { id: number; credits: number };
+  assert.equal(od.credits, 8); // nbpro_edit price, not the preset default's 2
+  await pollGen(od.id);
+  assert.equal(falCalls.at(-1)!.endpoint, "fal-ai/nano-banana-pro/edit");
+  // A VIDEO model can't render a styled photo — override rejected, no charge.
+  const bad = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "preset", id: "headshot", image_url: "https://fal.test/storage/u-1.jpg", model: "kling3" }),
+  });
+  assert.equal(bad.status, 400);
+});
+
+await step("/api/me exposes PENDING generations — the reload-safe resume contract", async () => {
+  // The Mini App re-hydrates in-flight renders after a reload from these rows
+  // (spec §4.1 resumePending) — if pending rows ever stop flowing through
+  // /api/me, in-progress work silently vanishes on refresh. Pin the contract.
+  const id = await createPendingGeneration(maker.id, "text_to_image", "resume contract", 2);
+  const gens = (await apiMe(signInitData(maker))).body.generations as unknown as Array<{ id: number; status: string; model: string }>;
+  const row = gens.find((x) => x.id === id);
+  assert.ok(row, "pending row missing from /api/me generations");
+  assert.equal(row!.status, "pending");
+  assert.equal(row!.model, "text_to_image");
+  // Clean up: terminal-state the row (no charge was made, so no refund needed).
+  assert.equal(await completeGeneration(id, "error"), true);
+});
+
+await step("marketplace-spec cards: preset pins 3:4 server-side; explicit user ratio wins", async () => {
+  // Exactly the 6 🔫 this step spends (3 × 2🔫 Seedream) — later steps assert
+  // absolute balances, so the step must be net-zero on the wallet.
+  await addCredits(maker.id, 6, "admin_grant", "test");
+  // Both spec cards are in the product category of the catalog.
+  const cat = (await apiMe(signInitData(maker))).body.catalog;
+  for (const id of ["kaspi_card", "wb_apparel_card"]) {
+    const p = cat.presets.find((x: { id: string }) => x.id === id);
+    assert.ok(p, `${id} missing from catalog`);
+    assert.equal(p.category, "product");
+  }
+  // One tap, NO ratio from the client → the preset's pinned 3:4 flows to fal
+  // (Seedream named size portrait_4_3) — the "upload-ready card" guarantee.
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "preset", id: "kaspi_card", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(r.status, 200);
+  await pollGen(((await r.json()) as { id: number }).id);
+  const pinned = falCalls.at(-1)!;
+  assert.equal(pinned.input.image_size, "portrait_4_3");
+  assert.match(pinned.input.prompt as string, /seamless white/);
+  // The apparel card pins the same ratio with the #f2f3f5 background.
+  const r2 = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "preset", id: "wb_apparel_card", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(r2.status, 200);
+  await pollGen(((await r2.json()) as { id: number }).id);
+  assert.match(falCalls.at(-1)!.input.prompt as string, /#f2f3f5/);
+  // An EXPLICIT user ratio overrides the pin (choice wins over default).
+  const r3 = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "preset", id: "kaspi_card", image_url: "https://fal.test/storage/u-1.jpg", aspect_ratio: "1:1" }),
+  });
+  assert.equal(r3.status, 200);
+  await pollGen(((await r3.json()) as { id: number }).id);
+  assert.equal(falCalls.at(-1)!.input.image_size, "square_hd");
+});
+
 await step("prompt library: VeoSee-seeded presets are exposed in the catalog and one-tap applicable", async () => {
   const ids = (await apiMe(signInitData(maker))).body.catalog.presets.map((p) => p.id);
   for (const id of ["candid_lux", "paris_rain", "pixar_me", "figurine", "retro90s",
@@ -591,12 +734,14 @@ await step("insufficient 🔫 → 402 with the pack catalog (in-app paywall)", a
   assert.equal(d.packs.length, 5); // 4 ladder + combo offer
 });
 
-await step("generate validation: unknown ids, missing photo, off-catalog models, empty prompt → 400", async () => {
+await step("generate validation: unknown ids, missing photo, unknown model keys, empty prompt → 400", async () => {
   const cases = [
     { source: "preset", id: "nope", image_url: "https://x.test/a.jpg" },
     { source: "preset", id: "headshot" }, // photo required
     { source: "campaign", id: "minifilm:nope", image_url: "https://x.test/a.jpg" },
-    { source: "model", model: "nbpro_edit", prompt: "hi", image_url: "https://x.test/a.jpg" }, // not in pickers
+    // The registry IS the allow-list now (Studio: all vetted models generable),
+    // so only keys outside MODELS are rejected — see the Studio-catalog step.
+    { source: "model", model: "definitely_not_a_model", prompt: "hi", image_url: "https://x.test/a.jpg" },
     { source: "model", model: "text_to_image", prompt: "   " }, // empty after sanitize
     { source: "hack" },
   ];
@@ -1052,7 +1197,9 @@ await step("catalog: model news banner + video composer params (durations priced
   // Seedance actually honors ratio + a resolution ladder.
   const seed = c.videoModels.find((m) => m.key === "seedance_fast")!;
   assert.ok(seed.video!.aspectRatios.includes("9:16"), "Seedance missing vertical ratio");
-  assert.ok(seed.video!.resolutions.some((r) => r.id === "1080p"), "Seedance missing 1080p tier");
+  // Seedance 2.0 resolution enum is 480p/720p (fal schema) — 1080p is NOT a real tier there.
+  assert.ok(seed.video!.resolutions.some((r) => r.id === "480p"), "Seedance missing 480p tier");
+  assert.ok(!seed.video!.resolutions.some((r) => r.id === "1080p"), "Seedance 1080p is not a real fal 2.0 tier — must be removed");
   // Images now expose aspect ratio (fixes square-by-default) + Nano Banana quality tiers.
   const t2i = c.imageModels.find((m) => m.key === "text_to_image")!;
   assert.ok(t2i.image!.aspectRatios.includes("9:16"), "image model missing vertical ratio");
@@ -1128,14 +1275,14 @@ await step("input params: image aspect ratio → image_size, quality tier prices
   await pollGen(((await img.json()) as { id: number }).id);
   assert.equal(falCalls.at(-1)!.input.image_size, "portrait_16_9");
 
-  // Quality tier: Nano Banana 2 at 4K costs the 2.5× multiplier and passes resolution through.
+  // Quality tier: Nano Banana 2 at 4K costs the 2× multiplier (fal schema) and passes resolution through.
   const hi = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({ source: "model", model: "nb2_image", prompt: "рисунок кота", resolution: "4K" }),
   });
   assert.equal(hi.status, 200);
   const hid = (await hi.json()) as { id: number; credits: number };
-  assert.equal(hid.credits, 10); // 4 base × 2.5
+  assert.equal(hid.credits, 8); // 4 base × 2 (4K = 2× rate)
   await pollGen(hid.id);
   assert.equal(falCalls.at(-1)!.input.resolution, "4K");
 
@@ -1144,16 +1291,16 @@ await step("input params: image aspect ratio → image_size, quality tier prices
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({
       source: "model", model: "seedance_fast", image_url: "https://fal.test/storage/u-1.jpg",
-      prompt: "motion", aspect_ratio: "9:16", resolution: "1080p",
+      prompt: "motion", aspect_ratio: "9:16", resolution: "480p",
     }),
   });
   assert.equal(sv.status, 200);
   const svd = (await sv.json()) as { id: number; credits: number };
-  assert.equal(svd.credits, 98); // 61 base (5s 720p) × 1.6 (1080p), ceil
+  assert.equal(svd.credits, 61); // 61 base (5s 720p); 480p priced same as 720p (mult 1) until measured
   await pollGen(svd.id);
   const scall = falCalls.at(-1)!;
   assert.equal(scall.input.aspect_ratio, "9:16");
-  assert.equal(scall.input.resolution, "1080p");
+  assert.equal(scall.input.resolution, "480p");
 });
 
 await step("end frame is validated as strictly as the source: video url or foreign id → 400", async () => {

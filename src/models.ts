@@ -15,7 +15,7 @@ export interface GenOpts {
   duration?: number; // video length in seconds
   aspectRatio?: string; // "auto" | "1:1" | "9:16" | "16:9" | "4:3" | "3:4"
   endImageUrl?: string; // video END frame (Kling 3.0 / Seedance) — start frame is the source image
-  resolution?: string; // quality-tier id (model-specific: "1K"/"2K"/"4K", "720p"/"1080p")
+  resolution?: string; // quality-tier id (model-specific: "1K"/"2K"/"4K", "480p"/"720p")
 }
 
 /** A quality/resolution tier the composer can offer; `mult` scales credits AND cost. */
@@ -86,18 +86,26 @@ function endParam(opts: GenOpts | undefined): { end_image_url?: string } {
 }
 
 /** Quality ladders (credit multiplier covers the higher provider cost with margin). */
+// Nano Banana 2 native multi-resolution: 1K base, 2K = 1.5× rate, 4K = 2× rate
+// (fal schema, verified 2026-07-22 — docs/cinema-studio-model-params.md P6).
 const NB_RES: ResTier[] = [
   { id: "1K", label: "1K", mult: 1 },
   { id: "2K", label: "2K ✨", mult: 1.5 },
-  { id: "4K", label: "4K 💎", mult: 2.5 },
+  { id: "4K", label: "4K 💎", mult: 2 },
 ];
+// Nano Banana Pro: 1K/2K same rate, 4K = double rate (fal schema). We default/floor
+// at 2K for quality (1K costs the same on fal, so it's a free quality win — P3).
 const NBPRO_RES: ResTier[] = [
   { id: "2K", label: "2K", mult: 1 },
-  { id: "4K", label: "4K 💎", mult: 1.8 },
+  { id: "4K", label: "4K 💎", mult: 2 },
 ];
+// Seedance 2.0 resolution enum is 480p/720p (NOT 1080p — that tier doesn't exist on
+// the 2.0 endpoint and a "1080p" request is rejected; fal schema, P1). 720p is the
+// balanced default (base price); 480p is faster, priced the same until its real
+// per-second cost is measured (then it can be discounted).
 const SEEDANCE_RES: ResTier[] = [
   { id: "720p", label: "720p", mult: 1 },
-  { id: "1080p", label: "1080p 💎", mult: 1.6 },
+  { id: "480p", label: "480p ⚡", mult: 1 },
 ];
 
 export const MODELS = {
@@ -506,6 +514,14 @@ export interface Preset {
    * never at module-init — robust to any evaluation-order quirk.
    */
   model?: keyof typeof MODELS;
+  /**
+   * Optional aspect ratio the look PINS (e.g. marketplace cards must be 3:4 —
+   * docs/growth-campaign-2026-07.md "killer feature"). Applied server-side as
+   * the DEFAULT when the user didn't pick a ratio themselves, so one tap yields
+   * a spec-correct result while an explicit user choice still wins. Must be a
+   * ratio the preset's model actually supports (checked by normalizeOpts).
+   */
+  aspect?: string;
 }
 
 /**
@@ -755,6 +771,35 @@ export const PRESETS: Preset[] = [
       "Turn this into a premium e-commerce hero shot: the product on a clean seamless studio background with soft " +
       "shadows, professional three-point lighting, subtle reflection, marketplace-listing composition, 4k quality. " +
       "Keep the product's shape, colors and branding exactly as in the photo.",
+  },
+  // --- Marketplace-spec cards (the growth plan's killer feature): one tap →
+  // an upload-READY listing card at the real marketplace spec — 3:4 portrait
+  // (900×1200 class), correct background per category (white for general goods,
+  // #f2f3f5 light-gray for apparel). Spec grounded in docs/growth-campaign-2026-07.md.
+  // Cheap Seedream (2 🔫) on purpose: this is the first-session hook for sellers.
+  {
+    id: "kaspi_card",
+    label: "🛒 Карточка Kaspi/WB",
+    category: "product",
+    aspect: "3:4",
+    prompt:
+      "Create a marketplace product listing card: cut out the product and place it on a pure seamless white " +
+      "studio background (#FFFFFF), vertical 3:4 portrait composition sized like a 900x1200 marketplace card, " +
+      "product centered and filling about 85% of the frame, soft natural shadow underneath, even professional " +
+      "e-commerce lighting, crisp focus, 4k quality. Keep the product's shape, colors, labels and branding " +
+      "exactly as in the photo — one single instance of the product.",
+  },
+  {
+    id: "wb_apparel_card",
+    label: "👕 Карточка одежды (WB)",
+    category: "product",
+    aspect: "3:4",
+    prompt:
+      "Create an apparel marketplace listing card: place the clothing item on a seamless light-gray studio " +
+      "background (#f2f3f5), vertical 3:4 portrait composition sized like a 900x1200 marketplace card, garment " +
+      "neatly presented and centered filling most of the frame, soft even studio lighting with a subtle floor " +
+      "shadow, fabric texture crisp and true to life, 4k quality. Keep the garment's cut, colors, patterns, " +
+      "prints and brand tags exactly as in the photo — one single instance of the garment.",
   },
   {
     id: "product_white",
