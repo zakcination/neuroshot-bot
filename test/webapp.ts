@@ -36,11 +36,16 @@ interface FalCall {
   input: Record<string, unknown>;
 }
 const falCalls: FalCall[] = [];
+let anyLlmFail = false; // flip to make the enhancer's LLM call blow up (refund path)
 (fal as { subscribe: unknown }).subscribe = async (
   endpoint: string,
   opts: { input: Record<string, unknown> },
 ) => {
   falCalls.push({ endpoint, input: opts.input });
+  if (endpoint === "fal-ai/any-llm") {
+    if (anyLlmFail) throw new Error("llm boom");
+    return { data: { output: `Cinematic, richly lit: ${String(opts.input.prompt)}` }, requestId: `req-${falCalls.length}` };
+  }
   const data = endpoint.includes("video")
     ? { video: { url: `https://fal.test/out/${falCalls.length}.mp4` } }
     : { images: [{ url: `https://fal.test/out/${falCalls.length}.png` }] };
@@ -525,6 +530,53 @@ await step("Studio preset: personalization is sanitized+appended; model override
     body: JSON.stringify({ source: "preset", id: "headshot", image_url: "https://fal.test/storage/u-1.jpg", model: "kling3" }),
   });
   assert.equal(bad.status, 400);
+});
+
+await step("Prompt Enhancer: first free → 1 🔫 → 402; provider failure refunds; a render re-arms the free one", async () => {
+  // A FRESH user so the enhance/gen_start event history is fully controlled.
+  const enh = { id: 990077, username: "enhancer", first_name: "Enh" };
+  await getOrCreateUser(enh.id, enh.username, null, 0);
+  const H = { Authorization: `tma ${signInitData(enh)}`, "Content-Type": "application/json" };
+  const call = (prompt: string) => fetch(`${base}/api/enhance`, { method: "POST", headers: H, body: JSON.stringify({ prompt }) });
+
+  // Empty prompt → 400, nothing charged.
+  assert.equal((await call("   ")).status, 400);
+  // 1st enhance ever → FREE, upgraded prompt back, balance untouched (0).
+  const r1 = await call("кот в очках");
+  assert.equal(r1.status, 200);
+  const d1 = (await r1.json()) as { prompt: string; charged: number; free: boolean; balance: number };
+  assert.equal(d1.free, true);
+  assert.equal(d1.charged, 0);
+  assert.equal(d1.balance, 0);
+  assert.match(d1.prompt, /Cinematic.*кот в очках/);
+  // 2nd enhance with 0 🔫 → 402 paywall (the free one is spent).
+  assert.equal((await call("кот в очках, неон")).status, 402);
+  // With 1 🔫 the 2nd enhance charges exactly 1.
+  await addCredits(enh.id, 1, "admin_grant", "test");
+  const r2 = await call("кот в очках, неон");
+  assert.equal(r2.status, 200);
+  const d2 = (await r2.json()) as { charged: number; free: boolean; balance: number };
+  assert.equal(d2.free, false);
+  assert.equal(d2.charged, 1);
+  assert.equal(d2.balance, 0);
+  // Provider failure on a PAID enhance → 502 and the patron comes back.
+  await addCredits(enh.id, 1, "admin_grant", "test");
+  anyLlmFail = true;
+  const rf = await call("ещё раз");
+  anyLlmFail = false;
+  assert.equal(rf.status, 502);
+  const balAfterFail = (await query("SELECT credits FROM users WHERE id = $1", [enh.id]))[0];
+  assert.equal(Number(balAfterFail.credits), 1); // refunded — net zero for the failed tap
+  // A generation start RE-ARMS the free enhance (D2: per-generation).
+  await addCredits(enh.id, 2, "admin_grant", "test"); // 1 + 2 = 3; t2i costs 2 → 1 left
+  const gen = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "model", model: "text_to_image", prompt: "домик у моря" }),
+  });
+  assert.equal(gen.status, 200);
+  const r3 = await call("домик у моря, но зимой");
+  assert.equal(r3.status, 200);
+  assert.equal(((await r3.json()) as { free: boolean }).free, true);
 });
 
 await step("/api/me exposes PENDING generations — the reload-safe resume contract", async () => {

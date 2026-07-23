@@ -1334,6 +1334,7 @@
         endPhoto: null, endGenerationId: null,
         duration: undefined, aspect: undefined, resolution: undefined,
         showAll: false, editOpen: prev ? prev.editOpen : false, swap: false,
+        prevPrompt: null, // pre-enhance prompt, powers the ↩ Вернуть undo
       };
       if (!stu.modelKey) stu.modelKey = defaultStudioModel();
       clampStudioOpts();
@@ -1421,7 +1422,11 @@
         ${stu.preset && isVideo ? `<div class="sub">Стиль применяется к фото. Для видео опишите движение ниже.</div>` : ""}
         ${!stu.preset || isVideo ? `
           <div class="quiz-q">${isVideo ? "Движение (необязательно)" : "Что нарисовать?"}</div>
-          <textarea class="prompt" id="stuPrompt" placeholder="${isVideo ? "камера медленно приближается, ветер в волосах…" : "флакон духов на мокром чёрном мраморе…"}">${esc(stu.prompt)}</textarea>` : ""}
+          <textarea class="prompt" id="stuPrompt" placeholder="${isVideo ? "камера медленно приближается, ветер в волосах…" : "флакон духов на мокром чёрном мраморе…"}">${esc(stu.prompt)}</textarea>
+          <div class="row" style="margin-top:6px">
+            <button class="btn ghost" id="stuEnh">✨ Улучшить промпт · 1-е бесплатно</button>
+            ${stu.prevPrompt != null ? `<button class="btn ghost" id="stuUndo">↩ Вернуть</button>` : ""}
+          </div>` : ""}
         <div class="quiz-q">Фото ${!isVideo && !m.needsImage ? "(не используется этой моделью)" : ""}</div>
         <div id="stuPhotoZone">
           ${stu.photo ? `<div class="photo-preview"><img src="${stu.photo}" alt="" /><button class="redo" id="stuRedo">↺ Другое</button></div>`
@@ -1483,6 +1488,22 @@
       bind("#stuSwap", (el) => (el.onclick = () => { stu.swap = true; st.tab = stu.preset.category === "product" ? "product" : "shoot"; viewPick(); }));
       bind("#stuCustom", (el) => (el.oninput = () => { stu.custom = el.value; }));
       bind("#stuPrompt", (el) => (el.oninput = () => { stu.prompt = el.value; cta(); }));
+      // ② Prompt Enhancer loop: first enhance after each render is free, then
+      // 1 patron. Provider failure keeps the original prompt + balance intact.
+      bind("#stuEnh", (el) => (el.onclick = async () => {
+        const raw = (stu.prompt || "").trim();
+        if (!raw) { toast("Сначала напишите идею 🙂"); return; }
+        el.disabled = true; el.textContent = "✨ Улучшаю…";
+        const { status, data } = await api("/api/enhance", { method: "POST", body: JSON.stringify({ prompt: raw }) });
+        if (status === 402) { viewPaywall(data); return; }
+        if (status !== 200) { toast("Не получилось улучшить — попробуйте ещё раз"); viewStudio(); return; }
+        stu.prevPrompt = raw; stu.prompt = data.prompt;
+        ME.dashboard.credits = data.balance; setBalance(data.balance);
+        haptic("success");
+        toast(data.free ? "✨ Улучшено — бесплатно" : `✨ Улучшено · −1 ${PATRON}`);
+        viewStudio();
+      }));
+      bind("#stuUndo", (el) => (el.onclick = () => { stu.prompt = stu.prevPrompt; stu.prevPrompt = null; viewStudio(); }));
       sheetBody.querySelectorAll("#stuSeg button").forEach((b) => (b.onclick = () => {
         if (b.dataset.md === stu.mode) return;
         stu.mode = b.dataset.md; stu.modelKey = defaultStudioModel();

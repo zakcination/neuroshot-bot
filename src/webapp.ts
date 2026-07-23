@@ -16,6 +16,7 @@ import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
 import { claimRoadmapBonus, claimWelcomeBonus, createOrder, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { enhancePrompt } from "./enhance.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { claimOrderPaid, grantPurchase } from "./payments.js";
 import { comboEndsAt } from "./offer.js";
@@ -175,6 +176,33 @@ export function authResponse(headers: Headers): { status: number; body: Record<s
  * patrons, and would confuse a plain credit top-up buyer in the Mini App.
  * They're surfaced only via the bot's dedicated /course command.
  */
+/**
+ * POST /api/enhance — Prompt Enhancer (Cinema Studio ②). First enhance after
+ * each generation start is free, then 1 patron; provider failure → 502 with
+ * the charge already refunded (src/enhance.ts) and the client keeps its
+ * original prompt.
+ */
+export async function enhanceResponse(
+  userId: number,
+  body: Record<string, unknown> | null,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const raw = typeof body?.prompt === "string" ? body.prompt : "";
+  try {
+    const r = await enhancePrompt(userId, raw);
+    if (!r.ok) {
+      if (r.error === "insufficient") {
+        const balance = (await getUser(userId))?.credits ?? 0;
+        return { status: 402, body: { error: "insufficient", need: 1, balance, packs: packsPayload() } };
+      }
+      return { status: 400, body: { error: r.error } };
+    }
+    return { status: 200, body: { prompt: r.prompt, charged: r.charged, free: r.free, balance: r.balance } };
+  } catch (err) {
+    console.error("enhance failed:", err);
+    return { status: 502, body: { error: "enhance_failed" } };
+  }
+}
+
 /**
  * One Studio catalog entry per registry model of the given mode — the full
  * curated registry (never the display-picker subsets), with everything the
@@ -937,6 +965,14 @@ export function createWebApp(): Server {
         if (!user) return json(res, 401, { error: "unauthorized" });
         await getOrCreateUser(user.id, user.username, null, config.freeCredits);
         const { status, body } = await generateResponse(user.id, await readJsonBody(req, 64 * 1024));
+        return json(res, status, body);
+      }
+      if (url.pathname === "/api/enhance") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        await getOrCreateUser(user.id, user.username, null, config.freeCredits);
+        const { status, body } = await enhanceResponse(user.id, await readJsonBody(req, 8 * 1024));
         return json(res, status, body);
       }
 

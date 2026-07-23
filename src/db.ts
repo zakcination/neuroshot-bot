@@ -1302,6 +1302,22 @@ export async function galleryPage(
 }
 
 /**
+ * Prompt Enhancer free-rule (Cinema Studio ②, decision D2): the FIRST enhance
+ * after each generation start is free. Derived from the events log — free iff
+ * the user's most recent 'enhance'/'gen_start' event is a gen_start (every
+ * render re-arms one free enhance), or neither exists yet (a brand-new user's
+ * very first enhance is free). No schema change, no extra counter to drift.
+ */
+export async function enhanceIsFree(userId: number): Promise<boolean> {
+  const rows = await q(
+    `SELECT type FROM events WHERE user_id = $1 AND type IN ('enhance','gen_start')
+     ORDER BY id DESC LIMIT 1`,
+    [userId],
+  );
+  return rows.length === 0 || rows[0].type === "gen_start";
+}
+
+/**
  * Records a behavioural event, opening a new visit (session_start) when the
  * previous event is older than SESSION_GAP_MIN (or on the first event).
  */
