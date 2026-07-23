@@ -4,10 +4,13 @@ Grounded in the actual mechanics (src/generate.ts exactly-once refund path,
 src/payments.ts/kaspi.ts order confirmation, no monetary-refund code path
 exists today) as of 2026-07-23. The two "kinds of refund" this policy
 distinguishes are a real, load-bearing distinction in the code — don't
-collapse them when editing. Before publishing: legal review — Kazakhstan
-consumer-protection rules on digital-goods refund windows should be
-confirmed by a local lawyer; the "reasonable request window" language below
-is a placeholder default, not a verified legal minimum/maximum.
+collapse them when editing. DELIBERATELY GENERIC on the payment processor's
+brand (see the same note in terms-of-service.md) — described by function
+("a licensed local payment partner") rather than by name. Before publishing:
+legal review — Kazakhstan consumer-protection rules on digital-goods refund
+windows should be confirmed by a local lawyer; the "reasonable request
+window" language below is a placeholder default, not a verified legal
+minimum/maximum.
 -->
 
 # Политика возврата средств NeuroShot
@@ -29,15 +32,16 @@ AI-провайдера (сбой, недоступность модели, от
 
 ## 2. Возврат денег за покупку пакета патронов
 
-Оплата пакетов патронов происходит в тенге через **Kaspi**, вне Telegram.
+Оплата пакетов патронов происходит в тенге через лицензированного местного
+партнёра по приёму платежей, вне Telegram.
 
 - **Пока патроны не потрачены.** Если вы приобрели пакет патронов и он ещё не
   израсходован, вы можете запросить возврат денежных средств, написав нам:
   **[EMAIL/КОНТАКТ ПОДДЕРЖКИ]** — в течение [СРОК, например 14 дней] с
   момента покупки. При подтверждении возврата купленные патроны списываются
   с баланса, а деньги возвращаются на способ оплаты, использованный при
-  покупке, в срок, определяемый правилами Kaspi (обычно занимает несколько
-  рабочих дней).
+  покупке, в срок, определяемый правилами платёжного партнёра (обычно
+  занимает несколько рабочих дней).
 - **Если патроны уже частично или полностью потрачены** на генерацию
   результатов, возврат денежных средств за использованную часть, как
   правило, не производится — вы уже получили услугу (созданный
@@ -68,7 +72,7 @@ AI-провайдера (сбой, недоступность модели, от
 
 ## 5. Спорные платежи
 
-Если вы оспариваете списание через свой банк/Kaspi напрямую (chargeback) без
+Если вы оспариваете списание через свой банк или платёжного партнёра напрямую (chargeback) без
 предварительного обращения к нам, ваш аккаунт может быть временно
 ограничен на время разбирательства. Мы рекомендуем сначала обратиться к нам
 напрямую — большинство ситуаций решается быстрее так, чем через банк.
