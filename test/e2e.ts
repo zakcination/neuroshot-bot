@@ -138,6 +138,23 @@ let falDelayMs = 0; // >0 keeps a detached render tail in-flight long enough to 
   return { data, requestId: `req-${falCalls.length}` };
 };
 
+// telegramFileUrl (generate.ts) now downloads the Telegram file itself and
+// re-hosts it on fal storage instead of handing fal a URL with the bot's live
+// token embedded — stub both network edges. Only intercepts the Telegram file
+// host; anything else falls through to the real fetch (unused in this suite).
+const realFetch = globalThis.fetch;
+let tgFileFetches = 0;
+globalThis.fetch = (async (input: unknown, init?: unknown) => {
+  const url = typeof input === "string" ? input : (input as { toString(): string }).toString();
+  if (url.startsWith("https://api.telegram.org/file/")) {
+    tgFileFetches++;
+    return new Response(new Uint8Array([0xff, 0xd8, 0xff]), { status: 200 }); // fake jpeg bytes
+  }
+  return realFetch(input as never, init as never);
+}) as typeof fetch;
+let storageUploadCount = 0;
+(fal.storage as unknown as { upload: unknown }).upload = async () => `https://fal.test/storage/tg-${++storageUploadCount}.jpg`;
+
 // ---------- update factories ----------
 
 let nextUpdateId = 1;
@@ -342,10 +359,13 @@ await step("photo→edit: action keyboard, prompt, Nano Banana edit charges 3 �
   await sendText(alice, "replace background with a Paris street");
   const edit = falCalls.at(-1)!;
   assert.equal(edit.endpoint, "fal-ai/nano-banana/edit");
-  assert.deepEqual(edit.input.image_urls, [
-    `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/photos/test.jpg`,
-  ]);
+  // The source photo is re-hosted on fal storage — never the raw Telegram file
+  // URL, which would embed the bot's live token in every fal.ai request.
+  const editUrl = (edit.input.image_urls as string[])[0];
+  assert.match(editUrl, /^https:\/\/fal\.test\/storage\/tg-\d+\.jpg$/);
+  assert.ok(!editUrl.includes(process.env.BOT_TOKEN!), "bot token leaked into the fal-bound URL");
   assert.equal(calls("getFile").length, 1);
+  assert.equal(tgFileFetches, 1);
   assert.equal(resultPhotos().length, 2);
   assert.equal(await credits(alice.id), 7); // 10 − 3
 });
@@ -492,7 +512,7 @@ await step("pending action survives the paywall: motion prompt now renders Kling
   const anim = falCalls.at(-1)!;
   assert.equal(anim.endpoint, "fal-ai/kling-video/v2.5-turbo/standard/image-to-video");
   assert.equal(anim.input.duration, "5");
-  assert.ok((anim.input.image_url as string).startsWith("https://api.telegram.org/file/bot"));
+  assert.match(anim.input.image_url as string, /^https:\/\/fal\.test\/storage\/tg-\d+\.jpg$/);
   assert.equal(calls("sendVideo").length, 1);
   assert.equal(await credits(alice.id), 182); // 207 − 25
 });
@@ -785,7 +805,7 @@ await step("top models: video picker routes photo→video to the chosen model (S
   await sendText(dave, "slow dolly in");
   const call = falCalls.at(-1)!;
   assert.equal(call.endpoint, "bytedance/seedance-2.0/image-to-video"); // verified fal endpoint
-  assert.ok((call.input.image_url as string).startsWith("https://api.telegram.org/file/bot"));
+  assert.match(call.input.image_url as string, /^https:\/\/fal\.test\/storage\/tg-\d+\.jpg$/);
   assert.equal(call.input.duration, "5");
   assert.equal(call.input.resolution, "720p");
   assert.equal(await credits(dave.id), 428); // 504 − 76

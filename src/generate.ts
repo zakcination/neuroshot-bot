@@ -80,10 +80,28 @@ export function isUploadedSource(fileId: string | null | undefined): boolean {
   return !!fileId && !/^https?:\/\//.test(fileId);
 }
 
-/** Resolve a Telegram file_id to a publicly fetchable URL for fal input. */
+/**
+ * Resolve a Telegram file_id to a URL fal.ai can fetch as model input.
+ *
+ * SECURITY: Telegram's raw file URL (`https://api.telegram.org/file/bot<TOKEN>/...`)
+ * embeds the bot's LIVE token. Handing that URL straight to a third-party
+ * provider — as this function used to do — leaks a credential that grants
+ * full control of the bot (send/read as the bot) into fal.ai's request path
+ * and logs on every single photo-based generation. Instead we fetch the file
+ * bytes ourselves (the token only ever leaves our server toward Telegram's
+ * own API, its intended use) and re-host them on fal's storage — the same
+ * no-secrets-in-URL pattern the Mini App's own upload path already uses
+ * (`webapp.ts` `uploadResponse`).
+ */
 async function telegramFileUrl(ctx: Context, fileId: string): Promise<string> {
   const file = await ctx.api.getFile(fileId);
-  return `https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`;
+  const tgUrl = `https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`;
+  const res = await fetch(tgUrl);
+  if (!res.ok) throw new Error(`telegram file download failed: ${res.status}`);
+  const buf = await res.arrayBuffer();
+  // bot.ts only ever handles message:photo (Telegram's compressed-photo
+  // pipeline), which is always JPEG.
+  return fal.storage.upload(new Blob([buf], { type: "image/jpeg" }));
 }
 
 function extractResultUrl(data: unknown): string | null {
