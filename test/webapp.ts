@@ -37,10 +37,21 @@ interface FalCall {
 }
 const falCalls: FalCall[] = [];
 let anyLlmFail = false; // flip to make the enhancer's LLM call blow up (refund path)
+// Content moderation (moderation.ts): tracked as its OWN edge, NOT pushed into
+// falCalls — several assertions use falCalls.length/.at(-1) to mean "the
+// generation MODEL ran", and this classifier call happens in addition to that
+// on every upload. Default SAFE (0) so existing journeys are unaffected;
+// individual steps flip this to exercise the block path, then reset it to 0.
+let nsfwProbability = 0;
+let nsfwCheckCalls = 0;
 (fal as { subscribe: unknown }).subscribe = async (
   endpoint: string,
   opts: { input: Record<string, unknown> },
 ) => {
+  if (endpoint === "fal-ai/imageutils/nsfw") {
+    nsfwCheckCalls++;
+    return { data: { nsfw_probability: nsfwProbability }, requestId: `req-nsfw-${nsfwCheckCalls}` };
+  }
   falCalls.push({ endpoint, input: opts.input });
   if (endpoint === "fal-ai/any-llm") {
     if (anyLlmFail) throw new Error("llm boom");
@@ -415,6 +426,35 @@ await step("POST /api/upload: base64 image → storage URL; bad mime and no auth
 
   const noauth = await fetch(`${base}/api/upload`, { method: "POST", body: "{}" });
   assert.equal(noauth.status, 401);
+});
+
+await step("content moderation: a flagged upload is rejected and never returns a usable url", async () => {
+  nsfwProbability = 0.9; // flip the classifier to "unsafe" for this step only
+  const png = `data:image/png;base64,${Buffer.from("tiny-png-bytes").toString("base64")}`;
+  const flagged = await fetch(`${base}/api/upload`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ data: png }),
+  });
+  assert.equal(flagged.status, 400);
+  assert.equal(((await flagged.json()) as { error: string }).error, "unsafe_image");
+  const row = (await query("SELECT type FROM events WHERE user_id = $1 ORDER BY id DESC LIMIT 1", [maker.id]))[0];
+  assert.equal(row.type, "moderation_blocked");
+  nsfwProbability = 0; // reset — every later step assumes SAFE
+  // The classifier itself failing (provider outage) also blocks — fail CLOSED.
+  const originalSubscribe = (fal as { subscribe: unknown }).subscribe;
+  (fal as { subscribe: unknown }).subscribe = async (endpoint: string, opts: { input: Record<string, unknown> }) => {
+    if (endpoint === "fal-ai/imageutils/nsfw") throw new Error("classifier outage");
+    return (originalSubscribe as (e: string, o: { input: Record<string, unknown> }) => unknown)(endpoint, opts);
+  };
+  const outage = await fetch(`${base}/api/upload`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ data: png }),
+  });
+  assert.equal(outage.status, 400);
+  assert.equal(((await outage.json()) as { error: string }).error, "unsafe_image");
+  (fal as { subscribe: unknown }).subscribe = originalSubscribe;
 });
 
 await step("POST /api/generate: preset charges, renders async, poll reaches ok", async () => {

@@ -17,6 +17,7 @@ import {
   type UserRow,
 } from "./db.js";
 import { costUsdFor, MODELS, priceFor, type FreeScenario, type GenOpts, type ModelSpec } from "./models.js";
+import { assertImageSafe, UnsafeImageError } from "./moderation.js";
 import { paywallKeyboard, paywallText } from "./payments.js";
 import { craftPrompt } from "./promptcraft.js";
 import { UNIT_EMOJI } from "./text.js";
@@ -101,7 +102,14 @@ async function telegramFileUrl(ctx: Context, fileId: string): Promise<string> {
   const buf = await res.arrayBuffer();
   // bot.ts only ever handles message:photo (Telegram's compressed-photo
   // pipeline), which is always JPEG.
-  return fal.storage.upload(new Blob([buf], { type: "image/jpeg" }));
+  const url = await fal.storage.upload(new Blob([buf], { type: "image/jpeg" }));
+  // Content moderation (src/moderation.ts): every bot-uploaded photo is
+  // screened before it can reach a generation model — the single choke point
+  // for both runGeneration and runFreeScenario, which both resolve their
+  // source photo through this function. Throws UnsafeImageError on a flagged
+  // image; callers' existing failure paths handle the refund/distinct message.
+  await assertImageSafe(url);
+  return url;
 }
 
 function extractResultUrl(data: unknown): string | null {
@@ -326,11 +334,16 @@ export async function runGeneration(
         if (!delivered && (await completeGeneration(genId, "error", undefined, costUsd, requestId))) {
           if (!free) await addCredits(user.id, model.credits, "refund", model.key);
           else await restoreFreeResult(user.id);
-          await ctx.api
-            .sendMessage(chatId, `⚠️ Не получилось — ${UNIT_EMOJI} патроны автоматически возвращены. Попробуйте ещё раз.`)
-            .catch(() => {});
+          // A moderation block is not a transient failure — retrying with the
+          // SAME photo will just fail again, so say so plainly instead of
+          // inviting a retry.
+          const text =
+            err instanceof UnsafeImageError
+              ? `❌ Это фото не подходит для обработки — ${UNIT_EMOJI} патроны возвращены. Загрузите другое фото.`
+              : `⚠️ Не получилось — ${UNIT_EMOJI} патроны автоматически возвращены. Попробуйте ещё раз.`;
+          await ctx.api.sendMessage(chatId, text).catch(() => {});
         }
-        await logEvent(user.id, "gen_error", model.key).catch(() => {});
+        await logEvent(user.id, err instanceof UnsafeImageError ? "moderation_blocked" : "gen_error", model.key).catch(() => {});
       } finally {
         await ctx.api.deleteMessage(progress.chat.id, progress.message_id).catch(() => {});
       }
@@ -420,11 +433,13 @@ export async function runFreeScenario(
         console.error(`free scenario failed (${scenario.id}):`, err);
         if (!delivered && (await completeGeneration(genId, "error", undefined, chainCostUsd, providerRequestId))) {
           await restoreFreeScenario(user.id); // return the gift so they can retry
-          await ctx.api
-            .sendMessage(chatId, "⚠️ Не получилось снять сценарий — попробуйте ещё раз, бесплатная попытка сохранена.")
-            .catch(() => {});
+          const text =
+            err instanceof UnsafeImageError
+              ? "❌ Это фото не подходит для обработки — бесплатная попытка сохранена. Загрузите другое фото."
+              : "⚠️ Не получилось снять сценарий — попробуйте ещё раз, бесплатная попытка сохранена.";
+          await ctx.api.sendMessage(chatId, text).catch(() => {});
         }
-        await logEvent(user.id, "gen_error", `free_${scenario.id}`).catch(() => {});
+        await logEvent(user.id, err instanceof UnsafeImageError ? "moderation_blocked" : "gen_error", `free_${scenario.id}`).catch(() => {});
       } finally {
         await ctx.api.deleteMessage(progress.chat.id, progress.message_id).catch(() => {});
       }

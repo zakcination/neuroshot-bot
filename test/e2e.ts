@@ -125,10 +125,24 @@ let falShouldFail = false;
 let falDelayMs = 0; // >0 keeps a detached render tail in-flight long enough to observe
 
 // The fal singleton is a plain object; generate.ts looks up `fal.subscribe` per call.
+// Content moderation (moderation.ts): every uploaded photo is screened via
+// fal-ai/imageutils/nsfw before it can be used as generation input. Tracked
+// as its OWN edge (not pushed into falCalls) — dozens of existing assertions
+// use falCalls.length deltas to mean "the generation MODEL ran N times", and
+// this classifier call happens in addition to that on every photo-based
+// generation; conflating the two would silently break every such count.
+// Default SAFE (0) so existing journeys are unaffected; individual steps
+// flip this to exercise the block/refund path, then must reset it to 0.
+let nsfwProbability = 0;
+let nsfwCheckCalls = 0;
 (fal as { subscribe: unknown }).subscribe = async (
   endpoint: string,
   opts: { input: Record<string, unknown> },
 ) => {
+  if (endpoint === "fal-ai/imageutils/nsfw") {
+    nsfwCheckCalls++;
+    return { data: { nsfw_probability: nsfwProbability }, requestId: "req-nsfw" };
+  }
   falCalls.push({ endpoint, input: opts.input });
   if (falDelayMs > 0) await new Promise((r) => setTimeout(r, falDelayMs));
   if (falShouldFail) throw new Error("simulated provider outage");
@@ -1549,6 +1563,30 @@ await step("dubbing engine: charge → dub job → deliver; failure refunds exac
   await addCredits(poor.id, 5, "admin_grant", "test");
   assert.deepEqual(await startDubbing(poor.id, "x", "en", 60), { ok: false, error: "insufficient" });
   assert.equal(await credits(poor.id), 5); // not charged
+});
+
+await step("content moderation: a flagged photo is blocked BEFORE generation, refunded, distinct message", async () => {
+  // A fresh, isolated user (0 free credits + an exact grant) so this step's
+  // charge/refund can't perturb any earlier step's cumulative counts —
+  // deliberately placed at the very end of the suite for the same reason.
+  const mod: From = { id: 8801, is_bot: false, first_name: "Mod" };
+  await getOrCreateUser(mod.id, mod.first_name, null, 0);
+  await addCredits(mod.id, 3, "admin_grant", "test"); // exactly one photo_edit render
+  const genCallsBefore = falCalls.length;
+  const nsfwCallsBefore = nsfwCheckCalls;
+  nsfwProbability = 0.9; // flip the classifier to "unsafe" for this step only
+  await sendPhoto(mod, "photo-unsafe");
+  await pressButton(mod, "act:photo_edit");
+  await sendText(mod, "replace background with a Paris street");
+  nsfwProbability = 0; // reset — nothing else in the suite runs after this step
+  // The classifier WAS consulted, but the actual generation model never ran
+  // (charge, then refund) — blocked strictly before that call.
+  assert.equal(nsfwCheckCalls, nsfwCallsBefore + 1);
+  assert.equal(falCalls.length, genCallsBefore, "generation model must not run on a blocked photo");
+  assert.match(lastText(), /не подходит/); // distinct from the generic "попробуйте ещё раз" retry message
+  assert.equal(await credits(mod.id), 3); // charged then refunded — net zero
+  const evt = await query("SELECT type FROM events WHERE user_id = $1 ORDER BY id DESC LIMIT 1", [mod.id]);
+  assert.equal(evt[0].type, "moderation_blocked");
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL || "embedded (pglite)"})`);

@@ -18,6 +18,7 @@ import { issueSession, verifySession } from "./auth.js";
 import { claimRoadmapBonus, claimWelcomeBonus, createOrder, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { enhancePrompt } from "./enhance.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
+import { assertImageSafe, UnsafeImageError } from "./moderation.js";
 import { claimOrderPaid, grantPurchase } from "./payments.js";
 import { comboEndsAt } from "./offer.js";
 import { sanitizePrompt } from "./promptcraft.js";
@@ -521,8 +522,14 @@ function readRawBody(req: IncomingMessage, limit: number): Promise<Buffer | null
 const UPLOAD_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 const UPLOAD_LIMIT = 9 * 1024 * 1024; // ~6.5MB of image as base64 JSON
 
-/** data:image/...;base64,… → public fal storage URL usable as model input. */
+/**
+ * data:image/...;base64,… → public fal storage URL usable as model input.
+ * Every upload is screened by the content-moderation gate (src/moderation.ts)
+ * BEFORE the url is ever handed back to the client — a flagged image never
+ * becomes usable as generation input on this surface.
+ */
 export async function uploadResponse(
+  userId: number,
   body: Record<string, unknown> | null,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const data = typeof body?.data === "string" ? body.data : "";
@@ -533,6 +540,13 @@ export async function uploadResponse(
   const buf = Buffer.from(m[2], "base64");
   if (!buf.length) return { status: 400, body: { error: "bad_image" } };
   const url = await fal.storage.upload(new Blob([new Uint8Array(buf)], { type: m[1].toLowerCase() }));
+  try {
+    await assertImageSafe(url);
+  } catch (err) {
+    if (!(err instanceof UnsafeImageError)) throw err;
+    await logEvent(userId, "moderation_blocked", "upload").catch(() => {});
+    return { status: 400, body: { error: "unsafe_image" } };
+  }
   return { status: 200, body: { url } };
 }
 
@@ -954,7 +968,7 @@ export function createWebApp(): Server {
         if (!methodIs(res, req.method, "POST")) return;
         const user = resolveUser(req.headers);
         if (!user) return json(res, 401, { error: "unauthorized" });
-        const { status, body } = await uploadResponse(await readJsonBody(req, UPLOAD_LIMIT));
+        const { status, body } = await uploadResponse(user.id, await readJsonBody(req, UPLOAD_LIMIT));
         return json(res, status, body);
       }
 

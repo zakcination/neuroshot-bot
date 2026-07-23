@@ -122,6 +122,16 @@ export const config = {
   // Provider cost per source-SECOND (USD) — PLACEHOLDER until the real ElevenLabs
   // per-minute price is measured in Phase 0. Drives per-second patron pricing.
   dubUsdPerSec: Number(process.env.DUB_USD_PER_SEC ?? 0.02),
+
+  // --- Content moderation (src/moderation.ts) ---
+  // Every uploaded photo is screened by fal's hosted NSFW classifier
+  // (fal-ai/imageutils/nsfw) before it can be used as generation input — no
+  // separate vendor/account, same FAL_KEY. Threshold is the nsfw_probability
+  // (0-1) at/above which an image is rejected. Deliberately conservative
+  // (reject more, not less): a false positive costs a legitimate user one
+  // re-upload; a false negative is the real exposure. Tune once real traffic
+  // gives calibration data.
+  moderationNsfwThreshold: Number(process.env.MODERATION_NSFW_THRESHOLD ?? 0.4),
 };
 
 /**
