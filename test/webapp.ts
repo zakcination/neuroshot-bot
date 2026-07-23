@@ -363,6 +363,24 @@ await step("serves the PWA manifest and service worker (SW is no-cache)", async 
   assert.match(sw.headers.get("cache-control") ?? "", /no-cache/); // prompt SW updates
 });
 
+await step("serves the legal pages (ToS, privacy, refund) — no auth required, no-cache, requisites present", async () => {
+  const pages = [
+    { path: "/legal/terms", must: [/Условия использования/, /ИП Z8 Capital/, /030722500509/] },
+    { path: "/legal/privacy", must: [/Политика конфиденциальности/, /ИП Z8 Capital/, /komekforyou@gmail\.com/] },
+    { path: "/legal/refund", must: [/Политика возврата средств/, /14 дней/, /komekforyou@gmail\.com/] },
+  ];
+  for (const { path, must } of pages) {
+    const r = await fetch(`${base}${path}`); // deliberately no Authorization — a legal page must be publicly readable
+    assert.equal(r.status, 200, `${path} status`);
+    assert.match(r.headers.get("content-type") ?? "", /text\/html/, `${path} content-type`);
+    assert.match(r.headers.get("cache-control") ?? "", /no-cache/, `${path} cache-control`);
+    const body = await r.text();
+    for (const re of must) assert.match(body, re, `${path} missing ${re}`);
+    // No vendor names leak into what's actually served to users.
+    assert.ok(!/fal\.ai|ElevenLabs|Kaspi/i.test(body), `${path} leaks a vendor name`);
+  }
+});
+
 await step("GET /img/<name>: serves decorative art, long-cached; rejects traversal/unknown", async () => {
   const ok = await fetch(`${base}/img/onboard-gift.jpg`);
   assert.equal(ok.status, 200);

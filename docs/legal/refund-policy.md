@@ -1,21 +1,26 @@
 <!--
-DRAFT — starting point only, not yet legally reviewed.
+Requisites filled 2026-07-23 (ИП Z8 Capital, БИН 030722500509; support
+komekforyou@gmail.com; 14-day refund window and 22.07.2026 publish date, all
+as instructed) and published: served at /legal/refund from the Mini App,
+linked from the "Ещё" tab and this repo's public/legal/refund.html (keep
+both in sync on future edits — this .md is the source of truth, the .html is
+what users actually see rendered).
+
 Grounded in the actual mechanics (src/generate.ts exactly-once refund path,
 src/payments.ts/kaspi.ts order confirmation, no monetary-refund code path
-exists today) as of 2026-07-23. The two "kinds of refund" this policy
-distinguishes are a real, load-bearing distinction in the code — don't
-collapse them when editing. DELIBERATELY GENERIC on the payment processor's
-brand (see the same note in terms-of-service.md) — described by function
-("a licensed local payment partner") rather than by name. Before publishing:
-legal review — Kazakhstan consumer-protection rules on digital-goods refund
-windows should be confirmed by a local lawyer; the "reasonable request
-window" language below is a placeholder default, not a verified legal
-minimum/maximum.
+exists in the codebase). The two "kinds of refund" this policy distinguishes
+are a real, load-bearing distinction in the code — don't collapse them when
+editing. DELIBERATELY GENERIC on the payment processor's brand (see the same
+note in terms-of-service.md) — described by function ("a licensed local
+payment partner") rather than by name. Still recommended: a lawyer
+confirming the 14-day window against Kazakhstan consumer-protection rules on
+digital-goods refunds — published now per the owner's instruction, to
+iterate rather than wait.
 -->
 
 # Политика возврата средств NeuroShot
 
-**Последнее обновление:** [ДАТА ПУБЛИКАЦИИ]
+**Последнее обновление:** 22.07.2026
 
 В Сервисе есть **два разных вида «возврата»** — их важно не путать.
 
@@ -37,7 +42,7 @@ AI-провайдера (сбой, недоступность модели, от
 
 - **Пока патроны не потрачены.** Если вы приобрели пакет патронов и он ещё не
   израсходован, вы можете запросить возврат денежных средств, написав нам:
-  **[EMAIL/КОНТАКТ ПОДДЕРЖКИ]** — в течение [СРОК, например 14 дней] с
+  **komekforyou@gmail.com** — в течение 14 дней с
   момента покупки. При подтверждении возврата купленные патроны списываются
   с баланса, а деньги возвращаются на способ оплаты, использованный при
   покупке, в срок, определяемый правилами платёжного партнёра (обычно
@@ -79,5 +84,5 @@ AI-провайдера (сбой, недоступность модели, от
 
 ## 6. Контакты по возвратам
 
-**[EMAIL/КОНТАКТ ПОДДЕРЖКИ]** или через бота NeuroShot. Укажите номер заказа
+**komekforyou@gmail.com** или через бота NeuroShot. Укажите номер заказа
 (если есть), дату оплаты и суть проблемы — это ускорит рассмотрение.

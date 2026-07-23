@@ -934,6 +934,12 @@ const STATIC: Record<string, { file: string; type: string; cache: string }> = {
   // promptly (mirrors vercel.json). The SW itself controls asset caching.
   "/sw.js": { file: "sw.js", type: "text/javascript; charset=utf-8", cache: "no-cache" },
   "/icon.svg": { file: "icon.svg", type: "image/svg+xml", cache: "public, max-age=3600" },
+  // Legal pages (docs/legal/*.md is the source of truth — keep both in sync
+  // on edits). no-cache so a policy correction ships immediately, never stuck
+  // behind a stale cached copy.
+  "/legal/terms": { file: "legal/terms.html", type: "text/html; charset=utf-8", cache: "no-cache" },
+  "/legal/privacy": { file: "legal/privacy.html", type: "text/html; charset=utf-8", cache: "no-cache" },
+  "/legal/refund": { file: "legal/refund.html", type: "text/html; charset=utf-8", cache: "no-cache" },
 };
 
 /** Build the Mini App HTTP server (exported for tests; not started here). */

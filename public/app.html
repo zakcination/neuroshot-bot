@@ -2282,6 +2282,13 @@
             <div class="sec-h"><h2>Связаться</h2></div>
             <div class="lnkrow" id="moreContact"><span class="ic"><img class="appicon" src="/img/ic-plane.png" alt="" /></span><span class="tx">Telegram-бот<small>@${esc(BOT)}</small></span><span class="chev">›</span></div>
           </section>
+
+          <section class="reveal">
+            <div class="sec-h"><h2>Документы</h2></div>
+            <div class="lnkrow" id="moreTerms"><span class="ic">📄</span><span class="tx">Условия использования</span><span class="chev">›</span></div>
+            <div class="lnkrow" id="morePrivacy"><span class="ic">🔒</span><span class="tx">Политика конфиденциальности</span><span class="chev">›</span></div>
+            <div class="lnkrow" id="moreRefund"><span class="ic">💳</span><span class="tx">Политика возврата средств</span><span class="chev">›</span></div>
+          </section>
         </div>
 
         <nav class="tabbar">
@@ -2361,6 +2368,13 @@
       if (moreSupport) moreSupport.onclick = () => openBot(BOT);
       const moreContact = document.getElementById("moreContact");
       if (moreContact) moreContact.onclick = () => openBot(BOT);
+      const openExternal = (url) => { if (tg?.openLink) tg.openLink(url); else window.open(url, "_blank"); };
+      const moreTerms = document.getElementById("moreTerms");
+      if (moreTerms) moreTerms.onclick = () => openExternal(location.origin + "/legal/terms");
+      const morePrivacy = document.getElementById("morePrivacy");
+      if (morePrivacy) morePrivacy.onclick = () => openExternal(location.origin + "/legal/privacy");
+      const moreRefund = document.getElementById("moreRefund");
+      if (moreRefund) moreRefund.onclick = () => openExternal(location.origin + "/legal/refund");
       document.getElementById("refC").onclick = async () => {
         try { await navigator.clipboard.writeText(refLink); } catch (e) { /* ignore */ }
         document.getElementById("refC").textContent = "Скопировано ✓";

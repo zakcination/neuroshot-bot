@@ -1,32 +1,31 @@
 <!--
-DRAFT — starting point only, not yet legally reviewed.
-Grounded in the actual product (src/, docs/kaspi.md, docs/compliance.md,
-docs/payment-compliance.md, docs/partner-program.md) as of 2026-07-23, so the
-substance matches what the app really does. DELIBERATELY GENERIC on vendors:
-no AI-model provider, payment processor, or other subcontractor is named by
-brand anywhere in this document (functional description only — "an AI
-processing partner", "a licensed payment partner") to avoid disclosing the
-vendor stack / business processes to competitors. This is legally sufficient
-— consumer/privacy law requires disclosing what happens to data and WHY, not
-which named vendor does it; a public ToS/privacy policy is not obligated to
-be a sub-processor list. Before publishing:
-  1. A lawyer familiar with Republic of Kazakhstan consumer/e-commerce law
-     should review this, especially the refund-policy cross-reference and the
-     age/minors clause.
-  2. Fill in every [PLACEHOLDER] — legal entity name, registration number,
-     legal address, and a real support contact. This document has NO legal
-     force with placeholders left in.
-  3. Link it from the Mini App (e.g. the "Ещё" tab) and from BotFather's bot
-     description once published.
+Requisites filled 2026-07-23 (ИП Z8 Capital, БИН 030722500509; support
+komekforyou@gmail.com; publish date 22.07.2026 as instructed) and published:
+served at /legal/terms from the Mini App, linked from the "Ещё" tab and this
+repo's public/legal/terms.html (keep both in sync on future edits — this .md
+is the source of truth, the .html is what users actually see rendered).
+
+Still recommended before treating this as bulletproof: a lawyer familiar
+with Republic of Kazakhstan consumer/e-commerce law reviewing it, especially
+the refund-policy cross-reference and the age/minors clause — the owner
+chose to publish now and iterate rather than wait.
+
+DELIBERATELY GENERIC on vendors: no AI-model provider, payment processor, or
+other subcontractor is named by brand anywhere in this document (functional
+description only — "an AI processing partner", "a licensed payment
+partner") to avoid disclosing the vendor stack / business processes to
+competitors. This is legally sufficient — consumer/privacy law requires
+disclosing what happens to data and WHY, not which named vendor does it; a
+public ToS/privacy policy is not obligated to be a sub-processor list.
 -->
 
 # Условия использования NeuroShot
 
-**Последнее обновление:** [ДАТА ПУБЛИКАЦИИ]
+**Последнее обновление:** 22.07.2026
 
 Настоящие Условия использования («Условия») регулируют использование Telegram-бота
 и Mini App **NeuroShot** (далее — «Сервис»), предоставляемого
-**[НАЗВАНИЕ ЮРИДИЧЕСКОГО ЛИЦА / ИП, РЕГ. НОМЕР, ЮРИДИЧЕСКИЙ АДРЕС]**
+**ИП Z8 Capital, БИН 030722500509**
 (далее — «мы», «NeuroShot»). Используя Сервис, вы соглашаетесь с этими Условиями,
 с [Политикой конфиденциальности](./privacy-policy.md) и с
 [Политикой возврата средств](./refund-policy.md), которые являются неотъемлемой
@@ -181,5 +180,5 @@ Telegram; сама транзакция происходит на стороне
 ## 12. Применимое право и контакты
 
 Настоящие Условия регулируются законодательством Республики Казахстан.
-По вопросам, связанным с Сервисом, обращайтесь: **[EMAIL/КОНТАКТ ПОДДЕРЖКИ]**
+По вопросам, связанным с Сервисом, обращайтесь: **komekforyou@gmail.com**
 или через бота NeuroShot.
