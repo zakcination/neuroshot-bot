@@ -60,7 +60,10 @@ KZ Law No. 230-VIII (Art. 21) requires AI-generated output to carry an on-asset
 mark **and** a machine-readable marking — both now shipped (the "AI Generated"
 badge + metadata, see `docs/compliance.md`). The law does not require a ToS
 clause, but a policy disclosure **reinforces** the on-asset mark and documents our
-compliance posture. **The user agreement / privacy policy should state:**
+compliance posture. **Drafted** in `docs/legal/terms-of-service.md` §9 — the
+clause there (below) plus the full ToS/privacy/refund set still needs a
+lawyer's review + placeholders filled in before publishing. **The user
+agreement / privacy policy should state:**
 
 > Изображения и видео, создаваемые в NeuroShot, генерируются искусственным
 > интеллектом и маркируются как «AI Generated» (визуальная отметка на файле и
