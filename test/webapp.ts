@@ -19,6 +19,17 @@ process.env.BOT_USERNAME = "neuroshot_test_bot";
 process.env.KASPI_PAY_URL = "https://pay.test/neuroshot"; // enable the Kaspi order flow
 process.env.KASPI_PAY_URL_COMBO = "https://pay.test/combo"; // per-pack fixed-amount link
 process.env.KASPI_API_SECRET = "test-kaspi-secret"; // enable the auto-approval callback
+// Rate limiting (src/ratelimit.ts): the shared "maker" user below makes FAR
+// more than the production default (30/min) worth of /api/generate calls
+// across this suite's ~40 steps, all within the same wall-clock minute since
+// tests run near-instantly — that's a suite-speed artifact, not something
+// production traffic does. Set high here; the dedicated rate-limiting step
+// primes its OWN fresh users' buckets directly rather than relying on this
+// value, so it still exercises the real limit from config.
+process.env.RATE_LIMIT_AUTH_PER_MIN = "100000";
+process.env.RATE_LIMIT_UPLOAD_PER_MIN = "100000";
+process.env.RATE_LIMIT_GENERATE_PER_MIN = "100000";
+process.env.RATE_LIMIT_ENHANCE_PER_MIN = "100000";
 
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
@@ -28,6 +39,8 @@ const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
 const { settleApprovedOrder } = await import("../src/payments.js");
+const { hit } = await import("../src/ratelimit.js");
+const { config } = await import("../src/config.js");
 const { Api } = await import("grammy");
 
 // ---- fal stubs (network edge): model runs + storage uploads ----
@@ -1586,6 +1599,51 @@ await step("AI disclosure: mandatory badge is always applied; promo CTA only whe
   // has ffmpeg (no ffmpeg → null early; ffmpeg present → the dead URL fails →
   // null), so the assertion isn't tied to the CI host's toolchain.
   assert.equal(await brandForDelivery(`${base}/nope.png`, "image", { promo: false }), null);
+});
+
+await step("rate limiting: cost-sensitive routes 429 past their limit; polling and other users are unaffected", async () => {
+  // Prime a FRESH user's bucket directly (same key format the route uses) so
+  // this step is self-contained — it doesn't depend on, or perturb, any
+  // other step's call counts, and doesn't need to actually fire N real
+  // requests just to reach the limit.
+  const limited = { id: 990088, username: "ratelimited" };
+  await getOrCreateUser(limited.id, limited.username, null, 0);
+  await addCredits(limited.id, 10, "admin_grant", "test"); // spendable, so a 429 is the ONLY reason to reject
+  for (let i = 0; i < config.rateLimitGeneratePerMin; i++) {
+    hit(`generate:${limited.id}`, config.rateLimitGeneratePerMin, 60_000);
+  }
+  const limitedHeaders = { Authorization: `tma ${signInitData(limited)}`, "Content-Type": "application/json" };
+  const blocked = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: limitedHeaders,
+    body: JSON.stringify({ source: "model", model: "text_to_image", prompt: "x" }),
+  });
+  assert.equal(blocked.status, 429);
+  assert.equal(((await blocked.json()) as { error: string }).error, "rate_limited");
+  assert.ok(Number(blocked.headers.get("retry-after")) > 0, "missing/invalid Retry-After header");
+
+  // Each ROUTE has its OWN bucket per user — /api/upload for the SAME user is
+  // unaffected by /api/generate's limit being tripped.
+  const png = `data:image/png;base64,${Buffer.from("tiny-png-bytes").toString("base64")}`;
+  const stillOk = await fetch(`${base}/api/upload`, {
+    method: "POST", headers: limitedHeaders, body: JSON.stringify({ data: png }),
+  });
+  assert.equal(stillOk.status, 200);
+
+  // A DIFFERENT user's /api/generate bucket is untouched — the limit is per
+  // user, not a global gate that would take down the whole app.
+  const freeUser = { id: 990089, username: "unaffected" };
+  await getOrCreateUser(freeUser.id, freeUser.username, null, 0);
+  await addCredits(freeUser.id, 10, "admin_grant", "test");
+  const freeResp = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { Authorization: `tma ${signInitData(freeUser)}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "text_to_image", prompt: "unaffected user" }),
+  });
+  assert.equal(freeResp.status, 200);
+
+  // Read-only polling is never subject to any limit, even for the blocked user.
+  const me = await fetch(`${base}/api/me`, { headers: { Authorization: `tma ${signInitData(limited)}` } });
+  assert.equal(me.status, 200);
 });
 
 await new Promise<void>((r) => server.close(() => r()));

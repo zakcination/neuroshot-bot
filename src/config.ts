@@ -132,6 +132,17 @@ export const config = {
   // re-upload; a false negative is the real exposure. Tune once real traffic
   // gives calibration data.
   moderationNsfwThreshold: Number(process.env.MODERATION_NSFW_THRESHOLD ?? 0.4),
+
+  // --- Rate limiting (src/ratelimit.ts) — per client IP, per 60s window ---
+  // Every cost/abuse-sensitive write route (session issuance, upload,
+  // generate, prompt-enhance) had NO limit at all before this. Defaults are
+  // generous enough for real usage (including the Studio's parallel-job
+  // support) while giving a real backstop against scripted hammering. Read-
+  // only polling (/api/me, /api/generations*) is intentionally unlimited.
+  rateLimitAuthPerMin: Number(process.env.RATE_LIMIT_AUTH_PER_MIN ?? 30),
+  rateLimitUploadPerMin: Number(process.env.RATE_LIMIT_UPLOAD_PER_MIN ?? 30),
+  rateLimitGeneratePerMin: Number(process.env.RATE_LIMIT_GENERATE_PER_MIN ?? 30),
+  rateLimitEnhancePerMin: Number(process.env.RATE_LIMIT_ENHANCE_PER_MIN ?? 20),
 };
 
 /**

@@ -19,6 +19,7 @@ import { claimRoadmapBonus, claimWelcomeBonus, createOrder, ensureRefCode, galle
 import { enhancePrompt } from "./enhance.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
+import { hit } from "./ratelimit.js";
 import { claimOrderPaid, grantPurchase } from "./payments.js";
 import { comboEndsAt } from "./offer.js";
 import { sanitizePrompt } from "./promptcraft.js";
@@ -114,6 +115,28 @@ function json(res: ServerResponse, status: number, obj: unknown): void {
 function header(headers: Headers, name: string): string {
   const v = headers[name] ?? headers[name.toLowerCase()];
   return Array.isArray(v) ? (v[0] ?? "") : (v ?? "");
+}
+
+/**
+ * Best-effort client identity for rate-limit keying. Fly.io's edge sets
+ * `Fly-Client-IP` (the actual production deploy target — trustworthy, set by
+ * Fly itself, not the caller); the Caddy/docker-compose deploy path sets the
+ * conventional `X-Forwarded-For` instead. Falls back to the raw socket
+ * address, then a shared "unknown" bucket (which rate-limits itself as a
+ * group — a safe degradation, never an open door).
+ */
+function clientIp(req: IncomingMessage): string {
+  const fly = header(req.headers, "fly-client-ip");
+  if (fly) return fly;
+  const xff = header(req.headers, "x-forwarded-for");
+  if (xff) return xff.split(",")[0].trim();
+  return req.socket.remoteAddress ?? "unknown";
+}
+
+/** 429 + Retry-After for a route that's exceeded its rate limit. */
+function tooManyRequests(res: ServerResponse, retryAfterMs: number): void {
+  res.setHeader("Retry-After", String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
+  json(res, 429, { error: "rate_limited" });
 }
 
 /** initData from `Authorization: tma <initData>` (Telegram convention) or the alt header. */
@@ -951,6 +974,8 @@ export function createWebApp(): Server {
       // POST /api/auth — initData → session token (client-agnostic).
       if (url.pathname === "/api/auth") {
         if (!methodIs(res, req.method, "POST")) return;
+        const rl = hit(`auth:${clientIp(req)}`, config.rateLimitAuthPerMin, 60_000);
+        if (rl.limited) return tooManyRequests(res, rl.retryAfterMs);
         const { status, body } = authResponse(req.headers);
         return json(res, status, body);
       }
@@ -964,10 +989,15 @@ export function createWebApp(): Server {
       }
 
       // POST /api/upload — base64 image → public URL for model input.
+      // Rate-limited per USER (not IP): these routes are already authenticated,
+      // and keying by IP would collaterally punish unrelated users sharing a
+      // mobile-carrier NAT — common in the KZ/CIS market this app targets.
       if (url.pathname === "/api/upload") {
         if (!methodIs(res, req.method, "POST")) return;
         const user = resolveUser(req.headers);
         if (!user) return json(res, 401, { error: "unauthorized" });
+        const rl = hit(`upload:${user.id}`, config.rateLimitUploadPerMin, 60_000);
+        if (rl.limited) return tooManyRequests(res, rl.retryAfterMs);
         const { status, body } = await uploadResponse(user.id, await readJsonBody(req, UPLOAD_LIMIT));
         return json(res, status, body);
       }
@@ -977,6 +1007,8 @@ export function createWebApp(): Server {
         if (!methodIs(res, req.method, "POST")) return;
         const user = resolveUser(req.headers);
         if (!user) return json(res, 401, { error: "unauthorized" });
+        const rl = hit(`generate:${user.id}`, config.rateLimitGeneratePerMin, 60_000);
+        if (rl.limited) return tooManyRequests(res, rl.retryAfterMs);
         await getOrCreateUser(user.id, user.username, null, config.freeCredits);
         const { status, body } = await generateResponse(user.id, await readJsonBody(req, 64 * 1024));
         return json(res, status, body);
@@ -985,6 +1017,8 @@ export function createWebApp(): Server {
         if (!methodIs(res, req.method, "POST")) return;
         const user = resolveUser(req.headers);
         if (!user) return json(res, 401, { error: "unauthorized" });
+        const rl = hit(`enhance:${user.id}`, config.rateLimitEnhancePerMin, 60_000);
+        if (rl.limited) return tooManyRequests(res, rl.retryAfterMs);
         await getOrCreateUser(user.id, user.username, null, config.freeCredits);
         const { status, body } = await enhanceResponse(user.id, await readJsonBody(req, 8 * 1024));
         return json(res, status, body);
