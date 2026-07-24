@@ -1217,6 +1217,9 @@
 
     function viewResult(g, job) {
       const isVideo = /\.(mp4|webm|mov)(\?|$)/i.test(g.output_url || "");
+      // A count>1 image render (num_images) carries every output here — video is
+      // never multi-output, so isVideo generations always take the single path.
+      const multi = !isVideo && g.output_urls && g.output_urls.length > 1 ? g.output_urls : null;
       const camp = job?.campaignId ? ME.catalog.campaigns.find((x) => x.id === job.campaignId) : null;
       const upsell = camp && !isVideo
         ? `<button class="btn primary" id="animBtn">${esc(camp.animateLabel)} · ${camp.videoCredits} ${PATRON}</button>`
@@ -1224,23 +1227,28 @@
           ? `<button class="btn primary" id="animBtn2">🎬 Оживить в видео · ${ME.catalog.videoModels[0].credits} ${PATRON}</button>`
           : "";
       sheetBody.innerHTML = `
-        <h3>Готово ✨</h3>
-        <div class="result-media">${isVideo
-          ? `<video src="${esc(g.output_url)}" controls autoplay muted loop playsinline></video>`
-          : `<img src="${esc(g.output_url)}" alt="" />`}</div>
+        <h3>Готово ✨${multi ? ` · ${multi.length} варианта` : ""}</h3>
+        <div class="result-media"${multi ? ` style="display:grid;grid-template-columns:1fr 1fr;gap:8px"` : ""}>${
+          multi ? multi.map((u) => `<img src="${esc(u)}" alt="" style="border-radius:12px" />`).join("")
+          : isVideo
+            ? `<video src="${esc(g.output_url)}" controls autoplay muted loop playsinline></video>`
+            : `<img src="${esc(g.output_url)}" alt="" />`
+        }</div>
         <div class="stack">
           ${upsell}
           <div class="row" style="margin-top:0">
-            <button class="btn ghost" id="saveBtn">📥 Скачать</button>
+            <button class="btn ghost" id="saveBtn">📥 Скачать${multi ? " всё" : ""}</button>
             <button class="btn ghost" id="chatBtn">💬 В чат</button>
           </div>
           <div class="row" style="margin-top:0">
-            <a class="btn ghost" href="${esc(g.output_url)}" target="_blank" rel="noopener noreferrer">↗ Открыть</a>
+            ${multi ? "" : `<a class="btn ghost" href="${esc(g.output_url)}" target="_blank" rel="noopener noreferrer">↗ Открыть</a>`}
             <button class="btn ghost" id="moreBtn">➕ Ещё</button>
           </div>
         </div>`;
       // Upsells reference the generation by ID — the server resolves the file,
-      // so chains survive app restarts and never depend on client state.
+      // so chains survive app restarts and never depend on client state. When
+      // multiple images came back, "оживить" always animates the FIRST one
+      // (there's no per-tile picker here — pick a specific one from the gallery).
       const animBtn = sheetBody.querySelector("#animBtn");
       if (animBtn) animBtn.onclick = () => {
         const m = ME.catalog.videoModels.find((x) => x.key === camp.videoModelKey) || ME.catalog.videoModels[0];
@@ -1249,9 +1257,23 @@
       };
       const animBtn2 = sheetBody.querySelector("#animBtn2");
       if (animBtn2) animBtn2.onclick = () => openStudio({ mode: "video", generationId: g.id, srcPreview: g.output_url });
-      sheetBody.querySelector("#saveBtn").onclick = () => saveMedia(g.output_url, g.id);
+      sheetBody.querySelector("#saveBtn").onclick = () => {
+        if (multi) multi.forEach((u, i) => saveMedia(u, `${g.id}-${i}`));
+        else saveMedia(g.output_url, g.id);
+        awardSaveXp(g.id);
+      };
       sheetBody.querySelector("#chatBtn").onclick = () => sendToChat(g.id);
       sheetBody.querySelector("#moreBtn").onclick = () => { st.pick = null; viewPick(); };
+    }
+
+    /**
+     * Reward-architecture P1: fire-and-forget XP claim for saving a result.
+     * Server-side idempotent (once per generation, daily-capped) and a no-op
+     * until an admin configures xp.save — never blocks or reports errors to
+     * the user, since it's not the point of tapping "Скачать".
+     */
+    function awardSaveXp(generationId) {
+      api("/api/xp/save", { method: "POST", body: JSON.stringify({ id: generationId }) }).catch(() => {});
     }
 
     /** Save to the device: Telegram's native downloadFile when available. */
@@ -1277,25 +1299,33 @@
     function openViewer(item) {
       openSheet(); viewedJob = null;
       const isVideo = /\.(mp4|webm|mov)(\?|$)/i.test(item.output_url || "");
+      const multi = !isVideo && item.output_urls && item.output_urls.length > 1 ? item.output_urls : null;
       sheetBody.innerHTML = `
-        <h3>Моя работа</h3>
-        <div class="result-media">${isVideo
-          ? `<video src="${esc(item.output_url)}" controls autoplay muted loop playsinline></video>`
-          : `<img src="${esc(item.output_url)}" alt="" />`}</div>
+        <h3>Моя работа${multi ? ` · ${multi.length} варианта` : ""}</h3>
+        <div class="result-media"${multi ? ` style="display:grid;grid-template-columns:1fr 1fr;gap:8px"` : ""}>${
+          multi ? multi.map((u) => `<img src="${esc(u)}" alt="" style="border-radius:12px" />`).join("")
+          : isVideo
+            ? `<video src="${esc(item.output_url)}" controls autoplay muted loop playsinline></video>`
+            : `<img src="${esc(item.output_url)}" alt="" />`
+        }</div>
         <div class="stack">
           ${!isVideo ? `<button class="btn primary" id="vAnim">🎬 Оживить в видео · от ${ME.catalog.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} ${PATRON}</button>` : ""}
           <div class="row" style="margin-top:0">
-            <button class="btn ghost" id="vSave">📥 Скачать</button>
+            <button class="btn ghost" id="vSave">📥 Скачать${multi ? " всё" : ""}</button>
             <button class="btn ghost" id="vChat">💬 В чат</button>
           </div>
           <div class="row" style="margin-top:0">
-            <a class="btn ghost" href="${esc(item.output_url)}" target="_blank" rel="noopener noreferrer">↗ Открыть</a>
+            ${multi ? "" : `<a class="btn ghost" href="${esc(item.output_url)}" target="_blank" rel="noopener noreferrer">↗ Открыть</a>`}
             <button class="btn ghost" id="vMore">✨ Создать ещё</button>
           </div>
         </div>`;
       const vAnim = sheetBody.querySelector("#vAnim");
       if (vAnim) vAnim.onclick = () => viewAnimateFrom(item);
-      sheetBody.querySelector("#vSave").onclick = () => saveMedia(item.output_url, item.id);
+      sheetBody.querySelector("#vSave").onclick = () => {
+        if (multi) multi.forEach((u, i) => saveMedia(u, `${item.id}-${i}`));
+        else saveMedia(item.output_url, item.id);
+        awardSaveXp(item.id);
+      };
       sheetBody.querySelector("#vChat").onclick = () => sendToChat(item.id);
       sheetBody.querySelector("#vMore").onclick = () => { st.pick = null; viewPick(); };
     }
@@ -1332,8 +1362,9 @@
         generationId: ctx.generationId || (prev ? prev.generationId : null),
         srcPreview: ctx.srcPreview || (prev ? prev.srcPreview : null),
         endPhoto: null, endGenerationId: null,
-        duration: undefined, aspect: undefined, resolution: undefined,
+        duration: undefined, aspect: undefined, resolution: undefined, numImages: undefined,
         showAll: false, editOpen: prev ? prev.editOpen : false, swap: false,
+        prevPrompt: null, // pre-enhance prompt, powers the ↩ Вернуть undo
       };
       if (!stu.modelKey) stu.modelKey = defaultStudioModel();
       clampStudioOpts();
@@ -1359,6 +1390,10 @@
       const caps = stu.mode === "video" ? m.video : m.image;
       if (stu.aspect && !((caps && caps.aspectRatios) || []).includes(stu.aspect)) stu.aspect = undefined;
       if (stu.resolution && !((caps && caps.resolutions) || []).some((r) => r.id === stu.resolution)) stu.resolution = undefined;
+      // Count (num_images) is images-only — a video model, or an image model
+      // that doesn't declare maxCount (premium_*, unverified), gets no selector.
+      const maxCount = stu.mode !== "video" && caps ? caps.maxCount || 0 : 0;
+      if (!maxCount || (stu.numImages && stu.numImages > maxCount)) stu.numImages = undefined;
       if (stu.mode === "video" && m.video) {
         if (!m.video.durations.some((d) => d.seconds === stu.duration)) stu.duration = m.video.durations[0].seconds;
         if (!m.video.endFrame) { stu.endPhoto = null; stu.endGenerationId = null; }
@@ -1377,8 +1412,21 @@
       } else if (m.image) {
         const t = stu.resolution ? (m.image.resolutions || []).find((r) => r.id === stu.resolution) : null;
         if (t) credits = t.credits;
+        // Count composes multiplicatively on top of whichever resolution is
+        // chosen — mirrors priceFor's exact `Math.ceil(credits × n)`.
+        if (m.image.maxCount && stu.numImages && stu.numImages > 1) {
+          credits = Math.max(1, Math.ceil(credits * Math.min(m.image.maxCount, stu.numImages)));
+        }
       }
       return credits;
+    }
+    /** Count chip prices for the current resolution — mirrors studioPrice's math per n. */
+    function stuCountOptions(m, caps) {
+      const tier = stu.resolution ? (caps.resolutions || []).find((r) => r.id === stu.resolution) : null;
+      const base = tier ? tier.credits : m.credits;
+      return Array.from({ length: caps.maxCount }, (_, i) => i + 1).map((n) => ({
+        n, credits: Math.max(1, Math.ceil(base * n)),
+      }));
     }
 
     function viewStudio() {
@@ -1421,7 +1469,11 @@
         ${stu.preset && isVideo ? `<div class="sub">Стиль применяется к фото. Для видео опишите движение ниже.</div>` : ""}
         ${!stu.preset || isVideo ? `
           <div class="quiz-q">${isVideo ? "Движение (необязательно)" : "Что нарисовать?"}</div>
-          <textarea class="prompt" id="stuPrompt" placeholder="${isVideo ? "камера медленно приближается, ветер в волосах…" : "флакон духов на мокром чёрном мраморе…"}">${esc(stu.prompt)}</textarea>` : ""}
+          <textarea class="prompt" id="stuPrompt" placeholder="${isVideo ? "камера медленно приближается, ветер в волосах…" : "флакон духов на мокром чёрном мраморе…"}">${esc(stu.prompt)}</textarea>
+          <div class="row" style="margin-top:6px">
+            <button class="btn ghost" id="stuEnh">✨ Улучшить промпт · 1-е бесплатно</button>
+            ${stu.prevPrompt != null ? `<button class="btn ghost" id="stuUndo">↩ Вернуть</button>` : ""}
+          </div>` : ""}
         <div class="quiz-q">Фото ${!isVideo && !m.needsImage ? "(не используется этой моделью)" : ""}</div>
         <div id="stuPhotoZone">
           ${stu.photo ? `<div class="photo-preview"><img src="${stu.photo}" alt="" /><button class="redo" id="stuRedo">↺ Другое</button></div>`
@@ -1450,6 +1502,10 @@
           <div class="quiz-q">Качество</div>
           <div class="chips" id="stuRes">${caps.resolutions.map((r) =>
             `<button class="chip ${r.id === (stu.resolution || caps.resolutions[0].id) ? "on" : ""}" data-res="${r.id}">${esc(r.label)} · ${r.credits} ${PATRON}</button>`).join("")}</div>` : ""}
+        ${!isVideo && caps && caps.maxCount ? `
+          <div class="quiz-q">Количество</div>
+          <div class="chips" id="stuCount">${stuCountOptions(m, caps).map((c) =>
+            `<button class="chip ${c.n === (stu.numImages || 1) ? "on" : ""}" data-cnt="${c.n}">${c.n} шт${c.n > 1 ? ` · ${c.credits} ${PATRON}` : ""}</button>`).join("")}</div>` : ""}
         ${isVideo && m.video ? `
           <div class="quiz-q">Длительность</div>
           <div class="chips" id="stuDur">${m.video.durations.map((d) =>
@@ -1483,16 +1539,33 @@
       bind("#stuSwap", (el) => (el.onclick = () => { stu.swap = true; st.tab = stu.preset.category === "product" ? "product" : "shoot"; viewPick(); }));
       bind("#stuCustom", (el) => (el.oninput = () => { stu.custom = el.value; }));
       bind("#stuPrompt", (el) => (el.oninput = () => { stu.prompt = el.value; cta(); }));
+      // ② Prompt Enhancer loop: first enhance after each render is free, then
+      // 1 patron. Provider failure keeps the original prompt + balance intact.
+      bind("#stuEnh", (el) => (el.onclick = async () => {
+        const raw = (stu.prompt || "").trim();
+        if (!raw) { toast("Сначала напишите идею 🙂"); return; }
+        el.disabled = true; el.textContent = "✨ Улучшаю…";
+        const { status, data } = await api("/api/enhance", { method: "POST", body: JSON.stringify({ prompt: raw }) });
+        if (status === 402) { viewPaywall(data); return; }
+        if (status !== 200) { toast("Не получилось улучшить — попробуйте ещё раз"); viewStudio(); return; }
+        stu.prevPrompt = raw; stu.prompt = data.prompt;
+        ME.dashboard.credits = data.balance; setBalance(data.balance);
+        haptic("success");
+        toast(data.free ? "✨ Улучшено — бесплатно" : `✨ Улучшено · −1 ${PATRON}`);
+        viewStudio();
+      }));
+      bind("#stuUndo", (el) => (el.onclick = () => { stu.prompt = stu.prevPrompt; stu.prevPrompt = null; viewStudio(); }));
       sheetBody.querySelectorAll("#stuSeg button").forEach((b) => (b.onclick = () => {
         if (b.dataset.md === stu.mode) return;
         stu.mode = b.dataset.md; stu.modelKey = defaultStudioModel();
-        stu.aspect = undefined; stu.resolution = undefined; stu.duration = undefined; stu.showAll = false;
+        stu.aspect = undefined; stu.resolution = undefined; stu.duration = undefined; stu.numImages = undefined; stu.showAll = false;
         clampStudioOpts(); viewStudio();
       }));
       sheetBody.querySelectorAll("[data-mk]").forEach((b) => (b.onclick = () => { stu.modelKey = b.dataset.mk; clampStudioOpts(); viewStudio(); }));
       bind("#stuMore", (el) => (el.onclick = () => { stu.showAll = true; viewStudio(); }));
       sheetBody.querySelectorAll("#stuAr .chip").forEach((c) => (c.onclick = () => { stu.aspect = c.dataset.ar; viewStudio(); }));
       sheetBody.querySelectorAll("#stuRes .chip").forEach((c) => (c.onclick = () => { stu.resolution = c.dataset.res; viewStudio(); }));
+      sheetBody.querySelectorAll("#stuCount .chip").forEach((c) => (c.onclick = () => { stu.numImages = Number(c.dataset.cnt); viewStudio(); }));
       sheetBody.querySelectorAll("#stuDur .chip").forEach((c) => (c.onclick = () => { stu.duration = Number(c.dataset.dur); viewStudio(); }));
       sheetBody.querySelectorAll("[data-story]").forEach((row) => {
         row.querySelectorAll(".chip").forEach((chip) => (chip.onclick = () => {
@@ -1550,6 +1623,7 @@
         generation_id: stu.generationId || undefined,
         aspect_ratio: stu.aspect && stu.aspect !== "auto" ? stu.aspect : undefined,
         resolution: stu.resolution || undefined,
+        num_images: !isVideo && stu.numImages && stu.numImages > 1 ? stu.numImages : undefined,
       };
       const body = stu.preset && !isVideo
         ? { source: "preset", id: stu.preset.id,
@@ -2037,9 +2111,10 @@
       }
       for (const item of items) {
         const isVideo = /\.(mp4|webm|mov)(\?|$)/i.test(item.output_url);
+        const count = !isVideo && item.output_urls ? item.output_urls.length : 1;
         const media = isVideo
           ? `<video src="${esc(item.output_url)}" muted loop playsinline autoplay preload="metadata"></video><span class="tag">видео</span>`
-          : `<img loading="lazy" src="${esc(item.output_url)}" alt="" />`;
+          : `<img loading="lazy" src="${esc(item.output_url)}" alt="" />${count > 1 ? `<span class="tag">+${count - 1}</span>` : ""}`;
         const el = $(`<a class="shot" href="#" role="button">${media}</a>`);
         el.onclick = (e) => { e.preventDefault(); openViewer(item); }; // viewer: save / chat / animate
         g.appendChild(el);
@@ -2261,6 +2336,18 @@
             <div class="sec-h"><h2>Связаться</h2></div>
             <div class="lnkrow" id="moreContact"><span class="ic"><img class="appicon" src="/img/ic-plane.png" alt="" /></span><span class="tx">Telegram-бот<small>@${esc(BOT)}</small></span><span class="chev">›</span></div>
           </section>
+
+          <section class="reveal">
+            <div class="sec-h"><h2>Документы</h2></div>
+            <div class="lnkrow" id="moreTerms"><span class="ic">📄</span><span class="tx">Условия использования</span><span class="chev">›</span></div>
+            <div class="lnkrow" id="morePrivacy"><span class="ic">🔒</span><span class="tx">Политика конфиденциальности</span><span class="chev">›</span></div>
+            <div class="lnkrow" id="moreRefund"><span class="ic">💳</span><span class="tx">Политика возврата средств</span><span class="chev">›</span></div>
+          </section>
+
+          <section class="reveal">
+            <div class="sec-h"><h2>Данные и приватность</h2></div>
+            <div class="lnkrow" id="moreDeleteData"><span class="ic">🗑️</span><span class="tx">Удалить мои данные<small>Необратимо — стирает профиль, историю, сжигает патроны</small></span><span class="chev">›</span></div>
+          </section>
         </div>
 
         <nav class="tabbar">
@@ -2340,6 +2427,32 @@
       if (moreSupport) moreSupport.onclick = () => openBot(BOT);
       const moreContact = document.getElementById("moreContact");
       if (moreContact) moreContact.onclick = () => openBot(BOT);
+      const openExternal = (url) => { if (tg?.openLink) tg.openLink(url); else window.open(url, "_blank"); };
+      const moreTerms = document.getElementById("moreTerms");
+      if (moreTerms) moreTerms.onclick = () => openExternal(location.origin + "/legal/terms");
+      const morePrivacy = document.getElementById("morePrivacy");
+      if (morePrivacy) morePrivacy.onclick = () => openExternal(location.origin + "/legal/privacy");
+      const moreRefund = document.getElementById("moreRefund");
+      if (moreRefund) moreRefund.onclick = () => openExternal(location.origin + "/legal/refund");
+      const moreDeleteData = document.getElementById("moreDeleteData");
+      if (moreDeleteData) moreDeleteData.onclick = () => {
+        const warning =
+          "Удалить данные аккаунта? Это необратимо: профиль, история и неиспользованные " +
+          PATRON + " патроны будут стёрты. Продолжить?";
+        const proceed = async (ok) => {
+          if (!ok) return;
+          const { status, data } = await api("/api/account/delete", { method: "POST" });
+          if (status === 200) {
+            toast("Данные удалены");
+            localStorage.removeItem(TOKEN_KEY);
+            setTimeout(() => location.reload(), 1200);
+          } else {
+            toast((data && data.error) || "Не удалось удалить данные");
+          }
+        };
+        if (tg?.showConfirm) tg.showConfirm(warning, proceed);
+        else proceed(window.confirm(warning));
+      };
       document.getElementById("refC").onclick = async () => {
         try { await navigator.clipboard.writeText(refLink); } catch (e) { /* ignore */ }
         document.getElementById("refC").textContent = "Скопировано ✓";

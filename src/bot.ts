@@ -7,9 +7,12 @@ import { Bot, GrammyError, HttpError, InlineKeyboard, InputFile, InputMediaBuild
 import { config } from "./config.js";
 import {
   addCredits,
+  allEconomyConfig,
+  allPresetGating,
   claimWelcomeBonus,
   createPartnerCode,
   deactivatePartnerCode,
+  deleteUserData,
   ensureRefCode,
   funnel,
   getGeneration,
@@ -33,7 +36,9 @@ import {
   referralStats,
   requestWithdrawal,
   resolveWithdrawal,
+  setEconomyConfig,
   setPending,
+  setPresetGating,
   setUserPhone,
   stats,
   upsertPartnerCode,
@@ -761,6 +766,42 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   bot.command("ref", async (ctx) => sendRefLink(ctx));
 
+  // Self-serve data deletion (Privacy Policy §4/§5) — a confirm step gates the
+  // irreversible action, mirroring how other destructive-adjacent flows in this
+  // bot (partner code deactivation) ask before acting rather than acting on the
+  // command alone.
+  bot.command("delete_me", async (ctx) => {
+    await user(ctx);
+    await ctx.reply(
+      "⚠️ <b>Удаление данных аккаунта</b>\n\n" +
+        "Это необратимо. При подтверждении:\n" +
+        "• личные данные (имя пользователя, телефон) будут стёрты;\n" +
+        "• история промптов и ссылок на созданный контент — удалена;\n" +
+        `• неиспользованные ${UNIT_EMOJI} патроны — сгорают (это не возврат денег — для возврата за неизрасходованный пакет см. /buy → политику возврата, отдельная процедура);\n` +
+        "• партнёрские коды (если есть) — деактивируются.\n\n" +
+        "Финансовые записи о платежах сохраняются в обезличенном виде — этого требует бухгалтерский/налоговый учёт.\n\n" +
+        "Продолжить?",
+      { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("❌ Да, удалить всё", "del:confirm").row().text("Отмена", "del:cancel") },
+    );
+  });
+
+  bot.callbackQuery("del:cancel", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Отменено — данные не тронуты.");
+  });
+
+  bot.callbackQuery("del:confirm", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!ctx.from) return;
+    const result = await deleteUserData(ctx.from.id);
+    await ctx.reply(
+      result
+        ? `✅ Готово. Данные удалены${result.forfeitedCredits > 0 ? ` (${nUnits(result.forfeitedCredits)} сгорели)` : ""}. ` +
+            "Аккаунт можно начать заново командой /start."
+        : "Аккаунт не найден или уже был удалён ранее.",
+    );
+  });
+
   bot.command("course", async (ctx) => {
     await user(ctx);
     await ctx.reply(courseText(), { parse_mode: "HTML", reply_markup: courseKeyboard() });
@@ -1077,7 +1118,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
         await ctx.reply(`Заявка №${id}: пакет «${order.pack_id}» больше не существует.`);
         return;
       }
-      await grantPurchase(ctx.api, order.user_id, pack); // credits + referral/partner payouts + notify
+      await grantPurchase(ctx.api, order.user_id, pack, order.id); // credits + referral/partner payouts + notify
       await ctx.reply(`✅ Заявка №${id} подтверждена — начислено ${pack.credits} ${UNIT_EMOJI} пользователю ${order.user_id}.`);
     } else {
       await ctx.reply(`↩️ Заявка №${id} отклонена.`);
@@ -1189,6 +1230,47 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       `✅ ${amount > 0 ? "Начислено" : "Списано"} ${UNIT_EMOJI} ${nUnits(Math.abs(amount))} → ${targetId}. ` +
         `Баланс: ${UNIT_EMOJI} ${nUnits(balance)}.`,
     );
+  });
+
+  // Reward-architecture P0 (neuroshot-reward-architecture-v1.md §8): tuned
+  // economy values (XP-per-action, level thresholds, season caps) and per-preset
+  // level gates live ONLY in the DB, set through these admin-only commands —
+  // never as literal source constants, since this repo is public. Both tables
+  // ship empty; nothing here is user-facing or read by any generation flow yet
+  // (that's P1+) — this is purely the private storage + admin visibility layer.
+  bot.command("econ", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const [values, gates] = await Promise.all([allEconomyConfig(), allPresetGating()]);
+    const v = values.length ? values.map((r) => `• ${r.key} = ${r.value}`).join("\n") : "(пусто)";
+    const g = gates.length ? gates.map((r) => `• ${r.preset_id} → уровень ${r.min_level}`).join("\n") : "(пусто)";
+    await ctx.reply(
+      `⚙️ <b>Экономика (только для админов)</b>\n\n<b>Значения:</b>\n${v}\n\n<b>Гейтинг пресетов:</b>\n${g}`,
+      { parse_mode: "HTML" },
+    );
+  });
+
+  bot.command("econ_set", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const [key, valS] = (ctx.match ?? "").trim().split(/\s+/);
+    const value = Number(valS);
+    if (!key || !Number.isInteger(value)) {
+      await ctx.reply("Формат: /econ_set <ключ> <целое_число>\nПример: /econ_set xp.save 25");
+      return;
+    }
+    await setEconomyConfig(key, value);
+    await ctx.reply(`✅ ${key} = ${value}`);
+  });
+
+  bot.command("econ_gate", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const [presetId, lvlS] = (ctx.match ?? "").trim().split(/\s+/);
+    const minLevel = Number(lvlS);
+    if (!presetId || !Number.isInteger(minLevel) || minLevel < 0) {
+      await ctx.reply("Формат: /econ_gate <preset_id> <мин_уровень>\nПример: /econ_gate headshot 3");
+      return;
+    }
+    await setPresetGating(presetId, minLevel);
+    await ctx.reply(`✅ ${presetId} → уровень ${minLevel}`);
   });
 
   // Admin: the daily digest on demand — /dash [days], default 24h, cap 30d.

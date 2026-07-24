@@ -50,11 +50,12 @@ every real delivery.
 
 ## Still required (not code)
 
-- **Terms of Service / privacy-policy clause.** The user agreement should state
-  that generated outputs are AI-generated and are marked as such (the
-  "AI Generated" badge + embedded metadata). This reinforces the on-asset marking
-  and documents NeuroShot's compliance posture; it does **not** replace the
-  on-asset warning. Tracked with the Kaspi/Telegram-ToS risk write-up.
+- ~~**Terms of Service / privacy-policy clause.**~~ **Drafted:** see
+  `docs/legal/terms-of-service.md` §9 and the clause quoted below (also in
+  `docs/legal/privacy-policy.md`). Still needs a lawyer's review + the
+  document's placeholders filled in before publishing — see that file's
+  header note. The clause reinforces the on-asset marking; it does **not**
+  replace it.
 
 ## Open items / caveats
 

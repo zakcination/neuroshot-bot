@@ -16,6 +16,7 @@ export interface GenOpts {
   aspectRatio?: string; // "auto" | "1:1" | "9:16" | "16:9" | "4:3" | "3:4"
   endImageUrl?: string; // video END frame (Kling 3.0 / Seedance) — start frame is the source image
   resolution?: string; // quality-tier id (model-specific: "1K"/"2K"/"4K", "480p"/"720p")
+  numImages?: number; // output count — image models only, clamped to image.maxCount
 }
 
 /** A quality/resolution tier the composer can offer; `mult` scales credits AND cost. */
@@ -29,6 +30,9 @@ export interface ResTier {
 export interface ImageParams {
   aspectRatios: string[]; // selectable ratios; "auto" ⇒ model/source decides
   resolutions?: ResTier[]; // optional quality ladder; resolutions[0] = default
+  /** Max output count via `num_images` (fal-verified — docs/cinema-studio-model-params.md P5).
+   *  Omitted where the endpoint's count support isn't confirmed (premium_*). */
+  maxCount?: number;
 }
 
 /** Video composer capabilities + per-second pricing (credits scale with length). */
@@ -84,6 +88,11 @@ function arParam(opts: GenOpts | undefined): { aspect_ratio?: string } {
 function endParam(opts: GenOpts | undefined): { end_image_url?: string } {
   return opts?.endImageUrl ? { end_image_url: opts.endImageUrl } : {};
 }
+/** {num_images} for image models — clamped to the model's declared maxCount, omitted at the default of 1. */
+function countParam(maxCount: number, opts: GenOpts | undefined): { num_images?: number } {
+  if (!opts?.numImages || opts.numImages <= 1) return {};
+  return { num_images: Math.min(maxCount, Math.floor(opts.numImages)) };
+}
 
 /** Quality ladders (credit multiplier covers the higher provider cost with margin). */
 // Nano Banana 2 native multi-resolution: 1K base, 2K = 1.5× rate, 4K = 2× rate
@@ -116,8 +125,8 @@ export const MODELS = {
     credits: 3,
     approxCostUsd: 0.06,
     label: "🖼 Редактирование фото",
-    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], ...arParam(opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS },
+    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], ...arParam(opts), ...countParam(4, opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 4 },
   },
   text_to_image: {
     key: "text_to_image",
@@ -126,8 +135,8 @@ export const MODELS = {
     credits: 2,
     approxCostUsd: 0.04,
     label: "✨ Картинка из текста",
-    input: (prompt, _img, opts) => ({ prompt, ...sizeParam(opts, true) }),
-    image: { aspectRatios: IMAGE_ASPECTS },
+    input: (prompt, _img, opts) => ({ prompt, ...sizeParam(opts, true), ...countParam(6, opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 6 },
   },
   // Seedream 4.5 edit — the default scenario image engine (photo → styled scene).
   // Stronger face-anchored scene edits than v4 at the same 2 🔫 tier ($0.04/img);
@@ -143,8 +152,8 @@ export const MODELS = {
     credits: 2,
     approxCostUsd: 0.04,
     label: "🖼 Сцена по фото",
-    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], ...sizeParam(opts, true) }),
-    image: { aspectRatios: IMAGE_ASPECTS },
+    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], ...sizeParam(opts, true), ...countParam(6, opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 6 },
   },
   animate: {
     key: "animate",
@@ -199,8 +208,8 @@ export const MODELS = {
     credits: 4,
     approxCostUsd: 0.08,
     label: "🎨 Картинка — быстро",
-    input: (prompt, _img, opts) => ({ prompt, resolution: opts?.resolution ?? "1K", ...arParam(opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES },
+    input: (prompt, _img, opts) => ({ prompt, resolution: opts?.resolution ?? "1K", ...arParam(opts), ...countParam(4, opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES, maxCount: 4 },
   },
   nb2_edit: {
     key: "nb2_edit",
@@ -209,8 +218,8 @@ export const MODELS = {
     credits: 4,
     approxCostUsd: 0.08,
     label: "🎨 Правка — быстро",
-    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], resolution: opts?.resolution ?? "1K", ...arParam(opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES },
+    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], resolution: opts?.resolution ?? "1K", ...arParam(opts), ...countParam(4, opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES, maxCount: 4 },
   },
   // Nano Banana Pro (Gemini 3 Pro) — SOTA image, $0.15/img @1K–2K.
   nbpro_image: {
@@ -220,8 +229,8 @@ export const MODELS = {
     credits: 8,
     approxCostUsd: 0.15,
     label: "🎨 Картинка — детально (2K)",
-    input: (prompt, _img, opts) => ({ prompt, resolution: opts?.resolution ?? "2K", ...arParam(opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES },
+    input: (prompt, _img, opts) => ({ prompt, resolution: opts?.resolution ?? "2K", ...arParam(opts), ...countParam(4, opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES, maxCount: 4 },
   },
   nbpro_edit: {
     key: "nbpro_edit",
@@ -230,8 +239,8 @@ export const MODELS = {
     credits: 8,
     approxCostUsd: 0.15,
     label: "🎨 Правка — детально (2K)",
-    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], resolution: opts?.resolution ?? "2K", ...arParam(opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES },
+    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], resolution: opts?.resolution ?? "2K", ...arParam(opts), ...countParam(4, opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES, maxCount: 4 },
   },
   // Kling 3.0 Pro — top image→video, $0.168/s audio-on → 5s ≈ $0.84.
   kling3: {
@@ -369,6 +378,13 @@ export function priceFor(model: ModelSpec, opts?: GenOpts): number {
     const t = tiers.find((x) => x.id === opts.resolution);
     if (t && t.mult !== 1) credits = Math.max(1, Math.ceil(credits * t.mult));
   }
+  // Output count: N images ≈ N provider runs — the charge scales linearly
+  // (docs/cinema-studio-model-params.md §4). Images only; clamped to maxCount.
+  const maxCount = model.image?.maxCount;
+  if (maxCount && opts?.numImages && opts.numImages > 1) {
+    const n = Math.min(maxCount, Math.floor(opts.numImages));
+    credits = Math.max(1, Math.ceil(credits * n));
+  }
   return credits;
 }
 
@@ -391,6 +407,10 @@ export function costUsdFor(model: ModelSpec, opts?: GenOpts): number {
   if (tiers && opts?.resolution) {
     const t = tiers.find((x) => x.id === opts.resolution);
     if (t && t.mult !== 1) usd *= t.mult;
+  }
+  const maxCount = model.image?.maxCount;
+  if (maxCount && opts?.numImages && opts.numImages > 1) {
+    usd *= Math.min(maxCount, Math.floor(opts.numImages));
   }
   return Math.round(usd * 1e6) / 1e6;
 }
@@ -420,6 +440,13 @@ export function normalizeOpts(model: ModelSpec, opts?: GenOpts): GenOpts | null 
   if (opts.endImageUrl != null) {
     if (!model.video?.endFrame) return null;
     out.endImageUrl = opts.endImageUrl;
+  }
+  // Output count — image models that declare maxCount only; must be a valid
+  // integer in [1, maxCount] (same reject-on-invalid convention as the others).
+  if (opts.numImages != null) {
+    const max = model.image?.maxCount;
+    if (!max || !Number.isInteger(opts.numImages) || opts.numImages < 1 || opts.numImages > max) return null;
+    out.numImages = opts.numImages;
   }
   return out;
 }

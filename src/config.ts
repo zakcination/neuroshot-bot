@@ -86,6 +86,11 @@ export const config = {
   // Reaper: a generation still 'pending' beyond this many minutes is treated as a
   // render whose process died (renders take 1–3 min); it's failed and refunded.
   genStaleMinutes: Number(process.env.GEN_STALE_MINUTES ?? 15),
+  // Reconciler: an order confirmed 'paid' whose credit grant never landed
+  // (granted_at still NULL) beyond this many minutes gets retried. Short by
+  // design — unlike a stuck render, this means a customer already PAID and got
+  // nothing, so it's worse to sit on than a slow render.
+  orderGrantStaleMinutes: Number(process.env.ORDER_GRANT_STALE_MINUTES ?? 5),
   // Identity-gate the free hook (docs/growth-product.md): require a verified phone
   // before the free scenario and tie the gift to the PHONE, so multi-account
   // farming needs multiple real numbers (Higgsfield banned 40k farmed accounts).
@@ -122,6 +127,27 @@ export const config = {
   // Provider cost per source-SECOND (USD) — PLACEHOLDER until the real ElevenLabs
   // per-minute price is measured in Phase 0. Drives per-second patron pricing.
   dubUsdPerSec: Number(process.env.DUB_USD_PER_SEC ?? 0.02),
+
+  // --- Content moderation (src/moderation.ts) ---
+  // Every uploaded photo is screened by fal's hosted NSFW classifier
+  // (fal-ai/imageutils/nsfw) before it can be used as generation input — no
+  // separate vendor/account, same FAL_KEY. Threshold is the nsfw_probability
+  // (0-1) at/above which an image is rejected. Deliberately conservative
+  // (reject more, not less): a false positive costs a legitimate user one
+  // re-upload; a false negative is the real exposure. Tune once real traffic
+  // gives calibration data.
+  moderationNsfwThreshold: Number(process.env.MODERATION_NSFW_THRESHOLD ?? 0.4),
+
+  // --- Rate limiting (src/ratelimit.ts) — per client IP, per 60s window ---
+  // Every cost/abuse-sensitive write route (session issuance, upload,
+  // generate, prompt-enhance) had NO limit at all before this. Defaults are
+  // generous enough for real usage (including the Studio's parallel-job
+  // support) while giving a real backstop against scripted hammering. Read-
+  // only polling (/api/me, /api/generations*) is intentionally unlimited.
+  rateLimitAuthPerMin: Number(process.env.RATE_LIMIT_AUTH_PER_MIN ?? 30),
+  rateLimitUploadPerMin: Number(process.env.RATE_LIMIT_UPLOAD_PER_MIN ?? 30),
+  rateLimitGeneratePerMin: Number(process.env.RATE_LIMIT_GENERATE_PER_MIN ?? 30),
+  rateLimitEnhancePerMin: Number(process.env.RATE_LIMIT_ENHANCE_PER_MIN ?? 20),
 };
 
 /**

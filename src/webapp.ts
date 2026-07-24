@@ -15,8 +15,11 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { claimRoadmapBonus, claimWelcomeBonus, createOrder, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getGeneration, getLevel, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { enhancePrompt } from "./enhance.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
+import { assertImageSafe, UnsafeImageError } from "./moderation.js";
+import { hit } from "./ratelimit.js";
 import { claimOrderPaid, grantPurchase } from "./payments.js";
 import { comboEndsAt } from "./offer.js";
 import { sanitizePrompt } from "./promptcraft.js";
@@ -114,6 +117,28 @@ function header(headers: Headers, name: string): string {
   return Array.isArray(v) ? (v[0] ?? "") : (v ?? "");
 }
 
+/**
+ * Best-effort client identity for rate-limit keying. Fly.io's edge sets
+ * `Fly-Client-IP` (the actual production deploy target — trustworthy, set by
+ * Fly itself, not the caller); the Caddy/docker-compose deploy path sets the
+ * conventional `X-Forwarded-For` instead. Falls back to the raw socket
+ * address, then a shared "unknown" bucket (which rate-limits itself as a
+ * group — a safe degradation, never an open door).
+ */
+function clientIp(req: IncomingMessage): string {
+  const fly = header(req.headers, "fly-client-ip");
+  if (fly) return fly;
+  const xff = header(req.headers, "x-forwarded-for");
+  if (xff) return xff.split(",")[0].trim();
+  return req.socket.remoteAddress ?? "unknown";
+}
+
+/** 429 + Retry-After for a route that's exceeded its rate limit. */
+function tooManyRequests(res: ServerResponse, retryAfterMs: number): void {
+  res.setHeader("Retry-After", String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
+  json(res, 429, { error: "rate_limited" });
+}
+
 /** initData from `Authorization: tma <initData>` (Telegram convention) or the alt header. */
 function initDataFromHeaders(headers: Headers): string {
   const auth = header(headers, "authorization");
@@ -176,6 +201,33 @@ export function authResponse(headers: Headers): { status: number; body: Record<s
  * They're surfaced only via the bot's dedicated /course command.
  */
 /**
+ * POST /api/enhance — Prompt Enhancer (Cinema Studio ②). First enhance after
+ * each generation start is free, then 1 patron; provider failure → 502 with
+ * the charge already refunded (src/enhance.ts) and the client keeps its
+ * original prompt.
+ */
+export async function enhanceResponse(
+  userId: number,
+  body: Record<string, unknown> | null,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const raw = typeof body?.prompt === "string" ? body.prompt : "";
+  try {
+    const r = await enhancePrompt(userId, raw);
+    if (!r.ok) {
+      if (r.error === "insufficient") {
+        const balance = (await getUser(userId))?.credits ?? 0;
+        return { status: 402, body: { error: "insufficient", need: 1, balance, packs: packsPayload() } };
+      }
+      return { status: 400, body: { error: r.error } };
+    }
+    return { status: 200, body: { prompt: r.prompt, charged: r.charged, free: r.free, balance: r.balance } };
+  } catch (err) {
+    console.error("enhance failed:", err);
+    return { status: 502, body: { error: "enhance_failed" } };
+  }
+}
+
+/**
  * One Studio catalog entry per registry model of the given mode — the full
  * curated registry (never the display-picker subsets), with everything the
  * composer needs to render a model row + its parameter block: capabilities
@@ -205,6 +257,12 @@ function studioModelsOf(mode: "image" | "video"): Array<Record<string, unknown>>
               mult: t.mult, // exact multiplier — client mirrors priceFor with it
               credits: priceFor(m, { resolution: t.id }),
             })),
+            // Output count (num_images): a plain max — unlike resolution/duration,
+            // count composes multiplicatively WITH whichever resolution is chosen,
+            // so the client mirrors priceFor's exact `credits × n` (rounded up)
+            // rather than reading a precomputed per-count price. 0 = no count
+            // selector (maxCount unset — unverified endpoints, e.g. premium_*).
+            maxCount: m.image.maxCount ?? 0,
           }
         : null,
       video: m.video
@@ -493,8 +551,14 @@ function readRawBody(req: IncomingMessage, limit: number): Promise<Buffer | null
 const UPLOAD_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 const UPLOAD_LIMIT = 9 * 1024 * 1024; // ~6.5MB of image as base64 JSON
 
-/** data:image/...;base64,… → public fal storage URL usable as model input. */
+/**
+ * data:image/...;base64,… → public fal storage URL usable as model input.
+ * Every upload is screened by the content-moderation gate (src/moderation.ts)
+ * BEFORE the url is ever handed back to the client — a flagged image never
+ * becomes usable as generation input on this surface.
+ */
 export async function uploadResponse(
+  userId: number,
   body: Record<string, unknown> | null,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const data = typeof body?.data === "string" ? body.data : "";
@@ -505,6 +569,13 @@ export async function uploadResponse(
   const buf = Buffer.from(m[2], "base64");
   if (!buf.length) return { status: 400, body: { error: "bad_image" } };
   const url = await fal.storage.upload(new Blob([new Uint8Array(buf)], { type: m[1].toLowerCase() }));
+  try {
+    await assertImageSafe(url);
+  } catch (err) {
+    if (!(err instanceof UnsafeImageError)) throw err;
+    await logEvent(userId, "moderation_blocked", "upload").catch(() => {});
+    return { status: 400, body: { error: "unsafe_image" } };
+  }
   return { status: 200, body: { url } };
 }
 
@@ -565,6 +636,14 @@ export async function generateResponse(
   if (source === "preset") {
     const p = PRESETS.find((x) => x.id === body?.id);
     if (!p || !imageUrl) return { status: 400, body: { error: "bad_request" } };
+    // Reward-architecture P1: style-library gating by Level (preset_gating is
+    // empty by default — ships inert; only presets an admin has actually gated
+    // via /econ_gate can ever block anyone). Checked before any charge.
+    const minLevel = await getPresetMinLevel(p.id);
+    if (minLevel != null) {
+      const level = await getLevel(userId);
+      if (level < minLevel) return { status: 403, body: { error: "level_locked", requiredLevel: minLevel, level } };
+    }
     // Studio ⑤: the preset's default model is preselected but SWAPPABLE — an
     // optional override must be an image-capable registry model (a video model
     // can't render a styled photo). Price follows the resolved model (priceFor).
@@ -684,6 +763,7 @@ export async function generateResponse(
     aspectRatio: typeof body?.aspect_ratio === "string" ? body.aspect_ratio : presetAspect,
     resolution: typeof body?.resolution === "string" ? body.resolution : undefined,
     endImageUrl,
+    numImages: body?.num_images != null ? Number(body.num_images) : undefined,
   } as GenOpts);
   if (opts === null) return { status: 400, body: { error: "bad_opts" } };
 
@@ -705,6 +785,9 @@ export async function generateResponse(
 /**
  * POST /api/send — deliver one of the caller's generations into their Telegram
  * chat with the bot (native save/forward/share from there). Owner-scoped.
+ * A multi-output image render (num_images > 1) ships as one sendMediaGroup
+ * instead of a single sendPhoto — video is never multi-output (count is
+ * images-only), so isVideo generations always take the single-item path.
  */
 export async function sendResponse(
   userId: number,
@@ -714,35 +797,72 @@ export async function sendResponse(
   if (!g || g.status !== "ok" || !g.output_url) return { status: 404, body: { error: "not_found" } };
   const isVideo = /\.(mp4|webm|mov)(\?|$)/i.test(g.output_url);
   const apiBase = process.env.TELEGRAM_API_BASE ?? "https://api.telegram.org";
-  const method = isVideo ? "sendVideo" : "sendPhoto";
-  const field = isVideo ? "video" : "photo";
   const caption = "✨ Из вашей студии NeuroShot";
-
-  // Every shared file carries the mandatory AI-generated disclosure (badge +
-  // metadata); the promo CTA is added only when the user's watermark setting is
-  // on. When branded, upload the bytes (multipart); otherwise pass the source URL.
   const u = await getUser(userId);
-  const branded = await brandForDelivery(g.output_url, isVideo ? "video" : "image", {
-    promo: !!u?.watermark_enabled,
-  });
+  const promo = !!u?.watermark_enabled;
 
+  const urls = !isVideo && g.output_urls && g.output_urls.length > 1 ? g.output_urls : null;
   let res: Response;
-  if (branded) {
+  if (urls) {
+    // Multi-image: brand each independently (mandatory AI disclosure); any that
+    // fails to brand falls back to its raw source URL rather than dropping it.
     const form = new FormData();
     form.set("chat_id", String(userId));
-    form.set("caption", caption);
-    form.set(field, new Blob([new Uint8Array(branded)]), isVideo ? "neuroshot.mp4" : "neuroshot.png");
-    res = await fetch(`${apiBase}/bot${config.botToken}/${method}`, { method: "POST", body: form });
+    const media = await Promise.all(
+      urls.map(async (u2, i) => {
+        const branded = await brandForDelivery(u2, "image", { promo });
+        if (branded) {
+          const name = `img${i}`;
+          form.set(name, new Blob([new Uint8Array(branded)]), "neuroshot.png");
+          return { type: "photo", media: `attach://${name}`, ...(i === 0 ? { caption } : {}) };
+        }
+        return { type: "photo", media: u2, ...(i === 0 ? { caption } : {}) };
+      }),
+    );
+    form.set("media", JSON.stringify(media));
+    res = await fetch(`${apiBase}/bot${config.botToken}/sendMediaGroup`, { method: "POST", body: form });
   } else {
-    res = await fetch(`${apiBase}/bot${config.botToken}/${method}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: userId, [field]: g.output_url, caption }),
-    });
+    const method = isVideo ? "sendVideo" : "sendPhoto";
+    const field = isVideo ? "video" : "photo";
+    // Every shared file carries the mandatory AI-generated disclosure (badge +
+    // metadata); the promo CTA is added only when the user's watermark setting is
+    // on. When branded, upload the bytes (multipart); otherwise pass the source URL.
+    const branded = await brandForDelivery(g.output_url, isVideo ? "video" : "image", { promo });
+    if (branded) {
+      const form = new FormData();
+      form.set("chat_id", String(userId));
+      form.set("caption", caption);
+      form.set(field, new Blob([new Uint8Array(branded)]), isVideo ? "neuroshot.mp4" : "neuroshot.png");
+      res = await fetch(`${apiBase}/bot${config.botToken}/${method}`, { method: "POST", body: form });
+    } else {
+      res = await fetch(`${apiBase}/bot${config.botToken}/${method}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: userId, [field]: g.output_url, caption }),
+      });
+    }
   }
   const data = (await res.json()) as { ok: boolean };
   if (!data.ok) return { status: 502, body: { error: "send_failed" } };
   return { status: 200, body: { ok: true } };
+}
+
+/**
+ * POST /api/xp/save — the client fires this alongside "📥 Скачать" (app.html
+ * saveMedia). Reward-architecture P1: awards the configured xp.save amount
+ * exactly once per generation (db.claimSaveXp is the idempotency + daily-cap
+ * guard), 0 if xp.save isn't configured yet. Never blocks the actual save —
+ * the client treats this as fire-and-forget.
+ */
+export async function xpSaveResponse(
+  userId: number,
+  body: Record<string, unknown> | null,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const id = Number(body?.id);
+  if (!Number.isInteger(id) || id <= 0) return { status: 400, body: { error: "bad_request" } };
+  const awarded = await claimSaveXp(id, userId);
+  const level = await getLevel(userId);
+  return { status: 200, body: { awarded, level } };
 }
 
 /** POST /api/settings — toggle the caller's watermark preference. */
@@ -753,6 +873,22 @@ export async function settingsResponse(
   if (typeof body?.watermark !== "boolean") return { status: 400, body: { error: "bad_request" } };
   const enabled = await setWatermark(userId, body.watermark);
   return { status: 200, body: { watermark: enabled } };
+}
+
+/**
+ * POST /api/account/delete — self-serve data deletion (Privacy Policy §4/§5),
+ * mirroring the bot's /delete_me confirm flow. The Mini App shows its own
+ * confirm dialog client-side before ever calling this, but the server doesn't
+ * trust that: this endpoint IS the irreversible action, called once per
+ * confirmed tap. Shares deleteUserData with the bot so both surfaces scrub
+ * the same fields identically.
+ */
+export async function deleteAccountResponse(
+  userId: number,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const result = await deleteUserData(userId);
+  if (!result) return { status: 404, body: { error: "not_found" } };
+  return { status: 200, body: { deleted: true, forfeitedCredits: result.forfeitedCredits } };
 }
 
 /**
@@ -822,7 +958,7 @@ const KASPI_PAID_STATUSES = new Set(["paid", "success", "completed", "approved",
 export async function kaspiCallbackResponse(
   rawBody: Buffer,
   signature: string,
-  grant: (userId: number, pack: import("./models.js").Pack) => Promise<void>,
+  grant: (userId: number, pack: import("./models.js").Pack, orderId: number) => Promise<void>,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   if (!config.kaspiApiSecret) return { status: 404, body: { error: "not_found" } };
   if (!signature) return { status: 401, body: { error: "unsigned" } };
@@ -857,7 +993,7 @@ export async function kaspiCallbackResponse(
 
   const won = await resolveOrder(orderId, true);
   if (!won) return { status: 200, body: { ok: true, already: "resolved" } };
-  await grant(order.user_id, pack);
+  await grant(order.user_id, pack, orderId);
   return { status: 200, body: { ok: true, granted: pack.credits } };
 }
 
@@ -869,6 +1005,12 @@ const STATIC: Record<string, { file: string; type: string; cache: string }> = {
   // promptly (mirrors vercel.json). The SW itself controls asset caching.
   "/sw.js": { file: "sw.js", type: "text/javascript; charset=utf-8", cache: "no-cache" },
   "/icon.svg": { file: "icon.svg", type: "image/svg+xml", cache: "public, max-age=3600" },
+  // Legal pages (docs/legal/*.md is the source of truth — keep both in sync
+  // on edits). no-cache so a policy correction ships immediately, never stuck
+  // behind a stale cached copy.
+  "/legal/terms": { file: "legal/terms.html", type: "text/html; charset=utf-8", cache: "no-cache" },
+  "/legal/privacy": { file: "legal/privacy.html", type: "text/html; charset=utf-8", cache: "no-cache" },
+  "/legal/refund": { file: "legal/refund.html", type: "text/html; charset=utf-8", cache: "no-cache" },
 };
 
 /** Build the Mini App HTTP server (exported for tests; not started here). */
@@ -909,6 +1051,8 @@ export function createWebApp(): Server {
       // POST /api/auth — initData → session token (client-agnostic).
       if (url.pathname === "/api/auth") {
         if (!methodIs(res, req.method, "POST")) return;
+        const rl = hit(`auth:${clientIp(req)}`, config.rateLimitAuthPerMin, 60_000);
+        if (rl.limited) return tooManyRequests(res, rl.retryAfterMs);
         const { status, body } = authResponse(req.headers);
         return json(res, status, body);
       }
@@ -922,11 +1066,16 @@ export function createWebApp(): Server {
       }
 
       // POST /api/upload — base64 image → public URL for model input.
+      // Rate-limited per USER (not IP): these routes are already authenticated,
+      // and keying by IP would collaterally punish unrelated users sharing a
+      // mobile-carrier NAT — common in the KZ/CIS market this app targets.
       if (url.pathname === "/api/upload") {
         if (!methodIs(res, req.method, "POST")) return;
         const user = resolveUser(req.headers);
         if (!user) return json(res, 401, { error: "unauthorized" });
-        const { status, body } = await uploadResponse(await readJsonBody(req, UPLOAD_LIMIT));
+        const rl = hit(`upload:${user.id}`, config.rateLimitUploadPerMin, 60_000);
+        if (rl.limited) return tooManyRequests(res, rl.retryAfterMs);
+        const { status, body } = await uploadResponse(user.id, await readJsonBody(req, UPLOAD_LIMIT));
         return json(res, status, body);
       }
 
@@ -935,8 +1084,20 @@ export function createWebApp(): Server {
         if (!methodIs(res, req.method, "POST")) return;
         const user = resolveUser(req.headers);
         if (!user) return json(res, 401, { error: "unauthorized" });
+        const rl = hit(`generate:${user.id}`, config.rateLimitGeneratePerMin, 60_000);
+        if (rl.limited) return tooManyRequests(res, rl.retryAfterMs);
         await getOrCreateUser(user.id, user.username, null, config.freeCredits);
         const { status, body } = await generateResponse(user.id, await readJsonBody(req, 64 * 1024));
+        return json(res, status, body);
+      }
+      if (url.pathname === "/api/enhance") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const rl = hit(`enhance:${user.id}`, config.rateLimitEnhancePerMin, 60_000);
+        if (rl.limited) return tooManyRequests(res, rl.retryAfterMs);
+        await getOrCreateUser(user.id, user.username, null, config.freeCredits);
+        const { status, body } = await enhanceResponse(user.id, await readJsonBody(req, 8 * 1024));
         return json(res, status, body);
       }
 
@@ -964,6 +1125,7 @@ export function createWebApp(): Server {
           id: g.id,
           status: g.status,
           output_url: g.output_url,
+          output_urls: g.output_urls,
           model: g.model,
           credits: g.credits,
         });
@@ -995,8 +1157,8 @@ export function createWebApp(): Server {
         const raw = await readRawBody(req, 8 * 1024);
         if (!raw) return json(res, 413, { error: "too_large" });
         const signature = header(req.headers, config.kaspiSignatureHeader);
-        const { status, body } = await kaspiCallbackResponse(raw, signature, (uid, pack) =>
-          grantPurchase(new Api(config.botToken), uid, pack),
+        const { status, body } = await kaspiCallbackResponse(raw, signature, (uid, pack, orderId) =>
+          grantPurchase(new Api(config.botToken), uid, pack, orderId),
         );
         return json(res, status, body);
       }
@@ -1010,6 +1172,17 @@ export function createWebApp(): Server {
         return json(res, status, body);
       }
 
+      // POST /api/xp/save — reward-architecture P1: award save-XP for one of the
+      // caller's OWN completed generations (idempotent, daily-capped, inert
+      // until an admin configures xp.save via /econ_set).
+      if (url.pathname === "/api/xp/save") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const { status, body } = await xpSaveResponse(user.id, await readJsonBody(req, 1024));
+        return json(res, status, body);
+      }
+
       // POST /api/settings — toggle the watermark preference.
       if (url.pathname === "/api/settings") {
         if (!methodIs(res, req.method, "POST")) return;
@@ -1017,6 +1190,15 @@ export function createWebApp(): Server {
         if (!user) return json(res, 401, { error: "unauthorized" });
         await getOrCreateUser(user.id, user.username, null, config.freeCredits);
         const { status, body } = await settingsResponse(user.id, await readJsonBody(req, 1024));
+        return json(res, status, body);
+      }
+
+      // POST /api/account/delete — self-serve data deletion (Privacy Policy §4/§5).
+      if (url.pathname === "/api/account/delete") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const { status, body } = await deleteAccountResponse(user.id);
         return json(res, status, body);
       }
 

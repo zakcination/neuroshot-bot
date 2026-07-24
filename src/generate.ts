@@ -17,6 +17,7 @@ import {
   type UserRow,
 } from "./db.js";
 import { costUsdFor, MODELS, priceFor, type FreeScenario, type GenOpts, type ModelSpec } from "./models.js";
+import { assertImageSafe, UnsafeImageError } from "./moderation.js";
 import { paywallKeyboard, paywallText } from "./payments.js";
 import { craftPrompt } from "./promptcraft.js";
 import { UNIT_EMOJI } from "./text.js";
@@ -80,33 +81,65 @@ export function isUploadedSource(fileId: string | null | undefined): boolean {
   return !!fileId && !/^https?:\/\//.test(fileId);
 }
 
-/** Resolve a Telegram file_id to a publicly fetchable URL for fal input. */
+/**
+ * Resolve a Telegram file_id to a URL fal.ai can fetch as model input.
+ *
+ * SECURITY: Telegram's raw file URL (`https://api.telegram.org/file/bot<TOKEN>/...`)
+ * embeds the bot's LIVE token. Handing that URL straight to a third-party
+ * provider — as this function used to do — leaks a credential that grants
+ * full control of the bot (send/read as the bot) into fal.ai's request path
+ * and logs on every single photo-based generation. Instead we fetch the file
+ * bytes ourselves (the token only ever leaves our server toward Telegram's
+ * own API, its intended use) and re-host them on fal's storage — the same
+ * no-secrets-in-URL pattern the Mini App's own upload path already uses
+ * (`webapp.ts` `uploadResponse`).
+ */
 async function telegramFileUrl(ctx: Context, fileId: string): Promise<string> {
   const file = await ctx.api.getFile(fileId);
-  return `https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`;
+  const tgUrl = `https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`;
+  const res = await fetch(tgUrl);
+  if (!res.ok) throw new Error(`telegram file download failed: ${res.status}`);
+  const buf = await res.arrayBuffer();
+  // bot.ts only ever handles message:photo (Telegram's compressed-photo
+  // pipeline), which is always JPEG.
+  const url = await fal.storage.upload(new Blob([buf], { type: "image/jpeg" }));
+  // Content moderation (src/moderation.ts): every bot-uploaded photo is
+  // screened before it can reach a generation model — the single choke point
+  // for both runGeneration and runFreeScenario, which both resolve their
+  // source photo through this function. Throws UnsafeImageError on a flagged
+  // image; callers' existing failure paths handle the refund/distinct message.
+  await assertImageSafe(url);
+  return url;
 }
 
-function extractResultUrl(data: unknown): string | null {
+/**
+ * All output URLs from a fal response, in order. `images` (num_images) carries
+ * every output; `image`/`video` are always single-output shapes. Empty array
+ * if nothing usable is present — falRun turns that into a thrown error.
+ */
+function extractResultUrls(data: unknown): string[] {
   // fal responses vary by model: {images: [{url}]}, {image: {url}} or {video: {url}}
   const d = data as {
     images?: Array<{ url?: string }>;
     image?: { url?: string };
     video?: { url?: string };
   };
-  return d?.images?.[0]?.url ?? d?.image?.url ?? d?.video?.url ?? null;
+  if (d?.images?.length) return d.images.map((i) => i.url).filter((u): u is string => !!u);
+  const single = d?.image?.url ?? d?.video?.url;
+  return single ? [single] : [];
 }
 
-/** Run a model on fal; returns the output URL + fal's request id (throws on provider failure). */
+/** Run a model on fal; returns all output URLs + fal's request id (throws on provider failure). */
 async function falRun(
   model: ModelSpec,
   prompt: string,
   imageUrl?: string,
   opts?: GenOpts,
-): Promise<{ url: string; requestId: string }> {
+): Promise<{ urls: string[]; requestId: string }> {
   const result = await fal.subscribe(model.falEndpoint, { input: model.input(prompt, imageUrl, opts) });
-  const url = extractResultUrl(result.data);
-  if (!url) throw new Error(`No output URL in fal response for ${model.falEndpoint}`);
-  return { url, requestId: result.requestId };
+  const urls = extractResultUrls(result.data);
+  if (!urls.length) throw new Error(`No output URL in fal response for ${model.falEndpoint}`);
+  return { urls, requestId: result.requestId };
 }
 
 /**
@@ -142,7 +175,7 @@ export async function startWebGeneration(
       const r = await falRun(model, prompt, imageUrl, opts);
       costUsd = costUsdFor(model, opts);
       requestId = r.requestId;
-      await completeGeneration(id, "ok", r.url, costUsd, requestId);
+      await completeGeneration(id, "ok", r.urls[0], costUsd, requestId, r.urls);
       // Analytics must never be able to trigger compensation: swallow its errors
       // so a post-'ok' logEvent blip can't fall into the catch and refund a
       // render we already completed and delivered.
@@ -274,7 +307,7 @@ export async function runGeneration(
             : await telegramFileUrl(ctx, fileId)
           : undefined;
         const r = await falRun(model, prompt, imageUrl);
-        const url = r.url;
+        const url = r.urls[0];
         costUsd = costUsdFor(model);
         requestId = r.requestId;
         const after = afterKeyboard(isUpload, opts.animate && !isVideo ? { campId: opts.animate, genId } : undefined);
@@ -308,11 +341,16 @@ export async function runGeneration(
         if (!delivered && (await completeGeneration(genId, "error", undefined, costUsd, requestId))) {
           if (!free) await addCredits(user.id, model.credits, "refund", model.key);
           else await restoreFreeResult(user.id);
-          await ctx.api
-            .sendMessage(chatId, `⚠️ Не получилось — ${UNIT_EMOJI} патроны автоматически возвращены. Попробуйте ещё раз.`)
-            .catch(() => {});
+          // A moderation block is not a transient failure — retrying with the
+          // SAME photo will just fail again, so say so plainly instead of
+          // inviting a retry.
+          const text =
+            err instanceof UnsafeImageError
+              ? `❌ Это фото не подходит для обработки — ${UNIT_EMOJI} патроны возвращены. Загрузите другое фото.`
+              : `⚠️ Не получилось — ${UNIT_EMOJI} патроны автоматически возвращены. Попробуйте ещё раз.`;
+          await ctx.api.sendMessage(chatId, text).catch(() => {});
         }
-        await logEvent(user.id, "gen_error", model.key).catch(() => {});
+        await logEvent(user.id, err instanceof UnsafeImageError ? "moderation_blocked" : "gen_error", model.key).catch(() => {});
       } finally {
         await ctx.api.deleteMessage(progress.chat.id, progress.message_id).catch(() => {});
       }
@@ -378,8 +416,8 @@ export async function runFreeScenario(
         const photoUrl = await telegramFileUrl(ctx, fileId);
         // 1) Photo → styled scene image (Seedream edit). 2) Scene → short video (Hailuo).
         const scene = await falRun(scenario.imageModel, scenario.imagePrompt, photoUrl);
-        const videoResult = await falRun(scenario.videoModel, scenario.videoPrompt, scene.url);
-        const videoUrl = videoResult.url;
+        const videoResult = await falRun(scenario.videoModel, scenario.videoPrompt, scene.urls[0]);
+        const videoUrl = videoResult.urls[0];
         // This ONE generations row represents the whole free chain — the actual
         // cost NeuroShot paid is both legs combined (the highest-COGS acquisition
         // path in the product, hence the two-model chain being worth tracking
@@ -402,11 +440,13 @@ export async function runFreeScenario(
         console.error(`free scenario failed (${scenario.id}):`, err);
         if (!delivered && (await completeGeneration(genId, "error", undefined, chainCostUsd, providerRequestId))) {
           await restoreFreeScenario(user.id); // return the gift so they can retry
-          await ctx.api
-            .sendMessage(chatId, "⚠️ Не получилось снять сценарий — попробуйте ещё раз, бесплатная попытка сохранена.")
-            .catch(() => {});
+          const text =
+            err instanceof UnsafeImageError
+              ? "❌ Это фото не подходит для обработки — бесплатная попытка сохранена. Загрузите другое фото."
+              : "⚠️ Не получилось снять сценарий — попробуйте ещё раз, бесплатная попытка сохранена.";
+          await ctx.api.sendMessage(chatId, text).catch(() => {});
         }
-        await logEvent(user.id, "gen_error", `free_${scenario.id}`).catch(() => {});
+        await logEvent(user.id, err instanceof UnsafeImageError ? "moderation_blocked" : "gen_error", `free_${scenario.id}`).catch(() => {});
       } finally {
         await ctx.api.deleteMessage(progress.chat.id, progress.message_id).catch(() => {});
       }

@@ -90,7 +90,7 @@ Unsupported selectors simply don't render.
 - ✅ ~~P4~~ **withdrawn** — kling3 (i2v) genuinely has no aspect param; the 16:9/9:16/1:1 enum is Kling v3's *t2v* variant. Registry was already correct.
 
 **Deliberately deferred (bigger than a drift fix):**
-- **P5 count (`num_images`)** — NOT just pricing: `falRun` keeps only `images[0]` (`generate.ts:96`) and a generation row stores a single `output_url`, so N>1 needs multi-output handling (result storage, gallery, delivery). Own task, do with/before the Studio composer.
+- ✅ **P5 count (`num_images`)** — SHIPPED 2026-07-24. `models.ts` (GenOpts.numImages, ImageParams.maxCount, linear price/cost scaling), `generate.ts` (falRun returns ALL output urls), `db.ts` (generations.output_urls, additive — output_url stays the first url always), `webapp.ts` (/api/generate accepts num_images, catalog exposes maxCount, poll/gallery expose output_urls, /api/send ships multi-output as one sendMediaGroup), and the Studio composer (count stepper, live ×N price, multi-image result/gallery views). Nano-banana family up to 4, Seedream up to 6; premium_* stays without a selector (endpoint unverified, P7). Scoped to the web Studio only — the bot's inline flows never set composer opts, so this shipped as a pure additive path with zero bot behavior change.
 - **P2 Seedance 4–15s durations** — the widening is trivial but the current 5/10 chips are fine for v1; widen alongside the composer's duration UI.
 - **P3 nbpro 1K tier** — 1K/2K cost the SAME on fal (only 4K is double), so exposing 1K would be a strictly-worse-quality same-price option; keeping the 2K floor is a better default. Revisit only if a "faster" tier is wanted.
 - **P6 nb2 0.5K tier** — optional cheap tier; low value while credits floor at 1.

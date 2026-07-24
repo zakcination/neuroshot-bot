@@ -19,15 +19,28 @@ process.env.BOT_USERNAME = "neuroshot_test_bot";
 process.env.KASPI_PAY_URL = "https://pay.test/neuroshot"; // enable the Kaspi order flow
 process.env.KASPI_PAY_URL_COMBO = "https://pay.test/combo"; // per-pack fixed-amount link
 process.env.KASPI_API_SECRET = "test-kaspi-secret"; // enable the auto-approval callback
+// Rate limiting (src/ratelimit.ts): the shared "maker" user below makes FAR
+// more than the production default (30/min) worth of /api/generate calls
+// across this suite's ~40 steps, all within the same wall-clock minute since
+// tests run near-instantly — that's a suite-speed artifact, not something
+// production traffic does. Set high here; the dedicated rate-limiting step
+// primes its OWN fresh users' buckets directly rather than relying on this
+// value, so it still exercises the real limit from config.
+process.env.RATE_LIMIT_AUTH_PER_MIN = "100000";
+process.env.RATE_LIMIT_UPLOAD_PER_MIN = "100000";
+process.env.RATE_LIMIT_GENERATE_PER_MIN = "100000";
+process.env.RATE_LIMIT_ENHANCE_PER_MIN = "100000";
 
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, completeGeneration, createOrder, createPendingGeneration, getOrCreateUser, getOrder, logEvent, logGeneration, query, spendCredits } = await import("../src/db.js");
+const { addCredits, completeGeneration, createOrder, createPendingGeneration, getOrCreateUser, getOrder, getLevel, getUserXp, logEvent, logGeneration, query, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
 const { settleApprovedOrder } = await import("../src/payments.js");
+const { hit } = await import("../src/ratelimit.js");
+const { config } = await import("../src/config.js");
 const { Api } = await import("grammy");
 
 // ---- fal stubs (network edge): model runs + storage uploads ----
@@ -36,15 +49,36 @@ interface FalCall {
   input: Record<string, unknown>;
 }
 const falCalls: FalCall[] = [];
+let anyLlmFail = false; // flip to make the enhancer's LLM call blow up (refund path)
+// Content moderation (moderation.ts): tracked as its OWN edge, NOT pushed into
+// falCalls — several assertions use falCalls.length/.at(-1) to mean "the
+// generation MODEL ran", and this classifier call happens in addition to that
+// on every upload. Default SAFE (0) so existing journeys are unaffected;
+// individual steps flip this to exercise the block path, then reset it to 0.
+let nsfwProbability = 0;
+let nsfwCheckCalls = 0;
 (fal as { subscribe: unknown }).subscribe = async (
   endpoint: string,
   opts: { input: Record<string, unknown> },
 ) => {
+  if (endpoint === "fal-ai/imageutils/nsfw") {
+    nsfwCheckCalls++;
+    return { data: { nsfw_probability: nsfwProbability }, requestId: `req-nsfw-${nsfwCheckCalls}` };
+  }
   falCalls.push({ endpoint, input: opts.input });
-  const data = endpoint.includes("video")
-    ? { video: { url: `https://fal.test/out/${falCalls.length}.mp4` } }
-    : { images: [{ url: `https://fal.test/out/${falCalls.length}.png` }] };
-  return { data, requestId: `req-${falCalls.length}` };
+  if (endpoint === "fal-ai/any-llm") {
+    if (anyLlmFail) throw new Error("llm boom");
+    return { data: { output: `Cinematic, richly lit: ${String(opts.input.prompt)}` }, requestId: `req-${falCalls.length}` };
+  }
+  if (endpoint.includes("video")) {
+    return { data: { video: { url: `https://fal.test/out/${falCalls.length}.mp4` } }, requestId: `req-${falCalls.length}` };
+  }
+  // num_images (P5, docs/cinema-studio-model-params.md): the real fal image
+  // endpoints return one images[] entry per requested count — mirror that so
+  // multi-output storage/pricing/delivery can be tested end-to-end.
+  const n = typeof opts.input.num_images === "number" ? opts.input.num_images : 1;
+  const images = Array.from({ length: n }, (_, i) => ({ url: `https://fal.test/out/${falCalls.length}-${i}.png` }));
+  return { data: { images }, requestId: `req-${falCalls.length}` };
 };
 // fal.storage is a getter — patch the method on the storage client instance.
 (fal.storage as unknown as { upload: unknown }).upload = async (blob: Blob) =>
@@ -334,6 +368,24 @@ await step("serves the PWA manifest and service worker (SW is no-cache)", async 
   assert.match(sw.headers.get("cache-control") ?? "", /no-cache/); // prompt SW updates
 });
 
+await step("serves the legal pages (ToS, privacy, refund) — no auth required, no-cache, requisites present", async () => {
+  const pages = [
+    { path: "/legal/terms", must: [/Условия использования/, /ИП Z8 Capital/, /030722500509/] },
+    { path: "/legal/privacy", must: [/Политика конфиденциальности/, /ИП Z8 Capital/, /komekforyou@gmail\.com/] },
+    { path: "/legal/refund", must: [/Политика возврата средств/, /14 дней/, /komekforyou@gmail\.com/] },
+  ];
+  for (const { path, must } of pages) {
+    const r = await fetch(`${base}${path}`); // deliberately no Authorization — a legal page must be publicly readable
+    assert.equal(r.status, 200, `${path} status`);
+    assert.match(r.headers.get("content-type") ?? "", /text\/html/, `${path} content-type`);
+    assert.match(r.headers.get("cache-control") ?? "", /no-cache/, `${path} cache-control`);
+    const body = await r.text();
+    for (const re of must) assert.match(body, re, `${path} missing ${re}`);
+    // No vendor names leak into what's actually served to users.
+    assert.ok(!/fal\.ai|ElevenLabs|Kaspi/i.test(body), `${path} leaks a vendor name`);
+  }
+});
+
 await step("GET /img/<name>: serves decorative art, long-cached; rejects traversal/unknown", async () => {
   const ok = await fetch(`${base}/img/onboard-gift.jpg`);
   assert.equal(ok.status, 200);
@@ -365,11 +417,14 @@ await step("method gating: /api/auth is POST-only, /api/me is GET-only (405 othe
 const maker = { id: 700, username: "maker", first_name: "Maker" };
 const makerHeaders = () => ({ Authorization: `tma ${signInitData(maker)}` });
 
-async function pollGen(id: number): Promise<{ status: string; output_url: string | null }> {
+async function pollGen(
+  id: number,
+  headers: Record<string, string> = makerHeaders(),
+): Promise<{ status: string; output_url: string | null; output_urls: string[] | null }> {
   for (let i = 0; i < 200; i++) {
-    const r = await fetch(`${base}/api/generations/${id}`, { headers: makerHeaders() });
+    const r = await fetch(`${base}/api/generations/${id}`, { headers });
     assert.equal(r.status, 200);
-    const d = (await r.json()) as { status: string; output_url: string | null };
+    const d = (await r.json()) as { status: string; output_url: string | null; output_urls: string[] | null };
     if (d.status !== "pending") return d;
     await new Promise((rr) => setTimeout(rr, 15));
   }
@@ -412,6 +467,35 @@ await step("POST /api/upload: base64 image → storage URL; bad mime and no auth
   assert.equal(noauth.status, 401);
 });
 
+await step("content moderation: a flagged upload is rejected and never returns a usable url", async () => {
+  nsfwProbability = 0.9; // flip the classifier to "unsafe" for this step only
+  const png = `data:image/png;base64,${Buffer.from("tiny-png-bytes").toString("base64")}`;
+  const flagged = await fetch(`${base}/api/upload`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ data: png }),
+  });
+  assert.equal(flagged.status, 400);
+  assert.equal(((await flagged.json()) as { error: string }).error, "unsafe_image");
+  const row = (await query("SELECT type FROM events WHERE user_id = $1 ORDER BY id DESC LIMIT 1", [maker.id]))[0];
+  assert.equal(row.type, "moderation_blocked");
+  nsfwProbability = 0; // reset — every later step assumes SAFE
+  // The classifier itself failing (provider outage) also blocks — fail CLOSED.
+  const originalSubscribe = (fal as { subscribe: unknown }).subscribe;
+  (fal as { subscribe: unknown }).subscribe = async (endpoint: string, opts: { input: Record<string, unknown> }) => {
+    if (endpoint === "fal-ai/imageutils/nsfw") throw new Error("classifier outage");
+    return (originalSubscribe as (e: string, o: { input: Record<string, unknown> }) => unknown)(endpoint, opts);
+  };
+  const outage = await fetch(`${base}/api/upload`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ data: png }),
+  });
+  assert.equal(outage.status, 400);
+  assert.equal(((await outage.json()) as { error: string }).error, "unsafe_image");
+  (fal as { subscribe: unknown }).subscribe = originalSubscribe;
+});
+
 await step("POST /api/generate: preset charges, renders async, poll reaches ok", async () => {
   await apiClaimWelcome(signInitData(maker)); // claim-gated — lands the 3 free 🔫 first
   await addCredits(maker.id, 100, "admin_grant", "test"); // 3 free + 100
@@ -436,6 +520,118 @@ await step("POST /api/generate: preset charges, renders async, poll reaches ok",
   const row = (await query("SELECT cost_usd, provider_request_id FROM generations WHERE id = $1", [d.id]))[0];
   assert.equal(Number(row.cost_usd), 0.04); // seedream_edit approxCostUsd
   assert.match(String(row.provider_request_id), /^req-\d+$/);
+});
+
+await step("num_images: charge scales ×N, multi-output stored/exposed, invalid counts rejected", async () => {
+  // Isolated user — this step spends real credits and must not perturb the
+  // shared `maker` user's running balance, which later steps assert absolutely
+  // (e.g. "101 − 76 = 25").
+  const cu = { id: 990088, username: "counter", first_name: "Cnt" };
+  await getOrCreateUser(cu.id, cu.username, null, 0);
+  await addCredits(cu.id, 100, "admin_grant", "test");
+  const H = { Authorization: `tma ${signInitData(cu)}`, "Content-Type": "application/json" };
+
+  // Catalog: text_to_image (Seedream) declares maxCount 6; premium_image's count
+  // support isn't fal-verified (P7), so it must expose 0 (no selector).
+  const cat = (await apiMe(signInitData(cu))).body.catalog as unknown as {
+    studio: { image: Array<{ key: string; image: { maxCount: number } | null }> };
+  };
+  const t2i = cat.studio.image.find((m) => m.key === "text_to_image")!;
+  assert.equal(t2i.image!.maxCount, 6);
+  const premium = cat.studio.image.find((m) => m.key === "premium_image")!;
+  assert.equal(premium.image!.maxCount, 0);
+
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "model", model: "text_to_image", prompt: "a cat", num_images: 3 }),
+  });
+  assert.equal(r.status, 200);
+  const d = (await r.json()) as { id: number; credits: number; balance: number };
+  assert.equal(d.credits, 6); // 2 base × 3
+  assert.equal(d.balance, 94); // 100 − 6
+  const call = falCalls.at(-1)!;
+  assert.equal(call.input.num_images, 3);
+
+  const done = await pollGen(d.id, H);
+  assert.equal(done.status, "ok");
+  assert.equal(done.output_urls?.length, 3);
+  assert.equal(done.output_url, done.output_urls?.[0]);
+  const row = (await query("SELECT output_urls FROM generations WHERE id = $1", [d.id]))[0];
+  assert.equal((JSON.parse(String(row.output_urls)) as string[]).length, 3);
+
+  // The gallery exposes output_urls on the same item too.
+  const gal = await fetch(`${base}/api/generations?size=5`, { headers: H });
+  const galBody = (await gal.json()) as { items: Array<{ id: number; output_urls: string[] | null }> };
+  const item = galBody.items.find((x) => x.id === d.id);
+  assert.equal(item?.output_urls?.length, 3);
+
+  // Out-of-range count → 400 bad_opts, nothing charged.
+  const tooMany = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "model", model: "text_to_image", prompt: "x", num_images: 7 }),
+  });
+  assert.equal(tooMany.status, 400);
+  assert.equal(((await tooMany.json()) as { error: string }).error, "bad_opts");
+
+  // A model with no maxCount (unverified endpoint) rejects any count request.
+  const noCount = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "model", model: "premium_image", prompt: "x", num_images: 2 }),
+  });
+  assert.equal(noCount.status, 400);
+  assert.equal((await apiMe(signInitData(cu))).body.dashboard.credits, 94, "rejected count requests must not charge");
+});
+
+await step("POST /api/send: a multi-output generation ships as one sendMediaGroup", async () => {
+  const su = { id: 990089, username: "sender", first_name: "Snd" };
+  await getOrCreateUser(su.id, su.username, null, 0);
+  await addCredits(su.id, 100, "admin_grant", "test");
+  const H = { Authorization: `tma ${signInitData(su)}`, "Content-Type": "application/json" };
+
+  const { createServer } = await import("node:http");
+  const sends: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const tgStub = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => {
+      void (async () => {
+        const buf = Buffer.concat(chunks);
+        const ct = req.headers["content-type"] ?? "";
+        let body: Record<string, unknown>;
+        if (ct.includes("multipart/form-data")) {
+          const form = await new Response(buf, { headers: { "content-type": ct } }).formData();
+          body = { chat_id: form.get("chat_id"), media: JSON.parse(String(form.get("media"))) };
+        } else {
+          body = JSON.parse(buf.toString("utf8")) as Record<string, unknown>;
+        }
+        sends.push({ path: req.url ?? "", body });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, result: [] }));
+      })();
+    });
+  });
+  await new Promise<void>((r) => tgStub.listen(0, r));
+  process.env.TELEGRAM_API_BASE = `http://127.0.0.1:${(tgStub.address() as AddressInfo).port}`;
+
+  const gen = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "model", model: "text_to_image", prompt: "a dog", num_images: 2 }),
+  });
+  const genId = ((await gen.json()) as { id: number }).id;
+  await pollGen(genId, H);
+
+  const r = await fetch(`${base}/api/send`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ id: genId }),
+  });
+  assert.equal(r.status, 200);
+  assert.match(sends[0].path, /\/sendMediaGroup$/);
+  const media = sends[0].body.media as Array<{ type: string; media: string; caption?: string }>;
+  assert.equal(media.length, 2);
+  assert.ok(media.every((m) => m.type === "photo"));
+  assert.equal(media[0].caption, "✨ Из вашей студии NeuroShot");
+  assert.equal(media[1].caption, undefined);
+  await new Promise<void>((r2) => tgStub.close(() => r2()));
 });
 
 await step("Studio catalog: FULL registry by mode, patron-only prices; every model generable", async () => {
@@ -525,6 +721,53 @@ await step("Studio preset: personalization is sanitized+appended; model override
     body: JSON.stringify({ source: "preset", id: "headshot", image_url: "https://fal.test/storage/u-1.jpg", model: "kling3" }),
   });
   assert.equal(bad.status, 400);
+});
+
+await step("Prompt Enhancer: first free → 1 🔫 → 402; provider failure refunds; a render re-arms the free one", async () => {
+  // A FRESH user so the enhance/gen_start event history is fully controlled.
+  const enh = { id: 990077, username: "enhancer", first_name: "Enh" };
+  await getOrCreateUser(enh.id, enh.username, null, 0);
+  const H = { Authorization: `tma ${signInitData(enh)}`, "Content-Type": "application/json" };
+  const call = (prompt: string) => fetch(`${base}/api/enhance`, { method: "POST", headers: H, body: JSON.stringify({ prompt }) });
+
+  // Empty prompt → 400, nothing charged.
+  assert.equal((await call("   ")).status, 400);
+  // 1st enhance ever → FREE, upgraded prompt back, balance untouched (0).
+  const r1 = await call("кот в очках");
+  assert.equal(r1.status, 200);
+  const d1 = (await r1.json()) as { prompt: string; charged: number; free: boolean; balance: number };
+  assert.equal(d1.free, true);
+  assert.equal(d1.charged, 0);
+  assert.equal(d1.balance, 0);
+  assert.match(d1.prompt, /Cinematic.*кот в очках/);
+  // 2nd enhance with 0 🔫 → 402 paywall (the free one is spent).
+  assert.equal((await call("кот в очках, неон")).status, 402);
+  // With 1 🔫 the 2nd enhance charges exactly 1.
+  await addCredits(enh.id, 1, "admin_grant", "test");
+  const r2 = await call("кот в очках, неон");
+  assert.equal(r2.status, 200);
+  const d2 = (await r2.json()) as { charged: number; free: boolean; balance: number };
+  assert.equal(d2.free, false);
+  assert.equal(d2.charged, 1);
+  assert.equal(d2.balance, 0);
+  // Provider failure on a PAID enhance → 502 and the patron comes back.
+  await addCredits(enh.id, 1, "admin_grant", "test");
+  anyLlmFail = true;
+  const rf = await call("ещё раз");
+  anyLlmFail = false;
+  assert.equal(rf.status, 502);
+  const balAfterFail = (await query("SELECT credits FROM users WHERE id = $1", [enh.id]))[0];
+  assert.equal(Number(balAfterFail.credits), 1); // refunded — net zero for the failed tap
+  // A generation start RE-ARMS the free enhance (D2: per-generation).
+  await addCredits(enh.id, 2, "admin_grant", "test"); // 1 + 2 = 3; t2i costs 2 → 1 left
+  const gen = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "model", model: "text_to_image", prompt: "домик у моря" }),
+  });
+  assert.equal(gen.status, 200);
+  const r3 = await call("домик у моря, но зимой");
+  assert.equal(r3.status, 200);
+  assert.equal(((await r3.json()) as { free: boolean }).free, true);
 });
 
 await step("/api/me exposes PENDING generations — the reload-safe resume contract", async () => {
@@ -1468,6 +1711,120 @@ await step("watermark setting: default on, /api/settings toggles it, /me reflect
   assert.equal(bad.status, 400);
 });
 
+await step("POST /api/account/delete: self-serve deletion scrubs PII, zeroes credits, requires auth, idempotent 404 on retry", async () => {
+  const du = { id: 809, username: "deleteme" };
+  await getOrCreateUser(du.id, du.username, null, 0);
+  await addCredits(du.id, 40, "admin_grant", "test");
+  const hdr = { Authorization: `tma ${signInitData(du)}` };
+
+  const unauth = await fetch(`${base}/api/account/delete`, { method: "POST" });
+  assert.equal(unauth.status, 401);
+
+  const ok = await fetch(`${base}/api/account/delete`, { method: "POST", headers: hdr });
+  assert.equal(ok.status, 200);
+  const okBody = (await ok.json()) as { deleted: boolean; forfeitedCredits: number };
+  assert.equal(okBody.deleted, true);
+  assert.equal(okBody.forfeitedCredits, 40);
+
+  const row = (await query("SELECT username, credits, deleted_at FROM users WHERE id = $1", [du.id]))[0];
+  assert.equal(row.username, null);
+  assert.equal(Number(row.credits), 0);
+  assert.ok(row.deleted_at);
+
+  // Already deleted → 404, not a re-grant of anything.
+  const again = await fetch(`${base}/api/account/delete`, { method: "POST", headers: hdr });
+  assert.equal(again.status, 404);
+});
+
+await step("reward-architecture P1: XP is inert until configured, then Level gates presets and save-XP is idempotent+capped", async () => {
+  const ru = { id: 990090, username: "rewarduser", first_name: "Rew" };
+  await getOrCreateUser(ru.id, ru.username, null, 0);
+  await addCredits(ru.id, 100, "admin_grant", "test"); // headroom for the gating checks near the end
+  const H = { Authorization: `tma ${signInitData(ru)}`, "Content-Type": "application/json" };
+
+  // Nothing configured yet: Level is 0, /api/me exposes xp/level, and the
+  // (still-empty) preset_gating table blocks nothing.
+  const me0 = (await apiMe(signInitData(ru))).body as unknown as { dashboard: { xp: number; level: number } };
+  assert.equal(me0.dashboard.xp, 0);
+  assert.equal(me0.dashboard.level, 0);
+
+  // Seed a completed generation to "save."
+  await logGeneration(ru.id, "text_to_image", "p", 2, "ok", "https://fal.test/out/rew.png");
+  const genId = Number((await query("SELECT id FROM generations WHERE user_id = $1", [ru.id]))[0].id);
+
+  // xp.save unconfigured → the save endpoint is a harmless no-op (0 awarded).
+  const noop = await fetch(`${base}/api/xp/save`, { method: "POST", headers: H, body: JSON.stringify({ id: genId }) });
+  assert.equal(noop.status, 200);
+  assert.equal(((await noop.json()) as { awarded: number }).awarded, 0);
+  assert.equal(await getUserXp(ru.id), 0);
+
+  // Now configure it — save-XP awards, exactly once, and is capped daily.
+  await setEconomyConfig("xp.save", 25);
+  await setEconomyConfig("xp.save.dailycap", 2);
+  const first = await fetch(`${base}/api/xp/save`, { method: "POST", headers: H, body: JSON.stringify({ id: genId }) });
+  assert.equal(((await first.json()) as { awarded: number }).awarded, 25);
+  assert.equal(await getUserXp(ru.id), 25);
+
+  // Re-tapping "Скачать" on the SAME generation must not re-award (idempotent claim).
+  const again = await fetch(`${base}/api/xp/save`, { method: "POST", headers: H, body: JSON.stringify({ id: genId }) });
+  assert.equal(((await again.json()) as { awarded: number }).awarded, 0);
+  assert.equal(await getUserXp(ru.id), 25);
+
+  // A second DIFFERENT generation still earns, up to the daily cap (2/day).
+  await logGeneration(ru.id, "text_to_image", "p", 2, "ok", "https://fal.test/out/rew2.png");
+  const gen2 = Number(
+    (await query("SELECT id FROM generations WHERE user_id = $1 ORDER BY id DESC LIMIT 1", [ru.id]))[0].id,
+  );
+  await fetch(`${base}/api/xp/save`, { method: "POST", headers: H, body: JSON.stringify({ id: gen2 }) });
+  assert.equal(await getUserXp(ru.id), 50);
+
+  // A third would exceed the daily cap of 2 saves → capped at 0 additional XP.
+  await logGeneration(ru.id, "text_to_image", "p", 2, "ok", "https://fal.test/out/rew3.png");
+  const gen3 = Number(
+    (await query("SELECT id FROM generations WHERE user_id = $1 ORDER BY id DESC LIMIT 1", [ru.id]))[0].id,
+  );
+  await fetch(`${base}/api/xp/save`, { method: "POST", headers: H, body: JSON.stringify({ id: gen3 }) });
+  assert.equal(await getUserXp(ru.id), 50, "the daily save cap must hold");
+
+  // Someone else's generation can't be claimed for XP.
+  const stranger = { id: 990091, username: "stranger" };
+  await getOrCreateUser(stranger.id, stranger.username, null, 0);
+  const stolen = await fetch(`${base}/api/xp/save`, {
+    method: "POST",
+    headers: { Authorization: `tma ${signInitData(stranger)}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ id: genId }),
+  });
+  assert.equal(((await stolen.json()) as { awarded: number }).awarded, 0);
+
+  // Unauthenticated: 401.
+  assert.equal((await fetch(`${base}/api/xp/save`, { method: "POST", body: JSON.stringify({ id: genId }) })).status, 401);
+
+  // Preset gating: gate "headshot" at Level 5 — this user is Level 0 (thresholds
+  // still unconfigured), so the preset must now be blocked; an ungated preset
+  // must be unaffected.
+  await setPresetGating("headshot", 5);
+  assert.equal(await getLevel(ru.id), 0);
+  const gated = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "preset", id: "headshot", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(gated.status, 403);
+  const gatedBody = (await gated.json()) as { error: string; requiredLevel: number; level: number };
+  assert.equal(gatedBody.error, "level_locked");
+  assert.equal(gatedBody.requiredLevel, 5);
+  assert.equal(gatedBody.level, 0);
+
+  const ungated = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "preset", id: "product_white", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(ungated.status, 200, "an ungated preset must not be affected by another preset's gate");
+
+  // Levelling up: configure a level-1 threshold at 40 XP (this user already has 50) — unlocks it.
+  await setEconomyConfig("level.threshold.1", 40);
+  assert.equal(await getLevel(ru.id), 1);
+});
+
 await step("AI disclosure: mandatory badge is always applied; promo CTA only when watermark on", async () => {
   const { deliveryStyles, buildOverlayFilter, brandForDelivery } = await import("../src/watermark.js");
   // The legal disclosure ("ai") is ALWAYS present and always first; the promo
@@ -1494,6 +1851,51 @@ await step("AI disclosure: mandatory badge is always applied; promo CTA only whe
   // has ffmpeg (no ffmpeg → null early; ffmpeg present → the dead URL fails →
   // null), so the assertion isn't tied to the CI host's toolchain.
   assert.equal(await brandForDelivery(`${base}/nope.png`, "image", { promo: false }), null);
+});
+
+await step("rate limiting: cost-sensitive routes 429 past their limit; polling and other users are unaffected", async () => {
+  // Prime a FRESH user's bucket directly (same key format the route uses) so
+  // this step is self-contained — it doesn't depend on, or perturb, any
+  // other step's call counts, and doesn't need to actually fire N real
+  // requests just to reach the limit.
+  const limited = { id: 990088, username: "ratelimited" };
+  await getOrCreateUser(limited.id, limited.username, null, 0);
+  await addCredits(limited.id, 10, "admin_grant", "test"); // spendable, so a 429 is the ONLY reason to reject
+  for (let i = 0; i < config.rateLimitGeneratePerMin; i++) {
+    hit(`generate:${limited.id}`, config.rateLimitGeneratePerMin, 60_000);
+  }
+  const limitedHeaders = { Authorization: `tma ${signInitData(limited)}`, "Content-Type": "application/json" };
+  const blocked = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: limitedHeaders,
+    body: JSON.stringify({ source: "model", model: "text_to_image", prompt: "x" }),
+  });
+  assert.equal(blocked.status, 429);
+  assert.equal(((await blocked.json()) as { error: string }).error, "rate_limited");
+  assert.ok(Number(blocked.headers.get("retry-after")) > 0, "missing/invalid Retry-After header");
+
+  // Each ROUTE has its OWN bucket per user — /api/upload for the SAME user is
+  // unaffected by /api/generate's limit being tripped.
+  const png = `data:image/png;base64,${Buffer.from("tiny-png-bytes").toString("base64")}`;
+  const stillOk = await fetch(`${base}/api/upload`, {
+    method: "POST", headers: limitedHeaders, body: JSON.stringify({ data: png }),
+  });
+  assert.equal(stillOk.status, 200);
+
+  // A DIFFERENT user's /api/generate bucket is untouched — the limit is per
+  // user, not a global gate that would take down the whole app.
+  const freeUser = { id: 990089, username: "unaffected" };
+  await getOrCreateUser(freeUser.id, freeUser.username, null, 0);
+  await addCredits(freeUser.id, 10, "admin_grant", "test");
+  const freeResp = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { Authorization: `tma ${signInitData(freeUser)}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "text_to_image", prompt: "unaffected user" }),
+  });
+  assert.equal(freeResp.status, 200);
+
+  // Read-only polling is never subject to any limit, even for the blocked user.
+  const me = await fetch(`${base}/api/me`, { headers: { Authorization: `tma ${signInitData(limited)}` } });
+  assert.equal(me.status, 200);
 });
 
 await new Promise<void>((r) => server.close(() => r()));

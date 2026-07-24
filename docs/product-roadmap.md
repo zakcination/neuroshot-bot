@@ -14,7 +14,9 @@ Status tags: **✅ done** · **🟡 partial** · **⬜ not started** · **🔁 i
 *Refreshed 2026-07-14 — full pass through every doc in `docs/` cross-checked
 against `src/`. This doc is the single source of truth for backlog/roadmap;
 `docs/products-2026-07-09.md` is an older dated snapshot, superseded on
-payments/presets/pricing — see its banner.*
+payments/presets/pricing — see its banner. For the strategic synthesis on top
+of this backlog (position, economics, KPIs, next bets), see
+`docs/miniapp-strategy-2026-07-23.md` — the current Mini App strategy memo.*
 
 ---
 

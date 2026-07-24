@@ -7,6 +7,7 @@
  * users through the funnel; the only daily decision is "which source gets
  * tomorrow's budget", so everything splits by acquisition source and payers.
  */
+import type { Api } from "grammy";
 import { config } from "./config.js";
 import {
   addCredits,
@@ -15,10 +16,12 @@ import {
   nudgedOnUtcDay,
   query,
   reapStalePending,
+  staleGrantedOrders,
   usersToNudge,
   type NudgeTarget,
 } from "./db.js";
-import { cheapestModel, CREDIT_COST_BASIS, MODELS } from "./models.js";
+import { cheapestModel, CREDIT_COST_BASIS, MODELS, packById } from "./models.js";
+import { grantPurchase } from "./payments.js";
 import { UNIT_EMOJI } from "./text.js";
 
 const MODEL_COST = new Map(Object.values(MODELS).map((m) => [m.key, m.approxCostUsd]));
@@ -269,6 +272,38 @@ export async function runReaper(send: SendFn): Promise<number> {
 }
 
 /**
+ * Reconciler: retry the credit grant for orders confirmed 'paid' whose grant
+ * never landed (a crash or DB hiccup between resolveOrder's pending→paid win
+ * and grantPurchase's credit/payout work) — the payment-side counterpart to
+ * runReaper. Safe to call repeatedly: grantPurchase's grantOrderCredits claim
+ * is an atomic no-op for any order that already got credited, whether by an
+ * earlier reconciler pass, a duplicate webhook, or an admin's `/order N ok`.
+ * A pack removed/renamed while the order sat paid-but-ungranted is logged and
+ * skipped rather than crashing the sweep — an admin must resolve it manually.
+ * Exported for tests. Returns how many orders were successfully (re)granted.
+ */
+export async function runOrderReconciler(api: Api): Promise<number> {
+  const stale = await staleGrantedOrders(config.orderGrantStaleMinutes);
+  let granted = 0;
+  for (const order of stale) {
+    const pack = packById(order.pack_id);
+    if (!pack) {
+      console.error(
+        `[reconciler] order #${order.id} is paid but pack "${order.pack_id}" no longer exists — cannot grant, needs manual review.`,
+      );
+      continue;
+    }
+    try {
+      await grantPurchase(api, order.user_id, pack, order.id); // no-ops if already granted meanwhile
+      granted++;
+    } catch (err) {
+      console.error(`[reconciler] retry failed for order #${order.id}:`, err);
+    }
+  }
+  return granted;
+}
+
+/**
  * One daily sweep that DMs a capped batch of dormant-but-recent users exactly
  * once each. Marks BEFORE sending so a crash mid-batch or a blocked user (send
  * throws) can never turn into a repeat nudge — a missed nudge is fine, a spammed
@@ -296,7 +331,7 @@ export async function runReengagement(send: SendFn): Promise<number> {
  * 10 minutes (each alert key fires at most once per 24h). Failures are logged
  * and never crash the bot.
  */
-export function startMonitor(send: SendFn): NodeJS.Timeout {
+export function startMonitor(send: SendFn, api: Api): NodeJS.Timeout {
   let lastDigestDay = "";
   let lastNudgeDay = "";
   let ticking = false; // re-entrancy guard: ticks fire on a timer and aren't awaited
@@ -329,6 +364,11 @@ export function startMonitor(send: SendFn): NodeJS.Timeout {
       if (now.getUTCMinutes() % 5 === 0) {
         const reaped = await runReaper(send);
         if (reaped > 0) console.log(`reaper: refunded ${reaped} stuck generation(s)`);
+      }
+      // Order reconciler: every 5 minutes, retry orders paid but never granted.
+      if (now.getUTCMinutes() % 5 === 0) {
+        const granted = await runOrderReconciler(api);
+        if (granted > 0) console.log(`reconciler: granted ${granted} stuck paid order(s)`);
       }
       // Alerts: every 10 minutes (tick runs each minute).
       if (now.getUTCMinutes() % 10 === 0) {
