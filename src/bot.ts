@@ -1077,7 +1077,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
         await ctx.reply(`Заявка №${id}: пакет «${order.pack_id}» больше не существует.`);
         return;
       }
-      await grantPurchase(ctx.api, order.user_id, pack); // credits + referral/partner payouts + notify
+      await grantPurchase(ctx.api, order.user_id, pack, order.id); // credits + referral/partner payouts + notify
       await ctx.reply(`✅ Заявка №${id} подтверждена — начислено ${pack.credits} ${UNIT_EMOJI} пользователю ${order.user_id}.`);
     } else {
       await ctx.reply(`↩️ Заявка №${id} отклонена.`);

@@ -2,9 +2,9 @@ import type { Api, Bot, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import {
-  addCredits,
   createOrder,
   getOrder,
+  grantOrderCredits,
   logEvent,
   resolveOrder,
   rewardPartnerOnPurchase,
@@ -159,9 +159,16 @@ async function inviteToCourseCohort(api: Api, userId: number, tier: "fast" | "fl
  * purchase-gated) partner/referral payouts, and notify everyone. Shared by the
  * Kaspi order-approval path (and any future payment provider) so crediting is
  * identical no matter how the payment was confirmed.
+ *
+ * grantOrderCredits is the FIRST thing this does — an atomic claim-and-credit
+ * that only one caller can win, and that never leaves a half-state (see its
+ * doc comment). That makes this whole function safe to retry: the reconciler
+ * sweep (monitor.ts), a duplicate webhook delivery, and an admin re-running
+ * `/order N ok` can all call this on the same order without ever
+ * double-crediting. A caller that loses the race returns immediately.
  */
-export async function grantPurchase(api: Api, userId: number, pack: Pack): Promise<void> {
-  await addCredits(userId, pack.credits, "purchase", String(pack.kzt));
+export async function grantPurchase(api: Api, userId: number, pack: Pack, orderId: number): Promise<void> {
+  if (!(await grantOrderCredits(orderId, userId, pack.credits, pack.kzt))) return;
   await logEvent(userId, "purchase", `${pack.id}:${pack.kzt}`);
 
   // Attribution is exclusive: a buyer came via a creator code OR a friend link.
@@ -221,7 +228,7 @@ export async function settleApprovedOrder(api: Api, orderId: number): Promise<Pa
   if (!pack) return null;
   const won = await resolveOrder(orderId, true);
   if (!won) return null; // lost the race — already resolved by another path
-  await grantPurchase(api, won.user_id, pack);
+  await grantPurchase(api, won.user_id, pack, orderId);
   return pack;
 }
 

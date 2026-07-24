@@ -147,6 +147,15 @@ const SCHEMA: string[] = [
     processed_at TIMESTAMPTZ
   )`,
   `CREATE INDEX IF NOT EXISTS idx_orders_pending ON orders(status) WHERE status = 'pending'`,
+  // Tracks whether grantPurchase's credit/payout side effects actually landed,
+  // SEPARATELY from status='paid' (which only means "payment confirmed"). A
+  // process crash or DB hiccup between the pending→paid transition and the
+  // credit grant would otherwise strand the order paid-but-uncredited forever —
+  // nothing else ever revisits a row once it leaves 'pending'. granted_at lets a
+  // reconciler sweep (mirroring the stale-generation reaper) find and retry
+  // exactly those rows.
+  `ALTER TABLE orders ADD COLUMN IF NOT EXISTS granted_at TIMESTAMPTZ`,
+  `CREATE INDEX IF NOT EXISTS idx_orders_ungranted ON orders(status) WHERE status = 'paid' AND granted_at IS NULL`,
   `CREATE TABLE IF NOT EXISTS ledger (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
@@ -930,6 +939,54 @@ export async function resolveOrder(id: number, approve: boolean): Promise<OrderR
     [id, approve ? "paid" : "rejected"],
   );
   return rows[0] ? mapOrder(rows[0]) : null;
+}
+
+/**
+ * Claim an order's credit grant AND perform it, atomically in one statement —
+ * returns true only for the ONE call that wins. This is deliberately a single
+ * CTE (like addCredits): claiming granted_at in a separate step BEFORE the
+ * credit update would let a crash in between mark the order "granted" with no
+ * credits ever added — worse than the gap it's meant to close, and invisible
+ * to staleGrantedOrders since granted_at would already be set. Bundling them
+ * means a retry (reconciler, duplicate webhook, admin re-running /order) is
+ * always either a full no-op (already credited) or a full grant — never a
+ * half-state.
+ */
+export async function grantOrderCredits(
+  orderId: number,
+  userId: number,
+  credits: number,
+  kzt: number,
+): Promise<boolean> {
+  const rows = await q(
+    `WITH claim AS (
+       UPDATE orders SET granted_at = now() WHERE id = $1 AND granted_at IS NULL RETURNING id
+     ), bal AS (
+       UPDATE users SET credits = credits + $3 WHERE id = $2 AND EXISTS (SELECT 1 FROM claim) RETURNING id
+     )
+     INSERT INTO ledger (user_id, delta, reason, meta)
+     SELECT $2, $3, 'purchase', $4 FROM bal RETURNING user_id`,
+    [orderId, userId, credits, String(kzt)],
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Orders confirmed paid but never successfully granted, stuck longer than
+ * `minutes` — the payment-side counterpart to reapStalePending. A crash
+ * between resolveOrder's pending→paid win and grantPurchase's credit/payout
+ * work leaves exactly this shape: status='paid', granted_at NULL. Feeds the
+ * reconciler sweep in monitor.ts, which retries grantPurchase for each.
+ */
+export async function staleGrantedOrders(minutes: number): Promise<OrderRow[]> {
+  const rows = await q(
+    `SELECT ${ORDER_COLS} FROM orders
+     WHERE status = 'paid' AND granted_at IS NULL
+       AND processed_at < now() - ($1 || ' minutes')::interval
+     ORDER BY id`,
+    [String(Math.max(1, Math.floor(minutes)))],
+  );
+  return rows.map(mapOrder);
 }
 
 /** Add credits and journal the movement atomically (single CTE statement). */

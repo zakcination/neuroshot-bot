@@ -11,7 +11,7 @@ await initDb(); // create the Postgres schema before serving
 const bot = createBot();
 
 // CEO monitoring: daily digest to admins + exception alerts (docs/monitoring.md).
-startMonitor((chatId, text) => bot.api.sendMessage(chatId, text, { parse_mode: "HTML" }));
+startMonitor((chatId, text) => bot.api.sendMessage(chatId, text, { parse_mode: "HTML" }), bot.api);
 
 bot.api.setMyCommands([
   { command: "menu", description: "📋 Меню — что создаём?" },

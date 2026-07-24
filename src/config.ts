@@ -86,6 +86,11 @@ export const config = {
   // Reaper: a generation still 'pending' beyond this many minutes is treated as a
   // render whose process died (renders take 1–3 min); it's failed and refunded.
   genStaleMinutes: Number(process.env.GEN_STALE_MINUTES ?? 15),
+  // Reconciler: an order confirmed 'paid' whose credit grant never landed
+  // (granted_at still NULL) beyond this many minutes gets retried. Short by
+  // design — unlike a stuck render, this means a customer already PAID and got
+  // nothing, so it's worse to sit on than a slow render.
+  orderGrantStaleMinutes: Number(process.env.ORDER_GRANT_STALE_MINUTES ?? 5),
   // Identity-gate the free hook (docs/growth-product.md): require a verified phone
   // before the free scenario and tie the gift to the PHONE, so multi-account
   // farming needs multiple real numbers (Higgsfield banned 40k farmed accounts).

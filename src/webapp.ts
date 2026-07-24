@@ -887,7 +887,7 @@ const KASPI_PAID_STATUSES = new Set(["paid", "success", "completed", "approved",
 export async function kaspiCallbackResponse(
   rawBody: Buffer,
   signature: string,
-  grant: (userId: number, pack: import("./models.js").Pack) => Promise<void>,
+  grant: (userId: number, pack: import("./models.js").Pack, orderId: number) => Promise<void>,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   if (!config.kaspiApiSecret) return { status: 404, body: { error: "not_found" } };
   if (!signature) return { status: 401, body: { error: "unsigned" } };
@@ -922,7 +922,7 @@ export async function kaspiCallbackResponse(
 
   const won = await resolveOrder(orderId, true);
   if (!won) return { status: 200, body: { ok: true, already: "resolved" } };
-  await grant(order.user_id, pack);
+  await grant(order.user_id, pack, orderId);
   return { status: 200, body: { ok: true, granted: pack.credits } };
 }
 
@@ -1085,8 +1085,8 @@ export function createWebApp(): Server {
         const raw = await readRawBody(req, 8 * 1024);
         if (!raw) return json(res, 413, { error: "too_large" });
         const signature = header(req.headers, config.kaspiSignatureHeader);
-        const { status, body } = await kaspiCallbackResponse(raw, signature, (uid, pack) =>
-          grantPurchase(new Api(config.botToken), uid, pack),
+        const { status, body } = await kaspiCallbackResponse(raw, signature, (uid, pack, orderId) =>
+          grantPurchase(new Api(config.botToken), uid, pack, orderId),
         );
         return json(res, status, body);
       }

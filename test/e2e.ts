@@ -31,9 +31,9 @@ process.env.DUB_USD_PER_SEC = "0.02";
 const { fal } = await import("@fal-ai/client");
 const { createBot, fastStartLessonMessages, flagshipModuleMessages } = await import("../src/bot.js");
 const { drainRenders, inFlightRenders } = await import("../src/generate.js");
-const { funnel, query, getUser, getOrCreateUser, addCredits, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay, createPendingGeneration, completeGeneration, claimFreePhone, phoneClaimedFree, setUserPhone } = await import("../src/db.js");
+const { funnel, query, getUser, getOrCreateUser, addCredits, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay, createPendingGeneration, completeGeneration, claimFreePhone, phoneClaimedFree, setUserPhone, createOrder, getOrder } = await import("../src/db.js");
 const { startDubbing, dubCredits, availableDubTargets } = await import("../src/dubbing.js");
-const { buildDigest, checkAlerts, nudgeText, runReengagement, runReaper } = await import("../src/monitor.js");
+const { buildDigest, checkAlerts, nudgeText, runReengagement, runReaper, runOrderReconciler } = await import("../src/monitor.js");
 const { nUnits, nResults } = await import("../src/text.js");
 const { PRESETS, presetModel } = await import("../src/models.js");
 
@@ -1427,6 +1427,44 @@ await step("reaper: a render stuck 'pending' is failed and refunded, idempotentl
   const gid = await createPendingGeneration(dan, "hailuo_fast", "p", 5);
   assert.equal(await completeGeneration(gid, "ok", "u"), true);
   assert.equal(await completeGeneration(gid, "error"), false);
+});
+
+await step("reconciler: an order confirmed 'paid' but never granted (crashed mid-grant) is retried, idempotently", async () => {
+  const eve = 5605;
+  await getOrCreateUser(eve, "eve", null, 0);
+  const orderId = await createOrder(eve, "start", 3700);
+  // Simulate exactly the crash window this fix closes: resolveOrder already won
+  // the pending→paid transition, but grantPurchase never ran (or crashed before
+  // its atomic credit step) — so granted_at is still NULL, old enough to sweep.
+  await query(
+    `UPDATE orders SET status = 'paid', processed_at = now() - interval '10 minutes' WHERE id = $1`,
+    [orderId],
+  );
+  assert.equal(await credits(eve), 0);
+
+  const purchasesBefore = await ledgerCount("purchase");
+  const granted = await runOrderReconciler(bot.api);
+  assert.ok(granted >= 1, "reconciler did not retry the stuck paid order");
+  assert.equal(await credits(eve), 60); // Старт = 60 🔫
+  assert.equal((await getOrder(orderId))?.status, "paid");
+  assert.equal(await ledgerCount("purchase"), purchasesBefore + 1);
+
+  // Idempotent: a second sweep must not double-credit (granted_at is now set,
+  // so the order no longer matches staleGrantedOrders — and even if it did,
+  // grantOrderCredits' atomic claim would no-op).
+  await runOrderReconciler(bot.api);
+  assert.equal(await credits(eve), 60);
+  assert.equal(await ledgerCount("purchase"), purchasesBefore + 1);
+
+  // A stuck order whose pack no longer exists is skipped, not crashed on.
+  const ghostId = await createOrder(eve, "ghost", 3700);
+  await query(
+    `UPDATE orders SET status = 'paid', processed_at = now() - interval '10 minutes' WHERE id = $1`,
+    [ghostId],
+  );
+  await runOrderReconciler(bot.api); // must not throw
+  assert.equal((await getOrder(ghostId))?.status, "paid");
+  assert.equal(await credits(eve), 60, "unknown pack must not grant anything");
 });
 
 await step("identity gate: one free gift per PHONE — cross-account farming blocked, owner may retry", async () => {
