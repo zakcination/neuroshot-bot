@@ -31,7 +31,7 @@ process.env.DUB_USD_PER_SEC = "0.02";
 const { fal } = await import("@fal-ai/client");
 const { createBot, fastStartLessonMessages, flagshipModuleMessages } = await import("../src/bot.js");
 const { drainRenders, inFlightRenders } = await import("../src/generate.js");
-const { funnel, query, getUser, getOrCreateUser, addCredits, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay, createPendingGeneration, completeGeneration, claimFreePhone, phoneClaimedFree, setUserPhone, createOrder, getOrder, deleteUserData } = await import("../src/db.js");
+const { funnel, query, getUser, getOrCreateUser, addCredits, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay, createPendingGeneration, completeGeneration, claimFreePhone, phoneClaimedFree, setUserPhone, createOrder, getOrder, deleteUserData, getEconomyConfig, getPresetMinLevel } = await import("../src/db.js");
 const { startDubbing, dubCredits, availableDubTargets } = await import("../src/dubbing.js");
 const { buildDigest, checkAlerts, nudgeText, runReengagement, runReaper, runOrderReconciler } = await import("../src/monitor.js");
 const { nUnits, nResults } = await import("../src/text.js");
@@ -1162,6 +1162,51 @@ await step("admin /grant: target + self shorthand + negative; non-admin silent; 
   assert.match(lastText(), /не найден/);
   assert.equal(await credits(alice.id), aliceBefore + 100);
   assert.equal(await ledgerCount("admin_grant"), grantsBefore + 3);
+});
+
+await step("reward-architecture P0: /econ_set + /econ_gate are admin-only, DB-backed, never in code", async () => {
+  // Empty until an admin sets something — no seed data, no in-code fallback.
+  await sendText(admin, "/econ");
+  assert.match(lastText(), /пусто/);
+
+  await sendText(admin, "/econ_set xp.save 25");
+  assert.match(lastText(), /xp\.save = 25/);
+  await sendText(admin, "/econ_set xp.reroll 0");
+  assert.match(lastText(), /xp\.reroll = 0/);
+  await sendText(admin, "/econ_gate headshot 3");
+  assert.match(lastText(), /headshot → уровень 3/);
+
+  await sendText(admin, "/econ");
+  assert.match(lastText(), /xp\.save = 25/);
+  assert.match(lastText(), /xp\.reroll = 0/);
+  assert.match(lastText(), /headshot → уровень 3/);
+
+  // Re-setting an existing key overwrites, doesn't duplicate.
+  await sendText(admin, "/econ_set xp.save 30");
+  await sendText(admin, "/econ");
+  const listed = lastText();
+  assert.match(listed, /xp\.save = 30/);
+  assert.equal((listed.match(/xp\.save = /g) || []).length, 1);
+
+  // Non-admin: silent, and cannot read or write.
+  const before = calls("sendMessage").length;
+  await sendText(alice, "/econ");
+  await sendText(alice, "/econ_set xp.save 999");
+  await sendText(alice, "/econ_gate headshot 0");
+  assert.equal(calls("sendMessage").length, before);
+  assert.equal(await getEconomyConfig("xp.save"), 30, "non-admin must not be able to overwrite economy config");
+  assert.equal(await getPresetMinLevel("headshot"), 3, "non-admin must not be able to overwrite preset gating");
+
+  // Bad input is rejected, not silently coerced.
+  await sendText(admin, "/econ_set xp.share notanumber");
+  assert.match(lastText(), /Формат/);
+  await sendText(admin, "/econ_gate headshot -1");
+  assert.match(lastText(), /Формат/);
+  assert.equal(await getPresetMinLevel("headshot"), 3, "invalid gate input must not overwrite the existing value");
+
+  // Unset keys stay null — the "ships inert, no guessable default" contract.
+  assert.equal(await getEconomyConfig("xp.never_set"), null);
+  assert.equal(await getPresetMinLevel("never_gated_preset"), null);
 });
 
 await step("partner v2: join → welcome (spend-only) + code; invitee pays → 15% withdrawable cashback", async () => {

@@ -7,6 +7,8 @@ import { Bot, GrammyError, HttpError, InlineKeyboard, InputFile, InputMediaBuild
 import { config } from "./config.js";
 import {
   addCredits,
+  allEconomyConfig,
+  allPresetGating,
   claimWelcomeBonus,
   createPartnerCode,
   deactivatePartnerCode,
@@ -34,7 +36,9 @@ import {
   referralStats,
   requestWithdrawal,
   resolveWithdrawal,
+  setEconomyConfig,
   setPending,
+  setPresetGating,
   setUserPhone,
   stats,
   upsertPartnerCode,
@@ -1226,6 +1230,47 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       `✅ ${amount > 0 ? "Начислено" : "Списано"} ${UNIT_EMOJI} ${nUnits(Math.abs(amount))} → ${targetId}. ` +
         `Баланс: ${UNIT_EMOJI} ${nUnits(balance)}.`,
     );
+  });
+
+  // Reward-architecture P0 (neuroshot-reward-architecture-v1.md §8): tuned
+  // economy values (XP-per-action, level thresholds, season caps) and per-preset
+  // level gates live ONLY in the DB, set through these admin-only commands —
+  // never as literal source constants, since this repo is public. Both tables
+  // ship empty; nothing here is user-facing or read by any generation flow yet
+  // (that's P1+) — this is purely the private storage + admin visibility layer.
+  bot.command("econ", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const [values, gates] = await Promise.all([allEconomyConfig(), allPresetGating()]);
+    const v = values.length ? values.map((r) => `• ${r.key} = ${r.value}`).join("\n") : "(пусто)";
+    const g = gates.length ? gates.map((r) => `• ${r.preset_id} → уровень ${r.min_level}`).join("\n") : "(пусто)";
+    await ctx.reply(
+      `⚙️ <b>Экономика (только для админов)</b>\n\n<b>Значения:</b>\n${v}\n\n<b>Гейтинг пресетов:</b>\n${g}`,
+      { parse_mode: "HTML" },
+    );
+  });
+
+  bot.command("econ_set", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const [key, valS] = (ctx.match ?? "").trim().split(/\s+/);
+    const value = Number(valS);
+    if (!key || !Number.isInteger(value)) {
+      await ctx.reply("Формат: /econ_set <ключ> <целое_число>\nПример: /econ_set xp.save 25");
+      return;
+    }
+    await setEconomyConfig(key, value);
+    await ctx.reply(`✅ ${key} = ${value}`);
+  });
+
+  bot.command("econ_gate", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const [presetId, lvlS] = (ctx.match ?? "").trim().split(/\s+/);
+    const minLevel = Number(lvlS);
+    if (!presetId || !Number.isInteger(minLevel) || minLevel < 0) {
+      await ctx.reply("Формат: /econ_gate <preset_id> <мин_уровень>\nПример: /econ_gate headshot 3");
+      return;
+    }
+    await setPresetGating(presetId, minLevel);
+    await ctx.reply(`✅ ${presetId} → уровень ${minLevel}`);
   });
 
   // Admin: the daily digest on demand — /dash [days], default 24h, cap 30d.

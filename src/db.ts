@@ -215,6 +215,25 @@ const SCHEMA: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_events_user ON events(user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_events_type ON events(type)`,
   `CREATE INDEX IF NOT EXISTS idx_generations_user ON generations(user_id)`,
+  // Reward-architecture P0 (docs: neuroshot-reward-architecture-v1.md, kept out of
+  // this public repo — see the security note in that doc §8). These tables are the
+  // ONLY place tuned economy values (XP-per-action, level thresholds, season caps,
+  // per-preset level gates) may live: never as literal source constants, so a
+  // public GitHub read can't hand anyone the exact farmable tuning. Both ship
+  // EMPTY — no seed data, no defaults baked into code — and are populated live via
+  // the /econ_set and /econ_gate admin commands (bot.ts), mirroring how KASPI_API_BASE
+  // and other not-yet-configured features in this codebase ship "dark" until an
+  // admin turns them on, rather than falling back to a guessable default.
+  `CREATE TABLE IF NOT EXISTS economy_config (
+    key TEXT PRIMARY KEY,
+    value INTEGER NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE TABLE IF NOT EXISTS preset_gating (
+    preset_id TEXT PRIMARY KEY,
+    min_level INTEGER NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
 ];
 
 let schemaReady: Promise<void> | null = null;
@@ -1793,4 +1812,52 @@ export async function stats(): Promise<{
     )[0].s,
   );
   return { users, paid, generations, kztRevenue };
+}
+
+// ---- Reward-architecture economy config (P0) ----
+// Deliberately no in-code defaults/fallbacks for these values: an unset key means
+// the feature reading it stays inert (e.g. "no XP awarded", "no season active")
+// rather than silently running on a guessable public-source number. See the
+// table comment above and neuroshot-reward-architecture-v1.md §8.
+
+/** A tuned economy scalar (XP-per-action, level threshold, season cap, …), or null if never set. */
+export async function getEconomyConfig(key: string): Promise<number | null> {
+  const rows = await q("SELECT value FROM economy_config WHERE key = $1", [key]);
+  return rows[0] ? Number(rows[0].value) : null;
+}
+
+/** Admin-only write path (bot.ts /econ_set) — upserts a single tuned value. */
+export async function setEconomyConfig(key: string, value: number): Promise<void> {
+  await q(
+    `INSERT INTO economy_config (key, value) VALUES ($1, $2)
+     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
+    [key, value],
+  );
+}
+
+/** Every tuned value currently set — powers the admin /econ listing. Never user-facing. */
+export async function allEconomyConfig(): Promise<Array<{ key: string; value: number }>> {
+  const rows = await q("SELECT key, value FROM economy_config ORDER BY key");
+  return rows.map((r) => ({ key: String(r.key), value: Number(r.value) }));
+}
+
+/** The minimum account Level required to use a preset, or null if ungated (open to everyone). */
+export async function getPresetMinLevel(presetId: string): Promise<number | null> {
+  const rows = await q("SELECT min_level FROM preset_gating WHERE preset_id = $1", [presetId]);
+  return rows[0] ? Number(rows[0].min_level) : null;
+}
+
+/** Admin-only write path (bot.ts /econ_gate) — upserts one preset's level gate. */
+export async function setPresetGating(presetId: string, minLevel: number): Promise<void> {
+  await q(
+    `INSERT INTO preset_gating (preset_id, min_level) VALUES ($1, $2)
+     ON CONFLICT (preset_id) DO UPDATE SET min_level = $2, updated_at = now()`,
+    [presetId, minLevel],
+  );
+}
+
+/** Every preset gate currently set — powers the admin /econ listing. */
+export async function allPresetGating(): Promise<Array<{ preset_id: string; min_level: number }>> {
+  const rows = await q("SELECT preset_id, min_level FROM preset_gating ORDER BY preset_id");
+  return rows.map((r) => ({ preset_id: String(r.preset_id), min_level: Number(r.min_level) }));
 }
