@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { claimRoadmapBonus, claimWelcomeBonus, createOrder, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { claimRoadmapBonus, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { enhancePrompt } from "./enhance.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
@@ -821,6 +821,22 @@ export async function settingsResponse(
 }
 
 /**
+ * POST /api/account/delete — self-serve data deletion (Privacy Policy §4/§5),
+ * mirroring the bot's /delete_me confirm flow. The Mini App shows its own
+ * confirm dialog client-side before ever calling this, but the server doesn't
+ * trust that: this endpoint IS the irreversible action, called once per
+ * confirmed tap. Shares deleteUserData with the bot so both surfaces scrub
+ * the same fields identically.
+ */
+export async function deleteAccountResponse(
+  userId: number,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const result = await deleteUserData(userId);
+  if (!result) return { status: 404, body: { error: "not_found" } };
+  return { status: 200, body: { deleted: true, forfeitedCredits: result.forfeitedCredits } };
+}
+
+/**
  * POST /api/order — start a Kaspi purchase: record a pending order and hand back
  * the Kaspi pay link + the order id. The app opens the link, the user pays, and
  * an admin (or, later, a Kaspi webhook) confirms via grantPurchase — so crediting
@@ -1107,6 +1123,15 @@ export function createWebApp(): Server {
         if (!user) return json(res, 401, { error: "unauthorized" });
         await getOrCreateUser(user.id, user.username, null, config.freeCredits);
         const { status, body } = await settingsResponse(user.id, await readJsonBody(req, 1024));
+        return json(res, status, body);
+      }
+
+      // POST /api/account/delete — self-serve data deletion (Privacy Policy §4/§5).
+      if (url.pathname === "/api/account/delete") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const { status, body } = await deleteAccountResponse(user.id);
         return json(res, status, body);
       }
 

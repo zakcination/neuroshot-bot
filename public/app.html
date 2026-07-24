@@ -2289,6 +2289,11 @@
             <div class="lnkrow" id="morePrivacy"><span class="ic">🔒</span><span class="tx">Политика конфиденциальности</span><span class="chev">›</span></div>
             <div class="lnkrow" id="moreRefund"><span class="ic">💳</span><span class="tx">Политика возврата средств</span><span class="chev">›</span></div>
           </section>
+
+          <section class="reveal">
+            <div class="sec-h"><h2>Данные и приватность</h2></div>
+            <div class="lnkrow" id="moreDeleteData"><span class="ic">🗑️</span><span class="tx">Удалить мои данные<small>Необратимо — стирает профиль, историю, сжигает патроны</small></span><span class="chev">›</span></div>
+          </section>
         </div>
 
         <nav class="tabbar">
@@ -2375,6 +2380,25 @@
       if (morePrivacy) morePrivacy.onclick = () => openExternal(location.origin + "/legal/privacy");
       const moreRefund = document.getElementById("moreRefund");
       if (moreRefund) moreRefund.onclick = () => openExternal(location.origin + "/legal/refund");
+      const moreDeleteData = document.getElementById("moreDeleteData");
+      if (moreDeleteData) moreDeleteData.onclick = () => {
+        const warning =
+          "Удалить данные аккаунта? Это необратимо: профиль, история и неиспользованные " +
+          PATRON + " патроны будут стёрты. Продолжить?";
+        const proceed = async (ok) => {
+          if (!ok) return;
+          const { status, data } = await api("/api/account/delete", { method: "POST" });
+          if (status === 200) {
+            toast("Данные удалены");
+            localStorage.removeItem(TOKEN_KEY);
+            setTimeout(() => location.reload(), 1200);
+          } else {
+            toast((data && data.error) || "Не удалось удалить данные");
+          }
+        };
+        if (tg?.showConfirm) tg.showConfirm(warning, proceed);
+        else proceed(window.confirm(warning));
+      };
       document.getElementById("refC").onclick = async () => {
         try { await navigator.clipboard.writeText(refLink); } catch (e) { /* ignore */ }
         document.getElementById("refC").textContent = "Скопировано ✓";

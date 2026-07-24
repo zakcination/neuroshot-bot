@@ -1467,6 +1467,45 @@ await step("reconciler: an order confirmed 'paid' but never granted (crashed mid
   assert.equal(await credits(eve), 60, "unknown pack must not grant anything");
 });
 
+await step("/delete_me: confirm scrubs PII + zeroes credits + nulls generation content + deactivates partner codes; cancel is a no-op", async () => {
+  const dora: From = { id: 5606, is_bot: false, first_name: "Dora" };
+  await getOrCreateUser(dora.id, "dora_handle", null, 0);
+  await addCredits(dora.id, 5, "admin_grant", "test");
+  await setUserPhone(dora.id, "+77010000099");
+  const gid = await createPendingGeneration(dora.id, "seedream", "a secret prompt", 2);
+  await completeGeneration(gid, "ok", "https://fal.test/secret.jpg");
+  await query("INSERT INTO partner_codes (code, user_id, percent) VALUES ($1, $2, 0.1)", ["doracode", dora.id]);
+
+  await sendText(dora, "/delete_me");
+  assert.match(lastText(), /Удаление данных/);
+  const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data: string }>>;
+  };
+  assert.deepEqual(kb.inline_keyboard.flat().map((b) => b.callback_data), ["del:confirm", "del:cancel"]);
+
+  // Cancel leaves everything untouched.
+  await pressButton(dora, "del:cancel");
+  assert.equal((await getUser(dora.id))!.username, "dora_handle");
+
+  await pressButton(dora, "del:confirm");
+  assert.match(lastText(), /Готово/);
+  const u = await getUser(dora.id);
+  assert.equal(u!.username, null);
+  assert.equal(u!.credits, 0);
+  const row = (await query("SELECT phone, ref_code, deleted_at FROM users WHERE id = $1", [dora.id]))[0];
+  assert.equal(row.phone, null);
+  assert.equal(row.ref_code, null);
+  assert.ok(row.deleted_at, "deleted_at was not stamped");
+  const gen = (await query("SELECT prompt, output_url FROM generations WHERE id = $1", [gid]))[0];
+  assert.equal(gen.prompt, null);
+  assert.equal(gen.output_url, null);
+  assert.equal((await query("SELECT active FROM partner_codes WHERE code = $1", ["doracode"]))[0].active, false);
+
+  // Idempotent: a second confirm on an already-deleted account is a graceful no-op.
+  await pressButton(dora, "del:confirm");
+  assert.match(lastText(), /не найден|уже был удалён/);
+});
+
 await step("identity gate: one free gift per PHONE — cross-account farming blocked, owner may retry", async () => {
   const phone = "+77010000001";
   assert.equal(await phoneClaimedFree(phone), false);

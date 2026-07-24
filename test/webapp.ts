@@ -1591,6 +1591,31 @@ await step("watermark setting: default on, /api/settings toggles it, /me reflect
   assert.equal(bad.status, 400);
 });
 
+await step("POST /api/account/delete: self-serve deletion scrubs PII, zeroes credits, requires auth, idempotent 404 on retry", async () => {
+  const du = { id: 809, username: "deleteme" };
+  await getOrCreateUser(du.id, du.username, null, 0);
+  await addCredits(du.id, 40, "admin_grant", "test");
+  const hdr = { Authorization: `tma ${signInitData(du)}` };
+
+  const unauth = await fetch(`${base}/api/account/delete`, { method: "POST" });
+  assert.equal(unauth.status, 401);
+
+  const ok = await fetch(`${base}/api/account/delete`, { method: "POST", headers: hdr });
+  assert.equal(ok.status, 200);
+  const okBody = (await ok.json()) as { deleted: boolean; forfeitedCredits: number };
+  assert.equal(okBody.deleted, true);
+  assert.equal(okBody.forfeitedCredits, 40);
+
+  const row = (await query("SELECT username, credits, deleted_at FROM users WHERE id = $1", [du.id]))[0];
+  assert.equal(row.username, null);
+  assert.equal(Number(row.credits), 0);
+  assert.ok(row.deleted_at);
+
+  // Already deleted → 404, not a re-grant of anything.
+  const again = await fetch(`${base}/api/account/delete`, { method: "POST", headers: hdr });
+  assert.equal(again.status, 404);
+});
+
 await step("AI disclosure: mandatory badge is always applied; promo CTA only when watermark on", async () => {
   const { deliveryStyles, buildOverlayFilter, brandForDelivery } = await import("../src/watermark.js");
   // The legal disclosure ("ai") is ALWAYS present and always first; the promo

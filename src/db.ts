@@ -85,6 +85,13 @@ const SCHEMA: string[] = [
   // every existing row too and the slideshow pops for the whole install base
   // once. It's replayable any time from the "Ещё" tab regardless of this flag.
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_seen BOOLEAN NOT NULL DEFAULT false`,
+  // Self-serve data deletion (Privacy Policy §4): marks when a user erased their
+  // PII. The row itself is kept (soft delete) — a Telegram id can't be reissued,
+  // and other users' referral/partner/ledger history legitimately points at it —
+  // but username/phone/ref_code/prompts/output_urls are scrubbed and credits
+  // forfeited. deleted_at is purely informational (support/audit visibility);
+  // nothing in the app currently branches on it.
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`,
   // Backfill only: rows from before this column existed have pending=0 by the
   // column DEFAULT, so this can never touch a real unclaimed balance — it just
   // marks pre-existing accounts (already credited under the old immediate-grant
@@ -297,6 +304,48 @@ export async function setWatermark(userId: number, enabled: boolean): Promise<bo
 /** Store a user's verified phone (from a shared Telegram contact). */
 export async function setUserPhone(userId: number, phone: string): Promise<void> {
   await q("UPDATE users SET phone = $2 WHERE id = $1", [userId, phone]);
+}
+
+/** Outcome of a self-serve deletion request — the credits forfeited feeds the confirmation message. */
+export interface DeletionResult {
+  forfeitedCredits: number;
+}
+
+/**
+ * Self-serve account-data deletion (Privacy Policy §4 / §5). Scrubs PII in
+ * place rather than deleting the row: the Telegram id can't be reissued to
+ * someone else, and OTHER users' referral/partner/purchase history legitimately
+ * references this id, so removing the row would orphan their records. What
+ * this DOES do:
+ *   - users: wipe username/phone/ref_code/pending_action/pending_file_id,
+ *     zero credits (forfeited — this is not a refund; see refund policy for
+ *     that separate flow), stamp deleted_at.
+ *   - generations: null out prompt/output_url (the actual content + what it
+ *     depicted), keeping model/credits/status/cost_usd so COGS/analytics
+ *     aggregates that group by those columns stay correct.
+ *   - partner_codes: deactivate any codes this user owns, so no one can join
+ *     under them post-deletion.
+ * Ledger/orders/withdrawals rows are deliberately left untouched — financial
+ * records retained for accounting/tax purposes, referencing only the bare
+ * numeric id (no PII) once this runs.
+ * Returns null if the user doesn't exist (nothing to delete).
+ */
+export async function deleteUserData(userId: number): Promise<DeletionResult | null> {
+  const before = await q("SELECT credits FROM users WHERE id = $1 AND deleted_at IS NULL", [userId]);
+  if (!before.length) return null; // unknown user, or already deleted — idempotent no-op
+  const rows = await q(
+    `UPDATE users SET
+       username = NULL, phone = NULL, ref_code = NULL,
+       pending_action = NULL, pending_file_id = NULL,
+       credits = 0, deleted_at = now()
+     WHERE id = $1 AND deleted_at IS NULL
+     RETURNING id`,
+    [userId],
+  );
+  if (!rows.length) return null; // lost a race with a concurrent deletion request
+  await q("UPDATE generations SET prompt = NULL, output_url = NULL WHERE user_id = $1", [userId]);
+  await q("UPDATE partner_codes SET active = false WHERE user_id = $1", [userId]);
+  return { forfeitedCredits: Number(before[0].credits) };
 }
 
 /**

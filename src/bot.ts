@@ -10,6 +10,7 @@ import {
   claimWelcomeBonus,
   createPartnerCode,
   deactivatePartnerCode,
+  deleteUserData,
   ensureRefCode,
   funnel,
   getGeneration,
@@ -760,6 +761,42 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   bot.command("buy", async (ctx) => sendBalance(ctx, (await user(ctx)).credits));
 
   bot.command("ref", async (ctx) => sendRefLink(ctx));
+
+  // Self-serve data deletion (Privacy Policy §4/§5) — a confirm step gates the
+  // irreversible action, mirroring how other destructive-adjacent flows in this
+  // bot (partner code deactivation) ask before acting rather than acting on the
+  // command alone.
+  bot.command("delete_me", async (ctx) => {
+    await user(ctx);
+    await ctx.reply(
+      "⚠️ <b>Удаление данных аккаунта</b>\n\n" +
+        "Это необратимо. При подтверждении:\n" +
+        "• личные данные (имя пользователя, телефон) будут стёрты;\n" +
+        "• история промптов и ссылок на созданный контент — удалена;\n" +
+        `• неиспользованные ${UNIT_EMOJI} патроны — сгорают (это не возврат денег — для возврата за неизрасходованный пакет см. /buy → политику возврата, отдельная процедура);\n` +
+        "• партнёрские коды (если есть) — деактивируются.\n\n" +
+        "Финансовые записи о платежах сохраняются в обезличенном виде — этого требует бухгалтерский/налоговый учёт.\n\n" +
+        "Продолжить?",
+      { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("❌ Да, удалить всё", "del:confirm").row().text("Отмена", "del:cancel") },
+    );
+  });
+
+  bot.callbackQuery("del:cancel", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply("Отменено — данные не тронуты.");
+  });
+
+  bot.callbackQuery("del:confirm", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!ctx.from) return;
+    const result = await deleteUserData(ctx.from.id);
+    await ctx.reply(
+      result
+        ? `✅ Готово. Данные удалены${result.forfeitedCredits > 0 ? ` (${nUnits(result.forfeitedCredits)} сгорели)` : ""}. ` +
+            "Аккаунт можно начать заново командой /start."
+        : "Аккаунт не найден или уже был удалён ранее.",
+    );
+  });
 
   bot.command("course", async (ctx) => {
     await user(ctx);
