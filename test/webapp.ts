@@ -34,7 +34,7 @@ process.env.RATE_LIMIT_ENHANCE_PER_MIN = "100000";
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, completeGeneration, createOrder, createPendingGeneration, getOrCreateUser, getOrder, logEvent, logGeneration, query, spendCredits } = await import("../src/db.js");
+const { addCredits, completeGeneration, createOrder, createPendingGeneration, getOrCreateUser, getOrder, getLevel, getUserXp, logEvent, logGeneration, query, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
@@ -1734,6 +1734,95 @@ await step("POST /api/account/delete: self-serve deletion scrubs PII, zeroes cre
   // Already deleted → 404, not a re-grant of anything.
   const again = await fetch(`${base}/api/account/delete`, { method: "POST", headers: hdr });
   assert.equal(again.status, 404);
+});
+
+await step("reward-architecture P1: XP is inert until configured, then Level gates presets and save-XP is idempotent+capped", async () => {
+  const ru = { id: 990090, username: "rewarduser", first_name: "Rew" };
+  await getOrCreateUser(ru.id, ru.username, null, 0);
+  await addCredits(ru.id, 100, "admin_grant", "test"); // headroom for the gating checks near the end
+  const H = { Authorization: `tma ${signInitData(ru)}`, "Content-Type": "application/json" };
+
+  // Nothing configured yet: Level is 0, /api/me exposes xp/level, and the
+  // (still-empty) preset_gating table blocks nothing.
+  const me0 = (await apiMe(signInitData(ru))).body as unknown as { dashboard: { xp: number; level: number } };
+  assert.equal(me0.dashboard.xp, 0);
+  assert.equal(me0.dashboard.level, 0);
+
+  // Seed a completed generation to "save."
+  await logGeneration(ru.id, "text_to_image", "p", 2, "ok", "https://fal.test/out/rew.png");
+  const genId = Number((await query("SELECT id FROM generations WHERE user_id = $1", [ru.id]))[0].id);
+
+  // xp.save unconfigured → the save endpoint is a harmless no-op (0 awarded).
+  const noop = await fetch(`${base}/api/xp/save`, { method: "POST", headers: H, body: JSON.stringify({ id: genId }) });
+  assert.equal(noop.status, 200);
+  assert.equal(((await noop.json()) as { awarded: number }).awarded, 0);
+  assert.equal(await getUserXp(ru.id), 0);
+
+  // Now configure it — save-XP awards, exactly once, and is capped daily.
+  await setEconomyConfig("xp.save", 25);
+  await setEconomyConfig("xp.save.dailycap", 2);
+  const first = await fetch(`${base}/api/xp/save`, { method: "POST", headers: H, body: JSON.stringify({ id: genId }) });
+  assert.equal(((await first.json()) as { awarded: number }).awarded, 25);
+  assert.equal(await getUserXp(ru.id), 25);
+
+  // Re-tapping "Скачать" on the SAME generation must not re-award (idempotent claim).
+  const again = await fetch(`${base}/api/xp/save`, { method: "POST", headers: H, body: JSON.stringify({ id: genId }) });
+  assert.equal(((await again.json()) as { awarded: number }).awarded, 0);
+  assert.equal(await getUserXp(ru.id), 25);
+
+  // A second DIFFERENT generation still earns, up to the daily cap (2/day).
+  await logGeneration(ru.id, "text_to_image", "p", 2, "ok", "https://fal.test/out/rew2.png");
+  const gen2 = Number(
+    (await query("SELECT id FROM generations WHERE user_id = $1 ORDER BY id DESC LIMIT 1", [ru.id]))[0].id,
+  );
+  await fetch(`${base}/api/xp/save`, { method: "POST", headers: H, body: JSON.stringify({ id: gen2 }) });
+  assert.equal(await getUserXp(ru.id), 50);
+
+  // A third would exceed the daily cap of 2 saves → capped at 0 additional XP.
+  await logGeneration(ru.id, "text_to_image", "p", 2, "ok", "https://fal.test/out/rew3.png");
+  const gen3 = Number(
+    (await query("SELECT id FROM generations WHERE user_id = $1 ORDER BY id DESC LIMIT 1", [ru.id]))[0].id,
+  );
+  await fetch(`${base}/api/xp/save`, { method: "POST", headers: H, body: JSON.stringify({ id: gen3 }) });
+  assert.equal(await getUserXp(ru.id), 50, "the daily save cap must hold");
+
+  // Someone else's generation can't be claimed for XP.
+  const stranger = { id: 990091, username: "stranger" };
+  await getOrCreateUser(stranger.id, stranger.username, null, 0);
+  const stolen = await fetch(`${base}/api/xp/save`, {
+    method: "POST",
+    headers: { Authorization: `tma ${signInitData(stranger)}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ id: genId }),
+  });
+  assert.equal(((await stolen.json()) as { awarded: number }).awarded, 0);
+
+  // Unauthenticated: 401.
+  assert.equal((await fetch(`${base}/api/xp/save`, { method: "POST", body: JSON.stringify({ id: genId }) })).status, 401);
+
+  // Preset gating: gate "headshot" at Level 5 — this user is Level 0 (thresholds
+  // still unconfigured), so the preset must now be blocked; an ungated preset
+  // must be unaffected.
+  await setPresetGating("headshot", 5);
+  assert.equal(await getLevel(ru.id), 0);
+  const gated = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "preset", id: "headshot", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(gated.status, 403);
+  const gatedBody = (await gated.json()) as { error: string; requiredLevel: number; level: number };
+  assert.equal(gatedBody.error, "level_locked");
+  assert.equal(gatedBody.requiredLevel, 5);
+  assert.equal(gatedBody.level, 0);
+
+  const ungated = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "preset", id: "product_white", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(ungated.status, 200, "an ungated preset must not be affected by another preset's gate");
+
+  // Levelling up: configure a level-1 threshold at 40 XP (this user already has 50) — unlocks it.
+  await setEconomyConfig("level.threshold.1", 40);
+  assert.equal(await getLevel(ru.id), 1);
 });
 
 await step("AI disclosure: mandatory badge is always applied; promo CTA only when watermark on", async () => {

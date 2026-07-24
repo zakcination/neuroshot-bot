@@ -234,6 +234,28 @@ const SCHEMA: string[] = [
     min_level INTEGER NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
+  // Reward-architecture P1: permanent Level currency (never resets — distinct
+  // from Кадры/credits and from any future seasonal XP). Starts at 0 for every
+  // existing row; getLevel() derives the account Level from this against the
+  // thresholds in economy_config, so Level only starts moving once an admin
+  // configures level.threshold.N — until then every account reads Level 0 and
+  // preset_gating (also empty by default) has nothing to enforce against.
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS xp INTEGER NOT NULL DEFAULT 0`,
+  `CREATE TABLE IF NOT EXISTS xp_ledger (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    delta INTEGER NOT NULL,
+    reason TEXT NOT NULL,  -- 'save' | 'rating' | 'new_style' | 'quest' | 'referral' | ...
+    meta TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_xp_ledger_user_reason ON xp_ledger(user_id, reason, created_at)`,
+  // One save-XP award per generation, ever — a claims table (not a boolean flag
+  // on `generations`) so re-tapping "Скачать" a hundred times can't farm XP.
+  `CREATE TABLE IF NOT EXISTS xp_save_claims (
+    generation_id BIGINT PRIMARY KEY,
+    claimed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
 ];
 
 let schemaReady: Promise<void> | null = null;
@@ -1519,8 +1541,10 @@ export async function userDashboard(userId: number): Promise<{
   referralCount: number; // friends invited (distinct users)
   referralPaying: number; // of them, friends who have purchased
   watermarkEnabled: boolean; // brand deliverables (user setting)
+  xp: number; // reward-architecture P1 — permanent, zero-COGS, never spendable
+  level: number; // derived from xp; 0 until economy_config's level.threshold.* is configured
 }> {
-  const u = await q("SELECT credits, watermark_enabled FROM users WHERE id = $1", [userId]);
+  const u = await q("SELECT credits, watermark_enabled, xp FROM users WHERE id = $1", [userId]);
   const gen = await q(
     `SELECT COUNT(*)::int AS total,
             COALESCE(SUM(CASE WHEN status='ok' THEN 1 ELSE 0 END),0)::int AS ok
@@ -1556,6 +1580,8 @@ export async function userDashboard(userId: number): Promise<{
     referralCount: Number(friends[0].invited),
     referralPaying: Number(friends[0].paying),
     watermarkEnabled: u[0] ? u[0].watermark_enabled !== false : true,
+    xp: u[0] ? Number(u[0].xp) : 0,
+    level: await getLevel(userId),
   };
 }
 
@@ -1860,4 +1886,89 @@ export async function setPresetGating(presetId: string, minLevel: number): Promi
 export async function allPresetGating(): Promise<Array<{ preset_id: string; min_level: number }>> {
   const rows = await q("SELECT preset_id, min_level FROM preset_gating ORDER BY preset_id");
   return rows.map((r) => ({ preset_id: String(r.preset_id), min_level: Number(r.min_level) }));
+}
+
+// ---- Reward-architecture XP / Level (P1) ----
+// XP is a separate, zero-COGS currency from Кадры/credits — it is NEVER
+// spendable and never converts (neuroshot-reward-architecture-v1.md §2). It only
+// ever moves the permanent Level, which only ever gates ACCESS (preset_gating),
+// never generation volume. `action` values award whatever economy_config has
+// configured for `xp.<action>` — an unconfigured action awards 0 and writes
+// nothing, so this whole subsystem is inert until an admin opts pieces of it in.
+
+/** Total permanent XP a user has accumulated (never resets, never spendable). */
+export async function getUserXp(userId: number): Promise<number> {
+  const rows = await q("SELECT xp FROM users WHERE id = $1", [userId]);
+  return rows[0] ? Number(rows[0].xp) : 0;
+}
+
+/**
+ * Award XP for a named action (only if `xp.<action>` is configured — see
+ * economy_config above) and journal it. Returns the amount actually awarded
+ * (0 if the action isn't configured, i.e. this feature isn't turned on yet).
+ */
+export async function awardXp(userId: number, action: string, meta?: string): Promise<number> {
+  const amount = await getEconomyConfig(`xp.${action}`);
+  if (!amount) return 0;
+  await q(
+    `WITH upd AS (UPDATE users SET xp = xp + $1 WHERE id = $2 RETURNING id)
+     INSERT INTO xp_ledger (user_id, delta, reason, meta) SELECT $2, $1, $3, $4 FROM upd`,
+    [amount, userId, action, meta ?? null],
+  );
+  return amount;
+}
+
+/**
+ * Derive the account's permanent Level from its XP against economy_config's
+ * `level.threshold.<N>` ladder (N=1,2,3,…, each value = cumulative XP required).
+ * Walks upward from 1 while a threshold is configured AND met; stops at the
+ * first gap (unset threshold) or the first unmet one. Level 0 means either no
+ * thresholds are configured yet, or XP hasn't reached level.threshold.1 —
+ * either way, preset_gating checks against Level 0 unlock only ungated presets.
+ */
+export async function getLevel(userId: number): Promise<number> {
+  const xp = await getUserXp(userId);
+  let level = 0;
+  for (let n = 1; n <= 100; n++) {
+    const threshold = await getEconomyConfig(`level.threshold.${n}`);
+    if (threshold == null || xp < threshold) break;
+    level = n;
+  }
+  return level;
+}
+
+/**
+ * Claim the one-time "save" XP for a generation — idempotent (xp_save_claims
+ * is a hard PK guard, so re-tapping "Скачать" can't re-earn it) and daily-capped
+ * via economy_config's `xp.save.dailycap` (unset = uncapped once xp.save itself
+ * is configured). Only the generation's OWNER can claim it, and only for a
+ * completed ('ok') render. Returns the XP actually awarded (0 if already
+ * claimed, not the owner, not done, capped, or xp.save isn't configured).
+ */
+export async function claimSaveXp(generationId: number, userId: number): Promise<number> {
+  // Check whether the feature is even on FIRST, before touching the claims
+  // table — otherwise a save tapped while xp.save is still unconfigured would
+  // permanently burn that generation's one-time claim slot, and turning the
+  // feature on later could never award it retroactively.
+  const amount = await getEconomyConfig("xp.save");
+  if (!amount) return 0;
+  const gen = await q("SELECT id FROM generations WHERE id = $1 AND user_id = $2 AND status = 'ok'", [
+    generationId,
+    userId,
+  ]);
+  if (!gen.length) return 0;
+  const won = await q(
+    "INSERT INTO xp_save_claims (generation_id) VALUES ($1) ON CONFLICT DO NOTHING RETURNING generation_id",
+    [generationId],
+  );
+  if (!won.length) return 0; // already claimed
+  const cap = await getEconomyConfig("xp.save.dailycap");
+  if (cap != null) {
+    const today = await q(
+      "SELECT COUNT(*)::int AS c FROM xp_ledger WHERE user_id = $1 AND reason = 'save' AND created_at > now() - interval '24 hours'",
+      [userId],
+    );
+    if (Number(today[0].c) >= cap) return 0;
+  }
+  return awardXp(userId, "save", String(generationId));
 }

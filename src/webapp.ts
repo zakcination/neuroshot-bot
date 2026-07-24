@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { claimRoadmapBonus, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getGeneration, getOrCreateUser, getOrder, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getGeneration, getLevel, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { enhancePrompt } from "./enhance.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
@@ -636,6 +636,14 @@ export async function generateResponse(
   if (source === "preset") {
     const p = PRESETS.find((x) => x.id === body?.id);
     if (!p || !imageUrl) return { status: 400, body: { error: "bad_request" } };
+    // Reward-architecture P1: style-library gating by Level (preset_gating is
+    // empty by default — ships inert; only presets an admin has actually gated
+    // via /econ_gate can ever block anyone). Checked before any charge.
+    const minLevel = await getPresetMinLevel(p.id);
+    if (minLevel != null) {
+      const level = await getLevel(userId);
+      if (level < minLevel) return { status: 403, body: { error: "level_locked", requiredLevel: minLevel, level } };
+    }
     // Studio ⑤: the preset's default model is preselected but SWAPPABLE — an
     // optional override must be an image-capable registry model (a video model
     // can't render a styled photo). Price follows the resolved model (priceFor).
@@ -837,6 +845,24 @@ export async function sendResponse(
   const data = (await res.json()) as { ok: boolean };
   if (!data.ok) return { status: 502, body: { error: "send_failed" } };
   return { status: 200, body: { ok: true } };
+}
+
+/**
+ * POST /api/xp/save — the client fires this alongside "📥 Скачать" (app.html
+ * saveMedia). Reward-architecture P1: awards the configured xp.save amount
+ * exactly once per generation (db.claimSaveXp is the idempotency + daily-cap
+ * guard), 0 if xp.save isn't configured yet. Never blocks the actual save —
+ * the client treats this as fire-and-forget.
+ */
+export async function xpSaveResponse(
+  userId: number,
+  body: Record<string, unknown> | null,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const id = Number(body?.id);
+  if (!Number.isInteger(id) || id <= 0) return { status: 400, body: { error: "bad_request" } };
+  const awarded = await claimSaveXp(id, userId);
+  const level = await getLevel(userId);
+  return { status: 200, body: { awarded, level } };
 }
 
 /** POST /api/settings — toggle the caller's watermark preference. */
@@ -1143,6 +1169,17 @@ export function createWebApp(): Server {
         const user = resolveUser(req.headers);
         if (!user) return json(res, 401, { error: "unauthorized" });
         const { status, body } = await sendResponse(user.id, await readJsonBody(req, 4 * 1024));
+        return json(res, status, body);
+      }
+
+      // POST /api/xp/save — reward-architecture P1: award save-XP for one of the
+      // caller's OWN completed generations (idempotent, daily-capped, inert
+      // until an admin configures xp.save via /econ_set).
+      if (url.pathname === "/api/xp/save") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const { status, body } = await xpSaveResponse(user.id, await readJsonBody(req, 1024));
         return json(res, status, body);
       }
 

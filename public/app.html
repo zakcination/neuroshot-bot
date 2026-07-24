@@ -1260,9 +1260,20 @@
       sheetBody.querySelector("#saveBtn").onclick = () => {
         if (multi) multi.forEach((u, i) => saveMedia(u, `${g.id}-${i}`));
         else saveMedia(g.output_url, g.id);
+        awardSaveXp(g.id);
       };
       sheetBody.querySelector("#chatBtn").onclick = () => sendToChat(g.id);
       sheetBody.querySelector("#moreBtn").onclick = () => { st.pick = null; viewPick(); };
+    }
+
+    /**
+     * Reward-architecture P1: fire-and-forget XP claim for saving a result.
+     * Server-side idempotent (once per generation, daily-capped) and a no-op
+     * until an admin configures xp.save — never blocks or reports errors to
+     * the user, since it's not the point of tapping "Скачать".
+     */
+    function awardSaveXp(generationId) {
+      api("/api/xp/save", { method: "POST", body: JSON.stringify({ id: generationId }) }).catch(() => {});
     }
 
     /** Save to the device: Telegram's native downloadFile when available. */
@@ -1313,6 +1324,7 @@
       sheetBody.querySelector("#vSave").onclick = () => {
         if (multi) multi.forEach((u, i) => saveMedia(u, `${item.id}-${i}`));
         else saveMedia(item.output_url, item.id);
+        awardSaveXp(item.id);
       };
       sheetBody.querySelector("#vChat").onclick = () => sendToChat(item.id);
       sheetBody.querySelector("#vMore").onclick = () => { st.pick = null; viewPick(); };
