@@ -328,6 +328,17 @@ export interface DeletionResult {
  * Ledger/orders/withdrawals rows are deliberately left untouched — financial
  * records retained for accounting/tax purposes, referencing only the bare
  * numeric id (no PII) once this runs.
+ *
+ * Deliberately NOT touched — abuse safety: free_result_used, free_scenario_used,
+ * welcome_bonus_claimed, pending_signup_credits/pending_join_bonus,
+ * roadmap_bonus_claimed, ref_first_purchase_at/ref_milestones. A Telegram id
+ * can't be reissued to a different person, so "delete, then /start again" is
+ * the SAME account, not a fresh one — if this reset those flags, deletion would
+ * become a free-tier farming loop (re-claim the welcome bonus, the free
+ * scenario, the first-result freebie, the roadmap bonus, indefinitely). Because
+ * the row survives (soft delete) and getOrCreateUser's INSERT is a no-op on an
+ * existing id, none of those grants can re-fire. See the e2e "abuse safety"
+ * test for the end-to-end proof.
  * Returns null if the user doesn't exist (nothing to delete).
  */
 export async function deleteUserData(userId: number): Promise<DeletionResult | null> {

@@ -31,7 +31,7 @@ process.env.DUB_USD_PER_SEC = "0.02";
 const { fal } = await import("@fal-ai/client");
 const { createBot, fastStartLessonMessages, flagshipModuleMessages } = await import("../src/bot.js");
 const { drainRenders, inFlightRenders } = await import("../src/generate.js");
-const { funnel, query, getUser, getOrCreateUser, addCredits, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay, createPendingGeneration, completeGeneration, claimFreePhone, phoneClaimedFree, setUserPhone, createOrder, getOrder } = await import("../src/db.js");
+const { funnel, query, getUser, getOrCreateUser, addCredits, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay, createPendingGeneration, completeGeneration, claimFreePhone, phoneClaimedFree, setUserPhone, createOrder, getOrder, deleteUserData } = await import("../src/db.js");
 const { startDubbing, dubCredits, availableDubTargets } = await import("../src/dubbing.js");
 const { buildDigest, checkAlerts, nudgeText, runReengagement, runReaper, runOrderReconciler } = await import("../src/monitor.js");
 const { nUnits, nResults } = await import("../src/text.js");
@@ -1504,6 +1504,51 @@ await step("/delete_me: confirm scrubs PII + zeroes credits + nulls generation c
   // Idempotent: a second confirm on an already-deleted account is a graceful no-op.
   await pressButton(dora, "del:confirm");
   assert.match(lastText(), /не найден|уже был удалён/);
+});
+
+await step("abuse safety: deleting an account can't be used to re-farm free-tier bonuses on the same id", async () => {
+  const farmer: From = { id: 5607, is_bot: false, first_name: "Farmer" };
+  await getOrCreateUser(farmer.id, "farmer", null, 12); // parks 12 signup credits like a real /start
+  // Simulate having already spent every one-time free grant this account can get.
+  await query(
+    `UPDATE users SET
+       welcome_bonus_claimed = true, pending_signup_credits = 0, pending_join_bonus = 0,
+       free_result_used = true, free_scenario_used = true, roadmap_bonus_claimed = true
+     WHERE id = $1`,
+    [farmer.id],
+  );
+  await addCredits(farmer.id, 3, "admin_grant", "test"); // some real spendable balance too
+
+  await deleteUserData(farmer.id);
+
+  // The one-time flags must survive the deletion untouched — that's what stops
+  // "delete, then /start again" from being a free-tier farming loop.
+  const flags = (await query(
+    `SELECT welcome_bonus_claimed, pending_signup_credits, pending_join_bonus,
+            free_result_used, free_scenario_used, roadmap_bonus_claimed, credits
+     FROM users WHERE id = $1`,
+    [farmer.id],
+  ))[0];
+  assert.equal(flags.welcome_bonus_claimed, true);
+  assert.equal(Number(flags.pending_signup_credits), 0);
+  assert.equal(Number(flags.pending_join_bonus), 0);
+  assert.equal(flags.free_result_used, true);
+  assert.equal(flags.free_scenario_used, true);
+  assert.equal(flags.roadmap_bonus_claimed, true);
+  assert.equal(Number(flags.credits), 0); // the spendable balance WAS forfeited
+
+  // Hitting /start again on the same Telegram id must not re-park a fresh
+  // signup bonus (ON CONFLICT DO NOTHING — the row already exists) and must
+  // show the RETURNING menu, never the newcomer claim button.
+  await sendText(farmer, "/start");
+  const lastKb = (calls("sendPhoto").at(-1) ?? calls("sendMessage").at(-1))?.payload.reply_markup as
+    | { inline_keyboard: Array<Array<{ callback_data: string }>> }
+    | undefined;
+  const buttons = lastKb?.inline_keyboard.flat().map((b) => b.callback_data) ?? [];
+  assert.ok(!buttons.includes("claim:welcome"), "a deleted-then-restarted account got a fresh claimable bonus");
+  const after = (await query("SELECT pending_signup_credits, credits FROM users WHERE id = $1", [farmer.id]))[0];
+  assert.equal(Number(after.pending_signup_credits), 0);
+  assert.equal(Number(after.credits), 0);
 });
 
 await step("identity gate: one free gift per PHONE — cross-account farming blocked, owner may retry", async () => {
