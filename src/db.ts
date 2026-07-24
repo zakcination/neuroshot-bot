@@ -198,6 +198,12 @@ const SCHEMA: string[] = [
   // (see the error-completion paths in src/generate.ts).
   `ALTER TABLE generations ADD COLUMN IF NOT EXISTS cost_usd NUMERIC`,
   `ALTER TABLE generations ADD COLUMN IF NOT EXISTS provider_request_id TEXT`,
+  // Multi-output support (num_images, images only — docs/cinema-studio-model-params.md
+  // P5): output_url stays the FIRST url always, so every existing single-output
+  // consumer (gallery, digest, delivery, reconciliation) keeps working unchanged.
+  // output_urls is a JSON-encoded array, populated ONLY when a render actually
+  // produced more than one output — NULL for every ordinary single-output row.
+  `ALTER TABLE generations ADD COLUMN IF NOT EXISTS output_urls TEXT`,
   `CREATE TABLE IF NOT EXISTS events (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
@@ -1209,10 +1215,21 @@ export interface GenerationRow {
   credits: number;
   status: string;
   output_url: string | null;
+  /** All output URLs when a render produced more than one (num_images > 1); null otherwise. */
+  output_urls: string[] | null;
   created_at: string;
 }
 
 function mapGeneration(r: Row): GenerationRow {
+  let outputUrls: string[] | null = null;
+  if (typeof r.output_urls === "string") {
+    try {
+      const parsed: unknown = JSON.parse(r.output_urls);
+      if (Array.isArray(parsed) && parsed.every((u) => typeof u === "string")) outputUrls = parsed;
+    } catch {
+      outputUrls = null; // corrupt/legacy value — degrade to the single output_url
+    }
+  }
   return {
     id: Number(r.id),
     model: r.model as string,
@@ -1220,6 +1237,7 @@ function mapGeneration(r: Row): GenerationRow {
     credits: Number(r.credits),
     status: r.status as string,
     output_url: (r.output_url as string | null) ?? null,
+    output_urls: outputUrls,
     created_at: String(r.created_at),
   };
 }
@@ -1254,11 +1272,19 @@ export async function completeGeneration(
   outputUrl?: string,
   costUsd?: number,
   providerRequestId?: string,
+  outputUrls?: string[],
 ): Promise<boolean> {
   const rows = await q(
-    `UPDATE generations SET status = $1, output_url = $2, cost_usd = $3, provider_request_id = $4
+    `UPDATE generations SET status = $1, output_url = $2, cost_usd = $3, provider_request_id = $4, output_urls = $6
      WHERE id = $5 AND status = 'pending' RETURNING id`,
-    [status, outputUrl ?? null, costUsd ?? null, providerRequestId ?? null, id],
+    [
+      status,
+      outputUrl ?? null,
+      costUsd ?? null,
+      providerRequestId ?? null,
+      id,
+      outputUrls && outputUrls.length > 1 ? JSON.stringify(outputUrls) : null,
+    ],
   );
   return rows.length > 0;
 }
@@ -1377,7 +1403,7 @@ export async function reapStalePending(minutes: number): Promise<StaleGeneration
 /** One generation, scoped to its owner — powers the web app's status polling. */
 export async function getGeneration(id: number, userId: number): Promise<GenerationRow | undefined> {
   const rows = await q(
-    "SELECT id, model, prompt, credits, status, output_url, created_at FROM generations WHERE id = $1 AND user_id = $2",
+    "SELECT id, model, prompt, credits, status, output_url, output_urls, created_at FROM generations WHERE id = $1 AND user_id = $2",
     [id, userId],
   );
   return rows[0] ? mapGeneration(rows[0]) : undefined;
@@ -1386,7 +1412,7 @@ export async function getGeneration(id: number, userId: number): Promise<Generat
 /** A user's recent generations (newest first) — powers the web-app gallery. */
 export async function recentGenerations(userId: number, limit = 30): Promise<GenerationRow[]> {
   const rows = await q(
-    `SELECT id, model, prompt, credits, status, output_url, created_at
+    `SELECT id, model, prompt, credits, status, output_url, output_urls, created_at
      FROM generations WHERE user_id = $1 ORDER BY id DESC LIMIT $2`,
     [userId, limit],
   );
@@ -1404,7 +1430,7 @@ export async function galleryPage(
   offset: number,
 ): Promise<{ items: GenerationRow[]; total: number }> {
   const items = await q(
-    `SELECT id, model, prompt, credits, status, output_url, created_at
+    `SELECT id, model, prompt, credits, status, output_url, output_urls, created_at
      FROM generations
      WHERE user_id = $1 AND status = 'ok' AND output_url IS NOT NULL
      ORDER BY id DESC LIMIT $2 OFFSET $3`,

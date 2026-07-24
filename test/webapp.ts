@@ -70,10 +70,15 @@ let nsfwCheckCalls = 0;
     if (anyLlmFail) throw new Error("llm boom");
     return { data: { output: `Cinematic, richly lit: ${String(opts.input.prompt)}` }, requestId: `req-${falCalls.length}` };
   }
-  const data = endpoint.includes("video")
-    ? { video: { url: `https://fal.test/out/${falCalls.length}.mp4` } }
-    : { images: [{ url: `https://fal.test/out/${falCalls.length}.png` }] };
-  return { data, requestId: `req-${falCalls.length}` };
+  if (endpoint.includes("video")) {
+    return { data: { video: { url: `https://fal.test/out/${falCalls.length}.mp4` } }, requestId: `req-${falCalls.length}` };
+  }
+  // num_images (P5, docs/cinema-studio-model-params.md): the real fal image
+  // endpoints return one images[] entry per requested count — mirror that so
+  // multi-output storage/pricing/delivery can be tested end-to-end.
+  const n = typeof opts.input.num_images === "number" ? opts.input.num_images : 1;
+  const images = Array.from({ length: n }, (_, i) => ({ url: `https://fal.test/out/${falCalls.length}-${i}.png` }));
+  return { data: { images }, requestId: `req-${falCalls.length}` };
 };
 // fal.storage is a getter — patch the method on the storage client instance.
 (fal.storage as unknown as { upload: unknown }).upload = async (blob: Blob) =>
@@ -412,11 +417,14 @@ await step("method gating: /api/auth is POST-only, /api/me is GET-only (405 othe
 const maker = { id: 700, username: "maker", first_name: "Maker" };
 const makerHeaders = () => ({ Authorization: `tma ${signInitData(maker)}` });
 
-async function pollGen(id: number): Promise<{ status: string; output_url: string | null }> {
+async function pollGen(
+  id: number,
+  headers: Record<string, string> = makerHeaders(),
+): Promise<{ status: string; output_url: string | null; output_urls: string[] | null }> {
   for (let i = 0; i < 200; i++) {
-    const r = await fetch(`${base}/api/generations/${id}`, { headers: makerHeaders() });
+    const r = await fetch(`${base}/api/generations/${id}`, { headers });
     assert.equal(r.status, 200);
-    const d = (await r.json()) as { status: string; output_url: string | null };
+    const d = (await r.json()) as { status: string; output_url: string | null; output_urls: string[] | null };
     if (d.status !== "pending") return d;
     await new Promise((rr) => setTimeout(rr, 15));
   }
@@ -512,6 +520,118 @@ await step("POST /api/generate: preset charges, renders async, poll reaches ok",
   const row = (await query("SELECT cost_usd, provider_request_id FROM generations WHERE id = $1", [d.id]))[0];
   assert.equal(Number(row.cost_usd), 0.04); // seedream_edit approxCostUsd
   assert.match(String(row.provider_request_id), /^req-\d+$/);
+});
+
+await step("num_images: charge scales ×N, multi-output stored/exposed, invalid counts rejected", async () => {
+  // Isolated user — this step spends real credits and must not perturb the
+  // shared `maker` user's running balance, which later steps assert absolutely
+  // (e.g. "101 − 76 = 25").
+  const cu = { id: 990088, username: "counter", first_name: "Cnt" };
+  await getOrCreateUser(cu.id, cu.username, null, 0);
+  await addCredits(cu.id, 100, "admin_grant", "test");
+  const H = { Authorization: `tma ${signInitData(cu)}`, "Content-Type": "application/json" };
+
+  // Catalog: text_to_image (Seedream) declares maxCount 6; premium_image's count
+  // support isn't fal-verified (P7), so it must expose 0 (no selector).
+  const cat = (await apiMe(signInitData(cu))).body.catalog as unknown as {
+    studio: { image: Array<{ key: string; image: { maxCount: number } | null }> };
+  };
+  const t2i = cat.studio.image.find((m) => m.key === "text_to_image")!;
+  assert.equal(t2i.image!.maxCount, 6);
+  const premium = cat.studio.image.find((m) => m.key === "premium_image")!;
+  assert.equal(premium.image!.maxCount, 0);
+
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "model", model: "text_to_image", prompt: "a cat", num_images: 3 }),
+  });
+  assert.equal(r.status, 200);
+  const d = (await r.json()) as { id: number; credits: number; balance: number };
+  assert.equal(d.credits, 6); // 2 base × 3
+  assert.equal(d.balance, 94); // 100 − 6
+  const call = falCalls.at(-1)!;
+  assert.equal(call.input.num_images, 3);
+
+  const done = await pollGen(d.id, H);
+  assert.equal(done.status, "ok");
+  assert.equal(done.output_urls?.length, 3);
+  assert.equal(done.output_url, done.output_urls?.[0]);
+  const row = (await query("SELECT output_urls FROM generations WHERE id = $1", [d.id]))[0];
+  assert.equal((JSON.parse(String(row.output_urls)) as string[]).length, 3);
+
+  // The gallery exposes output_urls on the same item too.
+  const gal = await fetch(`${base}/api/generations?size=5`, { headers: H });
+  const galBody = (await gal.json()) as { items: Array<{ id: number; output_urls: string[] | null }> };
+  const item = galBody.items.find((x) => x.id === d.id);
+  assert.equal(item?.output_urls?.length, 3);
+
+  // Out-of-range count → 400 bad_opts, nothing charged.
+  const tooMany = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "model", model: "text_to_image", prompt: "x", num_images: 7 }),
+  });
+  assert.equal(tooMany.status, 400);
+  assert.equal(((await tooMany.json()) as { error: string }).error, "bad_opts");
+
+  // A model with no maxCount (unverified endpoint) rejects any count request.
+  const noCount = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "model", model: "premium_image", prompt: "x", num_images: 2 }),
+  });
+  assert.equal(noCount.status, 400);
+  assert.equal((await apiMe(signInitData(cu))).body.dashboard.credits, 94, "rejected count requests must not charge");
+});
+
+await step("POST /api/send: a multi-output generation ships as one sendMediaGroup", async () => {
+  const su = { id: 990089, username: "sender", first_name: "Snd" };
+  await getOrCreateUser(su.id, su.username, null, 0);
+  await addCredits(su.id, 100, "admin_grant", "test");
+  const H = { Authorization: `tma ${signInitData(su)}`, "Content-Type": "application/json" };
+
+  const { createServer } = await import("node:http");
+  const sends: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const tgStub = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => {
+      void (async () => {
+        const buf = Buffer.concat(chunks);
+        const ct = req.headers["content-type"] ?? "";
+        let body: Record<string, unknown>;
+        if (ct.includes("multipart/form-data")) {
+          const form = await new Response(buf, { headers: { "content-type": ct } }).formData();
+          body = { chat_id: form.get("chat_id"), media: JSON.parse(String(form.get("media"))) };
+        } else {
+          body = JSON.parse(buf.toString("utf8")) as Record<string, unknown>;
+        }
+        sends.push({ path: req.url ?? "", body });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, result: [] }));
+      })();
+    });
+  });
+  await new Promise<void>((r) => tgStub.listen(0, r));
+  process.env.TELEGRAM_API_BASE = `http://127.0.0.1:${(tgStub.address() as AddressInfo).port}`;
+
+  const gen = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "model", model: "text_to_image", prompt: "a dog", num_images: 2 }),
+  });
+  const genId = ((await gen.json()) as { id: number }).id;
+  await pollGen(genId, H);
+
+  const r = await fetch(`${base}/api/send`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ id: genId }),
+  });
+  assert.equal(r.status, 200);
+  assert.match(sends[0].path, /\/sendMediaGroup$/);
+  const media = sends[0].body.media as Array<{ type: string; media: string; caption?: string }>;
+  assert.equal(media.length, 2);
+  assert.ok(media.every((m) => m.type === "photo"));
+  assert.equal(media[0].caption, "✨ Из вашей студии NeuroShot");
+  assert.equal(media[1].caption, undefined);
+  await new Promise<void>((r2) => tgStub.close(() => r2()));
 });
 
 await step("Studio catalog: FULL registry by mode, patron-only prices; every model generable", async () => {

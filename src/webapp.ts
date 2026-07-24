@@ -257,6 +257,12 @@ function studioModelsOf(mode: "image" | "video"): Array<Record<string, unknown>>
               mult: t.mult, // exact multiplier — client mirrors priceFor with it
               credits: priceFor(m, { resolution: t.id }),
             })),
+            // Output count (num_images): a plain max — unlike resolution/duration,
+            // count composes multiplicatively WITH whichever resolution is chosen,
+            // so the client mirrors priceFor's exact `credits × n` (rounded up)
+            // rather than reading a precomputed per-count price. 0 = no count
+            // selector (maxCount unset — unverified endpoints, e.g. premium_*).
+            maxCount: m.image.maxCount ?? 0,
           }
         : null,
       video: m.video
@@ -749,6 +755,7 @@ export async function generateResponse(
     aspectRatio: typeof body?.aspect_ratio === "string" ? body.aspect_ratio : presetAspect,
     resolution: typeof body?.resolution === "string" ? body.resolution : undefined,
     endImageUrl,
+    numImages: body?.num_images != null ? Number(body.num_images) : undefined,
   } as GenOpts);
   if (opts === null) return { status: 400, body: { error: "bad_opts" } };
 
@@ -770,6 +777,9 @@ export async function generateResponse(
 /**
  * POST /api/send — deliver one of the caller's generations into their Telegram
  * chat with the bot (native save/forward/share from there). Owner-scoped.
+ * A multi-output image render (num_images > 1) ships as one sendMediaGroup
+ * instead of a single sendPhoto — video is never multi-output (count is
+ * images-only), so isVideo generations always take the single-item path.
  */
 export async function sendResponse(
   userId: number,
@@ -779,31 +789,50 @@ export async function sendResponse(
   if (!g || g.status !== "ok" || !g.output_url) return { status: 404, body: { error: "not_found" } };
   const isVideo = /\.(mp4|webm|mov)(\?|$)/i.test(g.output_url);
   const apiBase = process.env.TELEGRAM_API_BASE ?? "https://api.telegram.org";
-  const method = isVideo ? "sendVideo" : "sendPhoto";
-  const field = isVideo ? "video" : "photo";
   const caption = "✨ Из вашей студии NeuroShot";
-
-  // Every shared file carries the mandatory AI-generated disclosure (badge +
-  // metadata); the promo CTA is added only when the user's watermark setting is
-  // on. When branded, upload the bytes (multipart); otherwise pass the source URL.
   const u = await getUser(userId);
-  const branded = await brandForDelivery(g.output_url, isVideo ? "video" : "image", {
-    promo: !!u?.watermark_enabled,
-  });
+  const promo = !!u?.watermark_enabled;
 
+  const urls = !isVideo && g.output_urls && g.output_urls.length > 1 ? g.output_urls : null;
   let res: Response;
-  if (branded) {
+  if (urls) {
+    // Multi-image: brand each independently (mandatory AI disclosure); any that
+    // fails to brand falls back to its raw source URL rather than dropping it.
     const form = new FormData();
     form.set("chat_id", String(userId));
-    form.set("caption", caption);
-    form.set(field, new Blob([new Uint8Array(branded)]), isVideo ? "neuroshot.mp4" : "neuroshot.png");
-    res = await fetch(`${apiBase}/bot${config.botToken}/${method}`, { method: "POST", body: form });
+    const media = await Promise.all(
+      urls.map(async (u2, i) => {
+        const branded = await brandForDelivery(u2, "image", { promo });
+        if (branded) {
+          const name = `img${i}`;
+          form.set(name, new Blob([new Uint8Array(branded)]), "neuroshot.png");
+          return { type: "photo", media: `attach://${name}`, ...(i === 0 ? { caption } : {}) };
+        }
+        return { type: "photo", media: u2, ...(i === 0 ? { caption } : {}) };
+      }),
+    );
+    form.set("media", JSON.stringify(media));
+    res = await fetch(`${apiBase}/bot${config.botToken}/sendMediaGroup`, { method: "POST", body: form });
   } else {
-    res = await fetch(`${apiBase}/bot${config.botToken}/${method}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: userId, [field]: g.output_url, caption }),
-    });
+    const method = isVideo ? "sendVideo" : "sendPhoto";
+    const field = isVideo ? "video" : "photo";
+    // Every shared file carries the mandatory AI-generated disclosure (badge +
+    // metadata); the promo CTA is added only when the user's watermark setting is
+    // on. When branded, upload the bytes (multipart); otherwise pass the source URL.
+    const branded = await brandForDelivery(g.output_url, isVideo ? "video" : "image", { promo });
+    if (branded) {
+      const form = new FormData();
+      form.set("chat_id", String(userId));
+      form.set("caption", caption);
+      form.set(field, new Blob([new Uint8Array(branded)]), isVideo ? "neuroshot.mp4" : "neuroshot.png");
+      res = await fetch(`${apiBase}/bot${config.botToken}/${method}`, { method: "POST", body: form });
+    } else {
+      res = await fetch(`${apiBase}/bot${config.botToken}/${method}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: userId, [field]: g.output_url, caption }),
+      });
+    }
   }
   const data = (await res.json()) as { ok: boolean };
   if (!data.ok) return { status: 502, body: { error: "send_failed" } };
@@ -1070,6 +1099,7 @@ export function createWebApp(): Server {
           id: g.id,
           status: g.status,
           output_url: g.output_url,
+          output_urls: g.output_urls,
           model: g.model,
           credits: g.credits,
         });

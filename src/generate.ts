@@ -112,27 +112,34 @@ async function telegramFileUrl(ctx: Context, fileId: string): Promise<string> {
   return url;
 }
 
-function extractResultUrl(data: unknown): string | null {
+/**
+ * All output URLs from a fal response, in order. `images` (num_images) carries
+ * every output; `image`/`video` are always single-output shapes. Empty array
+ * if nothing usable is present — falRun turns that into a thrown error.
+ */
+function extractResultUrls(data: unknown): string[] {
   // fal responses vary by model: {images: [{url}]}, {image: {url}} or {video: {url}}
   const d = data as {
     images?: Array<{ url?: string }>;
     image?: { url?: string };
     video?: { url?: string };
   };
-  return d?.images?.[0]?.url ?? d?.image?.url ?? d?.video?.url ?? null;
+  if (d?.images?.length) return d.images.map((i) => i.url).filter((u): u is string => !!u);
+  const single = d?.image?.url ?? d?.video?.url;
+  return single ? [single] : [];
 }
 
-/** Run a model on fal; returns the output URL + fal's request id (throws on provider failure). */
+/** Run a model on fal; returns all output URLs + fal's request id (throws on provider failure). */
 async function falRun(
   model: ModelSpec,
   prompt: string,
   imageUrl?: string,
   opts?: GenOpts,
-): Promise<{ url: string; requestId: string }> {
+): Promise<{ urls: string[]; requestId: string }> {
   const result = await fal.subscribe(model.falEndpoint, { input: model.input(prompt, imageUrl, opts) });
-  const url = extractResultUrl(result.data);
-  if (!url) throw new Error(`No output URL in fal response for ${model.falEndpoint}`);
-  return { url, requestId: result.requestId };
+  const urls = extractResultUrls(result.data);
+  if (!urls.length) throw new Error(`No output URL in fal response for ${model.falEndpoint}`);
+  return { urls, requestId: result.requestId };
 }
 
 /**
@@ -168,7 +175,7 @@ export async function startWebGeneration(
       const r = await falRun(model, prompt, imageUrl, opts);
       costUsd = costUsdFor(model, opts);
       requestId = r.requestId;
-      await completeGeneration(id, "ok", r.url, costUsd, requestId);
+      await completeGeneration(id, "ok", r.urls[0], costUsd, requestId, r.urls);
       // Analytics must never be able to trigger compensation: swallow its errors
       // so a post-'ok' logEvent blip can't fall into the catch and refund a
       // render we already completed and delivered.
@@ -300,7 +307,7 @@ export async function runGeneration(
             : await telegramFileUrl(ctx, fileId)
           : undefined;
         const r = await falRun(model, prompt, imageUrl);
-        const url = r.url;
+        const url = r.urls[0];
         costUsd = costUsdFor(model);
         requestId = r.requestId;
         const after = afterKeyboard(isUpload, opts.animate && !isVideo ? { campId: opts.animate, genId } : undefined);
@@ -409,8 +416,8 @@ export async function runFreeScenario(
         const photoUrl = await telegramFileUrl(ctx, fileId);
         // 1) Photo → styled scene image (Seedream edit). 2) Scene → short video (Hailuo).
         const scene = await falRun(scenario.imageModel, scenario.imagePrompt, photoUrl);
-        const videoResult = await falRun(scenario.videoModel, scenario.videoPrompt, scene.url);
-        const videoUrl = videoResult.url;
+        const videoResult = await falRun(scenario.videoModel, scenario.videoPrompt, scene.urls[0]);
+        const videoUrl = videoResult.urls[0];
         // This ONE generations row represents the whole free chain — the actual
         // cost NeuroShot paid is both legs combined (the highest-COGS acquisition
         // path in the product, hence the two-model chain being worth tracking
