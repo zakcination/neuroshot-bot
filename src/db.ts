@@ -85,6 +85,13 @@ const SCHEMA: string[] = [
   // every existing row too and the slideshow pops for the whole install base
   // once. It's replayable any time from the "Ещё" tab regardless of this flag.
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_seen BOOLEAN NOT NULL DEFAULT false`,
+  // Self-serve data deletion (Privacy Policy §4): marks when a user erased their
+  // PII. The row itself is kept (soft delete) — a Telegram id can't be reissued,
+  // and other users' referral/partner/ledger history legitimately points at it —
+  // but username/phone/ref_code/prompts/output_urls are scrubbed and credits
+  // forfeited. deleted_at is purely informational (support/audit visibility);
+  // nothing in the app currently branches on it.
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`,
   // Backfill only: rows from before this column existed have pending=0 by the
   // column DEFAULT, so this can never touch a real unclaimed balance — it just
   // marks pre-existing accounts (already credited under the old immediate-grant
@@ -147,6 +154,15 @@ const SCHEMA: string[] = [
     processed_at TIMESTAMPTZ
   )`,
   `CREATE INDEX IF NOT EXISTS idx_orders_pending ON orders(status) WHERE status = 'pending'`,
+  // Tracks whether grantPurchase's credit/payout side effects actually landed,
+  // SEPARATELY from status='paid' (which only means "payment confirmed"). A
+  // process crash or DB hiccup between the pending→paid transition and the
+  // credit grant would otherwise strand the order paid-but-uncredited forever —
+  // nothing else ever revisits a row once it leaves 'pending'. granted_at lets a
+  // reconciler sweep (mirroring the stale-generation reaper) find and retry
+  // exactly those rows.
+  `ALTER TABLE orders ADD COLUMN IF NOT EXISTS granted_at TIMESTAMPTZ`,
+  `CREATE INDEX IF NOT EXISTS idx_orders_ungranted ON orders(status) WHERE status = 'paid' AND granted_at IS NULL`,
   `CREATE TABLE IF NOT EXISTS ledger (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
@@ -182,6 +198,17 @@ const SCHEMA: string[] = [
   // (see the error-completion paths in src/generate.ts).
   `ALTER TABLE generations ADD COLUMN IF NOT EXISTS cost_usd NUMERIC`,
   `ALTER TABLE generations ADD COLUMN IF NOT EXISTS provider_request_id TEXT`,
+  // Multi-output support (num_images, images only — docs/cinema-studio-model-params.md
+  // P5): output_url stays the FIRST url always, so every existing single-output
+  // consumer (gallery, digest, delivery, reconciliation) keeps working unchanged.
+  // output_urls is a JSON-encoded array, populated ONLY when a render actually
+  // produced more than one output — NULL for every ordinary single-output row.
+  `ALTER TABLE generations ADD COLUMN IF NOT EXISTS output_urls TEXT`,
+  // When the render actually finished — the only way to state a wait time from
+  // MEASURED data instead of a guess. NULL on every pre-existing row and on
+  // anything still pending, so the ETA query simply has less to average until
+  // real traffic fills it in.
+  `ALTER TABLE generations ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ`,
   `CREATE TABLE IF NOT EXISTS events (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
@@ -193,6 +220,64 @@ const SCHEMA: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_events_user ON events(user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_events_type ON events(type)`,
   `CREATE INDEX IF NOT EXISTS idx_generations_user ON generations(user_id)`,
+  // Reward-architecture P0 (docs: neuroshot-reward-architecture-v1.md, kept out of
+  // this public repo — see the security note in that doc §8). These tables are the
+  // ONLY place tuned economy values (XP-per-action, level thresholds, season caps,
+  // per-preset level gates) may live: never as literal source constants, so a
+  // public GitHub read can't hand anyone the exact farmable tuning. Both ship
+  // EMPTY — no seed data, no defaults baked into code — and are populated live via
+  // the /econ_set and /econ_gate admin commands (bot.ts), mirroring how KASPI_API_BASE
+  // and other not-yet-configured features in this codebase ship "dark" until an
+  // admin turns them on, rather than falling back to a guessable default.
+  `CREATE TABLE IF NOT EXISTS economy_config (
+    key TEXT PRIMARY KEY,
+    value INTEGER NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE TABLE IF NOT EXISTS preset_gating (
+    preset_id TEXT PRIMARY KEY,
+    min_level INTEGER NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  // Reward-architecture P1: permanent Level currency (never resets — distinct
+  // from Кадры/credits and from any future seasonal XP). Starts at 0 for every
+  // existing row; getLevel() derives the account Level from this against the
+  // thresholds in economy_config, so Level only starts moving once an admin
+  // configures level.threshold.N — until then every account reads Level 0 and
+  // preset_gating (also empty by default) has nothing to enforce against.
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS xp INTEGER NOT NULL DEFAULT 0`,
+  `CREATE TABLE IF NOT EXISTS xp_ledger (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    delta INTEGER NOT NULL,
+    reason TEXT NOT NULL,  -- 'save' | 'rating' | 'new_style' | 'quest' | 'referral' | ...
+    meta TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_xp_ledger_user_reason ON xp_ledger(user_id, reason, created_at)`,
+  // One save-XP award per generation, ever — a claims table (not a boolean flag
+  // on `generations`) so re-tapping "Скачать" a hundred times can't farm XP.
+  `CREATE TABLE IF NOT EXISTS xp_save_claims (
+    generation_id BIGINT PRIMARY KEY,
+    claimed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  // Reward-architecture P4a: the Season entity — pure infra, same "ships inert"
+  // pattern as economy_config/preset_gating. No row means no active season, so
+  // every consumer must treat "no active season" as the normal default state,
+  // not an error. Theming/dates are curation (admin /season_new), never a code
+  // deploy — see neuroshot-reward-architecture-v1.md §4.3's KZ-calendar table
+  // (kept out of this public repo; only the mechanism ships here, not the
+  // actual season calendar). Quests and free-track reward claiming are NOT part
+  // of this table yet — deliberately deferred to P4b once this entity exists.
+  `CREATE TABLE IF NOT EXISTS seasons (
+    id BIGSERIAL PRIMARY KEY,
+    key TEXT NOT NULL UNIQUE,
+    theme_label TEXT NOT NULL,
+    starts_at TIMESTAMPTZ NOT NULL,
+    ends_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_seasons_active ON seasons(starts_at, ends_at)`,
 ];
 
 let schemaReady: Promise<void> | null = null;
@@ -288,6 +373,59 @@ export async function setWatermark(userId: number, enabled: boolean): Promise<bo
 /** Store a user's verified phone (from a shared Telegram contact). */
 export async function setUserPhone(userId: number, phone: string): Promise<void> {
   await q("UPDATE users SET phone = $2 WHERE id = $1", [userId, phone]);
+}
+
+/** Outcome of a self-serve deletion request — the credits forfeited feeds the confirmation message. */
+export interface DeletionResult {
+  forfeitedCredits: number;
+}
+
+/**
+ * Self-serve account-data deletion (Privacy Policy §4 / §5). Scrubs PII in
+ * place rather than deleting the row: the Telegram id can't be reissued to
+ * someone else, and OTHER users' referral/partner/purchase history legitimately
+ * references this id, so removing the row would orphan their records. What
+ * this DOES do:
+ *   - users: wipe username/phone/ref_code/pending_action/pending_file_id,
+ *     zero credits (forfeited — this is not a refund; see refund policy for
+ *     that separate flow), stamp deleted_at.
+ *   - generations: null out prompt/output_url (the actual content + what it
+ *     depicted), keeping model/credits/status/cost_usd so COGS/analytics
+ *     aggregates that group by those columns stay correct.
+ *   - partner_codes: deactivate any codes this user owns, so no one can join
+ *     under them post-deletion.
+ * Ledger/orders/withdrawals rows are deliberately left untouched — financial
+ * records retained for accounting/tax purposes, referencing only the bare
+ * numeric id (no PII) once this runs.
+ *
+ * Deliberately NOT touched — abuse safety: free_result_used, free_scenario_used,
+ * welcome_bonus_claimed, pending_signup_credits/pending_join_bonus,
+ * roadmap_bonus_claimed, ref_first_purchase_at/ref_milestones. A Telegram id
+ * can't be reissued to a different person, so "delete, then /start again" is
+ * the SAME account, not a fresh one — if this reset those flags, deletion would
+ * become a free-tier farming loop (re-claim the welcome bonus, the free
+ * scenario, the first-result freebie, the roadmap bonus, indefinitely). Because
+ * the row survives (soft delete) and getOrCreateUser's INSERT is a no-op on an
+ * existing id, none of those grants can re-fire. See the e2e "abuse safety"
+ * test for the end-to-end proof.
+ * Returns null if the user doesn't exist (nothing to delete).
+ */
+export async function deleteUserData(userId: number): Promise<DeletionResult | null> {
+  const before = await q("SELECT credits FROM users WHERE id = $1 AND deleted_at IS NULL", [userId]);
+  if (!before.length) return null; // unknown user, or already deleted — idempotent no-op
+  const rows = await q(
+    `UPDATE users SET
+       username = NULL, phone = NULL, ref_code = NULL,
+       pending_action = NULL, pending_file_id = NULL,
+       credits = 0, deleted_at = now()
+     WHERE id = $1 AND deleted_at IS NULL
+     RETURNING id`,
+    [userId],
+  );
+  if (!rows.length) return null; // lost a race with a concurrent deletion request
+  await q("UPDATE generations SET prompt = NULL, output_url = NULL WHERE user_id = $1", [userId]);
+  await q("UPDATE partner_codes SET active = false WHERE user_id = $1", [userId]);
+  return { forfeitedCredits: Number(before[0].credits) };
 }
 
 /**
@@ -932,6 +1070,54 @@ export async function resolveOrder(id: number, approve: boolean): Promise<OrderR
   return rows[0] ? mapOrder(rows[0]) : null;
 }
 
+/**
+ * Claim an order's credit grant AND perform it, atomically in one statement —
+ * returns true only for the ONE call that wins. This is deliberately a single
+ * CTE (like addCredits): claiming granted_at in a separate step BEFORE the
+ * credit update would let a crash in between mark the order "granted" with no
+ * credits ever added — worse than the gap it's meant to close, and invisible
+ * to staleGrantedOrders since granted_at would already be set. Bundling them
+ * means a retry (reconciler, duplicate webhook, admin re-running /order) is
+ * always either a full no-op (already credited) or a full grant — never a
+ * half-state.
+ */
+export async function grantOrderCredits(
+  orderId: number,
+  userId: number,
+  credits: number,
+  kzt: number,
+): Promise<boolean> {
+  const rows = await q(
+    `WITH claim AS (
+       UPDATE orders SET granted_at = now() WHERE id = $1 AND granted_at IS NULL RETURNING id
+     ), bal AS (
+       UPDATE users SET credits = credits + $3 WHERE id = $2 AND EXISTS (SELECT 1 FROM claim) RETURNING id
+     )
+     INSERT INTO ledger (user_id, delta, reason, meta)
+     SELECT $2, $3, 'purchase', $4 FROM bal RETURNING user_id`,
+    [orderId, userId, credits, String(kzt)],
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Orders confirmed paid but never successfully granted, stuck longer than
+ * `minutes` — the payment-side counterpart to reapStalePending. A crash
+ * between resolveOrder's pending→paid win and grantPurchase's credit/payout
+ * work leaves exactly this shape: status='paid', granted_at NULL. Feeds the
+ * reconciler sweep in monitor.ts, which retries grantPurchase for each.
+ */
+export async function staleGrantedOrders(minutes: number): Promise<OrderRow[]> {
+  const rows = await q(
+    `SELECT ${ORDER_COLS} FROM orders
+     WHERE status = 'paid' AND granted_at IS NULL
+       AND processed_at < now() - ($1 || ' minutes')::interval
+     ORDER BY id`,
+    [String(Math.max(1, Math.floor(minutes)))],
+  );
+  return rows.map(mapOrder);
+}
+
 /** Add credits and journal the movement atomically (single CTE statement). */
 export async function addCredits(
   userId: number,
@@ -1092,10 +1278,21 @@ export interface GenerationRow {
   credits: number;
   status: string;
   output_url: string | null;
+  /** All output URLs when a render produced more than one (num_images > 1); null otherwise. */
+  output_urls: string[] | null;
   created_at: string;
 }
 
 function mapGeneration(r: Row): GenerationRow {
+  let outputUrls: string[] | null = null;
+  if (typeof r.output_urls === "string") {
+    try {
+      const parsed: unknown = JSON.parse(r.output_urls);
+      if (Array.isArray(parsed) && parsed.every((u) => typeof u === "string")) outputUrls = parsed;
+    } catch {
+      outputUrls = null; // corrupt/legacy value — degrade to the single output_url
+    }
+  }
   return {
     id: Number(r.id),
     model: r.model as string,
@@ -1103,6 +1300,7 @@ function mapGeneration(r: Row): GenerationRow {
     credits: Number(r.credits),
     status: r.status as string,
     output_url: (r.output_url as string | null) ?? null,
+    output_urls: outputUrls,
     created_at: String(r.created_at),
   };
 }
@@ -1137,11 +1335,20 @@ export async function completeGeneration(
   outputUrl?: string,
   costUsd?: number,
   providerRequestId?: string,
+  outputUrls?: string[],
 ): Promise<boolean> {
   const rows = await q(
-    `UPDATE generations SET status = $1, output_url = $2, cost_usd = $3, provider_request_id = $4
+    `UPDATE generations SET status = $1, output_url = $2, cost_usd = $3, provider_request_id = $4,
+            output_urls = $6, finished_at = now()
      WHERE id = $5 AND status = 'pending' RETURNING id`,
-    [status, outputUrl ?? null, costUsd ?? null, providerRequestId ?? null, id],
+    [
+      status,
+      outputUrl ?? null,
+      costUsd ?? null,
+      providerRequestId ?? null,
+      id,
+      outputUrls && outputUrls.length > 1 ? JSON.stringify(outputUrls) : null,
+    ],
   );
   return rows.length > 0;
 }
@@ -1260,7 +1467,7 @@ export async function reapStalePending(minutes: number): Promise<StaleGeneration
 /** One generation, scoped to its owner — powers the web app's status polling. */
 export async function getGeneration(id: number, userId: number): Promise<GenerationRow | undefined> {
   const rows = await q(
-    "SELECT id, model, prompt, credits, status, output_url, created_at FROM generations WHERE id = $1 AND user_id = $2",
+    "SELECT id, model, prompt, credits, status, output_url, output_urls, created_at FROM generations WHERE id = $1 AND user_id = $2",
     [id, userId],
   );
   return rows[0] ? mapGeneration(rows[0]) : undefined;
@@ -1269,7 +1476,7 @@ export async function getGeneration(id: number, userId: number): Promise<Generat
 /** A user's recent generations (newest first) — powers the web-app gallery. */
 export async function recentGenerations(userId: number, limit = 30): Promise<GenerationRow[]> {
   const rows = await q(
-    `SELECT id, model, prompt, credits, status, output_url, created_at
+    `SELECT id, model, prompt, credits, status, output_url, output_urls, created_at
      FROM generations WHERE user_id = $1 ORDER BY id DESC LIMIT $2`,
     [userId, limit],
   );
@@ -1287,7 +1494,7 @@ export async function galleryPage(
   offset: number,
 ): Promise<{ items: GenerationRow[]; total: number }> {
   const items = await q(
-    `SELECT id, model, prompt, credits, status, output_url, created_at
+    `SELECT id, model, prompt, credits, status, output_url, output_urls, created_at
      FROM generations
      WHERE user_id = $1 AND status = 'ok' AND output_url IS NOT NULL
      ORDER BY id DESC LIMIT $2 OFFSET $3`,
@@ -1299,6 +1506,22 @@ export async function galleryPage(
     [userId],
   );
   return { items: items.map(mapGeneration), total: Number(cnt[0]?.c ?? 0) };
+}
+
+/**
+ * Prompt Enhancer free-rule (Cinema Studio ②, decision D2): the FIRST enhance
+ * after each generation start is free. Derived from the events log — free iff
+ * the user's most recent 'enhance'/'gen_start' event is a gen_start (every
+ * render re-arms one free enhance), or neither exists yet (a brand-new user's
+ * very first enhance is free). No schema change, no extra counter to drift.
+ */
+export async function enhanceIsFree(userId: number): Promise<boolean> {
+  const rows = await q(
+    `SELECT type FROM events WHERE user_id = $1 AND type IN ('enhance','gen_start')
+     ORDER BY id DESC LIMIT 1`,
+    [userId],
+  );
+  return rows.length === 0 || rows[0].type === "gen_start";
 }
 
 /**
@@ -1341,8 +1564,10 @@ export async function userDashboard(userId: number): Promise<{
   referralCount: number; // friends invited (distinct users)
   referralPaying: number; // of them, friends who have purchased
   watermarkEnabled: boolean; // brand deliverables (user setting)
+  xp: number; // reward-architecture P1 — permanent, zero-COGS, never spendable
+  level: number; // derived from xp; 0 until economy_config's level.threshold.* is configured
 }> {
-  const u = await q("SELECT credits, watermark_enabled FROM users WHERE id = $1", [userId]);
+  const u = await q("SELECT credits, watermark_enabled, xp FROM users WHERE id = $1", [userId]);
   const gen = await q(
     `SELECT COUNT(*)::int AS total,
             COALESCE(SUM(CASE WHEN status='ok' THEN 1 ELSE 0 END),0)::int AS ok
@@ -1378,6 +1603,8 @@ export async function userDashboard(userId: number): Promise<{
     referralCount: Number(friends[0].invited),
     referralPaying: Number(friends[0].paying),
     watermarkEnabled: u[0] ? u[0].watermark_enabled !== false : true,
+    xp: u[0] ? Number(u[0].xp) : 0,
+    level: await getLevel(userId),
   };
 }
 
@@ -1634,4 +1861,225 @@ export async function stats(): Promise<{
     )[0].s,
   );
   return { users, paid, generations, kztRevenue };
+}
+
+// ---- Reward-architecture economy config (P0) ----
+// Deliberately no in-code defaults/fallbacks for these values: an unset key means
+// the feature reading it stays inert (e.g. "no XP awarded", "no season active")
+// rather than silently running on a guessable public-source number. See the
+// table comment above and neuroshot-reward-architecture-v1.md §8.
+
+/** A tuned economy scalar (XP-per-action, level threshold, season cap, …), or null if never set. */
+export async function getEconomyConfig(key: string): Promise<number | null> {
+  const rows = await q("SELECT value FROM economy_config WHERE key = $1", [key]);
+  return rows[0] ? Number(rows[0].value) : null;
+}
+
+/** Admin-only write path (bot.ts /econ_set) — upserts a single tuned value. */
+export async function setEconomyConfig(key: string, value: number): Promise<void> {
+  await q(
+    `INSERT INTO economy_config (key, value) VALUES ($1, $2)
+     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
+    [key, value],
+  );
+}
+
+/** Every tuned value currently set — powers the admin /econ listing. Never user-facing. */
+export async function allEconomyConfig(): Promise<Array<{ key: string; value: number }>> {
+  const rows = await q("SELECT key, value FROM economy_config ORDER BY key");
+  return rows.map((r) => ({ key: String(r.key), value: Number(r.value) }));
+}
+
+/** The minimum account Level required to use a preset, or null if ungated (open to everyone). */
+export async function getPresetMinLevel(presetId: string): Promise<number | null> {
+  const rows = await q("SELECT min_level FROM preset_gating WHERE preset_id = $1", [presetId]);
+  return rows[0] ? Number(rows[0].min_level) : null;
+}
+
+/** Admin-only write path (bot.ts /econ_gate) — upserts one preset's level gate. */
+export async function setPresetGating(presetId: string, minLevel: number): Promise<void> {
+  await q(
+    `INSERT INTO preset_gating (preset_id, min_level) VALUES ($1, $2)
+     ON CONFLICT (preset_id) DO UPDATE SET min_level = $2, updated_at = now()`,
+    [presetId, minLevel],
+  );
+}
+
+/** Every preset gate currently set — powers the admin /econ listing. */
+export async function allPresetGating(): Promise<Array<{ preset_id: string; min_level: number }>> {
+  const rows = await q("SELECT preset_id, min_level FROM preset_gating ORDER BY preset_id");
+  return rows.map((r) => ({ preset_id: String(r.preset_id), min_level: Number(r.min_level) }));
+}
+
+// ---- Reward-architecture XP / Level (P1) ----
+// XP is a separate, zero-COGS currency from Кадры/credits — it is NEVER
+// spendable and never converts (neuroshot-reward-architecture-v1.md §2). It only
+// ever moves the permanent Level, which only ever gates ACCESS (preset_gating),
+// never generation volume. `action` values award whatever economy_config has
+// configured for `xp.<action>` — an unconfigured action awards 0 and writes
+// nothing, so this whole subsystem is inert until an admin opts pieces of it in.
+
+/** Total permanent XP a user has accumulated (never resets, never spendable). */
+export async function getUserXp(userId: number): Promise<number> {
+  const rows = await q("SELECT xp FROM users WHERE id = $1", [userId]);
+  return rows[0] ? Number(rows[0].xp) : 0;
+}
+
+/**
+ * Award XP for a named action (only if `xp.<action>` is configured — see
+ * economy_config above) and journal it. Returns the amount actually awarded
+ * (0 if the action isn't configured, i.e. this feature isn't turned on yet).
+ */
+export async function awardXp(userId: number, action: string, meta?: string): Promise<number> {
+  const amount = await getEconomyConfig(`xp.${action}`);
+  if (!amount) return 0;
+  await q(
+    `WITH upd AS (UPDATE users SET xp = xp + $1 WHERE id = $2 RETURNING id)
+     INSERT INTO xp_ledger (user_id, delta, reason, meta) SELECT $2, $1, $3, $4 FROM upd`,
+    [amount, userId, action, meta ?? null],
+  );
+  return amount;
+}
+
+/**
+ * Derive the account's permanent Level from its XP against economy_config's
+ * `level.threshold.<N>` ladder (N=1,2,3,…, each value = cumulative XP required).
+ * Walks upward from 1 while a threshold is configured AND met; stops at the
+ * first gap (unset threshold) or the first unmet one. Level 0 means either no
+ * thresholds are configured yet, or XP hasn't reached level.threshold.1 —
+ * either way, preset_gating checks against Level 0 unlock only ungated presets.
+ */
+export async function getLevel(userId: number): Promise<number> {
+  const xp = await getUserXp(userId);
+  let level = 0;
+  for (let n = 1; n <= 100; n++) {
+    const threshold = await getEconomyConfig(`level.threshold.${n}`);
+    if (threshold == null || xp < threshold) break;
+    level = n;
+  }
+  return level;
+}
+
+/**
+ * Claim the one-time "save" XP for a generation — idempotent (xp_save_claims
+ * is a hard PK guard, so re-tapping "Скачать" can't re-earn it) and daily-capped
+ * via economy_config's `xp.save.dailycap` (unset = uncapped once xp.save itself
+ * is configured). Only the generation's OWNER can claim it, and only for a
+ * completed ('ok') render. Returns the XP actually awarded (0 if already
+ * claimed, not the owner, not done, capped, or xp.save isn't configured).
+ */
+export async function claimSaveXp(generationId: number, userId: number): Promise<number> {
+  // Check whether the feature is even on FIRST, before touching the claims
+  // table — otherwise a save tapped while xp.save is still unconfigured would
+  // permanently burn that generation's one-time claim slot, and turning the
+  // feature on later could never award it retroactively.
+  const amount = await getEconomyConfig("xp.save");
+  if (!amount) return 0;
+  const gen = await q("SELECT id FROM generations WHERE id = $1 AND user_id = $2 AND status = 'ok'", [
+    generationId,
+    userId,
+  ]);
+  if (!gen.length) return 0;
+  const won = await q(
+    "INSERT INTO xp_save_claims (generation_id) VALUES ($1) ON CONFLICT DO NOTHING RETURNING generation_id",
+    [generationId],
+  );
+  if (!won.length) return 0; // already claimed
+  const cap = await getEconomyConfig("xp.save.dailycap");
+  if (cap != null) {
+    const today = await q(
+      "SELECT COUNT(*)::int AS c FROM xp_ledger WHERE user_id = $1 AND reason = 'save' AND created_at > now() - interval '24 hours'",
+      [userId],
+    );
+    if (Number(today[0].c) >= cap) return 0;
+  }
+  return awardXp(userId, "save", String(generationId));
+}
+
+// ---- Reward-architecture Season entity (P4a) ----
+
+export interface SeasonRow {
+  id: number;
+  key: string;
+  theme_label: string;
+  starts_at: string;
+  ends_at: string;
+}
+
+function mapSeason(r: Row): SeasonRow {
+  return {
+    id: Number(r.id),
+    key: String(r.key),
+    theme_label: String(r.theme_label),
+    starts_at: String(r.starts_at),
+    ends_at: String(r.ends_at),
+  };
+}
+
+/** Admin-only (bot.ts /season_new). `days` must be positive; key must be unique. */
+export async function createSeason(
+  key: string,
+  themeLabel: string,
+  days: number,
+): Promise<SeasonRow | { error: "duplicate_key" }> {
+  try {
+    const rows = await q(
+      `INSERT INTO seasons (key, theme_label, starts_at, ends_at)
+       VALUES ($1, $2, now(), now() + ($3 || ' days')::interval)
+       RETURNING id, key, theme_label, starts_at, ends_at`,
+      [key, themeLabel, String(Math.max(1, Math.floor(days)))],
+    );
+    return mapSeason(rows[0]);
+  } catch (err) {
+    // Unique-violation on `key` — surface as a typed result rather than throwing,
+    // so the admin command can give a clean "already exists" reply.
+    if (err instanceof Error && /unique|duplicate/i.test(err.message)) return { error: "duplicate_key" };
+    throw err;
+  }
+}
+
+/** The currently running season, or null — the normal state until an admin creates one. */
+export async function getActiveSeason(): Promise<SeasonRow | null> {
+  const rows = await q(
+    "SELECT id, key, theme_label, starts_at, ends_at FROM seasons WHERE starts_at <= now() AND ends_at >= now() ORDER BY starts_at DESC LIMIT 1",
+  );
+  return rows[0] ? mapSeason(rows[0]) : null;
+}
+
+/** All seasons (past/active/upcoming), newest-first — powers the admin /season_list. */
+export async function listSeasons(): Promise<SeasonRow[]> {
+  const rows = await q("SELECT id, key, theme_label, starts_at, ends_at FROM seasons ORDER BY starts_at DESC");
+  return rows.map(mapSeason);
+}
+
+
+/**
+ * Median wall-clock seconds from charge to delivery, per model, over recent
+ * SUCCESSFUL renders — the honest basis for "сколько ещё ждать". Median, not
+ * mean, so one pathological 6-minute outlier doesn't inflate everyone's ETA.
+ * A model only appears once it has MIN_ETA_SAMPLES finished runs; until then
+ * the UI must fall back to its coarse "обычно 10–30 секунд" copy rather than
+ * show a number we made up.
+ */
+const MIN_ETA_SAMPLES = 5;
+export async function modelEtaSeconds(hours = 72): Promise<Record<string, number>> {
+  const rows = await q(
+    `SELECT model,
+            percentile_cont(0.5) WITHIN GROUP (
+              ORDER BY EXTRACT(EPOCH FROM (finished_at - created_at))
+            ) AS med,
+            COUNT(*)::int AS n
+     FROM generations
+     WHERE status = 'ok' AND finished_at IS NOT NULL
+       AND created_at > now() - make_interval(hours => $1)
+     GROUP BY model`,
+    [hours],
+  );
+  const out: Record<string, number> = {};
+  for (const r of rows) {
+    if (Number(r.n) < MIN_ETA_SAMPLES) continue;
+    const sec = Math.round(Number(r.med));
+    if (Number.isFinite(sec) && sec > 0) out[String(r.model)] = sec;
+  }
+  return out;
 }

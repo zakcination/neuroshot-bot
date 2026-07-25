@@ -6,6 +6,7 @@
  * https://fal.ai/explore/models before deploying, and prefer updating here
  * over hardcoding IDs elsewhere.
  */
+import { config } from "./config.js";
 import { UNIT_EMOJI } from "./text.js";
 
 export type ModelKind = "image_edit" | "text_to_image" | "image_to_video";
@@ -16,6 +17,18 @@ export interface GenOpts {
   aspectRatio?: string; // "auto" | "1:1" | "9:16" | "16:9" | "4:3" | "3:4"
   endImageUrl?: string; // video END frame (Kling 3.0 / Seedance) — start frame is the source image
   resolution?: string; // quality-tier id (model-specific: "1K"/"2K"/"4K", "480p"/"720p")
+  numImages?: number; // output count — image models only, clamped to image.maxCount
+  /**
+   * A curated STYLE reference image, appended after the user's photo in
+   * `image_urls` so the model can read our look (palette, light, materials)
+   * instead of inferring it from words alone.
+   *
+   * SERVER-SET ONLY. normalizeOpts deliberately does not copy this field, so a
+   * client can never put a URL here — otherwise /api/generate would become a
+   * "fetch any URL you name and hand it to our provider" primitive. It is
+   * assigned AFTER normalizeOpts, from the preset registry (styleRefUrl below).
+   */
+  styleRefUrl?: string;
 }
 
 /** A quality/resolution tier the composer can offer; `mult` scales credits AND cost. */
@@ -29,6 +42,11 @@ export interface ResTier {
 export interface ImageParams {
   aspectRatios: string[]; // selectable ratios; "auto" ⇒ model/source decides
   resolutions?: ResTier[]; // optional quality ladder; resolutions[0] = default
+  /** Max output count via `num_images` (fal-verified — docs/cinema-studio-model-params.md P5).
+   *  Every image endpoint in the registry declares `num_images`, confirmed against
+   *  the live fal queue OpenAPI schemas. The cap here is OURS, not the provider's:
+   *  it bounds the worst-case spend a single tap can trigger. */
+  maxCount?: number;
 }
 
 /** Video composer capabilities + per-second pricing (credits scale with length). */
@@ -46,7 +64,17 @@ export interface ModelSpec {
   falEndpoint: string;
   credits: number; // charge for the DEFAULT settings (5s video / one image)
   approxCostUsd: number;
+  /**
+   * The provider's REAL model name, shown as-is. Users of this category already
+   * know "Nano Banana Pro" / "Seedream" / "GPT Image" and search for exactly
+   * those strings; inventing a house name for them adds a translation step and
+   * hides which engine they are actually buying. (This reverses an earlier
+   * benefit-naming decision — see git history.) Also rendered by
+   * payments.paywallText, so it must read sensibly in a sentence.
+   */
   label: string;
+  /** One short line of what the model is FOR — the benefit the name doesn't carry. */
+  note?: string;
   /** Builds the fal input payload. imageUrl set for edit/video; opts from the composer. */
   input: (prompt: string, imageUrl?: string, opts?: GenOpts) => Record<string, unknown>;
   /** Present on image models the composer can fine-tune (aspect ratio / quality). */
@@ -84,6 +112,44 @@ function arParam(opts: GenOpts | undefined): { aspect_ratio?: string } {
 function endParam(opts: GenOpts | undefined): { end_image_url?: string } {
   return opts?.endImageUrl ? { end_image_url: opts.endImageUrl } : {};
 }
+/**
+ * Resolve a preset's `styleRef` filename to an absolute URL fal can fetch.
+ * Our own art under public/img, never a caller-supplied address — the filename
+ * comes from the registry, so the set of reachable URLs is fixed at build time.
+ * Returns undefined when WEBAPP_URL isn't configured (nothing public to serve
+ * from): a style reference is an ENHANCEMENT, so its absence must degrade to a
+ * words-only render, never to a failed generation.
+ */
+export function styleRefUrl(file: string | undefined): string | undefined {
+  if (!file || !config.webappUrl) return undefined;
+  return `${config.webappUrl.replace(/\/+$/, "")}/img/${file}`;
+}
+/**
+ * The model payload's image list plus the optional style reference. Order is
+ * load-bearing: the user's photo stays FIRST (it is the identity anchor that
+ * KEEP_ID refers to) and the reference follows as supporting material.
+ */
+function refUrls(imageUrl: string | undefined, opts: GenOpts | undefined): string[] {
+  return [imageUrl, opts?.styleRefUrl].filter((u): u is string => !!u);
+}
+/**
+ * Tells the model what the second image is FOR. Without this the reference is
+ * ambiguous and the model may treat it as a second subject — blending faces,
+ * which would break the one promise the product actually makes.
+ */
+function refPrompt(prompt: string, opts: GenOpts | undefined): string {
+  if (!opts?.styleRefUrl) return prompt;
+  return (
+    `${prompt} The second image is a STYLE REFERENCE ONLY — copy its palette, lighting, ` +
+    `materials and mood. Do not copy any person, face or body from it; the subject is ` +
+    `taken solely from the first image.`
+  );
+}
+/** {num_images} for image models — clamped to the model's declared maxCount, omitted at the default of 1. */
+function countParam(maxCount: number, opts: GenOpts | undefined): { num_images?: number } {
+  if (!opts?.numImages || opts.numImages <= 1) return {};
+  return { num_images: Math.min(maxCount, Math.floor(opts.numImages)) };
+}
 
 /** Quality ladders (credit multiplier covers the higher provider cost with margin). */
 // Nano Banana 2 native multi-resolution: 1K base, 2K = 1.5× rate, 4K = 2× rate
@@ -115,9 +181,10 @@ export const MODELS = {
     falEndpoint: "fal-ai/nano-banana/edit",
     credits: 3,
     approxCostUsd: 0.06,
-    label: "🖼 Редактирование фото",
-    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], ...arParam(opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS },
+    label: "Nano Banana",
+    note: "правки по фото — быстро и дёшево",
+    input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), ...arParam(opts), ...countParam(4, opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 4 },
   },
   text_to_image: {
     key: "text_to_image",
@@ -125,26 +192,28 @@ export const MODELS = {
     falEndpoint: "fal-ai/bytedance/seedream/v4.5/text-to-image",
     credits: 2,
     approxCostUsd: 0.04,
-    label: "✨ Картинка из текста",
-    input: (prompt, _img, opts) => ({ prompt, ...sizeParam(opts, true) }),
-    image: { aspectRatios: IMAGE_ASPECTS },
+    label: "Seedream 4.5",
+    note: "картинка из текста",
+    input: (prompt, _img, opts) => ({ prompt, ...sizeParam(opts, true), ...countParam(6, opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 6 },
   },
   // Seedream 4.5 edit — the default scenario image engine (photo → styled scene).
   // Stronger face-anchored scene edits than v4 at the same 2 🔫 tier ($0.04/img);
   // same input contract (prompt + image_urls), so it's a drop-in over v4.
-  // Label deliberately drops the provider codename: not in a model picker, but
-  // this IS PRESET_MODEL, and payments.paywallText renders `model.label`
+  // NB this IS PRESET_MODEL, and payments.paywallText renders `model.label`
   // directly when a preset/campaign generation hits the insufficient-credits
-  // paywall — so it does reach users, just not through a picker keyboard.
+  // paywall — so the name reaches users outside any picker too. "Seedream 4.5"
+  // reads fine in that sentence.
   seedream_edit: {
     key: "seedream_edit",
     kind: "image_edit",
     falEndpoint: "fal-ai/bytedance/seedream/v4.5/edit",
     credits: 2,
     approxCostUsd: 0.04,
-    label: "🖼 Сцена по фото",
-    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], ...sizeParam(opts, true) }),
-    image: { aspectRatios: IMAGE_ASPECTS },
+    label: "Seedream 4.5",
+    note: "сцена по вашему фото",
+    input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), ...sizeParam(opts, true), ...countParam(6, opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 6 },
   },
   animate: {
     key: "animate",
@@ -152,7 +221,8 @@ export const MODELS = {
     falEndpoint: "fal-ai/kling-video/v2.5-turbo/standard/image-to-video",
     credits: 25,
     approxCostUsd: 0.5,
-    label: "🎬 Оживление фото",
+    label: "Kling 2.5 Turbo",
+    note: "оживить фото",
     // Kling 2.5-turbo has NO aspect_ratio param (ratio is inherited from the frame)
     // and no end-frame — don't advertise settings fal will silently ignore.
     input: (prompt, imageUrl, opts) => ({
@@ -168,9 +238,12 @@ export const MODELS = {
     falEndpoint: "fal-ai/gpt-image-2",
     credits: 11,
     approxCostUsd: 0.21, // high quality, 1024x1024
-    label: "💎 Премиум-картинка",
-    input: (prompt, _img, opts) => ({ prompt, quality: "high", image_size: sizeParam(opts, false).image_size ?? "square" }),
-    image: { aspectRatios: IMAGE_ASPECTS },
+    label: "GPT Image 2",
+    note: "текст на картинке, сложные сцены",
+    input: (prompt, _img, opts) => ({ prompt, quality: "high", image_size: sizeParam(opts, false).image_size ?? "square", ...countParam(2, opts) }),
+    // Count capped at 2, not 4: this is the most expensive image tier we run
+    // ($0.21/img), so a single tap must not be able to spend 44 🔫.
+    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 2 },
   },
   premium_edit: {
     key: "premium_edit",
@@ -178,9 +251,13 @@ export const MODELS = {
     falEndpoint: "openai/gpt-image-2/edit",
     credits: 11,
     approxCostUsd: 0.22, // high quality, 1024x1024
-    label: "💎 Премиум-правка",
-    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], quality: "high", ...sizeParam(opts, false) }),
-    image: { aspectRatios: IMAGE_ASPECTS },
+    label: "GPT Image 2",
+    note: "правка с текстом и типографикой",
+    // `image_urls` is an array here too, so a preset's curated style reference
+    // rides along exactly as it does on the Seedream/Nano Banana edit paths —
+    // without this a `styleRef` on a premium_edit preset would be silently dropped.
+    input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), quality: "high", ...sizeParam(opts, false), ...countParam(2, opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 2 },
   },
 
   // --- Top-tier models (verified against fal.ai model pages, Jul 2026) ---
@@ -190,17 +267,16 @@ export const MODELS = {
   // on mobile Stars payout and after the referral share. Re-verify before launch.
 
   // Nano Banana 2 (Google) — fast SOTA image, $0.08/img @1K.
-  // Labels are benefit/tier-named, never the fal provider codename — "Nano
-  // Banana" reads as a novelty app name to a user, not a professional tool.
   nb2_image: {
     key: "nb2_image",
     kind: "text_to_image",
     falEndpoint: "fal-ai/nano-banana-2",
     credits: 4,
     approxCostUsd: 0.08,
-    label: "🎨 Картинка — быстро",
-    input: (prompt, _img, opts) => ({ prompt, resolution: opts?.resolution ?? "1K", ...arParam(opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES },
+    label: "Nano Banana 2",
+    note: "картинка из текста, до 4K",
+    input: (prompt, _img, opts) => ({ prompt, resolution: opts?.resolution ?? "1K", ...arParam(opts), ...countParam(4, opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES, maxCount: 4 },
   },
   nb2_edit: {
     key: "nb2_edit",
@@ -208,9 +284,10 @@ export const MODELS = {
     falEndpoint: "fal-ai/nano-banana-2/edit",
     credits: 4,
     approxCostUsd: 0.08,
-    label: "🎨 Правка — быстро",
-    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], resolution: opts?.resolution ?? "1K", ...arParam(opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES },
+    label: "Nano Banana 2",
+    note: "правка по фото, до 4K",
+    input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), resolution: opts?.resolution ?? "1K", ...arParam(opts), ...countParam(4, opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES, maxCount: 4 },
   },
   // Nano Banana Pro (Gemini 3 Pro) — SOTA image, $0.15/img @1K–2K.
   nbpro_image: {
@@ -219,9 +296,10 @@ export const MODELS = {
     falEndpoint: "fal-ai/nano-banana-pro",
     credits: 8,
     approxCostUsd: 0.15,
-    label: "🎨 Картинка — детально (2K)",
-    input: (prompt, _img, opts) => ({ prompt, resolution: opts?.resolution ?? "2K", ...arParam(opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES },
+    label: "Nano Banana Pro",
+    note: "максимум деталей",
+    input: (prompt, _img, opts) => ({ prompt, resolution: opts?.resolution ?? "2K", ...arParam(opts), ...countParam(4, opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES, maxCount: 4 },
   },
   nbpro_edit: {
     key: "nbpro_edit",
@@ -229,9 +307,10 @@ export const MODELS = {
     falEndpoint: "fal-ai/nano-banana-pro/edit",
     credits: 8,
     approxCostUsd: 0.15,
-    label: "🎨 Правка — детально (2K)",
-    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], resolution: opts?.resolution ?? "2K", ...arParam(opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES },
+    label: "Nano Banana Pro",
+    note: "правка с максимумом деталей",
+    input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), resolution: opts?.resolution ?? "2K", ...arParam(opts), ...countParam(4, opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES, maxCount: 4 },
   },
   // Kling 3.0 Pro — top image→video, $0.168/s audio-on → 5s ≈ $0.84.
   kling3: {
@@ -240,7 +319,8 @@ export const MODELS = {
     falEndpoint: "fal-ai/kling-video/v3/pro/image-to-video",
     credits: 42,
     approxCostUsd: 0.84,
-    label: "🎬 Кино-движение",
+    label: "Kling 3.0 Pro",
+    note: "кинематографичное движение, финальный кадр",
     // Kling 3.0 has NO aspect_ratio param (ratio inherited from the start frame)
     // but DOES support an end frame — morph from the source image into end_image_url.
     input: (prompt, imageUrl, opts) => ({
@@ -258,7 +338,8 @@ export const MODELS = {
     falEndpoint: "bytedance/seedance-2.0/fast/image-to-video",
     credits: 61,
     approxCostUsd: 1.21,
-    label: "🎬 Эпичная сцена",
+    label: "Seedance 2.0 Fast",
+    note: "физика и сложные сцены",
     input: (prompt, imageUrl, opts) => ({
       prompt,
       image_url: imageUrl,
@@ -283,7 +364,8 @@ export const MODELS = {
     falEndpoint: "bytedance/seedance-2.0/image-to-video",
     credits: 76,
     approxCostUsd: 1.52,
-    label: "🎬 Видео со звуком",
+    label: "Seedance 2.0",
+    note: "со звуком — флагман",
     input: (prompt, imageUrl, opts) => ({
       prompt,
       image_url: imageUrl,
@@ -311,7 +393,8 @@ export const MODELS = {
     falEndpoint: "fal-ai/minimax/hailuo-2.3-fast/standard/image-to-video",
     credits: 10,
     approxCostUsd: 0.19,
-    label: "⚡ Видео — эконом",
+    label: "Hailuo 2.3 Fast",
+    note: "самое дешёвое видео",
     input: (prompt, imageUrl, opts) => ({
       prompt,
       image_url: imageUrl,
@@ -322,9 +405,8 @@ export const MODELS = {
 } satisfies Record<string, ModelSpec>;
 
 /**
- * Model pickers surfaced in the bot — a price/quality ladder, labeled by
- * OUTCOME and TIER, never the fal provider codename (a raw name like "Nano
- * Banana Pro" reads as a novelty app, not a professional tool).
+ * Model pickers surfaced in the bot — a price/quality ladder under the models'
+ * REAL names (see ModelSpec.label); `note` carries what each one is for.
  * Order = display order; each entry must be a real MODELS key of the right kind.
  * Default lineup (Jul 2026): fast SOTA image → detailed 2K → premium/GPT for
  * images; the cheap "эконом" video entry leads, then cinematic → epic → audio.
@@ -369,6 +451,13 @@ export function priceFor(model: ModelSpec, opts?: GenOpts): number {
     const t = tiers.find((x) => x.id === opts.resolution);
     if (t && t.mult !== 1) credits = Math.max(1, Math.ceil(credits * t.mult));
   }
+  // Output count: N images ≈ N provider runs — the charge scales linearly
+  // (docs/cinema-studio-model-params.md §4). Images only; clamped to maxCount.
+  const maxCount = model.image?.maxCount;
+  if (maxCount && opts?.numImages && opts.numImages > 1) {
+    const n = Math.min(maxCount, Math.floor(opts.numImages));
+    credits = Math.max(1, Math.ceil(credits * n));
+  }
   return credits;
 }
 
@@ -391,6 +480,10 @@ export function costUsdFor(model: ModelSpec, opts?: GenOpts): number {
   if (tiers && opts?.resolution) {
     const t = tiers.find((x) => x.id === opts.resolution);
     if (t && t.mult !== 1) usd *= t.mult;
+  }
+  const maxCount = model.image?.maxCount;
+  if (maxCount && opts?.numImages && opts.numImages > 1) {
+    usd *= Math.min(maxCount, Math.floor(opts.numImages));
   }
   return Math.round(usd * 1e6) / 1e6;
 }
@@ -420,6 +513,13 @@ export function normalizeOpts(model: ModelSpec, opts?: GenOpts): GenOpts | null 
   if (opts.endImageUrl != null) {
     if (!model.video?.endFrame) return null;
     out.endImageUrl = opts.endImageUrl;
+  }
+  // Output count — image models that declare maxCount only; must be a valid
+  // integer in [1, maxCount] (same reject-on-invalid convention as the others).
+  if (opts.numImages != null) {
+    const max = model.image?.maxCount;
+    if (!max || !Number.isInteger(opts.numImages) || opts.numImages < 1 || opts.numImages > max) return null;
+    out.numImages = opts.numImages;
   }
   return out;
 }
@@ -503,6 +603,16 @@ export interface Preset {
   /** Which use-case menu the preset belongs to. */
   category: "photo" | "product";
   prompt: string;
+  /**
+   * Optional curated STYLE reference — a filename under public/img, resolved to
+   * an absolute URL by styleRefUrl() and appended after the user's photo in
+   * image_urls. Use it when a look is easier to SHOW the model than to describe
+   * (a specific grade, material or lighting). Two hard rules: the art must be
+   * ours, and it must contain no usable face — a reference with a face invites
+   * the model to blend identities, which is the one thing this product cannot
+   * do. Applied only on the fal-verified edit models (see the params doc P7).
+   */
+  styleRef?: string;
   /**
    * Optional per-look model override. Most presets render on the cheap
    * PRESET_MODEL (Seedream edit); looks that DEPEND on on-image text/typography
@@ -885,6 +995,16 @@ export interface CampaignPreset {
   id: string;
   label: string;
   prompt: string;
+  /**
+   * Optional curated STYLE reference — a filename under public/img, resolved to
+   * an absolute URL by styleRefUrl() and appended after the user's photo in
+   * image_urls. Use it when a look is easier to SHOW the model than to describe
+   * (a specific grade, material or lighting). Two hard rules: the art must be
+   * ours, and it must contain no usable face — a reference with a face invites
+   * the model to blend identities, which is the one thing this product cannot
+   * do. Applied only on the fal-verified edit models (see the params doc P7).
+   */
+  styleRef?: string;
   /**
    * Difficulty tier for video scenes only (unset ⇒ "simple"). "simple" motion
    * (one clean action) runs on the cheap Hailuo default; "epic" scenes with
@@ -1350,6 +1470,161 @@ export const CAMPAIGNS: Campaign[] = [
           { id: "warm", label: "🌅 Тёплый", fragment: "Warm heartfelt emotional tone." },
           { id: "noir", label: "🕶 Триллер", fragment: "Tense noir-thriller atmosphere with moody shadows." },
           { id: "fun", label: "😄 Комедия", fragment: "Light comedic tone with playful energy." },
+        ],
+      },
+    ],
+  },
+  // Bronze-Age Homeric epic — our own trend drop, riding the fact that the myth
+  // is culturally in the air right now. Built on the EPIC ITSELF (Homer, public
+  // domain for ~2700 years), never on any studio's film, its title, or its cast:
+  //   • the whole product promise is that the user keeps THEIR face (KEEP_ID) —
+  //     rendering someone else's likeness would defeat the point, not serve it;
+  //   • an unreleased film has no visual reference a model can reliably reach
+  //     for, so "like the movie" yields mush while the real visual language
+  //     (hammered bronze, Aegean light, torchlit megaron, IMAX framing) yields
+  //     a shot every time.
+  // Deliberately covers both a warrior and a queen/goddess route so the core
+  // 25–34F segment gets a hero of their own, not a token option.
+  {
+    id: "odyssey",
+    label: "🏛 Одиссея — вы в эпосе",
+    header: "Кем вы будете в эпосе — один тап:",
+    ask: "Пришлите своё фото 🏛 — и станьте героем «Одиссеи»: бронза, море, свет факелов.",
+    presets: [
+      {
+        id: "king",
+        label: "👑 Одиссей",
+        // Our own cover plate — shot from behind, no usable face, so it can only
+        // hand the model palette/light/materials, never an identity.
+        styleRef: "card-odyssey.jpg",
+        prompt:
+          "Epic cinematic film still: the person as a Bronze Age Greek king-warrior on the deck of a wooden ship " +
+          "at dawn — hammered bronze cuirass with a deep-red wool cloak, leather bracers, a weathered sword at " +
+          "the hip, salt spray and rope rigging around them, the Aegean sea and distant islands behind, low-angle " +
+          "medium shot, hard morning sun with deep shadow, teal-and-bronze grade, IMAX-scale composition, " +
+          `photorealistic textures. ${KEEP_ID}`,
+      },
+      {
+        id: "agamemnon",
+        label: "🗡 Агамемнон — царь царей",
+        // Its own plate, in a COLD blue-steel-and-gold key — the rest of the
+        // campaign is warm amber/bronze, and Agamemnon is the one role that
+        // should read as command rather than adventure. Shot from behind with
+        // the head turned away: like every styleRef here, it carries palette,
+        // metal and cloth, never a face.
+        styleRef: "card-agamemnon.jpg",
+        prompt:
+          "Epic cinematic film still: the person as the high king and supreme commander of the Greek host, " +
+          "standing on the stone steps of a torchlit citadel at dusk — a layered plate cuirass in DARK " +
+          "desaturated gunmetal, near-black steel with only a faint cold cast (not bright blue), fine warm " +
+          "gold edging, a heavy gold sun-medallion clasp at each shoulder, a tall helmet with a black " +
+          "horsehair crest and gold trim pushed back clear of the face, a thick charcoal wool cloak with a " +
+          "deep folded collar, leather pteruges, a sheathed sword at the hip; ranks of spears and shields " +
+          "blurred in the haze behind. THE CAMERA IS LOW, on the steps below him, looking UP so he towers " +
+          "over the frame — medium shot. Hard torch rim light rakes across hammered, scratched, battle-worn " +
+          "metal; near-black steel and gold against warm flame, deep shadow. The face is weathered and alive " +
+          "— set jaw, the weight of ten years of war in the eyes, real skin with sweat, dust and stubble, " +
+          "not a smooth render. Shot on 85mm, shallow depth of field, photorealistic — a photograph, never " +
+          `CGI or a 3D game model. ${KEEP_ID}`,
+      },
+      {
+        id: "warrior",
+        label: "⚔️ Воин Трои",
+        styleRef: "card-odyssey.jpg",
+        prompt:
+          "Epic cinematic film still: the person as a battle-worn Bronze Age Greek warrior before the walls of a " +
+          "besieged citadel — crested bronze helmet pushed back off the face, scarred bronze breastplate, round " +
+          "shield and spear, dust and ash in the air, ranks of soldiers blurred behind, low-angle medium shot, " +
+          `harsh side light through haze, muted bronze-and-ochre grade, photorealistic. ${KEEP_ID}`,
+      },
+      {
+        id: "athena",
+        label: "🦉 Афина — богиня войны",
+        prompt:
+          "Epic cinematic film still: the person as the grey-eyed goddess of war and wisdom — polished bronze " +
+          "armour over a flowing chiton, a tall crested helmet held at the side, an owl perched nearby, standing " +
+          "in a shaft of divine light on marble temple steps, wind moving fabric, medium shot at eye level, " +
+          `cool silver-and-bronze grade, awe-struck scale, photorealistic. ${KEEP_ID}`,
+      },
+      {
+        id: "penelope",
+        label: "🕯 Пенелопа — царица Итаки",
+        prompt:
+          "Epic cinematic film still: the person as the queen of Ithaca in a torchlit stone megaron — a rich " +
+          "draped robe with gold shoulder pins, a great loom half-woven beside them, hand resting on the thread, " +
+          "quiet unbreakable resolve on the face, firelight flickering across stone columns, medium shot, warm " +
+          `amber-and-shadow grade, painterly cinematic detail. ${KEEP_ID}`,
+      },
+      {
+        id: "horse",
+        label: "🐴 Ночь троянского коня",
+        prompt:
+          "Epic cinematic film still at night: the person in bronze armour standing before the enormous wooden " +
+          "horse inside the citadel gates, torches guttering in the wind, smoke and embers drifting, the crowd a " +
+          "dark silhouette behind, wide-to-medium shot from low angle, firelight rim on the armour against deep " +
+          `blue night, ominous grandeur, photorealistic textures. ${KEEP_ID}`,
+      },
+    ],
+    animateLabel: "🎬 Оживить эпос",
+    // Default beat is deliberately cheap and simple — wind, cloak, one turn to
+    // camera. The physics-heavy scenes below carry tier:"epic" and auto-upgrade.
+    animatePrompt:
+      "Wind drives the cloak and hair as the subject slowly turns to face the camera, chin lifting, eyes hard; " +
+      "dust and sea spray drift through hard low sunlight, slow cinematic push-in — one steady, monumental beat.",
+    animateModel: MODELS.hailuo_fast,
+    videoScenes: [
+      {
+        id: "turn",
+        label: "🌬 Ветер и взгляд",
+        prompt:
+          "The cloak snaps in a hard sea wind and the subject turns slowly to the camera, jaw set, holding the " +
+          "look; light haze and spray drift past, slow push-in — one still, monumental beat.",
+      },
+      {
+        id: "storm",
+        label: "🌊 Гнев Посейдона",
+        tier: "epic",
+        prompt:
+          "A towering wave breaks over the ship's deck as the subject braces against the mast, drenched, rigging " +
+          "whipping, the hull pitching hard under black storm sky with lightning; the camera rolls with the deck — " +
+          "roaring sea and thunder, one violent, breathtaking beat.",
+      },
+      {
+        id: "battle",
+        label: "⚔️ Стена щитов",
+        tier: "epic",
+        prompt:
+          "The subject drives forward at the head of a bronze shield wall, spears levelling, dust exploding " +
+          "underfoot, war cries and clashing bronze all around; the camera tracks alongside at low angle — one " +
+          "thunderous, chaotic charge.",
+      },
+      {
+        id: "bow",
+        label: "🏹 Великий лук",
+        tier: "epic",
+        prompt:
+          "In a torchlit hall the subject draws an enormous war bow in one slow, impossible motion, the string " +
+          "creaking, the room falling silent around them, firelight sliding across bronze; the camera pushes in " +
+          "to the eyes as the arrow is loosed — one held-breath beat.",
+      },
+    ],
+    quiz: [
+      {
+        id: "place",
+        question: "Где вы?",
+        options: [
+          { id: "sea", label: "🌊 В море", fragment: "Set the scene on the open Aegean sea aboard a wooden ship." },
+          { id: "palace", label: "🏛 Во дворце", fragment: "Set the scene inside a torchlit stone palace hall with painted columns." },
+          { id: "field", label: "⚔️ На поле битвы", fragment: "Set the scene on a dusty battlefield before high citadel walls." },
+        ],
+      },
+      {
+        id: "light",
+        question: "Какой свет?",
+        options: [
+          { id: "dawn", label: "🌅 Рассвет", fragment: "Hard low dawn light with long shadows and golden rim light." },
+          { id: "torch", label: "🔥 Факелы", fragment: "Flickering torchlight and deep shadow, warm amber on bronze." },
+          { id: "storm", label: "⛈ Гроза", fragment: "Black storm sky with cold lightning flashes and driving rain." },
         ],
       },
     ],

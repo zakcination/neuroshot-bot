@@ -1,0 +1,4 @@
+# Every file needs a review from the repo owner before merge (paired with
+# branch protection's "Require review from Code Owners" — see the setup
+# steps in the PR/chat history, or docs/deploy.md).
+* @zakcination

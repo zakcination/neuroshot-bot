@@ -31,9 +31,9 @@ process.env.DUB_USD_PER_SEC = "0.02";
 const { fal } = await import("@fal-ai/client");
 const { createBot, fastStartLessonMessages, flagshipModuleMessages } = await import("../src/bot.js");
 const { drainRenders, inFlightRenders } = await import("../src/generate.js");
-const { funnel, query, getUser, getOrCreateUser, addCredits, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay, createPendingGeneration, completeGeneration, claimFreePhone, phoneClaimedFree, setUserPhone } = await import("../src/db.js");
+const { funnel, query, getUser, getOrCreateUser, addCredits, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay, createPendingGeneration, completeGeneration, claimFreePhone, phoneClaimedFree, setUserPhone, createOrder, getOrder, deleteUserData, getEconomyConfig, getPresetMinLevel, getActiveSeason, listSeasons } = await import("../src/db.js");
 const { startDubbing, dubCredits, availableDubTargets } = await import("../src/dubbing.js");
-const { buildDigest, checkAlerts, nudgeText, runReengagement, runReaper } = await import("../src/monitor.js");
+const { buildDigest, checkAlerts, nudgeText, runReengagement, runReaper, runOrderReconciler } = await import("../src/monitor.js");
 const { nUnits, nResults } = await import("../src/text.js");
 const { PRESETS, presetModel } = await import("../src/models.js");
 
@@ -125,10 +125,24 @@ let falShouldFail = false;
 let falDelayMs = 0; // >0 keeps a detached render tail in-flight long enough to observe
 
 // The fal singleton is a plain object; generate.ts looks up `fal.subscribe` per call.
+// Content moderation (moderation.ts): every uploaded photo is screened via
+// fal-ai/imageutils/nsfw before it can be used as generation input. Tracked
+// as its OWN edge (not pushed into falCalls) — dozens of existing assertions
+// use falCalls.length deltas to mean "the generation MODEL ran N times", and
+// this classifier call happens in addition to that on every photo-based
+// generation; conflating the two would silently break every such count.
+// Default SAFE (0) so existing journeys are unaffected; individual steps
+// flip this to exercise the block/refund path, then must reset it to 0.
+let nsfwProbability = 0;
+let nsfwCheckCalls = 0;
 (fal as { subscribe: unknown }).subscribe = async (
   endpoint: string,
   opts: { input: Record<string, unknown> },
 ) => {
+  if (endpoint === "fal-ai/imageutils/nsfw") {
+    nsfwCheckCalls++;
+    return { data: { nsfw_probability: nsfwProbability }, requestId: "req-nsfw" };
+  }
   falCalls.push({ endpoint, input: opts.input });
   if (falDelayMs > 0) await new Promise((r) => setTimeout(r, falDelayMs));
   if (falShouldFail) throw new Error("simulated provider outage");
@@ -137,6 +151,23 @@ let falDelayMs = 0; // >0 keeps a detached render tail in-flight long enough to 
     : { images: [{ url: `https://fal.test/out/${falCalls.length}.png` }] };
   return { data, requestId: `req-${falCalls.length}` };
 };
+
+// telegramFileUrl (generate.ts) now downloads the Telegram file itself and
+// re-hosts it on fal storage instead of handing fal a URL with the bot's live
+// token embedded — stub both network edges. Only intercepts the Telegram file
+// host; anything else falls through to the real fetch (unused in this suite).
+const realFetch = globalThis.fetch;
+let tgFileFetches = 0;
+globalThis.fetch = (async (input: unknown, init?: unknown) => {
+  const url = typeof input === "string" ? input : (input as { toString(): string }).toString();
+  if (url.startsWith("https://api.telegram.org/file/")) {
+    tgFileFetches++;
+    return new Response(new Uint8Array([0xff, 0xd8, 0xff]), { status: 200 }); // fake jpeg bytes
+  }
+  return realFetch(input as never, init as never);
+}) as typeof fetch;
+let storageUploadCount = 0;
+(fal.storage as unknown as { upload: unknown }).upload = async () => `https://fal.test/storage/tg-${++storageUploadCount}.jpg`;
 
 // ---------- update factories ----------
 
@@ -342,10 +373,13 @@ await step("photo→edit: action keyboard, prompt, Nano Banana edit charges 3 �
   await sendText(alice, "replace background with a Paris street");
   const edit = falCalls.at(-1)!;
   assert.equal(edit.endpoint, "fal-ai/nano-banana/edit");
-  assert.deepEqual(edit.input.image_urls, [
-    `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/photos/test.jpg`,
-  ]);
+  // The source photo is re-hosted on fal storage — never the raw Telegram file
+  // URL, which would embed the bot's live token in every fal.ai request.
+  const editUrl = (edit.input.image_urls as string[])[0];
+  assert.match(editUrl, /^https:\/\/fal\.test\/storage\/tg-\d+\.jpg$/);
+  assert.ok(!editUrl.includes(process.env.BOT_TOKEN!), "bot token leaked into the fal-bound URL");
   assert.equal(calls("getFile").length, 1);
+  assert.equal(tgFileFetches, 1);
   assert.equal(resultPhotos().length, 2);
   assert.equal(await credits(alice.id), 7); // 10 − 3
 });
@@ -360,7 +394,7 @@ await step("insufficient 🔫: animate (25) with 7 shows the sales-page paywall,
   // Paywall is a sales page: outcome headline, the tried model, the anchored entry pack.
   const wall = calls("sendMessage").at(-1)!;
   assert.match(wall.payload.text as string, /Ещё один шаг до результата/);
-  assert.match(wall.payload.text as string, /🎬 Оживление фото/);
+  assert.match(wall.payload.text as string, /Kling 2\.5 Turbo/); // the model's REAL name reaches the paywall copy
   assert.match(wall.payload.text as string, /Комбо/); // combo offer anchored as the entry
   assert.match(wall.payload.text as string, /Осталось/); // live countdown snapshot in the paywall
   const kb = wall.payload.reply_markup as { inline_keyboard: Array<Array<{ callback_data: string }>> };
@@ -492,7 +526,7 @@ await step("pending action survives the paywall: motion prompt now renders Kling
   const anim = falCalls.at(-1)!;
   assert.equal(anim.endpoint, "fal-ai/kling-video/v2.5-turbo/standard/image-to-video");
   assert.equal(anim.input.duration, "5");
-  assert.ok((anim.input.image_url as string).startsWith("https://api.telegram.org/file/bot"));
+  assert.match(anim.input.image_url as string, /^https:\/\/fal\.test\/storage\/tg-\d+\.jpg$/);
   assert.equal(calls("sendVideo").length, 1);
   assert.equal(await credits(alice.id), 182); // 207 − 25
 });
@@ -785,7 +819,7 @@ await step("top models: video picker routes photo→video to the chosen model (S
   await sendText(dave, "slow dolly in");
   const call = falCalls.at(-1)!;
   assert.equal(call.endpoint, "bytedance/seedance-2.0/image-to-video"); // verified fal endpoint
-  assert.ok((call.input.image_url as string).startsWith("https://api.telegram.org/file/bot"));
+  assert.match(call.input.image_url as string, /^https:\/\/fal\.test\/storage\/tg-\d+\.jpg$/);
   assert.equal(call.input.duration, "5");
   assert.equal(call.input.resolution, "720p");
   assert.equal(await credits(dave.id), 428); // 504 − 76
@@ -937,6 +971,50 @@ await step("мини-фильм campaign: Seedream film still → Seedance 2.0 (
   assert.equal(clip.input.generate_audio, true); // «со звуком» is real
   assert.match(clip.input.prompt as string, /multi-shot/i);
   assert.equal(await credits(actor.id), 134); // 210 − 76
+});
+
+await step("«Одиссея» campaign: bronze-armour still → epic scene auto-upgrades to Seedance; keeps the user's own face", async () => {
+  const hero: From = { id: 5503, is_bot: false, first_name: "Hero", username: "hero" };
+  await sendText(hero, "/start");
+  await pressButton(hero, "claim:welcome");
+  await payForPack(hero, "popular", 2200); // +200 → 212
+
+  await pressButton(hero, "camp:odyssey");
+  await sendPhoto(hero, "hero-1");
+  await pressButton(hero, "cpre:odyssey:king");
+  const still = falCalls.at(-1)!;
+  assert.equal(still.endpoint, "fal-ai/bytedance/seedream/v4.5/edit");
+  assert.match(still.input.prompt as string, /bronze/i);
+  // The whole point of the scenario: the USER is the hero, so identity is pinned
+  // and the prompt never reaches for a real film, its title, or its cast.
+  assert.match(still.input.prompt as string, /Keep the person's face and identity exactly as in the photo/);
+  const p = (still.input.prompt as string).toLowerCase();
+  for (const forbidden of ["nolan", "matt damon", "movie", "2026 film"]) {
+    assert.ok(!p.includes(forbidden), `odyssey prompt must not reference "${forbidden}"`);
+  }
+  assert.equal(await credits(hero.id), 210); // 212 − 2
+
+  // The default animate beat stays on the cheap engine…
+  const stillUrl = `https://fal.test/out/${falCalls.length}.png`;
+  const kb = resultPhotos().at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data?: string }>>;
+  };
+  const camv = kb.inline_keyboard.flat().map((b) => b.callback_data).find((d) => d?.startsWith("camv:odyssey:"));
+  assert.ok(camv, "«оживить» upsell missing on the odyssey still");
+  await pressButton(hero, camv!);
+  const clip = falCalls.at(-1)!;
+  assert.equal(clip.endpoint, "fal-ai/minimax/hailuo-2.3-fast/standard/image-to-video");
+  assert.equal(clip.input.image_url, stillUrl);
+  assert.equal(await credits(hero.id), 200); // 210 − 10
+
+  // …while a physics-heavy scene (the storm) is tiered epic and must resolve to
+  // the Seedance engine, not the cheap default that can't carry it.
+  const { campaignById: campById, sceneModel: resolveScene, MODELS: M } = await import("../src/models.js");
+  const odyssey = campById("odyssey")!;
+  const storm = odyssey.videoScenes!.find((s) => s.id === "storm")!;
+  assert.equal(resolveScene(storm, odyssey.animateModel).key, "seedance_fast");
+  const calm = odyssey.videoScenes!.find((s) => s.id === "turn")!;
+  assert.equal(resolveScene(calm, odyssey.animateModel).key, M.hailuo_fast.key);
 });
 
 await step("partner attribution is exclusive: no friend-referral double payout", async () => {
@@ -1128,6 +1206,87 @@ await step("admin /grant: target + self shorthand + negative; non-admin silent; 
   assert.match(lastText(), /не найден/);
   assert.equal(await credits(alice.id), aliceBefore + 100);
   assert.equal(await ledgerCount("admin_grant"), grantsBefore + 3);
+});
+
+await step("reward-architecture P0: /econ_set + /econ_gate are admin-only, DB-backed, never in code", async () => {
+  // Empty until an admin sets something — no seed data, no in-code fallback.
+  await sendText(admin, "/econ");
+  assert.match(lastText(), /пусто/);
+
+  await sendText(admin, "/econ_set xp.save 25");
+  assert.match(lastText(), /xp\.save = 25/);
+  await sendText(admin, "/econ_set xp.reroll 0");
+  assert.match(lastText(), /xp\.reroll = 0/);
+  await sendText(admin, "/econ_gate headshot 3");
+  assert.match(lastText(), /headshot → уровень 3/);
+
+  await sendText(admin, "/econ");
+  assert.match(lastText(), /xp\.save = 25/);
+  assert.match(lastText(), /xp\.reroll = 0/);
+  assert.match(lastText(), /headshot → уровень 3/);
+
+  // Re-setting an existing key overwrites, doesn't duplicate.
+  await sendText(admin, "/econ_set xp.save 30");
+  await sendText(admin, "/econ");
+  const listed = lastText();
+  assert.match(listed, /xp\.save = 30/);
+  assert.equal((listed.match(/xp\.save = /g) || []).length, 1);
+
+  // Non-admin: silent, and cannot read or write.
+  const before = calls("sendMessage").length;
+  await sendText(alice, "/econ");
+  await sendText(alice, "/econ_set xp.save 999");
+  await sendText(alice, "/econ_gate headshot 0");
+  assert.equal(calls("sendMessage").length, before);
+  assert.equal(await getEconomyConfig("xp.save"), 30, "non-admin must not be able to overwrite economy config");
+  assert.equal(await getPresetMinLevel("headshot"), 3, "non-admin must not be able to overwrite preset gating");
+
+  // Bad input is rejected, not silently coerced.
+  await sendText(admin, "/econ_set xp.share notanumber");
+  assert.match(lastText(), /Формат/);
+  await sendText(admin, "/econ_gate headshot -1");
+  assert.match(lastText(), /Формат/);
+  assert.equal(await getPresetMinLevel("headshot"), 3, "invalid gate input must not overwrite the existing value");
+
+  // Unset keys stay null — the "ships inert, no guessable default" contract.
+  assert.equal(await getEconomyConfig("xp.never_set"), null);
+  assert.equal(await getPresetMinLevel("never_gated_preset"), null);
+});
+
+await step("reward-architecture P4a: /season_new + /season_list are admin-only; no active season until one is created", async () => {
+  assert.equal(await getActiveSeason(), null);
+
+  await sendText(admin, "/season_list");
+  assert.match(lastText(), /пока нет/);
+
+  // Bad input rejected, nothing created.
+  await sendText(admin, "/season_new s1 0 Наурыз"); // 0 days invalid
+  assert.match(lastText(), /Формат/);
+  await sendText(admin, "/season_new s1 notanumber Наурыз");
+  assert.match(lastText(), /Формат/);
+  assert.equal(await getActiveSeason(), null);
+
+  await sendText(admin, "/season_new s1 42 Наурыз");
+  assert.match(lastText(), /Сезон «Наурыз» \(s1\) создан/);
+  const active = await getActiveSeason();
+  assert.equal(active?.key, "s1");
+  assert.equal(active?.theme_label, "Наурыз");
+
+  // Duplicate key rejected, doesn't clobber the existing season.
+  await sendText(admin, "/season_new s1 10 Другое название");
+  assert.match(lastText(), /уже существует/);
+  assert.equal((await getActiveSeason())?.theme_label, "Наурыз");
+
+  await sendText(admin, "/season_list");
+  assert.match(lastText(), /🟢 активен · Наурыз \(s1\)/);
+
+  // Non-admin: silent, no season created.
+  const before = calls("sendMessage").length;
+  await sendText(alice, "/season_new s2 10 Тест");
+  await sendText(alice, "/season_list");
+  assert.equal(calls("sendMessage").length, before);
+  const seasons = await listSeasons();
+  assert.equal(seasons.length, 1, "non-admin must not be able to create a season");
 });
 
 await step("partner v2: join → welcome (spend-only) + code; invitee pays → 15% withdrawable cashback", async () => {
@@ -1395,6 +1554,128 @@ await step("reaper: a render stuck 'pending' is failed and refunded, idempotentl
   assert.equal(await completeGeneration(gid, "error"), false);
 });
 
+await step("reconciler: an order confirmed 'paid' but never granted (crashed mid-grant) is retried, idempotently", async () => {
+  const eve = 5605;
+  await getOrCreateUser(eve, "eve", null, 0);
+  const orderId = await createOrder(eve, "start", 3700);
+  // Simulate exactly the crash window this fix closes: resolveOrder already won
+  // the pending→paid transition, but grantPurchase never ran (or crashed before
+  // its atomic credit step) — so granted_at is still NULL, old enough to sweep.
+  await query(
+    `UPDATE orders SET status = 'paid', processed_at = now() - interval '10 minutes' WHERE id = $1`,
+    [orderId],
+  );
+  assert.equal(await credits(eve), 0);
+
+  const purchasesBefore = await ledgerCount("purchase");
+  const granted = await runOrderReconciler(bot.api);
+  assert.ok(granted >= 1, "reconciler did not retry the stuck paid order");
+  assert.equal(await credits(eve), 60); // Старт = 60 🔫
+  assert.equal((await getOrder(orderId))?.status, "paid");
+  assert.equal(await ledgerCount("purchase"), purchasesBefore + 1);
+
+  // Idempotent: a second sweep must not double-credit (granted_at is now set,
+  // so the order no longer matches staleGrantedOrders — and even if it did,
+  // grantOrderCredits' atomic claim would no-op).
+  await runOrderReconciler(bot.api);
+  assert.equal(await credits(eve), 60);
+  assert.equal(await ledgerCount("purchase"), purchasesBefore + 1);
+
+  // A stuck order whose pack no longer exists is skipped, not crashed on.
+  const ghostId = await createOrder(eve, "ghost", 3700);
+  await query(
+    `UPDATE orders SET status = 'paid', processed_at = now() - interval '10 minutes' WHERE id = $1`,
+    [ghostId],
+  );
+  await runOrderReconciler(bot.api); // must not throw
+  assert.equal((await getOrder(ghostId))?.status, "paid");
+  assert.equal(await credits(eve), 60, "unknown pack must not grant anything");
+});
+
+await step("/delete_me: confirm scrubs PII + zeroes credits + nulls generation content + deactivates partner codes; cancel is a no-op", async () => {
+  const dora: From = { id: 5606, is_bot: false, first_name: "Dora" };
+  await getOrCreateUser(dora.id, "dora_handle", null, 0);
+  await addCredits(dora.id, 5, "admin_grant", "test");
+  await setUserPhone(dora.id, "+77010000099");
+  const gid = await createPendingGeneration(dora.id, "seedream", "a secret prompt", 2);
+  await completeGeneration(gid, "ok", "https://fal.test/secret.jpg");
+  await query("INSERT INTO partner_codes (code, user_id, percent) VALUES ($1, $2, 0.1)", ["doracode", dora.id]);
+
+  await sendText(dora, "/delete_me");
+  assert.match(lastText(), /Удаление данных/);
+  const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data: string }>>;
+  };
+  assert.deepEqual(kb.inline_keyboard.flat().map((b) => b.callback_data), ["del:confirm", "del:cancel"]);
+
+  // Cancel leaves everything untouched.
+  await pressButton(dora, "del:cancel");
+  assert.equal((await getUser(dora.id))!.username, "dora_handle");
+
+  await pressButton(dora, "del:confirm");
+  assert.match(lastText(), /Готово/);
+  const u = await getUser(dora.id);
+  assert.equal(u!.username, null);
+  assert.equal(u!.credits, 0);
+  const row = (await query("SELECT phone, ref_code, deleted_at FROM users WHERE id = $1", [dora.id]))[0];
+  assert.equal(row.phone, null);
+  assert.equal(row.ref_code, null);
+  assert.ok(row.deleted_at, "deleted_at was not stamped");
+  const gen = (await query("SELECT prompt, output_url FROM generations WHERE id = $1", [gid]))[0];
+  assert.equal(gen.prompt, null);
+  assert.equal(gen.output_url, null);
+  assert.equal((await query("SELECT active FROM partner_codes WHERE code = $1", ["doracode"]))[0].active, false);
+
+  // Idempotent: a second confirm on an already-deleted account is a graceful no-op.
+  await pressButton(dora, "del:confirm");
+  assert.match(lastText(), /не найден|уже был удалён/);
+});
+
+await step("abuse safety: deleting an account can't be used to re-farm free-tier bonuses on the same id", async () => {
+  const farmer: From = { id: 5607, is_bot: false, first_name: "Farmer" };
+  await getOrCreateUser(farmer.id, "farmer", null, 12); // parks 12 signup credits like a real /start
+  // Simulate having already spent every one-time free grant this account can get.
+  await query(
+    `UPDATE users SET
+       welcome_bonus_claimed = true, pending_signup_credits = 0, pending_join_bonus = 0,
+       free_result_used = true, free_scenario_used = true, roadmap_bonus_claimed = true
+     WHERE id = $1`,
+    [farmer.id],
+  );
+  await addCredits(farmer.id, 3, "admin_grant", "test"); // some real spendable balance too
+
+  await deleteUserData(farmer.id);
+
+  // The one-time flags must survive the deletion untouched — that's what stops
+  // "delete, then /start again" from being a free-tier farming loop.
+  const flags = (await query(
+    `SELECT welcome_bonus_claimed, pending_signup_credits, pending_join_bonus,
+            free_result_used, free_scenario_used, roadmap_bonus_claimed, credits
+     FROM users WHERE id = $1`,
+    [farmer.id],
+  ))[0];
+  assert.equal(flags.welcome_bonus_claimed, true);
+  assert.equal(Number(flags.pending_signup_credits), 0);
+  assert.equal(Number(flags.pending_join_bonus), 0);
+  assert.equal(flags.free_result_used, true);
+  assert.equal(flags.free_scenario_used, true);
+  assert.equal(flags.roadmap_bonus_claimed, true);
+  assert.equal(Number(flags.credits), 0); // the spendable balance WAS forfeited
+
+  // Hitting /start again on the same Telegram id must not re-park a fresh
+  // signup bonus (ON CONFLICT DO NOTHING — the row already exists) and must
+  // show the RETURNING menu, never the newcomer claim button.
+  await sendText(farmer, "/start");
+  const lastKb = (calls("sendPhoto").at(-1) ?? calls("sendMessage").at(-1))?.payload.reply_markup as
+    | { inline_keyboard: Array<Array<{ callback_data: string }>> }
+    | undefined;
+  const buttons = lastKb?.inline_keyboard.flat().map((b) => b.callback_data) ?? [];
+  assert.ok(!buttons.includes("claim:welcome"), "a deleted-then-restarted account got a fresh claimable bonus");
+  const after = (await query("SELECT pending_signup_credits, credits FROM users WHERE id = $1", [farmer.id]))[0];
+  assert.equal(Number(after.pending_signup_credits), 0);
+  assert.equal(Number(after.credits), 0);
+});
+
 await step("identity gate: one free gift per PHONE — cross-account farming blocked, owner may retry", async () => {
   const phone = "+77010000001";
   assert.equal(await phoneClaimedFree(phone), false);
@@ -1529,6 +1810,30 @@ await step("dubbing engine: charge → dub job → deliver; failure refunds exac
   await addCredits(poor.id, 5, "admin_grant", "test");
   assert.deepEqual(await startDubbing(poor.id, "x", "en", 60), { ok: false, error: "insufficient" });
   assert.equal(await credits(poor.id), 5); // not charged
+});
+
+await step("content moderation: a flagged photo is blocked BEFORE generation, refunded, distinct message", async () => {
+  // A fresh, isolated user (0 free credits + an exact grant) so this step's
+  // charge/refund can't perturb any earlier step's cumulative counts —
+  // deliberately placed at the very end of the suite for the same reason.
+  const mod: From = { id: 8801, is_bot: false, first_name: "Mod" };
+  await getOrCreateUser(mod.id, mod.first_name, null, 0);
+  await addCredits(mod.id, 3, "admin_grant", "test"); // exactly one photo_edit render
+  const genCallsBefore = falCalls.length;
+  const nsfwCallsBefore = nsfwCheckCalls;
+  nsfwProbability = 0.9; // flip the classifier to "unsafe" for this step only
+  await sendPhoto(mod, "photo-unsafe");
+  await pressButton(mod, "act:photo_edit");
+  await sendText(mod, "replace background with a Paris street");
+  nsfwProbability = 0; // reset — nothing else in the suite runs after this step
+  // The classifier WAS consulted, but the actual generation model never ran
+  // (charge, then refund) — blocked strictly before that call.
+  assert.equal(nsfwCheckCalls, nsfwCallsBefore + 1);
+  assert.equal(falCalls.length, genCallsBefore, "generation model must not run on a blocked photo");
+  assert.match(lastText(), /не подходит/); // distinct from the generic "попробуйте ещё раз" retry message
+  assert.equal(await credits(mod.id), 3); // charged then refunded — net zero
+  const evt = await query("SELECT type FROM events WHERE user_id = $1 ORDER BY id DESC LIMIT 1", [mod.id]);
+  assert.equal(evt[0].type, "moderation_blocked");
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL || "embedded (pglite)"})`);

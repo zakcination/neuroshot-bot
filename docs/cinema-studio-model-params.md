@@ -52,7 +52,7 @@ These are places where `src/models.ts` disagrees with the current fal schema. Se
 | ~~P4~~ | `kling3` | `aspectRatios = ["auto"]` | ~~16:9/9:16/1:1~~ **WITHDRAWN** — that enum belongs to Kling v3's *text-to-video* tab; the **image-to-video** variant (ours) has no `aspect_ratio` (ratio inherits from the start frame). Registry is correct. | — | No change. |
 | **P5** | all image models | no `num_images` | **1–4** (nano) / **1–6** (Seedream) | **HIGH — feature** | Add a `count` param + linear price multiplier (below). |
 | **P6** | `nb2_image` / `nb2_edit` | `NB_RES = 1K,2K,4K` | also **`0.5K`** (0.75× rate) | LOW | Optional cheaper 0.5K tier for price-sensitive users. |
-| **P7** | `premium_*`, `hailuo_fast` | endpoints assumed live | **absent from fal docs** | **HIGH — reliability** | Verify endpoints still resolve + confirm pricing; the docs now show `gpt-image-1.5` and `minimax-video`. Possible model retirement/rename. |
+| ~~P7~~ | `premium_*`, `hailuo_fast` | endpoints assumed live | **RESOLVED — all live** | — | Closed 2026-07-25, see §6. |
 
 ---
 
@@ -90,11 +90,16 @@ Unsupported selectors simply don't render.
 - ✅ ~~P4~~ **withdrawn** — kling3 (i2v) genuinely has no aspect param; the 16:9/9:16/1:1 enum is Kling v3's *t2v* variant. Registry was already correct.
 
 **Deliberately deferred (bigger than a drift fix):**
-- **P5 count (`num_images`)** — NOT just pricing: `falRun` keeps only `images[0]` (`generate.ts:96`) and a generation row stores a single `output_url`, so N>1 needs multi-output handling (result storage, gallery, delivery). Own task, do with/before the Studio composer.
+- ✅ **P5 count (`num_images`)** — SHIPPED 2026-07-24. `models.ts` (GenOpts.numImages, ImageParams.maxCount, linear price/cost scaling), `generate.ts` (falRun returns ALL output urls), `db.ts` (generations.output_urls, additive — output_url stays the first url always), `webapp.ts` (/api/generate accepts num_images, catalog exposes maxCount, poll/gallery expose output_urls, /api/send ships multi-output as one sendMediaGroup), and the Studio composer (count stepper, live ×N price, multi-image result/gallery views). Nano-banana family up to 4, Seedream up to 6; premium_* up to 2 (added 2026-07-25 once P7 confirmed `num_images`, capped low as a spend guard). Scoped to the web Studio only — the bot's inline flows never set composer opts, so this shipped as a pure additive path with zero bot behavior change.
 - **P2 Seedance 4–15s durations** — the widening is trivial but the current 5/10 chips are fine for v1; widen alongside the composer's duration UI.
 - **P3 nbpro 1K tier** — 1K/2K cost the SAME on fal (only 4K is double), so exposing 1K would be a strictly-worse-quality same-price option; keeping the 2K floor is a better default. Revisit only if a "faster" tier is wanted.
 - **P6 nb2 0.5K tier** — optional cheap tier; low value while credits floor at 1.
-- **P7 endpoint verification** (`premium_*`, `hailuo_fast`) — needs a live `FAL_KEY` probe (one $0.19–0.22 render each) or fal support confirmation; docs-only checking can't prove a legacy endpoint is dead. Flagged confirm-on-integration.
+- ✅ **P7 endpoint verification — CLOSED 2026-07-25.** Resolved without spending a cent on probe renders: fal publishes a per-endpoint queue OpenAPI schema, and an unknown endpoint id returns `null` rather than a schema — so schema-presence is proof the endpoint resolves. All **14** registry endpoints were swept and all 14 returned a live schema, including the three that were in doubt (`fal-ai/gpt-image-2`, `openai/gpt-image-2/edit`, `fal-ai/minimax/hailuo-2.3-fast/standard/image-to-video`). No retirement or rename. The sweep also cross-checked every parameter we send against the declared input schema:
+  - `hailuo_fast` — `duration` is a **string** enum `["6","10"]`; we send `String(...)` and declare `[6,10]`. Correct.
+  - `kling3` — required field is **`start_image_url`**, not `image_url`; the registry already uses it. Correct.
+  - `seedance_fast` — `resolution` enum is only `["480p","720p"]` while full `seedance` allows up to 4k; our shared `SEEDANCE_RES` is 720p/480p, valid for both. Correct.
+  - `nano-banana-pro` `["1K","2K","4K"]`, `nano-banana-2` `["0.5K","1K","2K","4K"]` — both supersets of what we expose. Correct.
+  - **Two gaps found and fixed:** (1) `premium_image`/`premium_edit` DO declare `num_images` — count support is now enabled, capped at **2** (not 4/6) because at ~$0.21/img a larger batch turns one tap into a 60+ 🔫 charge; (2) `premium_edit` takes `image_urls` as an **array**, so it now goes through `refPrompt`/`refUrls` like the other edit models — previously a `styleRef` on a premium preset would have been silently dropped. A registry-invariant test now fails the build if any model advertises `maxCount` without actually emitting `num_images`.
 
 ---
 
@@ -111,7 +116,7 @@ Verified from the same schemas (2026-07-22). This drives block ③ (Inputs).
 | **Video input** | yes | ❌ no | Seedance `reference-to-video` (`video_urls`), Kling o1/o3 **video-to-video**, Bytedance video-stylize, SeedVR/Topaz upscale | **new feature track** (v2v restyle / upscale). Not Studio v1. NB: *dubbing* already ingests video via ElevenLabs. |
 
 **Takeaways for the Studio:**
-1. **Multi-image input is a low-cost, high-value unlock** for ③ (schema + our payload already support the list) — strong candidate for a fast-follow after Studio v1. Pricing note: Seedream counts input images toward its 15-item cap; nano-banana composites references into one output (no per-input surcharge beyond `num_images`).
+1. ✅ **Multi-image input — SHIPPED 2026-07-25** as a curated STYLE REFERENCE (`Preset.styleRef` / `CampaignPreset.styleRef` → `styleRefUrl()` → second entry in `image_urls`, on **all five** edit models — `premium_edit` was folded in 2026-07-25 once P7 confirmed its `image_urls` is an array). Two constraints that are load-bearing, not stylistic: the reference art must contain **no usable face** (a face invites identity blending, which breaks the product's one promise — the prompt also carries an explicit "style only, do not copy any person" clause), and the URL is resolved **server-side from the registry only** — assigned after `normalizeOpts`, which rebuilds opts from scratch and never copies it, so `/api/generate` can't be turned into a fetch-any-URL primitive. No extra provider cost (see the pricing note below). Originally scoped as: strong candidate for a fast-follow after Studio v1. Pricing note: Seedream counts input images toward its 15-item cap; nano-banana composites references into one output (no per-input surcharge beyond `num_images`).
 2. **Audio/video *input* are genuinely new capabilities**, not parameters of existing models — they open distinct products (talking-avatar, lip-sync, video-to-video, upscale). Worth a separate spec if you want them; they should not expand Studio v1's scope. The dubbing feature already covers the "video-in → video-out" translation use-case via ElevenLabs.
 
 ---
