@@ -531,15 +531,18 @@ await step("num_images: charge scales ×N, multi-output stored/exposed, invalid 
   await addCredits(cu.id, 100, "admin_grant", "test");
   const H = { Authorization: `tma ${signInitData(cu)}`, "Content-Type": "application/json" };
 
-  // Catalog: text_to_image (Seedream) declares maxCount 6; premium_image's count
-  // support isn't fal-verified (P7), so it must expose 0 (no selector).
+  // Catalog: text_to_image (Seedream, $0.04/img) declares maxCount 6. The
+  // premium tier supports num_images too (fal-verified), but is capped at 2 on
+  // purpose — at $0.21/img a 6-up tap would cost 66 🔫. The cap is a spend
+  // guard, so it must stay strictly below the cheap tier's.
   const cat = (await apiMe(signInitData(cu))).body.catalog as unknown as {
     studio: { image: Array<{ key: string; image: { maxCount: number } | null }> };
   };
   const t2i = cat.studio.image.find((m) => m.key === "text_to_image")!;
   assert.equal(t2i.image!.maxCount, 6);
   const premium = cat.studio.image.find((m) => m.key === "premium_image")!;
-  assert.equal(premium.image!.maxCount, 0);
+  assert.equal(premium.image!.maxCount, 2);
+  assert.ok(premium.image!.maxCount < t2i.image!.maxCount, "the expensive tier must not allow the biggest batch");
 
   const r = await fetch(`${base}/api/generate`, {
     method: "POST", headers: H,
@@ -573,10 +576,19 @@ await step("num_images: charge scales ×N, multi-output stored/exposed, invalid 
   assert.equal(tooMany.status, 400);
   assert.equal(((await tooMany.json()) as { error: string }).error, "bad_opts");
 
-  // A model with no maxCount (unverified endpoint) rejects any count request.
+  // Each model is bounded by its OWN cap, not the global maximum: 3 is fine on
+  // Seedream but over the premium tier's deliberate 2-image spend guard.
+  const overPremium = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "model", model: "premium_image", prompt: "x", num_images: 3 }),
+  });
+  assert.equal(overPremium.status, 400);
+  assert.equal(((await overPremium.json()) as { error: string }).error, "bad_opts");
+
+  // A model with no count support at all (video) rejects any count request.
   const noCount = await fetch(`${base}/api/generate`, {
     method: "POST", headers: H,
-    body: JSON.stringify({ source: "model", model: "premium_image", prompt: "x", num_images: 2 }),
+    body: JSON.stringify({ source: "model", model: "animate", image_url: "https://fal.test/storage/u-1.jpg", prompt: "x", num_images: 2 }),
   });
   assert.equal(noCount.status, 400);
   assert.equal((await apiMe(signInitData(cu))).body.dashboard.credits, 94, "rejected count requests must not charge");
@@ -1893,6 +1905,26 @@ await step("style reference: a preset's curated ref rides in image_urls; a clien
   const injCall = falCalls.at(-1)!;
   assert.equal((injCall.input.image_urls as string[]).length, 1, "client-named reference must be ignored");
   assert.ok(!JSON.stringify(injCall.input).includes("evil.test"), "a caller-supplied URL must never reach fal");
+});
+
+await step("registry invariant: every declared maxCount is actually wired to num_images", async () => {
+  const { MODELS } = await import("../src/models.js");
+  // A model can advertise "до N шт" in the picker only if its input builder
+  // really emits num_images — otherwise the user is charged N× for one image.
+  // (Endpoint IDs and their num_images support were verified against the live
+  // fal queue OpenAPI schemas; this guards the wiring on OUR side.)
+  for (const m of Object.values(MODELS) as Array<Record<string, unknown>>) {
+    const img = m.image as { maxCount?: number } | undefined;
+    if (!img?.maxCount || img.maxCount < 2) continue;
+    const build = m.input as (p: string, i: string, o: unknown) => Record<string, unknown>;
+    const one = build("p", "https://fal.test/storage/a.jpg", { numImages: 1 });
+    const many = build("p", "https://fal.test/storage/a.jpg", { numImages: img.maxCount });
+    assert.equal(one.num_images, undefined, `${String(m.key)}: a single image must not send num_images`);
+    assert.equal(many.num_images, img.maxCount, `${String(m.key)}: maxCount is advertised but never sent`);
+    // …and the cap is a real cap: asking for more than we allow is clamped.
+    const over = build("p", "https://fal.test/storage/a.jpg", { numImages: img.maxCount + 50 });
+    assert.equal(over.num_images, img.maxCount, `${String(m.key)}: count is not clamped to maxCount`);
+  }
 });
 
 await step("model catalog: real provider names, and ETA only once we have MEASURED runs", async () => {

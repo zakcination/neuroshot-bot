@@ -43,7 +43,9 @@ export interface ImageParams {
   aspectRatios: string[]; // selectable ratios; "auto" ⇒ model/source decides
   resolutions?: ResTier[]; // optional quality ladder; resolutions[0] = default
   /** Max output count via `num_images` (fal-verified — docs/cinema-studio-model-params.md P5).
-   *  Omitted where the endpoint's count support isn't confirmed (premium_*). */
+   *  Every image endpoint in the registry declares `num_images`, confirmed against
+   *  the live fal queue OpenAPI schemas. The cap here is OURS, not the provider's:
+   *  it bounds the worst-case spend a single tap can trigger. */
   maxCount?: number;
 }
 
@@ -238,8 +240,10 @@ export const MODELS = {
     approxCostUsd: 0.21, // high quality, 1024x1024
     label: "GPT Image 2",
     note: "текст на картинке, сложные сцены",
-    input: (prompt, _img, opts) => ({ prompt, quality: "high", image_size: sizeParam(opts, false).image_size ?? "square" }),
-    image: { aspectRatios: IMAGE_ASPECTS },
+    input: (prompt, _img, opts) => ({ prompt, quality: "high", image_size: sizeParam(opts, false).image_size ?? "square", ...countParam(2, opts) }),
+    // Count capped at 2, not 4: this is the most expensive image tier we run
+    // ($0.21/img), so a single tap must not be able to spend 44 🔫.
+    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 2 },
   },
   premium_edit: {
     key: "premium_edit",
@@ -249,8 +253,11 @@ export const MODELS = {
     approxCostUsd: 0.22, // high quality, 1024x1024
     label: "GPT Image 2",
     note: "правка с текстом и типографикой",
-    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], quality: "high", ...sizeParam(opts, false) }),
-    image: { aspectRatios: IMAGE_ASPECTS },
+    // `image_urls` is an array here too, so a preset's curated style reference
+    // rides along exactly as it does on the Seedream/Nano Banana edit paths —
+    // without this a `styleRef` on a premium_edit preset would be silently dropped.
+    input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), quality: "high", ...sizeParam(opts, false), ...countParam(2, opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 2 },
   },
 
   // --- Top-tier models (verified against fal.ai model pages, Jul 2026) ---
