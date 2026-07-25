@@ -1972,6 +1972,67 @@ await step("provider down: the breaker refuses WITHOUT charging, and clears itse
   assert.equal(providerBlocked(), false, "a successful run proves the account works again");
 });
 
+await step("XP earning: breadth pays once per new thing, free actions cannot be farmed", async () => {
+  const { awardXpOnce, awardXpCapped } = await import("../src/db.js");
+  const xu = { id: 990099, username: "xpearner" };
+  await getOrCreateUser(xu.id, xu.username, null, 0);
+  await addCredits(xu.id, 300, "admin_grant", "test");
+  const H = { Authorization: `tma ${signInitData(xu)}`, "Content-Type": "application/json" };
+  await query("DELETE FROM economy_config WHERE key LIKE 'xp.%'");
+  // An earlier step gates a style behind a Level; this one is about earning,
+  // not gating, so start from an ungated catalogue.
+  await query("DELETE FROM preset_gating");
+
+  // Inert until configured — the shipped default, and the rule the whole
+  // economy_config design exists for.
+  assert.equal(await awardXpOnce(xu.id, "model:seedream_edit", "model"), 0);
+  assert.equal(await awardXpCapped(xu.id, "generate"), 0);
+  assert.equal(await getUserXp(xu.id), 0, "nothing may accrue while unconfigured");
+
+  await setEconomyConfig("xp.generate", 5);
+  await setEconomyConfig("xp.model", 20);
+  await setEconomyConfig("xp.image", 15);
+  await setEconomyConfig("xp.preset", 10);
+  await setEconomyConfig("xp.upload", 30);
+  await setEconomyConfig("xp.share", 8);
+
+  // A completed render pays the repeatable award PLUS the one-time breadth
+  // awards for a first-seen engine, mode and style.
+  const gen = async (preset: string) => {
+    const r = await fetch(`${base}/api/generate`, {
+      method: "POST", headers: H,
+      body: JSON.stringify({ source: "preset", id: preset, image_url: "https://fal.test/storage/u-1.jpg" }),
+    });
+    assert.equal(r.status, 200);
+    return pollGen(((await r.json()) as { id: number }).id, H);
+  };
+  await gen("fashion");
+  const afterFirst = await getUserXp(xu.id);
+  assert.equal(afterFirst, 5 + 20 + 15 + 10, "generate + first model + first mode + first preset");
+
+  // Same engine, same mode, SAME style again: only the repeatable part pays.
+  await gen("fashion");
+  assert.equal(await getUserXp(xu.id) - afterFirst, 5, "breadth must not pay twice for the same thing");
+
+  // A DIFFERENT style pays its own one-time award — this is the exploration
+  // incentive, and it is self-limiting: the catalogue is finite.
+  const beforeNew = await getUserXp(xu.id);
+  await gen("headshot");
+  assert.equal(await getUserXp(xu.id) - beforeNew, 5 + 10, "a new style pays once");
+
+  // FREE actions are the real abuse surface: uploading and sharing cost the
+  // user nothing, so an un-guarded award would be an infinite XP farm.
+  const beforeUpload = await getUserXp(xu.id);
+  const px = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  for (let i = 0; i < 3; i++) {
+    const r = await fetch(`${base}/api/upload`, { method: "POST", headers: H, body: JSON.stringify({ data: px }) });
+    assert.equal(r.status, 200);
+  }
+  assert.equal(await getUserXp(xu.id) - beforeUpload, 30, "three uploads, one award");
+
+  await query("DELETE FROM economy_config WHERE key LIKE 'xp.%'");
+});
+
 await step("/healthz reports the BOT, not just the socket — a dead poller must fail the check", async () => {
   const { setLivenessProbe } = await import("../src/webapp.js");
   const hz = async () => {

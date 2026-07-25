@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { allPresetGating, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { allPresetGating, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { enhancePrompt } from "./enhance.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
@@ -607,6 +607,9 @@ export async function uploadResponse(
     await logEvent(userId, "moderation_blocked", "upload").catch(() => {});
     return { status: 400, body: { error: "unsafe_image" } };
   }
+  // ONCE, ever. Uploading is free and unlimited, so a repeatable award here
+  // would be an infinite XP farm — the claim key carries no id on purpose.
+  await awardXpOnce(userId, "upload", "upload").catch(() => 0);
   return { status: 200, body: { url } };
 }
 
@@ -705,6 +708,10 @@ export async function generateResponse(
   let presetAspect: string | undefined;
   // The curated style reference this look ships with, if any (registry only).
   let presetStyleRef: string | undefined;
+  // What this render was launched FROM — a plain preset id, or "campaign:preset".
+  // Stored on the generation row so breadth XP is awarded on COMPLETION with
+  // full context, never at request time for a render that may still fail.
+  let sourceId: string | undefined;
   if (source === "preset") {
     const p = PRESETS.find((x) => x.id === body?.id);
     if (!p || !imageUrl) return { status: 400, body: { error: "bad_request" } };
@@ -734,6 +741,7 @@ export async function generateResponse(
     [model, prompt, crafted] = [m, composed, true];
     presetAspect = p.aspect;
     presetStyleRef = p.styleRef;
+    sourceId = p.id;
     // Log WHICH preset was used — the web studio was the one tap surface that
     // didn't (bot logs preset: taps, the campaign branch below logs camp:preset),
     // so plain-preset usage by category (e.g. the product/маркетплейс presets)
@@ -762,6 +770,7 @@ export async function generateResponse(
     // Same "camp:preset" shape the bot's cpre: taps log — one convention for the
     // "Ваш путь в NeuroShot" roadmap's scenario signal, whichever surface it came from.
     await logEvent(userId, "preset", `${campId}:${presetId}`);
+    sourceId = `${campId}:${presetId}`; // the colon is what marks it a scenario
   } else if (source === "campaign_video") {
     const c = campaignById(String(body?.id ?? ""));
     if (!c || !imageUrl) return { status: 400, body: { error: "bad_request" } };
@@ -858,7 +867,7 @@ export async function generateResponse(
     opts.extraImageUrls = extraImageUrls;
   }
 
-  const r = await startWebGeneration(userId, model, prompt, imageUrl, crafted, opts);
+  const r = await startWebGeneration(userId, model, prompt, imageUrl, crafted, opts, sourceId);
   if (!r.ok) {
     if (r.error === "insufficient") {
       const balance = (await getUser(userId))?.credits ?? 0;
@@ -939,6 +948,9 @@ export async function sendResponse(
   }
   const data = (await res.json()) as { ok: boolean };
   if (!data.ok) return { status: 502, body: { error: "send_failed" } };
+  // Sharing a result out of the app — once per generation. Free and
+  // unverifiable, so the generation id is the only thing keeping it honest.
+  await awardXpOnce(userId, `share:${g.id}`, "share", String(g.id)).catch(() => 0);
   return { status: 200, body: { ok: true } };
 }
 

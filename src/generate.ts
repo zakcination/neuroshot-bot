@@ -4,6 +4,7 @@ import { InlineKeyboard, InputFile } from "grammy";
 import { config } from "./config.js";
 import {
   addCredits,
+  awardGenerationXp,
   claimFreePhone,
   completeGeneration,
   consumeFreeResult,
@@ -60,7 +61,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function markOk(genId: number, url: string, costUsd: number, requestId: string): Promise<void> {
   for (let i = 0; i < 3; i++) {
     try {
-      await completeGeneration(genId, "ok", url, costUsd, requestId);
+      // The boolean is the pending→ok CAS result: true means WE made it
+      // terminal, so this is the one place breadth XP may be awarded for the
+      // bot path. A retry that loses the CAS must not award twice.
+      if (await completeGeneration(genId, "ok", url, costUsd, requestId)) {
+        await awardGenerationXp(genId).catch(() => 0);
+      }
       return;
     } catch (e) {
       if (i === 2) {
@@ -215,6 +221,8 @@ export async function startWebGeneration(
   imageUrl?: string,
   crafted = false,
   opts?: GenOpts,
+  /** Preset or campaign id this render came from — powers breadth XP. */
+  sourceId?: string,
 ): Promise<
   { ok: true; id: number; credits: number } | { ok: false; error: "empty_prompt" | "insufficient" | "provider_down" }
 > {
@@ -229,7 +237,7 @@ export async function startWebGeneration(
     return { ok: false, error: "insufficient" };
   }
   await logEvent(userId, "gen_start", model.key);
-  const id = await createPendingGeneration(userId, model.key, prompt, credits);
+  const id = await createPendingGeneration(userId, model.key, prompt, credits, sourceId);
   void (async () => {
     // Provider metadata hoisted so a failed tail can still record what fal
     // actually billed us (populated only once falRun succeeds).
@@ -240,6 +248,9 @@ export async function startWebGeneration(
       costUsd = costUsdFor(model, opts);
       requestId = r.requestId;
       await completeGeneration(id, "ok", r.urls[0], costUsd, requestId, r.urls);
+      // Breadth/usage XP. Same swallow rule as analytics below: a reward must
+      // never be able to fail a render the user already received.
+      await awardGenerationXp(id).catch(() => 0);
       // Analytics must never be able to trigger compensation: swallow its errors
       // so a post-'ok' logEvent blip can't fall into the catch and refund a
       // render we already completed and delivered.
