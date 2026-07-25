@@ -1972,6 +1972,32 @@ await step("provider down: the breaker refuses WITHOUT charging, and clears itse
   assert.equal(providerBlocked(), false, "a successful run proves the account works again");
 });
 
+await step("/healthz reports the BOT, not just the socket — a dead poller must fail the check", async () => {
+  const { setLivenessProbe } = await import("../src/webapp.js");
+  const hz = async () => {
+    const r = await fetch(`${base}/healthz`);
+    return { status: r.status, body: (await r.json()) as { ok: boolean; polling: boolean } };
+  };
+
+  // Default: healthy. Callers that serve the web layer alone (Vercel, tests)
+  // have no bot to report on and must not be marked down.
+  const fresh = await hz();
+  assert.equal(fresh.status, 200);
+  assert.equal(fresh.body.ok, true);
+
+  // The real failure this exists for: the process is alive and answering HTTP,
+  // but Telegram is no longer being polled. Before this, /healthz returned a
+  // flat 200 here — so the platform health check stayed green over a total bot
+  // outage and nothing ever restarted it.
+  setLivenessProbe(() => false);
+  const dead = await hz();
+  assert.equal(dead.status, 503, "a dead poller must fail the health check");
+  assert.equal(dead.body.polling, false);
+
+  setLivenessProbe(() => true);
+  assert.equal((await hz()).status, 200, "recovery must clear the check");
+});
+
 await step("bento birthday: pins the typography engine and holds two ages of one face", async () => {
   const { PRESETS, presetModel } = await import("../src/models.js");
   const { existsSync } = await import("node:fs");
