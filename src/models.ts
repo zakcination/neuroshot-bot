@@ -741,8 +741,9 @@ export const PRESETS: Preset[] = [
       "jaw, a cool level gaze straight down the lens or eyes closed in stillness. Confident, never smiling for " +
       "the camera.\n" +
       "LIGHT — one dramatic hard key with a deep falloff, crisp shadow edges, subtle film grain, shot on 85mm. " +
-      "Cover-shoot framing with clean negative space at the top, but NO text, masthead or lettering anywhere " +
-      `in the image. Tack-sharp face. ${KEEP_ID}`,
+      "Cover-shoot framing — the subject sits low enough in the frame that a cover would have room above them, " +
+      "but the backdrop must continue edge to edge: NO white bar, NO border, NO blank band, and NO text, " +
+      `masthead or lettering anywhere in the image. Tack-sharp face. ${KEEP_ID}`,
   },
   {
     id: "travel",
@@ -831,7 +832,7 @@ export const PRESETS: Preset[] = [
       "the wardrobe and the expression; do not keep the pose from the source photo.\n" +
       "WARDROBE — choose ONE complete look that genuinely suits this person and commit to it: a polka-dot " +
       "midi dress with a nipped waist; a silk headscarf tied under the chin with cat-eye sunglasses; a wide " +
-      "oversized double-breasted suit with padded shoulders and pleated trousers; a knitted vintage cardigan " +
+      "oversized double-breasted suit with strong SQUARED structured shoulders (tailored and sharp, never gathered or puffed) and pleated trousers; a knitted vintage cardigan " +
       "over a collared shirt; a tailored trench with leather gloves and a wide-brimmed hat. Add period " +
       "headwear where it fits the look — a headscarf, beret, fedora or pillbox hat.\n" +
       "SETTING — a vintage street scene with a polished chrome-heavy retro car in frame: leaning back against " +
@@ -886,7 +887,10 @@ export const PRESETS: Preset[] = [
       "styled — controlled, close to the head, NOT frizzy, NOT puffed out, no flyaways. Hard noir lighting: a " +
       "single low key light raking across the face so bright speculars catch the cheekbones, brow and bridge of " +
       "the nose, deep black shadows on the opposite side, strong chiaroscuro contrast, rich blacks, glowing " +
-      "highlights, fine silver film grain. The finished paper strip lies at a gentle diagonal TILT on a warm " +
+      "highlights, fine silver film grain. The three photographs are COMPLETELY BLACK AND WHITE — fully " +
+      "desaturated, no colour anywhere inside the frames and no selective-colour accents: clothing, tie and " +
+      "background are all pure greyscale. Only the table and lamplight AROUND the printed strip carry warm " +
+      "colour. The finished paper strip lies at a gentle diagonal TILT on a warm " +
       "wooden table beside a coffee cup, soft lamplight and a shallow depth of field around it — a cosy, " +
       `lived-in keepsake photographed from above. Tack-sharp face in every frame. ${KEEP_ID}`,
   },
