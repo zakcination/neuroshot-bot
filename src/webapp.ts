@@ -1114,7 +1114,14 @@ export function createWebApp(): Server {
     try {
       const url = new URL(req.url ?? "/", "http://localhost");
 
-      if (url.pathname === "/healthz") return json(res, 200, { ok: true });
+      // 503 when the bot has stopped polling: this is the signal the platform
+      // health check acts on, and it is the only automated path back from a
+      // dead poller in a live process. Returning 200 here would keep a broken
+      // bot running forever.
+      if (url.pathname === "/healthz") {
+        const polling = livenessProbe();
+        return json(res, polling ? 200 : 503, { ok: polling, polling });
+      }
 
       if (url.pathname === "/" || url.pathname === "/app") {
         return send(res, 200, APP_HTML, "text/html; charset=utf-8");
@@ -1339,6 +1346,23 @@ export function createWebApp(): Server {
 }
 
 /** Start the Mini App server if a public URL is configured. */
+/**
+ * Liveness probe for /healthz beyond "the HTTP server answers".
+ *
+ * The bot and this server share one process, so an HTTP 200 says nothing
+ * about whether Telegram is still being polled. When long polling dies the
+ * process stays alive — the listening socket keeps the event loop open — and
+ * the platform health check keeps passing, so nothing ever restarts it. The
+ * bot is then down indefinitely while every dashboard reads green.
+ *
+ * Defaults to healthy: callers that serve the web layer alone (Vercel, tests)
+ * have no bot to report on.
+ */
+let livenessProbe: () => boolean = () => true;
+export function setLivenessProbe(fn: () => boolean): void {
+  livenessProbe = fn;
+}
+
 export function startWebApp(): Server | null {
   if (!config.webappUrl) return null;
   const server = createWebApp();
