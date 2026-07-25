@@ -1907,6 +1907,28 @@ await step("style reference: a preset's curated ref rides in image_urls; a clien
   assert.ok(!JSON.stringify(injCall.input).includes("evil.test"), "a caller-supplied URL must never reach fal");
 });
 
+await step("registry invariant: every declared styleRef points at art that actually exists", async () => {
+  const { CAMPAIGNS, PRESETS } = await import("../src/models.js");
+  const { existsSync } = await import("node:fs");
+  // A styleRef resolves to /img/<file> on our own origin. If the art is missing
+  // the provider silently gets a 404 for the reference and the look degrades to
+  // "no reference at all" — invisible in tests, visible only in the output. So
+  // the filename is checked against disk here rather than trusted.
+  const refs: string[] = [];
+  for (const c of CAMPAIGNS) for (const p of c.presets) if (p.styleRef) refs.push(p.styleRef);
+  for (const p of PRESETS) if (p.styleRef) refs.push(p.styleRef);
+  assert.ok(refs.length > 0, "the invariant is only meaningful while some preset uses a styleRef");
+  for (const f of refs) {
+    assert.ok(existsSync(new URL(`../public/img/${f}`, import.meta.url)), `styleRef art missing: public/img/${f}`);
+  }
+  // Agamemnon carries its OWN plate — the campaign's default cover is a warm
+  // amber key and would fight the cold blue-steel look this role is built on.
+  const ody = CAMPAIGNS.find((c) => c.id === "odyssey")!;
+  const aga = ody.presets.find((p) => p.id === "agamemnon")!;
+  assert.equal(aga.styleRef, "card-agamemnon.jpg");
+  assert.notEqual(aga.styleRef, ody.presets.find((p) => p.id === "king")!.styleRef);
+});
+
 await step("registry invariant: every declared maxCount is actually wired to num_images", async () => {
   const { MODELS } = await import("../src/models.js");
   // A model can advertise "до N шт" in the picker only if its input builder

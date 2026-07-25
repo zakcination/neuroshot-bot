@@ -1505,6 +1505,29 @@ export const CAMPAIGNS: Campaign[] = [
           `photorealistic textures. ${KEEP_ID}`,
       },
       {
+        id: "agamemnon",
+        label: "🗡 Агамемнон — царь царей",
+        // Its own plate, in a COLD blue-steel-and-gold key — the rest of the
+        // campaign is warm amber/bronze, and Agamemnon is the one role that
+        // should read as command rather than adventure. Shot from behind with
+        // the head turned away: like every styleRef here, it carries palette,
+        // metal and cloth, never a face.
+        styleRef: "card-agamemnon.jpg",
+        prompt:
+          "Epic cinematic film still: the person as the high king and supreme commander of the Greek host, " +
+          "standing on the stone steps of a torchlit citadel at dusk — a layered plate cuirass in DARK " +
+          "desaturated gunmetal, near-black steel with only a faint cold cast (not bright blue), fine warm " +
+          "gold edging, a heavy gold sun-medallion clasp at each shoulder, a tall helmet with a black " +
+          "horsehair crest and gold trim pushed back clear of the face, a thick charcoal wool cloak with a " +
+          "deep folded collar, leather pteruges, a sheathed sword at the hip; ranks of spears and shields " +
+          "blurred in the haze behind. THE CAMERA IS LOW, on the steps below him, looking UP so he towers " +
+          "over the frame — medium shot. Hard torch rim light rakes across hammered, scratched, battle-worn " +
+          "metal; near-black steel and gold against warm flame, deep shadow. The face is weathered and alive " +
+          "— set jaw, the weight of ten years of war in the eyes, real skin with sweat, dust and stubble, " +
+          "not a smooth render. Shot on 85mm, shallow depth of field, photorealistic — a photograph, never " +
+          `CGI or a 3D game model. ${KEEP_ID}`,
+      },
+      {
         id: "warrior",
         label: "⚔️ Воин Трои",
         styleRef: "card-odyssey.jpg",
