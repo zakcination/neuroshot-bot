@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { allPresetGating, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { allPresetGating, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { enhancePrompt } from "./enhance.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
@@ -269,6 +269,10 @@ function studioModelsOf(mode: "image" | "video", eta: Record<string, number>): A
             // rather than reading a precomputed per-count price. 0 = no count
             // selector (maxCount unset — unverified endpoints, e.g. premium_*).
             maxCount: m.image.maxCount ?? 0,
+            // How many of the user's OWN photos this model reads, including the
+            // first. 1 = single-photo model, so the client shows no "add another
+            // angle" affordance. Extra angles do not change the price.
+            maxInputs: m.image.maxInputs ?? 1,
           }
         : null,
       video: m.video
@@ -450,18 +454,20 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta] = await Promise.all([
-    userDashboard(user.id),
-    recentGenerations(user.id, 30),
-    ensureRefCode(user.id),
-    getUser(user.id),
-    roadmapProgress(user.id),
-    referralList(user.id),
-    presetUsageCounts(),
-    getActiveSeason(),
-    allPresetGating(),
-    modelEtaSeconds(),
-  ]);
+  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress] =
+    await Promise.all([
+      userDashboard(user.id),
+      recentGenerations(user.id, 30),
+      ensureRefCode(user.id),
+      getUser(user.id),
+      roadmapProgress(user.id),
+      referralList(user.id),
+      presetUsageCounts(),
+      getActiveSeason(),
+      allPresetGating(),
+      modelEtaSeconds(),
+      getLevelProgress(user.id),
+    ]);
   const gates = Object.fromEntries(gateRows.map((g) => [g.preset_id, g.min_level]));
   return {
     // No raw tg id in ref_code — an opaque link the client builds the share URL from.
@@ -478,6 +484,12 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     // /season_new. No quest/reward data yet — that's P4b, built once this
     // entity exists.
     season: season ? { key: season.key, themeLabel: season.theme_label, startsAt: season.starts_at, endsAt: season.ends_at } : null,
+    // Everything the progression screen needs, resolved server-side: the XP
+    // ladder itself is private config (economy_config), so the client is handed
+    // a position on it, never the table. `active: false` — the shipped default,
+    // since no threshold is configured — makes the UI say "not on yet" instead
+    // of drawing an empty Level 0 bar.
+    progress,
     // Welcome bonus (signup + join bonus) is claim-gated — see claimWelcomeBonus
     // in db.ts. The client shows a "🎁 Получить" claim button on the onboarding
     // slideshow's last slide only while claimed=false and pending>0; otherwise
@@ -603,6 +615,24 @@ function isHttpsUrl(v: unknown): v is string {
   return typeof v === "string" && v.length < 2048 && /^https:\/\//.test(v);
 }
 
+/**
+ * An image URL a CLIENT is allowed to hand us: HTTPS, and on a host we actually
+ * issue URLs from (config.mediaHostSuffixes). Suffix matching is done on parsed
+ * hostname boundaries, never `endsWith` on the raw string — `evil-fal.media`
+ * and `fal.media.attacker.com` must both fail, and a substring test would let
+ * one of them through.
+ */
+function isMediaUrl(v: unknown): v is string {
+  if (!isHttpsUrl(v)) return false;
+  let host: string;
+  try {
+    host = new URL(v).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return config.mediaHostSuffixes.some((s) => host === s || host.endsWith(`.${s}`));
+}
+
 /** id → English fragment for the video story composer (curated, server-side). */
 const VIDEO_FRAGMENTS = new Map(VIDEO_STORY.flatMap((s) => s.options.map((o) => [o.id, o.fragment])));
 
@@ -633,9 +663,10 @@ export async function generateResponse(
   body: Record<string, unknown> | null,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const source = body?.source;
-  // Image source: an uploaded HTTPS URL, or one of the CALLER'S OWN previous
-  // generations by id (reusable works: no re-upload, owner-scoped).
-  let imageUrl = isHttpsUrl(body?.image_url) ? body.image_url : undefined;
+  // Image source: a URL from /api/upload (screened + re-hosted by us), or one of
+  // the CALLER'S OWN previous generations by id (reusable works: no re-upload,
+  // owner-scoped). A generation's output_url is trusted because WE wrote it.
+  let imageUrl = isMediaUrl(body?.image_url) ? body.image_url : undefined;
   if (!imageUrl && body?.generation_id != null) {
     const src = await getGeneration(Number(body.generation_id), userId);
     if (!src || src.status !== "ok" || !src.output_url) {
@@ -644,8 +675,28 @@ export async function generateResponse(
     imageUrl = src.output_url;
   }
   // A video file can't be a model's image input (e.g. Seedance needs a frame).
-  if (imageUrl && /\.(mp4|webm|mov)(\?|$)/i.test(imageUrl)) {
+  const isVideoFile = (u: string) => /\.(mp4|webm|mov)(\?|$)/i.test(u);
+  if (imageUrl && isVideoFile(imageUrl)) {
     return { status: 400, body: { error: "bad_source" } };
+  }
+  // Additional photos of the SAME person. More angles of one face is the single
+  // cheapest way to improve likeness, and it costs nothing extra — the providers
+  // composite the references into one output. Validated exactly like the primary
+  // photo; the per-model cap is applied further down, once the model is known.
+  const extraImageUrls: string[] = [];
+  if (body?.image_urls != null) {
+    if (!Array.isArray(body.image_urls)) return { status: 400, body: { error: "bad_source" } };
+    // 16 is a hard parse-time ceiling so a huge array can't be walked at all;
+    // the real, much smaller limit is the model's maxInputs, checked below.
+    if (body.image_urls.length > 16) return { status: 400, body: { error: "bad_source" } };
+    for (const u of body.image_urls) {
+      if (!isMediaUrl(u) || isVideoFile(u)) return { status: 400, body: { error: "bad_source" } };
+      // The primary photo may legitimately repeat in the list the client keeps;
+      // sending the same URL twice only wastes provider context.
+      if (u !== imageUrl && !extraImageUrls.includes(u)) extraImageUrls.push(u);
+    }
+    // Whole request was extras and no primary — promote the first one.
+    if (!imageUrl && extraImageUrls.length) imageUrl = extraImageUrls.shift();
   }
   let model: ModelSpec, prompt: string, crafted;
 
@@ -768,7 +819,7 @@ export async function generateResponse(
   // which would render without the frame the user picked).
   let endImageUrl: string | undefined;
   if (body?.end_image_url != null || body?.end_generation_id != null) {
-    if (isHttpsUrl(body?.end_image_url)) {
+    if (isMediaUrl(body?.end_image_url)) {
       endImageUrl = body.end_image_url as string;
     } else if (body?.end_generation_id != null) {
       const src = await getGeneration(Number(body.end_generation_id), userId);
@@ -795,6 +846,17 @@ export async function generateResponse(
   // provider payload (that would make /api/generate fetch arbitrary URLs).
   const refUrl = styleRefUrl(presetStyleRef);
   if (refUrl) opts.styleRefUrl = refUrl;
+  // Extra reference photos — same rule: assigned after normalizeOpts, from URLs
+  // this handler validated itself, never carried through the opts bag. Rejecting
+  // (rather than truncating) an over-cap list keeps the client honest: silently
+  // dropping photos would look like the model ignored them.
+  if (extraImageUrls.length) {
+    const maxInputs = model.image?.maxInputs ?? 1;
+    if (extraImageUrls.length + 1 > maxInputs) {
+      return { status: 400, body: { error: "too_many_inputs", maxInputs } };
+    }
+    opts.extraImageUrls = extraImageUrls;
+  }
 
   const r = await startWebGeneration(userId, model, prompt, imageUrl, crafted, opts);
   if (!r.ok) {
@@ -805,6 +867,10 @@ export async function generateResponse(
         body: { error: "insufficient", need: priceFor(model, opts), balance, packs: packsPayload() },
       };
     }
+    // 503, not 400: nothing is wrong with the request — our provider is
+    // refusing us. A 4xx would tell the client to change something it can't.
+    // Nothing was charged, which is the point of refusing here.
+    if (r.error === "provider_down") return { status: 503, body: { error: "provider_down" } };
     return { status: 400, body: { error: r.error } };
   }
   const balance = (await getUser(userId))?.credits ?? 0;

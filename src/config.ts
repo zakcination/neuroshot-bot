@@ -138,6 +138,20 @@ export const config = {
   // gives calibration data.
   moderationNsfwThreshold: Number(process.env.MODERATION_NSFW_THRESHOLD ?? 0.4),
 
+  // Host suffixes an image URL may come from when a client hands one to
+  // /api/generate. Every legitimate URL is one WE issued — /api/upload screens
+  // the bytes and re-hosts them on provider storage, and a reused work is a
+  // provider-hosted output — so anything outside this list is a caller naming
+  // an address of their own. Accepting those would let a client skip the
+  // moderation gate entirely by hosting the photo elsewhere, and would turn
+  // /api/generate into "fetch this URL and hand it to our provider". Kept in
+  // config, not a hard-coded constant, so a provider CDN rename is an env
+  // change rather than a deploy-blocking outage.
+  mediaHostSuffixes: (process.env.MEDIA_HOST_SUFFIXES ?? "fal.media,fal.run")
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean),
+
   // --- Rate limiting (src/ratelimit.ts) — per client IP, per 60s window ---
   // Every cost/abuse-sensitive write route (session issuance, upload,
   // generate, prompt-enhance) had NO limit at all before this. Defaults are

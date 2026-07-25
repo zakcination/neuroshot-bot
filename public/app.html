@@ -261,6 +261,27 @@
       text-transform: uppercase; background: var(--aurora); padding: 4px 9px; border-radius: 999px; color: #fff;
     }
     .pack.best { border-color: rgba(255,77,141,.55); box-shadow: 0 6px 30px rgba(255,77,141,.12); }
+    /* A pack too small to finish the render the user just tried. Still buyable
+       — it is a valid top-up — but visibly not the way out of this screen. */
+    .pack.short { opacity: .55; }
+
+    /* Progression card — the mobile-game "level ring + XP bar" read. The ring is
+       a conic-gradient sweep driven by --pct, so the fill needs no extra markup
+       and no SVG. */
+    .lvlcard { display: flex; align-items: center; gap: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+    .lvlcard.off { opacity: .75; }
+    .lvlring {
+      flex: 0 0 auto; width: 56px; height: 56px; border-radius: 999px; display: grid; place-items: center; position: relative;
+      background: conic-gradient(var(--violet) calc(var(--pct, 0) * 1%), rgba(255,255,255,.08) 0);
+    }
+    .lvlring::after { content: ""; position: absolute; inset: 4px; border-radius: 999px; background: var(--surface); }
+    .lvlring b { position: relative; z-index: 1; font-size: 20px; font-weight: 800; }
+    .lvlbody { flex: 1; min-width: 0; }
+    .lvltop { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .lvltop b { font-size: 15px; }
+    .lvlxp { color: var(--amber); font-weight: 700; font-size: 13px; white-space: nowrap; }
+    .lvlbar { height: 8px; border-radius: 999px; background: rgba(255,255,255,.08); overflow: hidden; margin: 8px 0 6px; }
+    .lvlbar i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--violet), var(--magenta)); transition: width .5s ease; }
 
     .refcard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 19px; }
     .refcard h3 { margin: 0 0 5px; font-size: 16px; }
@@ -609,6 +630,14 @@
     .drop input { display: none; }
     .photo-preview { position: relative; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); }
     .photo-preview img { width: 100%; max-height: 42dvh; object-fit: contain; display: block; background: #000; }
+    /* "More angles" strip: square thumbs + a dashed add tile, horizontally
+       scrollable so a narrow phone never wraps it into a ragged second row. */
+    .xrow { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; -webkit-overflow-scrolling: touch; }
+    .xthumb { position: relative; flex: 0 0 auto; width: 68px; height: 68px; border-radius: var(--radius-s); overflow: hidden; border: 1px solid var(--line); }
+    .xthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .xdel { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border: 0; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; font: inherit; font-size: 11px; line-height: 20px; padding: 0; cursor: pointer; }
+    .xadd { flex: 0 0 auto; width: 68px; height: 68px; border-radius: var(--radius-s); border: 1px dashed var(--violet); display: grid; place-items: center; color: var(--violet); font-size: 22px; cursor: pointer; }
+    .xadd input { display: none; }
     .photo-preview .redo { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,.55); backdrop-filter: blur(6px); border: 0; color: #fff; border-radius: 999px; padding: 8px 13px; font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; }
 
     textarea.prompt {
@@ -987,7 +1016,45 @@
       count: "Количество — сколько разных вариантов сделать за один раз. Каждый вариант считается отдельно и стоит патронов.",
       duration: "Длительность — сколько секунд будет видео. Дольше — дороже.",
       endframe: "Финальный кадр — необязательно. Если добавить, видео плавно придёт от вашего фото к этому кадру.",
+      angles: "Несколько фото ОДНОГО человека с разных сторон — модель лучше понимает лицо и точнее его сохраняет. Не добавляйте сюда других людей: получится смесь. Дополнительные фото не стоят патронов.",
     };
+    /**
+     * The progression card — the mobile-game read of "what level am I, how much
+     * XP, and how far to the next one". Everything here comes from the server's
+     * `progress` object: the XP ladder itself is private tuning, so the client
+     * is handed a POSITION on it and never the table.
+     *
+     * Three states, because a progression screen that lies is worse than none:
+     *  • not switched on (the shipped default) — say so plainly rather than
+     *    drawing an empty Level 0 bar that looks broken;
+     *  • max level — a full bar, no phantom "0 to next";
+     *  • normal — level ring, XP counter, and the exact XP left to the next.
+     */
+    function levelCardHtml(p) {
+      if (!p || !p.active) {
+        return `<div class="lvlcard off">
+          <div class="lvlring"><b>—</b></div>
+          <div class="lvlbody">
+            <div class="lvltop"><b>Уровни скоро</b></div>
+            <div class="sub">Опыт уже копится за ваши работы. Как только шкала откроется, он весь останется с вами.</div>
+          </div>
+        </div>`;
+      }
+      const pct = Math.round((p.into / p.span) * 100);
+      const maxed = p.nextAt == null;
+      const left = maxed ? 0 : p.nextAt - p.xp;
+      return `<div class="lvlcard">
+        <div class="lvlring" style="--pct:${pct}"><b>${p.level}</b></div>
+        <div class="lvlbody">
+          <div class="lvltop"><b>Уровень ${p.level}</b><span class="lvlxp">${p.xp} XP</span></div>
+          <div class="lvlbar"><i style="width:${pct}%"></i></div>
+          <div class="sub">${maxed
+            ? "Максимальный уровень — вы прошли всю шкалу 🏆"
+            : `Ещё ${left} XP до ${p.level + 1} уровня · открывает новые стили`}</div>
+        </div>
+      </div>`;
+    }
+
     /** A section label, with a tap-to-explain "?" when we have something to say. */
     function qLabel(text, hintKey) {
       const hint = hintKey && HINTS[hintKey]
@@ -1493,6 +1560,10 @@
         modelKey: ctx.modelKey || null,
         photo: prev ? prev.photo : null,
         photoUrl: prev ? prev.photoUrl : null,
+        // Additional angles of the SAME face: [{data, url}]. Survives a re-open
+        // for the same reason the primary photo does — retaking them is the most
+        // annoying thing we could ask for.
+        extras: prev ? prev.extras || [] : [],
         generationId: ctx.generationId || (prev ? prev.generationId : null),
         srcPreview: ctx.srcPreview || (prev ? prev.srcPreview : null),
         endPhoto: null, endGenerationId: null,
@@ -1528,6 +1599,12 @@
       // that doesn't declare maxCount (premium_*, unverified), gets no selector.
       const maxCount = stu.mode !== "video" && caps ? caps.maxCount || 0 : 0;
       if (!maxCount || (stu.numImages && stu.numImages > maxCount)) stu.numImages = undefined;
+      // Extra angles: images-only, and only as many as the chosen model reads.
+      // Swapping to a narrower model trims the tail rather than failing at
+      // «Создать» — the server rejects an over-cap list outright.
+      stu.extras = stu.extras || [];
+      const maxInputs = stu.mode !== "video" && caps ? caps.maxInputs || 1 : 1;
+      if (stu.extras.length > maxInputs - 1) stu.extras = stu.extras.slice(0, Math.max(0, maxInputs - 1));
       if (stu.mode === "video" && m.video) {
         if (!m.video.durations.some((d) => d.seconds === stu.duration)) stu.duration = m.video.durations[0].seconds;
         if (!m.video.endFrame) { stu.endPhoto = null; stu.endGenerationId = null; }
@@ -1578,6 +1655,32 @@
         if ((x.image.resolutions || []).length) bits.push(x.image.resolutions.map((r) => r.label).join("/"));
       }
       return bits.length ? `<div class="mmeta">${esc(bits.join(" · "))}</div>` : "";
+    }
+
+    /**
+     * "More angles of the same face" strip. Shown only once there IS a primary
+     * photo and the chosen model actually reads several (`maxInputs > 1`) — an
+     * empty affordance on a single-photo model would just be a dead end.
+     *
+     * The copy carries the two things a user cannot guess: these must be the
+     * SAME person (the model is told so server-side, and a second person would
+     * come back as a blend), and it does NOT cost more.
+     */
+    function extrasBlock(m, isVideo, hasSource) {
+      const caps = isVideo ? null : m && m.image;
+      const maxInputs = (caps && caps.maxInputs) || 1;
+      if (isVideo || !hasSource || maxInputs < 2) return "";
+      const extras = stu.extras || [];
+      const room = maxInputs - 1 - extras.length;
+      return `
+        <div class="xtra">
+          <div style="margin-top:12px">${qLabel("Ещё ракурсы — точнее лицо", "angles")}</div>
+          <div class="xrow">
+            ${extras.map((x, i) => `<div class="xthumb"><img src="${x.data}" alt="" /><button class="xdel" data-xi="${i}" aria-label="Убрать">✕</button></div>`).join("")}
+            ${room > 0 ? `<label class="xadd"><input type="file" accept="image/*" id="stuExtraFile" multiple /><span>＋</span></label>` : ""}
+          </div>
+          <div class="sub" style="margin-top:6px">Те же черты лица с других сторон — до ${maxInputs} фото. Цена не меняется.</div>
+        </div>`;
     }
 
     /** Count chip prices for the current resolution — mirrors studioPrice's math per n. */
@@ -1647,6 +1750,7 @@
                  <span class="em">📸</span><b>Выбрать фото</b><span>с устройства или из галереи</span></label>
                ${works.length ? `<div class="quiz-q">…или из моих работ</div>
                <div class="mini" id="stuMini">${works.map((g) => `<img src="${esc(g.output_url)}" data-gid="${g.id}" loading="lazy" alt="" />`).join("")}</div>` : ""}`}
+          ${extrasBlock(m, isVideo, has)}
         </div>
         <div class="seg" id="stuSeg">
           <button data-md="image" class="${!isVideo ? "on" : ""}">🖼 Фото</button>
@@ -1763,7 +1867,29 @@
         stu.generationId = Number(im.dataset.gid); stu.srcPreview = im.getAttribute("src");
         clampStudioOpts(); viewStudio();
       }));
-      bind("#stuRedo", (el) => (el.onclick = () => { stu.photo = null; stu.photoUrl = null; stu.generationId = null; stu.srcPreview = null; viewStudio(); }));
+      // Dropping the primary photo drops the extra angles with it — they only
+      // ever mean "more of THIS face", so keeping them would silently attach
+      // one person's angles to somebody else's photo.
+      bind("#stuRedo", (el) => (el.onclick = () => {
+        stu.photo = null; stu.photoUrl = null; stu.generationId = null; stu.srcPreview = null; stu.extras = [];
+        viewStudio();
+      }));
+      bind("#stuExtraFile", (el) => (el.onchange = async (e) => {
+        const m = studioModel();
+        const room = (((m && m.image && m.image.maxInputs) || 1) - 1) - (stu.extras || []).length;
+        const files = [...e.target.files].slice(0, Math.max(0, room));
+        if (!files.length) return;
+        let failed = 0;
+        for (const f of files) {
+          const data = await downscale(f);
+          if (data) stu.extras.push({ data, url: null }); else failed++;
+        }
+        if (failed) toast(failed === files.length ? "Не получилось прочитать фото" : "Часть фото не удалось прочитать");
+        clampStudioOpts(); viewStudio();
+      }));
+      sheetBody.querySelectorAll(".xdel").forEach((b) => (b.onclick = () => {
+        stu.extras.splice(Number(b.dataset.xi), 1); viewStudio();
+      }));
       bind("#stuEndFile", (el) => (el.onchange = async (e) => {
         const f = e.target.files[0];
         if (!f) return;
@@ -1788,6 +1914,17 @@
         stu.photoUrl = await uploadData(stu.photo);
         if (!stu.photoUrl) { toast("Не удалось загрузить фото — попробуйте ещё раз"); viewStudio(); return; }
       }
+      // Extra angles upload the same way, and each keeps its url so a reroll
+      // doesn't re-upload photos we already have on the provider's storage.
+      // One failed angle must not sink the render — it is supporting material,
+      // so we drop it and tell the user rather than aborting a paid action.
+      let dropped = 0;
+      for (const x of stu.extras || []) {
+        if (!x.url) x.url = await uploadData(x.data);
+        if (!x.url) dropped++;
+      }
+      const extraUrls = (stu.extras || []).map((x) => x.url).filter(Boolean);
+      if (dropped) toast(`Не удалось загрузить доп. фото (${dropped}) — рисуем по остальным`);
       let end_image_url;
       if (stu.endPhoto) {
         end_image_url = await uploadData(stu.endPhoto);
@@ -1795,6 +1932,7 @@
       }
       const opts = {
         image_url: stu.photoUrl || undefined,
+        image_urls: !isVideo && extraUrls.length ? extraUrls : undefined,
         generation_id: stu.generationId || undefined,
         aspect_ratio: stu.aspect && stu.aspect !== "auto" ? stu.aspect : undefined,
         resolution: stu.resolution || undefined,
@@ -1814,6 +1952,19 @@
       if (status === 402) { viewPaywall(data); return; }
       if (status === 403 && data && data.error === "level_locked") {
         haptic("error"); toast(lockText({ need: data.requiredLevel, have: data.level }), { wide: true, ms: 5000 }); viewStudio(); return;
+      }
+      // Our provider is refusing us — every render would fail, so say so
+      // honestly instead of the generic "что-то пошло не так", which invites a
+      // retry that cannot work. Nothing was charged, and we say that too.
+      if (status === 503 && data && data.error === "provider_down") {
+        haptic("error");
+        toast("Сервис генерации временно недоступен — мы уже чиним. Патроны не списаны, попробуйте через пару минут.", { wide: true, ms: 6000 });
+        viewStudio(); return;
+      }
+      if (status === 400 && data && data.error === "too_many_inputs") {
+        haptic("error");
+        toast(`Эта модель читает не больше ${data.maxInputs} фото — уберите лишние ракурсы`, { wide: true, ms: 4500 });
+        viewStudio(); return;
       }
       if (status !== 200) { toast("Что-то пошло не так — попробуйте ещё раз"); viewStudio(); return; }
       ME.dashboard.credits = data.balance;
@@ -2022,15 +2173,27 @@
       haptic("warning");
       // Arm the exit-offer: closing the paywall (✕ / backdrop) shows the combo
       // once, instead of silently losing the buyer. "Назад" arms it too.
-      const combo = (data.packs || []).find((p) => p.offer);
+      const packs = data.packs || [];
+      // How much this pack must ADD to finish the render the user just tried.
+      // Anything smaller leaves them stuck after paying — the failure mode this
+      // block exists to prevent. The expensive video models (Seedance) cost more
+      // than the entry pack grants, so before this the paywall would happily
+      // sell «Старт» to someone who still couldn't render afterwards.
+      const gap = Math.max(0, (data.need || 0) - (data.balance || 0));
+      const covers = (p) => p.credits >= gap;
+      // Recommend the CHEAPEST pack that actually gets them there, not a fixed
+      // slot in the list.
+      const best = packs.filter((p) => !p.offer && covers(p)).sort((a, b) => a.kzt - b.kzt)[0];
+      // The exit-offer only makes sense if the combo itself would unblock them.
+      const combo = packs.find((p) => p.offer && covers(p));
       if (combo && !exitOfferShown) sheetCloseHook = () => viewExitOffer(combo, data);
       sheetBody.innerHTML = `
         <h3>Ещё один шаг до результата ✨</h3>
         <div class="sub">Нужно ${data.need} ${PATRON}, на балансе ${data.balance}. Пополните — и результат сразу продолжит создаваться.</div>
-        <div class="packs">${(data.packs || []).map((p, i) => `
-          <button class="pack ${i === 1 ? "best" : ""}" data-pk="${p.id}">
-            ${i === 1 ? '<span class="hot">Популярный</span>' : ""}
-            <span><span class="amount">${PATRON} ${p.credits}</span><div class="per">≈ ${(p.kzt / p.credits).toFixed(0)} ₸ за патрон</div></span>
+        <div class="packs">${packs.map((p) => `
+          <button class="pack ${best && p.id === best.id ? "best" : ""} ${covers(p) ? "" : "short"}" data-pk="${p.id}">
+            ${best && p.id === best.id ? '<span class="hot">Хватит на этот кадр</span>' : ""}
+            <span><span class="amount">${PATRON} ${p.credits}</span><div class="per">≈ ${(p.kzt / p.credits).toFixed(0)} ₸ за патрон${covers(p) ? "" : ` · не хватит на этот кадр`}</div></span>
             <span class="stars">${p.kzt.toLocaleString("ru-RU")} ₸</span>
           </button>`).join("")}</div>
         <div class="row"><button class="btn ghost" id="backBtn">← Назад</button></div>`;
@@ -2424,10 +2587,10 @@
             <div class="ach"><span class="achic">🏆</span><span class="achtx">Студия освоена<small>вы прошли весь путь в NeuroShot</small></span></div>
           </section>` : ""}
 
-          ${(dash.xp || 0) > 0 ? `<section class="reveal">
+          <section class="reveal">
             <div class="sec-h"><h2>Уровень</h2></div>
-            <div class="ach"><span class="achic">⭐</span><span class="achtx">Уровень ${dash.level}<small>${dash.xp} опыта · открывает новые стили</small></span></div>
-          </section>` : ""}
+            ${levelCardHtml(d.progress)}
+          </section>
 
           <section class="reveal">
             <div class="sec-h"><h2>Мои работы</h2></div>

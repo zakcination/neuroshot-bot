@@ -29,6 +29,17 @@ export interface GenOpts {
    * assigned AFTER normalizeOpts, from the preset registry (styleRefUrl below).
    */
   styleRefUrl?: string;
+  /**
+   * ADDITIONAL photos of the SAME person, appended after the primary photo in
+   * `image_urls`. More angles of one face give the model a far better likeness
+   * than a single frame can — that is the whole point of this field, and why
+   * refPrompt below tells the model these are one subject and not a group.
+   *
+   * SERVER-SET ONLY, exactly like styleRefUrl: normalizeOpts does not copy it,
+   * so a client cannot smuggle URLs in through the opts bag. webapp.ts assigns
+   * it after validating every entry against the media-host allow-list.
+   */
+  extraImageUrls?: string[];
 }
 
 /** A quality/resolution tier the composer can offer; `mult` scales credits AND cost. */
@@ -47,6 +58,11 @@ export interface ImageParams {
    *  the live fal queue OpenAPI schemas. The cap here is OURS, not the provider's:
    *  it bounds the worst-case spend a single tap can trigger. */
   maxCount?: number;
+  /** Max USER photos accepted as input, INCLUDING the primary one. Only edit
+   *  models declare it (a text-to-image model has no photo input at all). Extra
+   *  angles of the same face cost nothing extra — the providers composite the
+   *  references into one output, so the charge still follows `num_images`. */
+  maxInputs?: number;
 }
 
 /** Video composer capabilities + per-second pricing (credits scale with length). */
@@ -125,25 +141,39 @@ export function styleRefUrl(file: string | undefined): string | undefined {
   return `${config.webappUrl.replace(/\/+$/, "")}/img/${file}`;
 }
 /**
- * The model payload's image list plus the optional style reference. Order is
- * load-bearing: the user's photo stays FIRST (it is the identity anchor that
- * KEEP_ID refers to) and the reference follows as supporting material.
+ * The model payload's image list: the user's photos, then the optional style
+ * reference. Order is load-bearing in both directions — the user's primary
+ * photo stays FIRST (it is the identity anchor KEEP_ID refers to) and the style
+ * plate stays LAST, which is what refPrompt below tells the model to expect.
  */
 function refUrls(imageUrl: string | undefined, opts: GenOpts | undefined): string[] {
-  return [imageUrl, opts?.styleRefUrl].filter((u): u is string => !!u);
+  return [imageUrl, ...(opts?.extraImageUrls ?? []), opts?.styleRefUrl].filter((u): u is string => !!u);
 }
 /**
- * Tells the model what the second image is FOR. Without this the reference is
- * ambiguous and the model may treat it as a second subject — blending faces,
- * which would break the one promise the product actually makes.
+ * Tells the model what the images after the first one are FOR. Without this the
+ * list is ambiguous and the model reads extra images as extra PEOPLE — blending
+ * faces or rendering a crowd, either of which breaks the one promise the product
+ * actually makes. Both clauses are positional, so they stay correct however many
+ * reference photos the user attached.
  */
 function refPrompt(prompt: string, opts: GenOpts | undefined): string {
-  if (!opts?.styleRefUrl) return prompt;
-  return (
-    `${prompt} The second image is a STYLE REFERENCE ONLY — copy its palette, lighting, ` +
-    `materials and mood. Do not copy any person, face or body from it; the subject is ` +
-    `taken solely from the first image.`
-  );
+  const extra = opts?.extraImageUrls?.length ?? 0;
+  const parts: string[] = [];
+  if (extra) {
+    parts.push(
+      `The first ${extra + 1} images are all photographs of the SAME single person from ` +
+      `different angles and in different lighting — read them together to get the face right. ` +
+      `Render exactly ONE person, never a group and never a collage.`,
+    );
+  }
+  if (opts?.styleRefUrl) {
+    parts.push(
+      `The LAST image is a STYLE REFERENCE ONLY — copy its palette, lighting, ` +
+      `materials and mood. Do not copy any person, face or body from it; the subject is ` +
+      `taken solely from the ${extra ? "photographs above" : "first image"}.`,
+    );
+  }
+  return parts.length ? `${prompt} ${parts.join(" ")}` : prompt;
 }
 /** {num_images} for image models — clamped to the model's declared maxCount, omitted at the default of 1. */
 function countParam(maxCount: number, opts: GenOpts | undefined): { num_images?: number } {
@@ -184,7 +214,7 @@ export const MODELS = {
     label: "Nano Banana",
     note: "правки по фото — быстро и дёшево",
     input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), ...arParam(opts), ...countParam(4, opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 4 },
+    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 4, maxInputs: 4 },
   },
   text_to_image: {
     key: "text_to_image",
@@ -213,7 +243,7 @@ export const MODELS = {
     label: "Seedream 4.5",
     note: "сцена по вашему фото",
     input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), ...sizeParam(opts, true), ...countParam(6, opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 6 },
+    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 6, maxInputs: 4 },
   },
   animate: {
     key: "animate",
@@ -257,7 +287,9 @@ export const MODELS = {
     // rides along exactly as it does on the Seedream/Nano Banana edit paths —
     // without this a `styleRef` on a premium_edit preset would be silently dropped.
     input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), quality: "high", ...sizeParam(opts, false), ...countParam(2, opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 2 },
+    // Fewer extra angles than the cheap tiers: every input image is billed
+    // context on this endpoint, so the cap doubles as a cost guard.
+    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 2, maxInputs: 2 },
   },
 
   // --- Top-tier models (verified against fal.ai model pages, Jul 2026) ---
@@ -287,7 +319,7 @@ export const MODELS = {
     label: "Nano Banana 2",
     note: "правка по фото, до 4K",
     input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), resolution: opts?.resolution ?? "1K", ...arParam(opts), ...countParam(4, opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES, maxCount: 4 },
+    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES, maxCount: 4, maxInputs: 4 },
   },
   // Nano Banana Pro (Gemini 3 Pro) — SOTA image, $0.15/img @1K–2K.
   nbpro_image: {
@@ -310,7 +342,7 @@ export const MODELS = {
     label: "Nano Banana Pro",
     note: "правка с максимумом деталей",
     input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), resolution: opts?.resolution ?? "2K", ...arParam(opts), ...countParam(4, opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES, maxCount: 4 },
+    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES, maxCount: 4, maxInputs: 4 },
   },
   // Kling 3.0 Pro — top image→video, $0.168/s audio-on → 5s ≈ $0.84.
   kling3: {
@@ -681,9 +713,36 @@ export const PRESETS: Preset[] = [
     id: "fashion",
     label: "🕶 Fashion-съёмка",
     category: "photo",
+    // "A designer outfit, Vogue-style" was doing the opposite of high fashion:
+    // it pulled generic luxury-logo clothing, and it named a real magazine.
+    // Both are dropped. Logos are now explicitly forbidden — a monogram print
+    // is a trademark we have no right to put on a user's chest, and it is also
+    // simply worse styling than a strong silhouette.
+    //
+    // What replaces it is what actually makes an editorial: a CONCEPT, one
+    // committed PROP, and hair treated as sculpture. Same "choose one and
+    // commit" structure as the retro look — a stacked list of ideas produces a
+    // cluttered frame, one idea produces a cover.
+    aspect: "3:4",
     prompt:
-      "Restyle into a high-fashion editorial photo: a designer outfit, dramatic studio lighting, Vogue-style " +
-      `composition, subtle film grain, bold styling, tack-sharp face. ${KEEP_ID}`,
+      "Restage the person as a high-fashion magazine COVER shoot built on a concept, not on expensive clothes. " +
+      "NO brand names, NO logos, NO monograms, NO designer labels anywhere in frame — the styling must carry " +
+      "the image on its own.\n" +
+      "CONCEPT — choose ONE and commit to it completely: bold monochrome colour-blocking where the outfit and " +
+      "the seamless backdrop are the same saturated hue; sculptural silhouette with exaggerated shoulders or a " +
+      "vast voluminous sleeve; sharp minimalism in raw unbleached fabric against concrete; high-contrast " +
+      "graphic black-and-white with strong geometry.\n" +
+      "PROP — one strong object, used with intent rather than held: an oversized bloom held to the jaw, a " +
+      "sheet of rippling silk caught mid-air, a shard of mirror reflecting one eye, a single vintage chair " +
+      "used as a frame within the frame.\n" +
+      "HAIR — treat it as part of the sculpture: wet-look slicked back, an architectural sculpted updo, a " +
+      "sleek deep side part, or deliberately wind-blown across the face.\n" +
+      "POSE AND EXPRESSION — an editorial attitude: an elongated neck and dropped shoulder, a hand framing the " +
+      "jaw, a cool level gaze straight down the lens or eyes closed in stillness. Confident, never smiling for " +
+      "the camera.\n" +
+      "LIGHT — one dramatic hard key with a deep falloff, crisp shadow edges, subtle film grain, shot on 85mm. " +
+      "Cover-shoot framing with clean negative space at the top, but NO text, masthead or lettering anywhere " +
+      `in the image. Tack-sharp face. ${KEEP_ID}`,
   },
   {
     id: "travel",
@@ -752,12 +811,38 @@ export const PRESETS: Preset[] = [
   },
   {
     id: "retro90s",
-    label: "📼 Плёнка 90-х",
+    label: "📼 Ретро-фотосессия",
     category: "photo",
+    // The old version only regraded the image — faded colour, grain, light
+    // leaks — and left the person's pose, clothes and expression exactly as
+    // uploaded. That reads as "the photo, but yellower", not as a shoot.
+    //
+    // So the direction is explicit about the three things that actually make it
+    // a photoshoot: a NEW pose, a CHANGED wardrobe, and a chosen expression.
+    // The wardrobe is offered as a menu with "pick ONE that suits the person"
+    // rather than a list, because stacking every item produces a polka-dot
+    // dress and an oversize suit in the same frame — and because a look that
+    // fits one person doesn't fit another. The user's own words (appended after
+    // this prompt as "Extra details") are given final say, which is what makes
+    // the result vary with the request instead of being one fixed costume.
+    aspect: "3:4",
     prompt:
-      "Restyle into an authentic 1990s film-photo portrait: warm slightly-faded color, soft grain, gentle on-camera " +
-      "flash, period-accurate styling and hair, a nostalgic snapshot feel with subtle light leaks and true-to-film " +
-      `skin tones, tack-sharp face. ${KEEP_ID}`,
+      "Restage the person as a full RETRO PHOTOSHOOT — not a filter on the original snapshot. Change the pose, " +
+      "the wardrobe and the expression; do not keep the pose from the source photo.\n" +
+      "WARDROBE — choose ONE complete look that genuinely suits this person and commit to it: a polka-dot " +
+      "midi dress with a nipped waist; a silk headscarf tied under the chin with cat-eye sunglasses; a wide " +
+      "oversized double-breasted suit with padded shoulders and pleated trousers; a knitted vintage cardigan " +
+      "over a collared shirt; a tailored trench with leather gloves and a wide-brimmed hat. Add period " +
+      "headwear where it fits the look — a headscarf, beret, fedora or pillbox hat.\n" +
+      "SETTING — a vintage street scene with a polished chrome-heavy retro car in frame: leaning back against " +
+      "the door, seated on the bonnet, or half-out of the driver's window, with period shopfronts and signage " +
+      "softly out of focus behind.\n" +
+      "POSE AND EMOTION — pick one and play it fully: a confident hand-on-hip stance with a direct look; a " +
+      "caught-mid-laugh moment with the head tilted back; a wistful glance away over the shoulder; a hand " +
+      "adjusting the hat or sunglasses. The face must be alive and acting, not a neutral passport expression.\n" +
+      "FINISH — warm slightly-faded film colour, soft grain, gentle on-camera flash, subtle light leaks, " +
+      "true-to-film skin tones, medium shot on a 35mm lens. If the user asked for a specific outfit, era, car " +
+      `or mood below, THAT overrides these choices. Tack-sharp face. ${KEEP_ID}`,
   },
   // More curated one-tap looks adapted from the VeoSee prompt-library research
   // (docs/prompt-library.md): rewritten in NeuroShot's voice, identity-locked,
@@ -784,10 +869,26 @@ export const PRESETS: Preset[] = [
     id: "photobooth_bw",
     label: "🖤 Фотобудка Ч/Б",
     category: "photo",
+    // Noir and "cozy" pull in opposite directions, so they are assigned to
+    // DIFFERENT things rather than averaged into flat grey: noir is the grade
+    // INSIDE the frames (hard chiaroscuro, deep blacks), cozy is the physical
+    // print — a real strip lying tilted on a warm surface. Asking one image to
+    // be both moody and warm at once is what produced the flat studio look.
+    // The strip is pinned to THREE frames and the sunglasses to the MIDDLE one,
+    // because "one of them" left the model free to put shades on all three.
+    aspect: "3:4",
     prompt:
-      "Restyle into a black-and-white photobooth strip: a vertical strip of four cinematic frames with natural " +
-      "editorial poses, luxurious voluminous hair, quiet-luxury styling, soft film grain, timeless monochrome " +
-      `aesthetic, tack-sharp face. ${KEEP_ID}`,
+      "Restyle into a vintage black-and-white photobooth strip — one single VERTICAL strip of exactly THREE " +
+      "stacked square frames (not a grid, not four), thin white borders between them. Behind the person in every " +
+      "frame hangs a heavy pleated curtain backdrop, its folds catching the light. TOP frame: a warm natural " +
+      "half-smile toward the lens. MIDDLE frame: the same person wearing retro 70s sunglasses, chin lifted, " +
+      "playful. BOTTOM frame: a quiet three-quarter turn, eyes down. The hair is smooth, sleek and softly " +
+      "styled — controlled, close to the head, NOT frizzy, NOT puffed out, no flyaways. Hard noir lighting: a " +
+      "single low key light raking across the face so bright speculars catch the cheekbones, brow and bridge of " +
+      "the nose, deep black shadows on the opposite side, strong chiaroscuro contrast, rich blacks, glowing " +
+      "highlights, fine silver film grain. The finished paper strip lies at a gentle diagonal TILT on a warm " +
+      "wooden table beside a coffee cup, soft lamplight and a shallow depth of field around it — a cosy, " +
+      `lived-in keepsake photographed from above. Tack-sharp face in every frame. ${KEEP_ID}`,
   },
   {
     id: "paper_doll",
@@ -823,7 +924,7 @@ export const PRESETS: Preset[] = [
     prompt:
       "Place the person in an ultra-realistic billionaire-lifestyle editorial exiting a glossy black helicopter on a " +
       "private rooftop helipad: a confident dominant pose with wind-blown hair, an expensive quiet-luxury linen suit, " +
-      `bright daylight with a city skyline and distant mountains behind, Vogue-campaign mood, tack-sharp face. ${KEEP_ID}`,
+      `bright daylight with a city skyline and distant mountains behind, glossy campaign mood, tack-sharp face. ${KEEP_ID}`,
   },
   {
     id: "alpine_lux",
@@ -1515,17 +1616,18 @@ export const CAMPAIGNS: Campaign[] = [
         styleRef: "card-agamemnon.jpg",
         prompt:
           "Epic cinematic film still: the person as the high king and supreme commander of the Greek host, " +
-          "standing on the stone steps of a torchlit citadel at dusk — a layered plate cuirass in DARK " +
-          "desaturated gunmetal, near-black steel with only a faint cold cast (not bright blue), fine warm " +
-          "gold edging, a heavy gold sun-medallion clasp at each shoulder, a tall helmet with a black " +
-          "horsehair crest and gold trim pushed back clear of the face, a thick charcoal wool cloak with a " +
-          "deep folded collar, leather pteruges, a sheathed sword at the hip; ranks of spears and shields " +
-          "blurred in the haze behind. THE CAMERA IS LOW, on the steps below him, looking UP so he towers " +
-          "over the frame — medium shot. Hard torch rim light rakes across hammered, scratched, battle-worn " +
-          "metal; near-black steel and gold against warm flame, deep shadow. The face is weathered and alive " +
-          "— set jaw, the weight of ten years of war in the eyes, real skin with sweat, dust and stubble, " +
-          "not a smooth render. Shot on 85mm, shallow depth of field, photorealistic — a photograph, never " +
-          `CGI or a 3D game model. ${KEEP_ID}`,
+          "standing on the stone steps of a torchlit citadel at dusk — polished STEEL-BLUE plate armour, " +
+          "cold blue-grey metal with crisp warm gold edging and gold filigree; a heavy struck-gold coin " +
+          "medallion at each shoulder; a tall steel-blue helmet with a sculpted mask-like faceplate — hinged " +
+          "cheek guards and a nasal bar framing the face but leaving it fully visible — crowned with a tall " +
+          "dark navy-black horsehair crest, and a column of articulated GOLD VERTEBRAE running down the back " +
+          "of the helmet to the nape; a heavy dark cloak, leather pteruges, a sheathed sword at the hip; " +
+          "ranks of spears and shields blurred in the haze behind. THE CAMERA IS LOW, on the steps below " +
+          "him, looking UP so he towers over the frame — medium shot. Hard torch rim light rakes across " +
+          "hammered, scratched, battle-worn metal; cold steel-blue and gold against warm flame, deep shadow. " +
+          "The face is weathered and alive — set jaw, the weight of ten years of war in the eyes, real skin " +
+          "with sweat, dust and stubble, not a smooth render. Shot on 85mm, shallow depth of field, " +
+          `photorealistic — a photograph, never CGI or a 3D game model. ${KEEP_ID}`,
       },
       {
         id: "warrior",

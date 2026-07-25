@@ -129,6 +129,64 @@ function extractResultUrls(data: unknown): string[] {
   return single ? [single] : [];
 }
 
+/**
+ * Is this failure our PROVIDER ACCOUNT being blocked, rather than one model
+ * misbehaving? A 401/403 (bad key, or "User is locked. Reason: Exhausted
+ * balance") stops every render we make, but reaches the user as the same
+ * generic "не получилось, патроны возвращены" as any one-off failure — and
+ * the refund makes it look handled. It is not: it is a total revenue stop.
+ *
+ * It also surfaces UNEVENLY, which is what makes it so easy to misread. A
+ * balance drains to a level that still covers a $0.04 image but no longer a
+ * $1.52 video, so the expensive models "stop working" first and it reads as a
+ * bug in one model. Worth its own signal for exactly that reason.
+ */
+export function isProviderBlocked(err: unknown): boolean {
+  const e = err as { status?: number; body?: { detail?: unknown } } | null;
+  if (e?.status === 401 || e?.status === 403) return true;
+  const detail = typeof e?.body?.detail === "string" ? e.body.detail : "";
+  return /exhausted balance|user is locked|insufficient (?:funds|balance)|quota/i.test(detail);
+}
+
+/**
+ * Circuit breaker for an account-level provider block.
+ *
+ * Once the provider has locked our account, EVERY render fails — so the normal
+ * flow (charge → run → fail → refund) just churns the ledger, spins a progress
+ * bar for a minute, and hands back a message that invites a retry which will
+ * also fail. Worse, the refund makes it look handled, which is how an outage
+ * gets mistaken for "one model is broken".
+ *
+ * So the first block trips a short breaker: subsequent renders are refused
+ * IMMEDIATELY and, critically, WITHOUT CHARGING. The window is deliberately
+ * short and any successful render clears it, so topping the balance up recovers
+ * on its own — no redeploy, no manual reset. A stale breaker costs at most one
+ * refused render; the alternative costs every user a minute and a fake refund.
+ */
+const PROVIDER_BLOCK_COOLDOWN_MS = 120_000;
+let providerBlockedUntil = 0;
+/** True while we have recent, unambiguous evidence the provider is refusing us. */
+export function providerBlocked(): boolean {
+  return Date.now() < providerBlockedUntil;
+}
+/** Called on any successful provider run — proof the account works again. */
+function clearProviderBlock(): void {
+  providerBlockedUntil = 0;
+}
+/** Test seam: reset the breaker between cases. */
+export function resetProviderBlock(): void {
+  providerBlockedUntil = 0;
+}
+
+/** Log a provider block distinctly so the monitor can alert on the FIRST one. */
+async function noteProviderBlock(userId: number, model: ModelSpec, err: unknown): Promise<void> {
+  if (!isProviderBlocked(err)) return;
+  providerBlockedUntil = Date.now() + PROVIDER_BLOCK_COOLDOWN_MS;
+  const detail = (err as { body?: { detail?: unknown } } | null)?.body?.detail;
+  console.error(`PROVIDER BLOCKED (${model.key}):`, typeof detail === "string" ? detail : err);
+  await logEvent(userId, "provider_blocked", model.key).catch(() => {});
+}
+
 /** Run a model on fal; returns all output URLs + fal's request id (throws on provider failure). */
 async function falRun(
   model: ModelSpec,
@@ -137,6 +195,7 @@ async function falRun(
   opts?: GenOpts,
 ): Promise<{ urls: string[]; requestId: string }> {
   const result = await fal.subscribe(model.falEndpoint, { input: model.input(prompt, imageUrl, opts) });
+  clearProviderBlock(); // the account answered — whatever was wrong is over
   const urls = extractResultUrls(result.data);
   if (!urls.length) throw new Error(`No output URL in fal response for ${model.falEndpoint}`);
   return { urls, requestId: result.requestId };
@@ -156,9 +215,14 @@ export async function startWebGeneration(
   imageUrl?: string,
   crafted = false,
   opts?: GenOpts,
-): Promise<{ ok: true; id: number; credits: number } | { ok: false; error: "empty_prompt" | "insufficient" }> {
+): Promise<
+  { ok: true; id: number; credits: number } | { ok: false; error: "empty_prompt" | "insufficient" | "provider_down" }
+> {
   prompt = craftPrompt(model.kind, prompt, crafted);
   if (!prompt) return { ok: false, error: "empty_prompt" };
+  // Refuse BEFORE spending anything: while the provider is refusing us, every
+  // render would be charged, fail, and be refunded a minute later.
+  if (providerBlocked()) return { ok: false, error: "provider_down" };
   const credits = priceFor(model, opts); // video charge scales with duration
   if (!(await spendCredits(userId, credits, model.key))) {
     await logEvent(userId, "paywall", model.key);
@@ -182,6 +246,7 @@ export async function startWebGeneration(
       await logEvent(userId, "gen_ok", model.key).catch(() => {});
     } catch (err) {
       console.error(`web generation failed (${model.key}):`, err);
+      await noteProviderBlock(userId, model, err);
       // Refund ONLY if we win the pending→error CAS. If the 'ok' write already
       // landed (e.g. this catch was reached by a later throw), the CAS loses and
       // we must NOT refund a successful generation. Persist the provider cost we
@@ -339,6 +404,7 @@ export async function runGeneration(
         await logEvent(user.id, "gen_ok", model.key).catch(() => {});
       } catch (err) {
         console.error(`generation failed (${model.key}):`, err);
+        await noteProviderBlock(user.id, model, err);
         // Compensate ONLY if we never delivered, and ONLY if we win the pending→
         // error CAS — so a post-delivery error can't refund a delivered render and
         // the reaper can't double-refund. Exactly-once.

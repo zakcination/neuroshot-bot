@@ -14,6 +14,11 @@ process.env.FAL_KEY = "test-fal-key";
 // Force hermetic embedded pglite (see test/e2e.ts): never touch a real Postgres.
 process.env.DATABASE_URL = "";
 process.env.FREE_CREDITS = "3";
+// This suite's fake provider storage lives on fal.test. Production's allow-list
+// (config.mediaHostSuffixes) is the real fal CDN, so the fake host is declared
+// HERE rather than baked into the shipped default — a test hostname must never
+// be an accepted origin in production.
+process.env.MEDIA_HOST_SUFFIXES = "fal.test";
 process.env.WEBAPP_URL = "https://app.test"; // enable app-config paths
 process.env.BOT_USERNAME = "neuroshot_test_bot";
 process.env.KASPI_PAY_URL = "https://pay.test/neuroshot"; // enable the Kaspi order flow
@@ -34,7 +39,7 @@ process.env.RATE_LIMIT_ENHANCE_PER_MIN = "100000";
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, logEvent, logGeneration, query, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
+const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, logEvent, logGeneration, query, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
@@ -50,6 +55,10 @@ interface FalCall {
 }
 const falCalls: FalCall[] = [];
 let anyLlmFail = false; // flip to make the enhancer's LLM call blow up (refund path)
+// Flip to make every generation model reject the way a LOCKED PROVIDER ACCOUNT
+// does (403 + "Exhausted balance") — the failure that masquerades as one
+// broken model. Reset to false to simulate the balance being topped up.
+let providerLocked = false;
 // Content moderation (moderation.ts): tracked as its OWN edge, NOT pushed into
 // falCalls — several assertions use falCalls.length/.at(-1) to mean "the
 // generation MODEL ran", and this classifier call happens in addition to that
@@ -66,6 +75,12 @@ let nsfwCheckCalls = 0;
     return { data: { nsfw_probability: nsfwProbability }, requestId: `req-nsfw-${nsfwCheckCalls}` };
   }
   falCalls.push({ endpoint, input: opts.input });
+  if (providerLocked) {
+    const e = new Error("Forbidden") as Error & { status: number; body: unknown };
+    e.status = 403;
+    e.body = { detail: "User is locked. Reason: Exhausted balance. Top up your balance at fal.ai/dashboard/billing." };
+    throw e;
+  }
   if (endpoint === "fal-ai/any-llm") {
     if (anyLlmFail) throw new Error("llm boom");
     return { data: { output: `Cinematic, richly lit: ${String(opts.input.prompt)}` }, requestId: `req-${falCalls.length}` };
@@ -179,6 +194,10 @@ interface MeResponse {
     }>;
     imageModels: Array<{ key: string; label: string; credits: number }>;
     videoModels: Array<{ key: string; label: string; credits: number }>;
+  };
+  progress: {
+    active: boolean; xp: number; level: number; levelAt: number;
+    nextAt: number | null; into: number; span: number;
   };
 }
 
@@ -991,12 +1010,12 @@ await step("insufficient 🔫 → 402 with the pack catalog (in-app paywall)", a
 
 await step("generate validation: unknown ids, missing photo, unknown model keys, empty prompt → 400", async () => {
   const cases = [
-    { source: "preset", id: "nope", image_url: "https://x.test/a.jpg" },
+    { source: "preset", id: "nope", image_url: "https://fal.test/x/a.jpg" },
     { source: "preset", id: "headshot" }, // photo required
-    { source: "campaign", id: "minifilm:nope", image_url: "https://x.test/a.jpg" },
+    { source: "campaign", id: "minifilm:nope", image_url: "https://fal.test/x/a.jpg" },
     // The registry IS the allow-list now (Studio: all vetted models generable),
     // so only keys outside MODELS are rejected — see the Studio-catalog step.
-    { source: "model", model: "definitely_not_a_model", prompt: "hi", image_url: "https://x.test/a.jpg" },
+    { source: "model", model: "definitely_not_a_model", prompt: "hi", image_url: "https://fal.test/x/a.jpg" },
     { source: "model", model: "text_to_image", prompt: "   " }, // empty after sanitize
     { source: "hack" },
   ];
@@ -1499,21 +1518,21 @@ await step("video composer: duration scales the charge, ratio flows to fal, stor
 await step("video composer validation: bad duration/ratio → 400 bad_opts, bad story id → bad_option", async () => {
   const badDur = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "model", model: "kling3", image_url: "https://x.test/a.jpg", prompt: "m", duration: 7 }),
+    body: JSON.stringify({ source: "model", model: "kling3", image_url: "https://fal.test/x/a.jpg", prompt: "m", duration: 7 }),
   });
   assert.equal(badDur.status, 400);
   assert.equal(((await badDur.json()) as { error: string }).error, "bad_opts");
 
   const badRatio = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "model", model: "kling3", image_url: "https://x.test/a.jpg", prompt: "m", aspect_ratio: "3:2" }),
+    body: JSON.stringify({ source: "model", model: "kling3", image_url: "https://fal.test/x/a.jpg", prompt: "m", aspect_ratio: "3:2" }),
   });
   assert.equal(badRatio.status, 400);
   assert.equal(((await badRatio.json()) as { error: string }).error, "bad_opts");
 
   const badStory = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "model", model: "kling3", image_url: "https://x.test/a.jpg", prompt: "m", options: ["nope"] }),
+    body: JSON.stringify({ source: "model", model: "kling3", image_url: "https://fal.test/x/a.jpg", prompt: "m", options: ["nope"] }),
   });
   assert.equal(badStory.status, 400);
   assert.equal(((await badStory.json()) as { error: string }).error, "bad_option");
@@ -1611,14 +1630,14 @@ await step("scenario video scenes: on-theme scene sets the motion; model swap ad
   // Unknown scene id / off-picker model → 400 (nothing charged).
   const badScene = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://x.test/a.jpg", scene: "nope" }),
+    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://fal.test/x/a.jpg", scene: "nope" }),
   });
   assert.equal(badScene.status, 400);
   assert.equal(((await badScene.json()) as { error: string }).error, "bad_scene");
 
   const badModel = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://x.test/a.jpg", model: "nb2_image" }),
+    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://fal.test/x/a.jpg", model: "nb2_image" }),
   });
   assert.equal(badModel.status, 400);
 });
@@ -1905,6 +1924,252 @@ await step("style reference: a preset's curated ref rides in image_urls; a clien
   const injCall = falCalls.at(-1)!;
   assert.equal((injCall.input.image_urls as string[]).length, 1, "client-named reference must be ignored");
   assert.ok(!JSON.stringify(injCall.input).includes("evil.test"), "a caller-supplied URL must never reach fal");
+});
+
+await step("provider down: the breaker refuses WITHOUT charging, and clears itself on recovery", async () => {
+  const { resetProviderBlock, providerBlocked } = await import("../src/generate.js");
+  const du = { id: 990098, username: "downtime" };
+  await getOrCreateUser(du.id, du.username, null, 0);
+  await addCredits(du.id, 50, "admin_grant", "test");
+  const H = { Authorization: `tma ${signInitData(du)}`, "Content-Type": "application/json" };
+  const gen = () => fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "model", model: "text_to_image", prompt: "a cat" }),
+  });
+  const balance = async () => (await apiMe(signInitData(du))).body.dashboard.credits;
+
+  resetProviderBlock();
+  assert.equal(providerBlocked(), false);
+
+  // First render meets the locked account. It charges and refunds as before —
+  // this one we cannot avoid, it is how we LEARN the provider is down.
+  providerLocked = true;
+  const first = await gen();
+  assert.equal(first.status, 200, "we only find out mid-render, so the request itself succeeds");
+  const firstDone = await pollGen(((await first.json()) as { id: number }).id, H);
+  assert.equal(firstDone.status, "error");
+  assert.equal(await balance(), 50, "charged then refunded — net zero");
+  assert.equal(providerBlocked(), true, "one unambiguous block trips the breaker");
+
+  // Every render after that is refused up front. The user waits zero seconds
+  // and, critically, is never charged for a render that cannot happen.
+  const before = await balance();
+  const second = await gen();
+  assert.equal(second.status, 503);
+  assert.equal(((await second.json()) as { error: string }).error, "provider_down");
+  assert.equal(await balance(), before, "a refused render must not touch the balance");
+  // No pending row either — nothing to reap, nothing in «Мои работы».
+  const pend = await query("SELECT COUNT(*)::int AS c FROM generations WHERE user_id = $1 AND status = 'pending'", [du.id]);
+  assert.equal(Number(pend[0].c), 0);
+
+  // Recovery must be automatic: topping the balance up is done at the provider,
+  // not here, so nothing in our system would ever know to un-break itself.
+  providerLocked = false;
+  resetProviderBlock();
+  const third = await gen();
+  assert.equal(third.status, 200);
+  assert.equal((await pollGen(((await third.json()) as { id: number }).id, H)).status, "ok");
+  assert.equal(providerBlocked(), false, "a successful run proves the account works again");
+});
+
+await step("prompt library: no third-party brand or magazine names reach the provider", async () => {
+  const { PRESETS, CAMPAIGNS, VIDEO_STORY } = await import("../src/models.js");
+  // Naming a real fashion house or magazine does two bad things at once: it
+  // puts someone else's trademark (often a monogram print) onto a paying user's
+  // chest, and it is worse styling than describing the silhouette we actually
+  // want. Concept and props carry an editorial; a logo does not.
+  const BANNED = /\b(gucci|louis\s*vuitton|prada|chanel|balenciaga|dior|versace|rolex|herm[eè]s|nike|adidas|vogue|elle|harper'?s bazaar|cosmopolitan)\b/i;
+  const texts: Array<[string, string]> = [];
+  for (const p of PRESETS) texts.push([`preset:${p.id}`, p.prompt]);
+  for (const c of CAMPAIGNS) {
+    for (const p of c.presets) texts.push([`campaign:${c.id}:${p.id}`, p.prompt]);
+    for (const s of c.videoScenes ?? []) texts.push([`scene:${c.id}:${s.id}`, s.prompt]);
+    texts.push([`animate:${c.id}`, c.animatePrompt]);
+  }
+  for (const s of VIDEO_STORY) for (const o of s.options) texts.push([`story:${s.id}:${o.id}`, o.fragment]);
+  for (const [where, text] of texts) {
+    const hit = text.match(BANNED);
+    assert.ok(!hit, `${where} names a third-party brand: "${hit?.[0]}"`);
+  }
+  // The fashion look must say so out loud, not merely omit brands — the model
+  // reaches for logo-shaped clothing on "high fashion" unless told not to.
+  const fashion = PRESETS.find((p) => p.id === "fashion")!;
+  assert.match(fashion.prompt, /NO brand names, NO logos/);
+  // And the retro look must actually restage the person, which is the whole
+  // difference between a photoshoot and a colour filter.
+  const retro = PRESETS.find((p) => p.id === "retro90s")!;
+  assert.match(retro.prompt, /do not keep the pose from the source photo/);
+  for (const cue of [/polka-dot/i, /oversized double-breasted suit/i, /headscarf/i, /retro car/i]) {
+    assert.match(retro.prompt, cue);
+  }
+});
+
+await step("provider block: an account-level rejection is classified and alerts on the FIRST one", async () => {
+  const { isProviderBlocked } = await import("../src/generate.js");
+  const { checkAlerts } = await import("../src/monitor.js");
+
+  // What fal actually returns when the account runs dry — the exact shape that
+  // sent us hunting for a bug in one model.
+  assert.equal(isProviderBlocked({ status: 403, body: { detail: "User is locked. Reason: Exhausted balance." } }), true);
+  assert.equal(isProviderBlocked({ status: 401, body: {} }), true, "a bad key is the same class of outage");
+  assert.equal(isProviderBlocked({ body: { detail: "insufficient balance" } }), true, "detail alone is enough");
+  // A model failing on its own is NOT an account outage — misclassifying it
+  // would cry wolf on every ordinary provider hiccup.
+  assert.equal(isProviderBlocked({ status: 500, body: { detail: "internal error" } }), false);
+  assert.equal(isProviderBlocked(new Error("No output URL in fal response")), false);
+  assert.equal(isProviderBlocked(null), false);
+
+  const bu = { id: 990097, username: "blocked" };
+  await getOrCreateUser(bu.id, bu.username, null, 0);
+  await query("DELETE FROM events WHERE type = 'provider_blocked'");
+  assert.ok(!(await checkAlerts()).some((a) => a.key === "provider_blocked"), "quiet while nothing is blocked");
+
+  // ONE event is enough. The per-model drift alert needs 5 runs of the same
+  // model within an hour, which an expensive, rarely-run video model never
+  // reaches — so without this rule an account outage stays invisible exactly
+  // where it hurts most.
+  await logEvent(bu.id, "provider_blocked", "seedance");
+  const alerts = await checkAlerts();
+  const hit = alerts.find((a) => a.key === "provider_blocked");
+  assert.ok(hit, "a single provider block must alert immediately");
+  assert.match(hit!.text, /seedance/);
+  await query("DELETE FROM events WHERE type = 'provider_blocked'");
+});
+
+await step("/api/me progress: inert by default, then a real position on the private XP ladder", async () => {
+  const pu = { id: 990096, username: "progress" };
+  await getOrCreateUser(pu.id, pu.username, null, 0);
+  type Prog = { active: boolean; xp: number; level: number; levelAt: number; nextAt: number | null; into: number; span: number };
+  // The P1 step earlier in this suite leaves a ladder configured, so start from
+  // a known-empty one — this step is about the ladder's own edge cases.
+  await query("DELETE FROM economy_config WHERE key LIKE 'level.threshold.%'");
+  const read = async () => (await apiMe(signInitData(pu))).body.progress as unknown as Prog;
+
+  // Shipped default: no level.threshold.* configured at all → inert. The UI
+  // shows "уровни скоро" rather than an empty Level 0 bar.
+  const off = await read();
+  assert.equal(off.active, false);
+  assert.equal(off.level, 0);
+
+  // A three-rung ladder. These numbers live in economy_config (private tuning),
+  // never in the repo — the client only ever receives a POSITION on them.
+  await setEconomyConfig("level.threshold.1", 100);
+  await setEconomyConfig("level.threshold.2", 300);
+  await setEconomyConfig("level.threshold.3", 600);
+
+  const zero = await read();
+  assert.equal(zero.active, true);
+  assert.equal(zero.level, 0);
+  assert.equal(zero.nextAt, 100);
+  assert.equal(zero.into, 0);
+  assert.equal(zero.span, 100, "the level-0 band runs from 0 to the first threshold");
+
+  // Mid-band: the bar must measure progress INSIDE the band, not from zero —
+  // 150 XP at level 1 is a fifth of the way to level 2, not half of 300.
+  await setEconomyConfig("xp.probe", 150);
+  await awardXp(pu.id, "probe", "mid");
+  const mid = await read();
+  assert.equal(mid.level, 1);
+  assert.equal(mid.xp, 150);
+  assert.equal(mid.levelAt, 100);
+  assert.equal(mid.nextAt, 300);
+  assert.equal(mid.into, 50);
+  assert.equal(mid.span, 200);
+
+  // Top of the configured ladder: no phantom "next", and a full bar rather
+  // than a division by zero.
+  await setEconomyConfig("xp.probe", 500);
+  await awardXp(pu.id, "probe", "max");
+  const top = await read();
+  assert.equal(top.level, 3);
+  assert.equal(top.nextAt, null);
+  assert.equal(top.into, top.span, "a maxed ladder renders as a complete bar");
+
+  // The private ladder itself must NOT be shipped to the client anywhere in the
+  // payload — only the user's position on it.
+  const body = JSON.stringify((await apiMe(signInitData(pu))).body);
+  assert.ok(!body.includes("level.threshold"), "the XP table must never reach the client");
+
+  await query("DELETE FROM economy_config WHERE key LIKE 'level.threshold.%' OR key = 'xp.probe'");
+});
+
+await step("multi-image input: extra angles ride along, are capped per model, and the host is enforced", async () => {
+  const mu = { id: 990095, username: "manyangles" };
+  await getOrCreateUser(mu.id, mu.username, null, 0);
+  await addCredits(mu.id, 200, "admin_grant", "test");
+  const H = { Authorization: `tma ${signInitData(mu)}`, "Content-Type": "application/json" };
+  const P = "https://fal.test/storage/primary.jpg";
+
+  // Three angles of one face → four entries, the PRIMARY first (it is the
+  // identity anchor), and the model told in words that this is one person.
+  const ok = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({
+      source: "model", model: "seedream_edit", prompt: "portrait", image_url: P,
+      image_urls: ["https://fal.test/storage/a2.jpg", "https://fal.test/storage/a3.jpg"],
+    }),
+  });
+  assert.equal(ok.status, 200);
+  const call = falCalls.at(-1)!;
+  const urls = call.input.image_urls as string[];
+  assert.deepEqual(urls, [P, "https://fal.test/storage/a2.jpg", "https://fal.test/storage/a3.jpg"]);
+  assert.match(call.input.prompt as string, /first 3 images are all photographs of the SAME single person/);
+  assert.match(call.input.prompt as string, /exactly ONE person, never a group/);
+  // Extra angles are free — the charge is the model's base price, unchanged.
+  assert.equal(((await ok.json()) as { credits: number }).credits, 2);
+
+  // A duplicate of the primary is dropped rather than billed as context twice.
+  const dup = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "model", model: "seedream_edit", prompt: "p", image_url: P, image_urls: [P, P] }),
+  });
+  assert.equal(dup.status, 200);
+  assert.deepEqual(falCalls.at(-1)!.input.image_urls as string[], [P]);
+  assert.ok(!(falCalls.at(-1)!.input.prompt as string).includes("SAME single person"));
+
+  // Over the model's own cap → 400 with the cap echoed back, nothing charged.
+  const before = (await apiMe(signInitData(mu))).body.dashboard.credits;
+  const tooMany = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({
+      source: "model", model: "premium_edit", prompt: "p", image_url: P, // premium reads 2 total
+      image_urls: ["https://fal.test/storage/a2.jpg", "https://fal.test/storage/a3.jpg"],
+    }),
+  });
+  assert.equal(tooMany.status, 400);
+  assert.equal(((await tooMany.json()) as { error: string; maxInputs: number }).maxInputs, 2);
+
+  // SECURITY: an off-host URL is refused even when it is perfectly valid HTTPS.
+  // Otherwise a caller could host the photo anywhere and skip the upload
+  // moderation gate entirely — and hand our provider any address they like.
+  for (const bad of [
+    "https://evil.test/x.jpg",
+    "https://fal.test.evil.test/x.jpg", // suffix must match on a host boundary
+    "https://notfal.test/x.jpg", // …and not merely end with the allowed string
+  ]) {
+    const r = await fetch(`${base}/api/generate`, {
+      method: "POST", headers: H,
+      body: JSON.stringify({ source: "model", model: "seedream_edit", prompt: "p", image_url: P, image_urls: [bad] }),
+    });
+    assert.equal(r.status, 400, `${bad} must be refused`);
+    assert.equal(((await r.json()) as { error: string }).error, "bad_source");
+  }
+  // The same rule covers the PRIMARY photo, not just the extras.
+  const badPrimary = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "model", model: "seedream_edit", prompt: "p", image_url: "https://evil.test/x.jpg" }),
+  });
+  assert.equal(badPrimary.status, 400);
+  assert.equal((await apiMe(signInitData(mu))).body.dashboard.credits, before, "refused requests must not charge");
+
+  // The catalog tells the client the per-model cap, so the UI can stop earlier.
+  const cat = (await apiMe(signInitData(mu))).body.catalog as unknown as {
+    studio: { image: Array<{ key: string; image: { maxInputs: number } | null }> };
+  };
+  assert.equal(cat.studio.image.find((m) => m.key === "seedream_edit")!.image!.maxInputs, 4);
+  assert.equal(cat.studio.image.find((m) => m.key === "premium_edit")!.image!.maxInputs, 2);
+  // A text-to-image model reads no photo at all — 1, so no "add angle" affordance.
+  assert.equal(cat.studio.image.find((m) => m.key === "text_to_image")!.image!.maxInputs, 1);
 });
 
 await step("registry invariant: every declared styleRef points at art that actually exists", async () => {
