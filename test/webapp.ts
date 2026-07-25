@@ -1916,6 +1916,38 @@ await step("style reference: a preset's curated ref rides in image_urls; a clien
   assert.ok(!JSON.stringify(injCall.input).includes("evil.test"), "a caller-supplied URL must never reach fal");
 });
 
+await step("provider block: an account-level rejection is classified and alerts on the FIRST one", async () => {
+  const { isProviderBlocked } = await import("../src/generate.js");
+  const { checkAlerts } = await import("../src/monitor.js");
+
+  // What fal actually returns when the account runs dry — the exact shape that
+  // sent us hunting for a bug in one model.
+  assert.equal(isProviderBlocked({ status: 403, body: { detail: "User is locked. Reason: Exhausted balance." } }), true);
+  assert.equal(isProviderBlocked({ status: 401, body: {} }), true, "a bad key is the same class of outage");
+  assert.equal(isProviderBlocked({ body: { detail: "insufficient balance" } }), true, "detail alone is enough");
+  // A model failing on its own is NOT an account outage — misclassifying it
+  // would cry wolf on every ordinary provider hiccup.
+  assert.equal(isProviderBlocked({ status: 500, body: { detail: "internal error" } }), false);
+  assert.equal(isProviderBlocked(new Error("No output URL in fal response")), false);
+  assert.equal(isProviderBlocked(null), false);
+
+  const bu = { id: 990097, username: "blocked" };
+  await getOrCreateUser(bu.id, bu.username, null, 0);
+  await query("DELETE FROM events WHERE type = 'provider_blocked'");
+  assert.ok(!(await checkAlerts()).some((a) => a.key === "provider_blocked"), "quiet while nothing is blocked");
+
+  // ONE event is enough. The per-model drift alert needs 5 runs of the same
+  // model within an hour, which an expensive, rarely-run video model never
+  // reaches — so without this rule an account outage stays invisible exactly
+  // where it hurts most.
+  await logEvent(bu.id, "provider_blocked", "seedance");
+  const alerts = await checkAlerts();
+  const hit = alerts.find((a) => a.key === "provider_blocked");
+  assert.ok(hit, "a single provider block must alert immediately");
+  assert.match(hit!.text, /seedance/);
+  await query("DELETE FROM events WHERE type = 'provider_blocked'");
+});
+
 await step("/api/me progress: inert by default, then a real position on the private XP ladder", async () => {
   const pu = { id: 990096, username: "progress" };
   await getOrCreateUser(pu.id, pu.username, null, 0);

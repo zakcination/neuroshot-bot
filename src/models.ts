@@ -816,10 +816,26 @@ export const PRESETS: Preset[] = [
     id: "photobooth_bw",
     label: "🖤 Фотобудка Ч/Б",
     category: "photo",
+    // Noir and "cozy" pull in opposite directions, so they are assigned to
+    // DIFFERENT things rather than averaged into flat grey: noir is the grade
+    // INSIDE the frames (hard chiaroscuro, deep blacks), cozy is the physical
+    // print — a real strip lying tilted on a warm surface. Asking one image to
+    // be both moody and warm at once is what produced the flat studio look.
+    // The strip is pinned to THREE frames and the sunglasses to the MIDDLE one,
+    // because "one of them" left the model free to put shades on all three.
+    aspect: "3:4",
     prompt:
-      "Restyle into a black-and-white photobooth strip: a vertical strip of four cinematic frames with natural " +
-      "editorial poses, luxurious voluminous hair, quiet-luxury styling, soft film grain, timeless monochrome " +
-      `aesthetic, tack-sharp face. ${KEEP_ID}`,
+      "Restyle into a vintage black-and-white photobooth strip — one single VERTICAL strip of exactly THREE " +
+      "stacked square frames (not a grid, not four), thin white borders between them. Behind the person in every " +
+      "frame hangs a heavy pleated curtain backdrop, its folds catching the light. TOP frame: a warm natural " +
+      "half-smile toward the lens. MIDDLE frame: the same person wearing retro 70s sunglasses, chin lifted, " +
+      "playful. BOTTOM frame: a quiet three-quarter turn, eyes down. The hair is smooth, sleek and softly " +
+      "styled — controlled, close to the head, NOT frizzy, NOT puffed out, no flyaways. Hard noir lighting: a " +
+      "single low key light raking across the face so bright speculars catch the cheekbones, brow and bridge of " +
+      "the nose, deep black shadows on the opposite side, strong chiaroscuro contrast, rich blacks, glowing " +
+      "highlights, fine silver film grain. The finished paper strip lies at a gentle diagonal TILT on a warm " +
+      "wooden table beside a coffee cup, soft lamplight and a shallow depth of field around it — a cosy, " +
+      `lived-in keepsake photographed from above. Tack-sharp face in every frame. ${KEEP_ID}`,
   },
   {
     id: "paper_doll",

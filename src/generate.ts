@@ -129,6 +129,33 @@ function extractResultUrls(data: unknown): string[] {
   return single ? [single] : [];
 }
 
+/**
+ * Is this failure our PROVIDER ACCOUNT being blocked, rather than one model
+ * misbehaving? A 401/403 (bad key, or "User is locked. Reason: Exhausted
+ * balance") stops every render we make, but reaches the user as the same
+ * generic "не получилось, патроны возвращены" as any one-off failure — and
+ * the refund makes it look handled. It is not: it is a total revenue stop.
+ *
+ * It also surfaces UNEVENLY, which is what makes it so easy to misread. A
+ * balance drains to a level that still covers a $0.04 image but no longer a
+ * $1.52 video, so the expensive models "stop working" first and it reads as a
+ * bug in one model. Worth its own signal for exactly that reason.
+ */
+export function isProviderBlocked(err: unknown): boolean {
+  const e = err as { status?: number; body?: { detail?: unknown } } | null;
+  if (e?.status === 401 || e?.status === 403) return true;
+  const detail = typeof e?.body?.detail === "string" ? e.body.detail : "";
+  return /exhausted balance|user is locked|insufficient (?:funds|balance)|quota/i.test(detail);
+}
+
+/** Log a provider block distinctly so the monitor can alert on the FIRST one. */
+async function noteProviderBlock(userId: number, model: ModelSpec, err: unknown): Promise<void> {
+  if (!isProviderBlocked(err)) return;
+  const detail = (err as { body?: { detail?: unknown } } | null)?.body?.detail;
+  console.error(`PROVIDER BLOCKED (${model.key}):`, typeof detail === "string" ? detail : err);
+  await logEvent(userId, "provider_blocked", model.key).catch(() => {});
+}
+
 /** Run a model on fal; returns all output URLs + fal's request id (throws on provider failure). */
 async function falRun(
   model: ModelSpec,
@@ -182,6 +209,7 @@ export async function startWebGeneration(
       await logEvent(userId, "gen_ok", model.key).catch(() => {});
     } catch (err) {
       console.error(`web generation failed (${model.key}):`, err);
+      await noteProviderBlock(userId, model, err);
       // Refund ONLY if we win the pending→error CAS. If the 'ok' write already
       // landed (e.g. this catch was reached by a later throw), the CAS loses and
       // we must NOT refund a successful generation. Persist the provider cost we
@@ -339,6 +367,7 @@ export async function runGeneration(
         await logEvent(user.id, "gen_ok", model.key).catch(() => {});
       } catch (err) {
         console.error(`generation failed (${model.key}):`, err);
+        await noteProviderBlock(user.id, model, err);
         // Compensate ONLY if we never delivered, and ONLY if we win the pending→
         // error CAS — so a post-delivery error can't refund a delivered render and
         // the reaper can't double-refund. Exactly-once.

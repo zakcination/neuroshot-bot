@@ -207,6 +207,29 @@ export async function checkAlerts(): Promise<Alert[]> {
     }
   }
 
+  // 1b) Provider account blocked (exhausted balance / bad key). Fires on the
+  //     FIRST occurrence, with no minimum-runs gate — unlike model drift this
+  //     is not a statistical signal, it is a hard stop on every render we make.
+  //     The per-model check above cannot catch it in time: it needs 5 runs of
+  //     one model within an hour, and the expensive models (which fail first
+  //     when a balance runs low) are precisely the ones that never run 5 times
+  //     in an hour. That gap is how "only Seedance is broken" happens.
+  const blocked = await query(
+    `SELECT COUNT(*)::int AS c, MAX(meta) AS model FROM events
+     WHERE type = 'provider_blocked' AND created_at > now() - interval '1 hour'`,
+  );
+  if (num(blocked[0]?.c) > 0) {
+    out.push({
+      key: "provider_blocked",
+      text:
+        `🛑 <b>Провайдер отклоняет запросы</b> (${num(blocked[0]?.c)} за час, напр. ${String(blocked[0]?.model)}).\n` +
+        `Обычно это исчерпанный баланс или недействительный ключ. Генерации падают, ` +
+        `${UNIT_EMOJI} возвращаются — пользователи видят просто «не получилось». ` +
+        `Дорогие модели отказывают ПЕРВЫМИ, поэтому похоже на поломку одной модели. ` +
+        `Проверьте баланс и ключ у провайдера.`,
+    });
+  }
+
   // 2) Gross margin <50% today (only meaningful when there IS revenue).
   const day = await buildDigest(24);
   if (day.marginPct != null && day.marginPct < 50) {
