@@ -55,6 +55,10 @@ interface FalCall {
 }
 const falCalls: FalCall[] = [];
 let anyLlmFail = false; // flip to make the enhancer's LLM call blow up (refund path)
+// Flip to make every generation model reject the way a LOCKED PROVIDER ACCOUNT
+// does (403 + "Exhausted balance") — the failure that masquerades as one
+// broken model. Reset to false to simulate the balance being topped up.
+let providerLocked = false;
 // Content moderation (moderation.ts): tracked as its OWN edge, NOT pushed into
 // falCalls — several assertions use falCalls.length/.at(-1) to mean "the
 // generation MODEL ran", and this classifier call happens in addition to that
@@ -71,6 +75,12 @@ let nsfwCheckCalls = 0;
     return { data: { nsfw_probability: nsfwProbability }, requestId: `req-nsfw-${nsfwCheckCalls}` };
   }
   falCalls.push({ endpoint, input: opts.input });
+  if (providerLocked) {
+    const e = new Error("Forbidden") as Error & { status: number; body: unknown };
+    e.status = 403;
+    e.body = { detail: "User is locked. Reason: Exhausted balance. Top up your balance at fal.ai/dashboard/billing." };
+    throw e;
+  }
   if (endpoint === "fal-ai/any-llm") {
     if (anyLlmFail) throw new Error("llm boom");
     return { data: { output: `Cinematic, richly lit: ${String(opts.input.prompt)}` }, requestId: `req-${falCalls.length}` };
@@ -1914,6 +1924,52 @@ await step("style reference: a preset's curated ref rides in image_urls; a clien
   const injCall = falCalls.at(-1)!;
   assert.equal((injCall.input.image_urls as string[]).length, 1, "client-named reference must be ignored");
   assert.ok(!JSON.stringify(injCall.input).includes("evil.test"), "a caller-supplied URL must never reach fal");
+});
+
+await step("provider down: the breaker refuses WITHOUT charging, and clears itself on recovery", async () => {
+  const { resetProviderBlock, providerBlocked } = await import("../src/generate.js");
+  const du = { id: 990098, username: "downtime" };
+  await getOrCreateUser(du.id, du.username, null, 0);
+  await addCredits(du.id, 50, "admin_grant", "test");
+  const H = { Authorization: `tma ${signInitData(du)}`, "Content-Type": "application/json" };
+  const gen = () => fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "model", model: "text_to_image", prompt: "a cat" }),
+  });
+  const balance = async () => (await apiMe(signInitData(du))).body.dashboard.credits;
+
+  resetProviderBlock();
+  assert.equal(providerBlocked(), false);
+
+  // First render meets the locked account. It charges and refunds as before —
+  // this one we cannot avoid, it is how we LEARN the provider is down.
+  providerLocked = true;
+  const first = await gen();
+  assert.equal(first.status, 200, "we only find out mid-render, so the request itself succeeds");
+  const firstDone = await pollGen(((await first.json()) as { id: number }).id, H);
+  assert.equal(firstDone.status, "error");
+  assert.equal(await balance(), 50, "charged then refunded — net zero");
+  assert.equal(providerBlocked(), true, "one unambiguous block trips the breaker");
+
+  // Every render after that is refused up front. The user waits zero seconds
+  // and, critically, is never charged for a render that cannot happen.
+  const before = await balance();
+  const second = await gen();
+  assert.equal(second.status, 503);
+  assert.equal(((await second.json()) as { error: string }).error, "provider_down");
+  assert.equal(await balance(), before, "a refused render must not touch the balance");
+  // No pending row either — nothing to reap, nothing in «Мои работы».
+  const pend = await query("SELECT COUNT(*)::int AS c FROM generations WHERE user_id = $1 AND status = 'pending'", [du.id]);
+  assert.equal(Number(pend[0].c), 0);
+
+  // Recovery must be automatic: topping the balance up is done at the provider,
+  // not here, so nothing in our system would ever know to un-break itself.
+  providerLocked = false;
+  resetProviderBlock();
+  const third = await gen();
+  assert.equal(third.status, 200);
+  assert.equal((await pollGen(((await third.json()) as { id: number }).id, H)).status, "ok");
+  assert.equal(providerBlocked(), false, "a successful run proves the account works again");
 });
 
 await step("prompt library: no third-party brand or magazine names reach the provider", async () => {

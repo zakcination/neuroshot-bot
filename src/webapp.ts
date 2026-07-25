@@ -867,6 +867,10 @@ export async function generateResponse(
         body: { error: "insufficient", need: priceFor(model, opts), balance, packs: packsPayload() },
       };
     }
+    // 503, not 400: nothing is wrong with the request — our provider is
+    // refusing us. A 4xx would tell the client to change something it can't.
+    // Nothing was charged, which is the point of refusing here.
+    if (r.error === "provider_down") return { status: 503, body: { error: "provider_down" } };
     return { status: 400, body: { error: r.error } };
   }
   const balance = (await getUser(userId))?.credits ?? 0;

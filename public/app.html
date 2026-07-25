@@ -1953,6 +1953,14 @@
       if (status === 403 && data && data.error === "level_locked") {
         haptic("error"); toast(lockText({ need: data.requiredLevel, have: data.level }), { wide: true, ms: 5000 }); viewStudio(); return;
       }
+      // Our provider is refusing us — every render would fail, so say so
+      // honestly instead of the generic "что-то пошло не так", which invites a
+      // retry that cannot work. Nothing was charged, and we say that too.
+      if (status === 503 && data && data.error === "provider_down") {
+        haptic("error");
+        toast("Сервис генерации временно недоступен — мы уже чиним. Патроны не списаны, попробуйте через пару минут.", { wide: true, ms: 6000 });
+        viewStudio(); return;
+      }
       if (status === 400 && data && data.error === "too_many_inputs") {
         haptic("error");
         toast(`Эта модель читает не больше ${data.maxInputs} фото — уберите лишние ракурсы`, { wide: true, ms: 4500 });
