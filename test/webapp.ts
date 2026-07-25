@@ -1820,6 +1820,14 @@ await step("reward-architecture P1: XP is inert until configured, then Level gat
   });
   assert.equal(ungated.status, 200, "an ungated preset must not be affected by another preset's gate");
 
+  // The catalog must carry the gate so the CARD can show a lock up front —
+  // otherwise the user only discovers it after configuring and tapping "Создать".
+  const cat = (await apiMe(signInitData(ru))).body.catalog as unknown as {
+    presets: Array<{ id: string; minLevel: number }>;
+  };
+  assert.equal(cat.presets.find((p) => p.id === "headshot")?.minLevel, 5);
+  assert.equal(cat.presets.find((p) => p.id === "product_white")?.minLevel, 0, "an ungated preset must report 0");
+
   // Levelling up: configure a level-1 threshold at 40 XP (this user already has 50) — unlocks it.
   await setEconomyConfig("level.threshold.1", 40);
   assert.equal(await getLevel(ru.id), 1);

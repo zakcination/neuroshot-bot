@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { allPresetGating, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { enhancePrompt } from "./enhance.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
@@ -302,7 +302,7 @@ function packsPayload(): Array<Record<string, unknown>> {
  * The top 5 tapped presets (with ≥1 real tap) are flagged `trending`; a fresh
  * deploy with no taps yet simply shows no trending badges, not fake ones.
  */
-function catalogPayload(usage: Record<string, number>): Record<string, unknown> {
+function catalogPayload(usage: Record<string, number>, gates: Record<string, number>): Record<string, unknown> {
   const trending = new Set(
     PRESETS.map((p) => ({ id: p.id, count: usage[p.id] ?? 0 }))
       .filter((p) => p.count > 0)
@@ -328,6 +328,11 @@ function catalogPayload(usage: Record<string, number>): Record<string, unknown> 
       previewUrl: `/img/card-preset-${p.id}.jpg`,
       usageCount: usage[p.id] ?? 0,
       trending: trending.has(p.id),
+      // Reward-architecture P1: the Level this style needs, or 0 = open to
+      // everyone (the default — preset_gating ships empty). Sent so the card
+      // can show a lock UP FRONT rather than letting the user pick a style,
+      // configure it, tap "Создать", and only then hit a 403.
+      minLevel: gates[p.id] ?? 0,
     })),
     campaigns: CAMPAIGNS.map((c) => ({
       id: c.id,
@@ -439,7 +444,7 @@ function catalogPayload(usage: Record<string, number>): Record<string, unknown> 
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season] = await Promise.all([
+  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows] = await Promise.all([
     userDashboard(user.id),
     recentGenerations(user.id, 30),
     ensureRefCode(user.id),
@@ -448,7 +453,9 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     referralList(user.id),
     presetUsageCounts(),
     getActiveSeason(),
+    allPresetGating(),
   ]);
+  const gates = Object.fromEntries(gateRows.map((g) => [g.preset_id, g.min_level]));
   return {
     // No raw tg id in ref_code — an opaque link the client builds the share URL from.
     user: { id: user.id, username: user.username, first_name: user.first_name, ref_code: refCode },
@@ -457,7 +464,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     bot_username: config.webappBotUsername,
     // Pack catalog for the app's pricing section — same source as the bot.
     packs: packsPayload(),
-    catalog: catalogPayload(usage),
+    catalog: catalogPayload(usage, gates),
     // Combo offer deadline (ms epoch) for the live countdown.
     comboOffer: { endsAt: comboEndsAt() },
     // Reward-architecture P4a: null (the normal state) until an admin runs
