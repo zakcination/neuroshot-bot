@@ -713,9 +713,36 @@ export const PRESETS: Preset[] = [
     id: "fashion",
     label: "🕶 Fashion-съёмка",
     category: "photo",
+    // "A designer outfit, Vogue-style" was doing the opposite of high fashion:
+    // it pulled generic luxury-logo clothing, and it named a real magazine.
+    // Both are dropped. Logos are now explicitly forbidden — a monogram print
+    // is a trademark we have no right to put on a user's chest, and it is also
+    // simply worse styling than a strong silhouette.
+    //
+    // What replaces it is what actually makes an editorial: a CONCEPT, one
+    // committed PROP, and hair treated as sculpture. Same "choose one and
+    // commit" structure as the retro look — a stacked list of ideas produces a
+    // cluttered frame, one idea produces a cover.
+    aspect: "3:4",
     prompt:
-      "Restyle into a high-fashion editorial photo: a designer outfit, dramatic studio lighting, Vogue-style " +
-      `composition, subtle film grain, bold styling, tack-sharp face. ${KEEP_ID}`,
+      "Restage the person as a high-fashion magazine COVER shoot built on a concept, not on expensive clothes. " +
+      "NO brand names, NO logos, NO monograms, NO designer labels anywhere in frame — the styling must carry " +
+      "the image on its own.\n" +
+      "CONCEPT — choose ONE and commit to it completely: bold monochrome colour-blocking where the outfit and " +
+      "the seamless backdrop are the same saturated hue; sculptural silhouette with exaggerated shoulders or a " +
+      "vast voluminous sleeve; sharp minimalism in raw unbleached fabric against concrete; high-contrast " +
+      "graphic black-and-white with strong geometry.\n" +
+      "PROP — one strong object, used with intent rather than held: an oversized bloom held to the jaw, a " +
+      "sheet of rippling silk caught mid-air, a shard of mirror reflecting one eye, a single vintage chair " +
+      "used as a frame within the frame.\n" +
+      "HAIR — treat it as part of the sculpture: wet-look slicked back, an architectural sculpted updo, a " +
+      "sleek deep side part, or deliberately wind-blown across the face.\n" +
+      "POSE AND EXPRESSION — an editorial attitude: an elongated neck and dropped shoulder, a hand framing the " +
+      "jaw, a cool level gaze straight down the lens or eyes closed in stillness. Confident, never smiling for " +
+      "the camera.\n" +
+      "LIGHT — one dramatic hard key with a deep falloff, crisp shadow edges, subtle film grain, shot on 85mm. " +
+      "Cover-shoot framing with clean negative space at the top, but NO text, masthead or lettering anywhere " +
+      `in the image. Tack-sharp face. ${KEEP_ID}`,
   },
   {
     id: "travel",
@@ -784,12 +811,38 @@ export const PRESETS: Preset[] = [
   },
   {
     id: "retro90s",
-    label: "📼 Плёнка 90-х",
+    label: "📼 Ретро-фотосессия",
     category: "photo",
+    // The old version only regraded the image — faded colour, grain, light
+    // leaks — and left the person's pose, clothes and expression exactly as
+    // uploaded. That reads as "the photo, but yellower", not as a shoot.
+    //
+    // So the direction is explicit about the three things that actually make it
+    // a photoshoot: a NEW pose, a CHANGED wardrobe, and a chosen expression.
+    // The wardrobe is offered as a menu with "pick ONE that suits the person"
+    // rather than a list, because stacking every item produces a polka-dot
+    // dress and an oversize suit in the same frame — and because a look that
+    // fits one person doesn't fit another. The user's own words (appended after
+    // this prompt as "Extra details") are given final say, which is what makes
+    // the result vary with the request instead of being one fixed costume.
+    aspect: "3:4",
     prompt:
-      "Restyle into an authentic 1990s film-photo portrait: warm slightly-faded color, soft grain, gentle on-camera " +
-      "flash, period-accurate styling and hair, a nostalgic snapshot feel with subtle light leaks and true-to-film " +
-      `skin tones, tack-sharp face. ${KEEP_ID}`,
+      "Restage the person as a full RETRO PHOTOSHOOT — not a filter on the original snapshot. Change the pose, " +
+      "the wardrobe and the expression; do not keep the pose from the source photo.\n" +
+      "WARDROBE — choose ONE complete look that genuinely suits this person and commit to it: a polka-dot " +
+      "midi dress with a nipped waist; a silk headscarf tied under the chin with cat-eye sunglasses; a wide " +
+      "oversized double-breasted suit with padded shoulders and pleated trousers; a knitted vintage cardigan " +
+      "over a collared shirt; a tailored trench with leather gloves and a wide-brimmed hat. Add period " +
+      "headwear where it fits the look — a headscarf, beret, fedora or pillbox hat.\n" +
+      "SETTING — a vintage street scene with a polished chrome-heavy retro car in frame: leaning back against " +
+      "the door, seated on the bonnet, or half-out of the driver's window, with period shopfronts and signage " +
+      "softly out of focus behind.\n" +
+      "POSE AND EMOTION — pick one and play it fully: a confident hand-on-hip stance with a direct look; a " +
+      "caught-mid-laugh moment with the head tilted back; a wistful glance away over the shoulder; a hand " +
+      "adjusting the hat or sunglasses. The face must be alive and acting, not a neutral passport expression.\n" +
+      "FINISH — warm slightly-faded film colour, soft grain, gentle on-camera flash, subtle light leaks, " +
+      "true-to-film skin tones, medium shot on a 35mm lens. If the user asked for a specific outfit, era, car " +
+      `or mood below, THAT overrides these choices. Tack-sharp face. ${KEEP_ID}`,
   },
   // More curated one-tap looks adapted from the VeoSee prompt-library research
   // (docs/prompt-library.md): rewritten in NeuroShot's voice, identity-locked,
@@ -871,7 +924,7 @@ export const PRESETS: Preset[] = [
     prompt:
       "Place the person in an ultra-realistic billionaire-lifestyle editorial exiting a glossy black helicopter on a " +
       "private rooftop helipad: a confident dominant pose with wind-blown hair, an expensive quiet-luxury linen suit, " +
-      `bright daylight with a city skyline and distant mountains behind, Vogue-campaign mood, tack-sharp face. ${KEEP_ID}`,
+      `bright daylight with a city skyline and distant mountains behind, glossy campaign mood, tack-sharp face. ${KEEP_ID}`,
   },
   {
     id: "alpine_lux",

@@ -1916,6 +1916,38 @@ await step("style reference: a preset's curated ref rides in image_urls; a clien
   assert.ok(!JSON.stringify(injCall.input).includes("evil.test"), "a caller-supplied URL must never reach fal");
 });
 
+await step("prompt library: no third-party brand or magazine names reach the provider", async () => {
+  const { PRESETS, CAMPAIGNS, VIDEO_STORY } = await import("../src/models.js");
+  // Naming a real fashion house or magazine does two bad things at once: it
+  // puts someone else's trademark (often a monogram print) onto a paying user's
+  // chest, and it is worse styling than describing the silhouette we actually
+  // want. Concept and props carry an editorial; a logo does not.
+  const BANNED = /\b(gucci|louis\s*vuitton|prada|chanel|balenciaga|dior|versace|rolex|herm[eè]s|nike|adidas|vogue|elle|harper'?s bazaar|cosmopolitan)\b/i;
+  const texts: Array<[string, string]> = [];
+  for (const p of PRESETS) texts.push([`preset:${p.id}`, p.prompt]);
+  for (const c of CAMPAIGNS) {
+    for (const p of c.presets) texts.push([`campaign:${c.id}:${p.id}`, p.prompt]);
+    for (const s of c.videoScenes ?? []) texts.push([`scene:${c.id}:${s.id}`, s.prompt]);
+    texts.push([`animate:${c.id}`, c.animatePrompt]);
+  }
+  for (const s of VIDEO_STORY) for (const o of s.options) texts.push([`story:${s.id}:${o.id}`, o.fragment]);
+  for (const [where, text] of texts) {
+    const hit = text.match(BANNED);
+    assert.ok(!hit, `${where} names a third-party brand: "${hit?.[0]}"`);
+  }
+  // The fashion look must say so out loud, not merely omit brands — the model
+  // reaches for logo-shaped clothing on "high fashion" unless told not to.
+  const fashion = PRESETS.find((p) => p.id === "fashion")!;
+  assert.match(fashion.prompt, /NO brand names, NO logos/);
+  // And the retro look must actually restage the person, which is the whole
+  // difference between a photoshoot and a colour filter.
+  const retro = PRESETS.find((p) => p.id === "retro90s")!;
+  assert.match(retro.prompt, /do not keep the pose from the source photo/);
+  for (const cue of [/polka-dot/i, /oversized double-breasted suit/i, /headscarf/i, /retro car/i]) {
+    assert.match(retro.prompt, cue);
+  }
+});
+
 await step("provider block: an account-level rejection is classified and alerts on the FIRST one", async () => {
   const { isProviderBlocked } = await import("../src/generate.js");
   const { checkAlerts } = await import("../src/monitor.js");
