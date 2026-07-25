@@ -15,6 +15,8 @@ process.env.FAL_KEY = "test-fal-key";
 // so the suite never runs against (and mutates) a real Postgres.
 process.env.DATABASE_URL = "";
 process.env.FREE_CREDITS = "12"; // enough headroom for the multi-step journey below
+// Fake provider storage host for this suite — see the same note in test/webapp.ts.
+process.env.MEDIA_HOST_SUFFIXES = "fal.test";
 process.env.ADMIN_IDS = "9999";
 process.env.KASPI_PAY_URL = "https://pay.test/neuroshot"; // enable the Kaspi buy flow
 process.env.PARTNER_WELCOME = "180"; // ≈$20 welcome bonus (spend-only)

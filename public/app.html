@@ -609,6 +609,14 @@
     .drop input { display: none; }
     .photo-preview { position: relative; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); }
     .photo-preview img { width: 100%; max-height: 42dvh; object-fit: contain; display: block; background: #000; }
+    /* "More angles" strip: square thumbs + a dashed add tile, horizontally
+       scrollable so a narrow phone never wraps it into a ragged second row. */
+    .xrow { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; -webkit-overflow-scrolling: touch; }
+    .xthumb { position: relative; flex: 0 0 auto; width: 68px; height: 68px; border-radius: var(--radius-s); overflow: hidden; border: 1px solid var(--line); }
+    .xthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .xdel { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border: 0; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; font: inherit; font-size: 11px; line-height: 20px; padding: 0; cursor: pointer; }
+    .xadd { flex: 0 0 auto; width: 68px; height: 68px; border-radius: var(--radius-s); border: 1px dashed var(--violet); display: grid; place-items: center; color: var(--violet); font-size: 22px; cursor: pointer; }
+    .xadd input { display: none; }
     .photo-preview .redo { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,.55); backdrop-filter: blur(6px); border: 0; color: #fff; border-radius: 999px; padding: 8px 13px; font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; }
 
     textarea.prompt {
@@ -987,6 +995,7 @@
       count: "Количество — сколько разных вариантов сделать за один раз. Каждый вариант считается отдельно и стоит патронов.",
       duration: "Длительность — сколько секунд будет видео. Дольше — дороже.",
       endframe: "Финальный кадр — необязательно. Если добавить, видео плавно придёт от вашего фото к этому кадру.",
+      angles: "Несколько фото ОДНОГО человека с разных сторон — модель лучше понимает лицо и точнее его сохраняет. Не добавляйте сюда других людей: получится смесь. Дополнительные фото не стоят патронов.",
     };
     /** A section label, with a tap-to-explain "?" when we have something to say. */
     function qLabel(text, hintKey) {
@@ -1493,6 +1502,10 @@
         modelKey: ctx.modelKey || null,
         photo: prev ? prev.photo : null,
         photoUrl: prev ? prev.photoUrl : null,
+        // Additional angles of the SAME face: [{data, url}]. Survives a re-open
+        // for the same reason the primary photo does — retaking them is the most
+        // annoying thing we could ask for.
+        extras: prev ? prev.extras || [] : [],
         generationId: ctx.generationId || (prev ? prev.generationId : null),
         srcPreview: ctx.srcPreview || (prev ? prev.srcPreview : null),
         endPhoto: null, endGenerationId: null,
@@ -1528,6 +1541,12 @@
       // that doesn't declare maxCount (premium_*, unverified), gets no selector.
       const maxCount = stu.mode !== "video" && caps ? caps.maxCount || 0 : 0;
       if (!maxCount || (stu.numImages && stu.numImages > maxCount)) stu.numImages = undefined;
+      // Extra angles: images-only, and only as many as the chosen model reads.
+      // Swapping to a narrower model trims the tail rather than failing at
+      // «Создать» — the server rejects an over-cap list outright.
+      stu.extras = stu.extras || [];
+      const maxInputs = stu.mode !== "video" && caps ? caps.maxInputs || 1 : 1;
+      if (stu.extras.length > maxInputs - 1) stu.extras = stu.extras.slice(0, Math.max(0, maxInputs - 1));
       if (stu.mode === "video" && m.video) {
         if (!m.video.durations.some((d) => d.seconds === stu.duration)) stu.duration = m.video.durations[0].seconds;
         if (!m.video.endFrame) { stu.endPhoto = null; stu.endGenerationId = null; }
@@ -1578,6 +1597,32 @@
         if ((x.image.resolutions || []).length) bits.push(x.image.resolutions.map((r) => r.label).join("/"));
       }
       return bits.length ? `<div class="mmeta">${esc(bits.join(" · "))}</div>` : "";
+    }
+
+    /**
+     * "More angles of the same face" strip. Shown only once there IS a primary
+     * photo and the chosen model actually reads several (`maxInputs > 1`) — an
+     * empty affordance on a single-photo model would just be a dead end.
+     *
+     * The copy carries the two things a user cannot guess: these must be the
+     * SAME person (the model is told so server-side, and a second person would
+     * come back as a blend), and it does NOT cost more.
+     */
+    function extrasBlock(m, isVideo, hasSource) {
+      const caps = isVideo ? null : m && m.image;
+      const maxInputs = (caps && caps.maxInputs) || 1;
+      if (isVideo || !hasSource || maxInputs < 2) return "";
+      const extras = stu.extras || [];
+      const room = maxInputs - 1 - extras.length;
+      return `
+        <div class="xtra">
+          <div style="margin-top:12px">${qLabel("Ещё ракурсы — точнее лицо", "angles")}</div>
+          <div class="xrow">
+            ${extras.map((x, i) => `<div class="xthumb"><img src="${x.data}" alt="" /><button class="xdel" data-xi="${i}" aria-label="Убрать">✕</button></div>`).join("")}
+            ${room > 0 ? `<label class="xadd"><input type="file" accept="image/*" id="stuExtraFile" multiple /><span>＋</span></label>` : ""}
+          </div>
+          <div class="sub" style="margin-top:6px">Те же черты лица с других сторон — до ${maxInputs} фото. Цена не меняется.</div>
+        </div>`;
     }
 
     /** Count chip prices for the current resolution — mirrors studioPrice's math per n. */
@@ -1647,6 +1692,7 @@
                  <span class="em">📸</span><b>Выбрать фото</b><span>с устройства или из галереи</span></label>
                ${works.length ? `<div class="quiz-q">…или из моих работ</div>
                <div class="mini" id="stuMini">${works.map((g) => `<img src="${esc(g.output_url)}" data-gid="${g.id}" loading="lazy" alt="" />`).join("")}</div>` : ""}`}
+          ${extrasBlock(m, isVideo, has)}
         </div>
         <div class="seg" id="stuSeg">
           <button data-md="image" class="${!isVideo ? "on" : ""}">🖼 Фото</button>
@@ -1763,7 +1809,29 @@
         stu.generationId = Number(im.dataset.gid); stu.srcPreview = im.getAttribute("src");
         clampStudioOpts(); viewStudio();
       }));
-      bind("#stuRedo", (el) => (el.onclick = () => { stu.photo = null; stu.photoUrl = null; stu.generationId = null; stu.srcPreview = null; viewStudio(); }));
+      // Dropping the primary photo drops the extra angles with it — they only
+      // ever mean "more of THIS face", so keeping them would silently attach
+      // one person's angles to somebody else's photo.
+      bind("#stuRedo", (el) => (el.onclick = () => {
+        stu.photo = null; stu.photoUrl = null; stu.generationId = null; stu.srcPreview = null; stu.extras = [];
+        viewStudio();
+      }));
+      bind("#stuExtraFile", (el) => (el.onchange = async (e) => {
+        const m = studioModel();
+        const room = (((m && m.image && m.image.maxInputs) || 1) - 1) - (stu.extras || []).length;
+        const files = [...e.target.files].slice(0, Math.max(0, room));
+        if (!files.length) return;
+        let failed = 0;
+        for (const f of files) {
+          const data = await downscale(f);
+          if (data) stu.extras.push({ data, url: null }); else failed++;
+        }
+        if (failed) toast(failed === files.length ? "Не получилось прочитать фото" : "Часть фото не удалось прочитать");
+        clampStudioOpts(); viewStudio();
+      }));
+      sheetBody.querySelectorAll(".xdel").forEach((b) => (b.onclick = () => {
+        stu.extras.splice(Number(b.dataset.xi), 1); viewStudio();
+      }));
       bind("#stuEndFile", (el) => (el.onchange = async (e) => {
         const f = e.target.files[0];
         if (!f) return;
@@ -1788,6 +1856,17 @@
         stu.photoUrl = await uploadData(stu.photo);
         if (!stu.photoUrl) { toast("Не удалось загрузить фото — попробуйте ещё раз"); viewStudio(); return; }
       }
+      // Extra angles upload the same way, and each keeps its url so a reroll
+      // doesn't re-upload photos we already have on the provider's storage.
+      // One failed angle must not sink the render — it is supporting material,
+      // so we drop it and tell the user rather than aborting a paid action.
+      let dropped = 0;
+      for (const x of stu.extras || []) {
+        if (!x.url) x.url = await uploadData(x.data);
+        if (!x.url) dropped++;
+      }
+      const extraUrls = (stu.extras || []).map((x) => x.url).filter(Boolean);
+      if (dropped) toast(`Не удалось загрузить доп. фото (${dropped}) — рисуем по остальным`);
       let end_image_url;
       if (stu.endPhoto) {
         end_image_url = await uploadData(stu.endPhoto);
@@ -1795,6 +1874,7 @@
       }
       const opts = {
         image_url: stu.photoUrl || undefined,
+        image_urls: !isVideo && extraUrls.length ? extraUrls : undefined,
         generation_id: stu.generationId || undefined,
         aspect_ratio: stu.aspect && stu.aspect !== "auto" ? stu.aspect : undefined,
         resolution: stu.resolution || undefined,
@@ -1814,6 +1894,11 @@
       if (status === 402) { viewPaywall(data); return; }
       if (status === 403 && data && data.error === "level_locked") {
         haptic("error"); toast(lockText({ need: data.requiredLevel, have: data.level }), { wide: true, ms: 5000 }); viewStudio(); return;
+      }
+      if (status === 400 && data && data.error === "too_many_inputs") {
+        haptic("error");
+        toast(`Эта модель читает не больше ${data.maxInputs} фото — уберите лишние ракурсы`, { wide: true, ms: 4500 });
+        viewStudio(); return;
       }
       if (status !== 200) { toast("Что-то пошло не так — попробуйте ещё раз"); viewStudio(); return; }
       ME.dashboard.credits = data.balance;

@@ -14,6 +14,11 @@ process.env.FAL_KEY = "test-fal-key";
 // Force hermetic embedded pglite (see test/e2e.ts): never touch a real Postgres.
 process.env.DATABASE_URL = "";
 process.env.FREE_CREDITS = "3";
+// This suite's fake provider storage lives on fal.test. Production's allow-list
+// (config.mediaHostSuffixes) is the real fal CDN, so the fake host is declared
+// HERE rather than baked into the shipped default — a test hostname must never
+// be an accepted origin in production.
+process.env.MEDIA_HOST_SUFFIXES = "fal.test";
 process.env.WEBAPP_URL = "https://app.test"; // enable app-config paths
 process.env.BOT_USERNAME = "neuroshot_test_bot";
 process.env.KASPI_PAY_URL = "https://pay.test/neuroshot"; // enable the Kaspi order flow
@@ -991,12 +996,12 @@ await step("insufficient 🔫 → 402 with the pack catalog (in-app paywall)", a
 
 await step("generate validation: unknown ids, missing photo, unknown model keys, empty prompt → 400", async () => {
   const cases = [
-    { source: "preset", id: "nope", image_url: "https://x.test/a.jpg" },
+    { source: "preset", id: "nope", image_url: "https://fal.test/x/a.jpg" },
     { source: "preset", id: "headshot" }, // photo required
-    { source: "campaign", id: "minifilm:nope", image_url: "https://x.test/a.jpg" },
+    { source: "campaign", id: "minifilm:nope", image_url: "https://fal.test/x/a.jpg" },
     // The registry IS the allow-list now (Studio: all vetted models generable),
     // so only keys outside MODELS are rejected — see the Studio-catalog step.
-    { source: "model", model: "definitely_not_a_model", prompt: "hi", image_url: "https://x.test/a.jpg" },
+    { source: "model", model: "definitely_not_a_model", prompt: "hi", image_url: "https://fal.test/x/a.jpg" },
     { source: "model", model: "text_to_image", prompt: "   " }, // empty after sanitize
     { source: "hack" },
   ];
@@ -1499,21 +1504,21 @@ await step("video composer: duration scales the charge, ratio flows to fal, stor
 await step("video composer validation: bad duration/ratio → 400 bad_opts, bad story id → bad_option", async () => {
   const badDur = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "model", model: "kling3", image_url: "https://x.test/a.jpg", prompt: "m", duration: 7 }),
+    body: JSON.stringify({ source: "model", model: "kling3", image_url: "https://fal.test/x/a.jpg", prompt: "m", duration: 7 }),
   });
   assert.equal(badDur.status, 400);
   assert.equal(((await badDur.json()) as { error: string }).error, "bad_opts");
 
   const badRatio = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "model", model: "kling3", image_url: "https://x.test/a.jpg", prompt: "m", aspect_ratio: "3:2" }),
+    body: JSON.stringify({ source: "model", model: "kling3", image_url: "https://fal.test/x/a.jpg", prompt: "m", aspect_ratio: "3:2" }),
   });
   assert.equal(badRatio.status, 400);
   assert.equal(((await badRatio.json()) as { error: string }).error, "bad_opts");
 
   const badStory = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "model", model: "kling3", image_url: "https://x.test/a.jpg", prompt: "m", options: ["nope"] }),
+    body: JSON.stringify({ source: "model", model: "kling3", image_url: "https://fal.test/x/a.jpg", prompt: "m", options: ["nope"] }),
   });
   assert.equal(badStory.status, 400);
   assert.equal(((await badStory.json()) as { error: string }).error, "bad_option");
@@ -1611,14 +1616,14 @@ await step("scenario video scenes: on-theme scene sets the motion; model swap ad
   // Unknown scene id / off-picker model → 400 (nothing charged).
   const badScene = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://x.test/a.jpg", scene: "nope" }),
+    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://fal.test/x/a.jpg", scene: "nope" }),
   });
   assert.equal(badScene.status, 400);
   assert.equal(((await badScene.json()) as { error: string }).error, "bad_scene");
 
   const badModel = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://x.test/a.jpg", model: "nb2_image" }),
+    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://fal.test/x/a.jpg", model: "nb2_image" }),
   });
   assert.equal(badModel.status, 400);
 });
@@ -1905,6 +1910,85 @@ await step("style reference: a preset's curated ref rides in image_urls; a clien
   const injCall = falCalls.at(-1)!;
   assert.equal((injCall.input.image_urls as string[]).length, 1, "client-named reference must be ignored");
   assert.ok(!JSON.stringify(injCall.input).includes("evil.test"), "a caller-supplied URL must never reach fal");
+});
+
+await step("multi-image input: extra angles ride along, are capped per model, and the host is enforced", async () => {
+  const mu = { id: 990095, username: "manyangles" };
+  await getOrCreateUser(mu.id, mu.username, null, 0);
+  await addCredits(mu.id, 200, "admin_grant", "test");
+  const H = { Authorization: `tma ${signInitData(mu)}`, "Content-Type": "application/json" };
+  const P = "https://fal.test/storage/primary.jpg";
+
+  // Three angles of one face → four entries, the PRIMARY first (it is the
+  // identity anchor), and the model told in words that this is one person.
+  const ok = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({
+      source: "model", model: "seedream_edit", prompt: "portrait", image_url: P,
+      image_urls: ["https://fal.test/storage/a2.jpg", "https://fal.test/storage/a3.jpg"],
+    }),
+  });
+  assert.equal(ok.status, 200);
+  const call = falCalls.at(-1)!;
+  const urls = call.input.image_urls as string[];
+  assert.deepEqual(urls, [P, "https://fal.test/storage/a2.jpg", "https://fal.test/storage/a3.jpg"]);
+  assert.match(call.input.prompt as string, /first 3 images are all photographs of the SAME single person/);
+  assert.match(call.input.prompt as string, /exactly ONE person, never a group/);
+  // Extra angles are free — the charge is the model's base price, unchanged.
+  assert.equal(((await ok.json()) as { credits: number }).credits, 2);
+
+  // A duplicate of the primary is dropped rather than billed as context twice.
+  const dup = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "model", model: "seedream_edit", prompt: "p", image_url: P, image_urls: [P, P] }),
+  });
+  assert.equal(dup.status, 200);
+  assert.deepEqual(falCalls.at(-1)!.input.image_urls as string[], [P]);
+  assert.ok(!(falCalls.at(-1)!.input.prompt as string).includes("SAME single person"));
+
+  // Over the model's own cap → 400 with the cap echoed back, nothing charged.
+  const before = (await apiMe(signInitData(mu))).body.dashboard.credits;
+  const tooMany = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({
+      source: "model", model: "premium_edit", prompt: "p", image_url: P, // premium reads 2 total
+      image_urls: ["https://fal.test/storage/a2.jpg", "https://fal.test/storage/a3.jpg"],
+    }),
+  });
+  assert.equal(tooMany.status, 400);
+  assert.equal(((await tooMany.json()) as { error: string; maxInputs: number }).maxInputs, 2);
+
+  // SECURITY: an off-host URL is refused even when it is perfectly valid HTTPS.
+  // Otherwise a caller could host the photo anywhere and skip the upload
+  // moderation gate entirely — and hand our provider any address they like.
+  for (const bad of [
+    "https://evil.test/x.jpg",
+    "https://fal.test.evil.test/x.jpg", // suffix must match on a host boundary
+    "https://notfal.test/x.jpg", // …and not merely end with the allowed string
+  ]) {
+    const r = await fetch(`${base}/api/generate`, {
+      method: "POST", headers: H,
+      body: JSON.stringify({ source: "model", model: "seedream_edit", prompt: "p", image_url: P, image_urls: [bad] }),
+    });
+    assert.equal(r.status, 400, `${bad} must be refused`);
+    assert.equal(((await r.json()) as { error: string }).error, "bad_source");
+  }
+  // The same rule covers the PRIMARY photo, not just the extras.
+  const badPrimary = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "model", model: "seedream_edit", prompt: "p", image_url: "https://evil.test/x.jpg" }),
+  });
+  assert.equal(badPrimary.status, 400);
+  assert.equal((await apiMe(signInitData(mu))).body.dashboard.credits, before, "refused requests must not charge");
+
+  // The catalog tells the client the per-model cap, so the UI can stop earlier.
+  const cat = (await apiMe(signInitData(mu))).body.catalog as unknown as {
+    studio: { image: Array<{ key: string; image: { maxInputs: number } | null }> };
+  };
+  assert.equal(cat.studio.image.find((m) => m.key === "seedream_edit")!.image!.maxInputs, 4);
+  assert.equal(cat.studio.image.find((m) => m.key === "premium_edit")!.image!.maxInputs, 2);
+  // A text-to-image model reads no photo at all — 1, so no "add angle" affordance.
+  assert.equal(cat.studio.image.find((m) => m.key === "text_to_image")!.image!.maxInputs, 1);
 });
 
 await step("registry invariant: every declared styleRef points at art that actually exists", async () => {

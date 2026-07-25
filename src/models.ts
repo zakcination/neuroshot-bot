@@ -29,6 +29,17 @@ export interface GenOpts {
    * assigned AFTER normalizeOpts, from the preset registry (styleRefUrl below).
    */
   styleRefUrl?: string;
+  /**
+   * ADDITIONAL photos of the SAME person, appended after the primary photo in
+   * `image_urls`. More angles of one face give the model a far better likeness
+   * than a single frame can — that is the whole point of this field, and why
+   * refPrompt below tells the model these are one subject and not a group.
+   *
+   * SERVER-SET ONLY, exactly like styleRefUrl: normalizeOpts does not copy it,
+   * so a client cannot smuggle URLs in through the opts bag. webapp.ts assigns
+   * it after validating every entry against the media-host allow-list.
+   */
+  extraImageUrls?: string[];
 }
 
 /** A quality/resolution tier the composer can offer; `mult` scales credits AND cost. */
@@ -47,6 +58,11 @@ export interface ImageParams {
    *  the live fal queue OpenAPI schemas. The cap here is OURS, not the provider's:
    *  it bounds the worst-case spend a single tap can trigger. */
   maxCount?: number;
+  /** Max USER photos accepted as input, INCLUDING the primary one. Only edit
+   *  models declare it (a text-to-image model has no photo input at all). Extra
+   *  angles of the same face cost nothing extra — the providers composite the
+   *  references into one output, so the charge still follows `num_images`. */
+  maxInputs?: number;
 }
 
 /** Video composer capabilities + per-second pricing (credits scale with length). */
@@ -125,25 +141,39 @@ export function styleRefUrl(file: string | undefined): string | undefined {
   return `${config.webappUrl.replace(/\/+$/, "")}/img/${file}`;
 }
 /**
- * The model payload's image list plus the optional style reference. Order is
- * load-bearing: the user's photo stays FIRST (it is the identity anchor that
- * KEEP_ID refers to) and the reference follows as supporting material.
+ * The model payload's image list: the user's photos, then the optional style
+ * reference. Order is load-bearing in both directions — the user's primary
+ * photo stays FIRST (it is the identity anchor KEEP_ID refers to) and the style
+ * plate stays LAST, which is what refPrompt below tells the model to expect.
  */
 function refUrls(imageUrl: string | undefined, opts: GenOpts | undefined): string[] {
-  return [imageUrl, opts?.styleRefUrl].filter((u): u is string => !!u);
+  return [imageUrl, ...(opts?.extraImageUrls ?? []), opts?.styleRefUrl].filter((u): u is string => !!u);
 }
 /**
- * Tells the model what the second image is FOR. Without this the reference is
- * ambiguous and the model may treat it as a second subject — blending faces,
- * which would break the one promise the product actually makes.
+ * Tells the model what the images after the first one are FOR. Without this the
+ * list is ambiguous and the model reads extra images as extra PEOPLE — blending
+ * faces or rendering a crowd, either of which breaks the one promise the product
+ * actually makes. Both clauses are positional, so they stay correct however many
+ * reference photos the user attached.
  */
 function refPrompt(prompt: string, opts: GenOpts | undefined): string {
-  if (!opts?.styleRefUrl) return prompt;
-  return (
-    `${prompt} The second image is a STYLE REFERENCE ONLY — copy its palette, lighting, ` +
-    `materials and mood. Do not copy any person, face or body from it; the subject is ` +
-    `taken solely from the first image.`
-  );
+  const extra = opts?.extraImageUrls?.length ?? 0;
+  const parts: string[] = [];
+  if (extra) {
+    parts.push(
+      `The first ${extra + 1} images are all photographs of the SAME single person from ` +
+      `different angles and in different lighting — read them together to get the face right. ` +
+      `Render exactly ONE person, never a group and never a collage.`,
+    );
+  }
+  if (opts?.styleRefUrl) {
+    parts.push(
+      `The LAST image is a STYLE REFERENCE ONLY — copy its palette, lighting, ` +
+      `materials and mood. Do not copy any person, face or body from it; the subject is ` +
+      `taken solely from the ${extra ? "photographs above" : "first image"}.`,
+    );
+  }
+  return parts.length ? `${prompt} ${parts.join(" ")}` : prompt;
 }
 /** {num_images} for image models — clamped to the model's declared maxCount, omitted at the default of 1. */
 function countParam(maxCount: number, opts: GenOpts | undefined): { num_images?: number } {
@@ -184,7 +214,7 @@ export const MODELS = {
     label: "Nano Banana",
     note: "правки по фото — быстро и дёшево",
     input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), ...arParam(opts), ...countParam(4, opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 4 },
+    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 4, maxInputs: 4 },
   },
   text_to_image: {
     key: "text_to_image",
@@ -213,7 +243,7 @@ export const MODELS = {
     label: "Seedream 4.5",
     note: "сцена по вашему фото",
     input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), ...sizeParam(opts, true), ...countParam(6, opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 6 },
+    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 6, maxInputs: 4 },
   },
   animate: {
     key: "animate",
@@ -257,7 +287,9 @@ export const MODELS = {
     // rides along exactly as it does on the Seedream/Nano Banana edit paths —
     // without this a `styleRef` on a premium_edit preset would be silently dropped.
     input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), quality: "high", ...sizeParam(opts, false), ...countParam(2, opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 2 },
+    // Fewer extra angles than the cheap tiers: every input image is billed
+    // context on this endpoint, so the cap doubles as a cost guard.
+    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 2, maxInputs: 2 },
   },
 
   // --- Top-tier models (verified against fal.ai model pages, Jul 2026) ---
@@ -287,7 +319,7 @@ export const MODELS = {
     label: "Nano Banana 2",
     note: "правка по фото, до 4K",
     input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), resolution: opts?.resolution ?? "1K", ...arParam(opts), ...countParam(4, opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES, maxCount: 4 },
+    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES, maxCount: 4, maxInputs: 4 },
   },
   // Nano Banana Pro (Gemini 3 Pro) — SOTA image, $0.15/img @1K–2K.
   nbpro_image: {
@@ -310,7 +342,7 @@ export const MODELS = {
     label: "Nano Banana Pro",
     note: "правка с максимумом деталей",
     input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), resolution: opts?.resolution ?? "2K", ...arParam(opts), ...countParam(4, opts) }),
-    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES, maxCount: 4 },
+    image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES, maxCount: 4, maxInputs: 4 },
   },
   // Kling 3.0 Pro — top image→video, $0.168/s audio-on → 5s ≈ $0.84.
   kling3: {
@@ -1515,17 +1547,18 @@ export const CAMPAIGNS: Campaign[] = [
         styleRef: "card-agamemnon.jpg",
         prompt:
           "Epic cinematic film still: the person as the high king and supreme commander of the Greek host, " +
-          "standing on the stone steps of a torchlit citadel at dusk — a layered plate cuirass in DARK " +
-          "desaturated gunmetal, near-black steel with only a faint cold cast (not bright blue), fine warm " +
-          "gold edging, a heavy gold sun-medallion clasp at each shoulder, a tall helmet with a black " +
-          "horsehair crest and gold trim pushed back clear of the face, a thick charcoal wool cloak with a " +
-          "deep folded collar, leather pteruges, a sheathed sword at the hip; ranks of spears and shields " +
-          "blurred in the haze behind. THE CAMERA IS LOW, on the steps below him, looking UP so he towers " +
-          "over the frame — medium shot. Hard torch rim light rakes across hammered, scratched, battle-worn " +
-          "metal; near-black steel and gold against warm flame, deep shadow. The face is weathered and alive " +
-          "— set jaw, the weight of ten years of war in the eyes, real skin with sweat, dust and stubble, " +
-          "not a smooth render. Shot on 85mm, shallow depth of field, photorealistic — a photograph, never " +
-          `CGI or a 3D game model. ${KEEP_ID}`,
+          "standing on the stone steps of a torchlit citadel at dusk — polished STEEL-BLUE plate armour, " +
+          "cold blue-grey metal with crisp warm gold edging and gold filigree; a heavy struck-gold coin " +
+          "medallion at each shoulder; a tall steel-blue helmet with a sculpted mask-like faceplate — hinged " +
+          "cheek guards and a nasal bar framing the face but leaving it fully visible — crowned with a tall " +
+          "dark navy-black horsehair crest, and a column of articulated GOLD VERTEBRAE running down the back " +
+          "of the helmet to the nape; a heavy dark cloak, leather pteruges, a sheathed sword at the hip; " +
+          "ranks of spears and shields blurred in the haze behind. THE CAMERA IS LOW, on the steps below " +
+          "him, looking UP so he towers over the frame — medium shot. Hard torch rim light rakes across " +
+          "hammered, scratched, battle-worn metal; cold steel-blue and gold against warm flame, deep shadow. " +
+          "The face is weathered and alive — set jaw, the weight of ten years of war in the eyes, real skin " +
+          "with sweat, dust and stubble, not a smooth render. Shot on 85mm, shallow depth of field, " +
+          `photorealistic — a photograph, never CGI or a 3D game model. ${KEEP_ID}`,
       },
       {
         id: "warrior",
