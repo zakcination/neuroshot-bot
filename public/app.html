@@ -1098,7 +1098,11 @@
           const lock = presetLock(p); // null = open (the default for every style)
           return `
           <button class="pcard ${lock ? "locked" : ""}" data-preset="${p.id}">
-            <img class="pbg" src="${esc(p.previewUrl)}" alt="" loading="lazy" />
+            <!-- previewUrl is derived from the id, so a style whose card art
+                 hasn't been produced yet 404s. Without this the card shows a
+                 broken-image icon; hiding the img falls back to the tile's own
+                 gradient, which looks deliberate. -->
+            <img class="pbg" src="${esc(p.previewUrl)}" alt="" loading="lazy" onerror="this.remove()" />
             <div class="ptop">
               <span class="pemoji">${esc(p.label.split(" ")[0] || "✨")}</span>
               ${lock ? `<span class="plock">🔒 ур. ${lock.need}</span>`
