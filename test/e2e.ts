@@ -394,7 +394,7 @@ await step("insufficient 🔫: animate (25) with 7 shows the sales-page paywall,
   // Paywall is a sales page: outcome headline, the tried model, the anchored entry pack.
   const wall = calls("sendMessage").at(-1)!;
   assert.match(wall.payload.text as string, /Ещё один шаг до результата/);
-  assert.match(wall.payload.text as string, /🎬 Оживление фото/);
+  assert.match(wall.payload.text as string, /Kling 2\.5 Turbo/); // the model's REAL name reaches the paywall copy
   assert.match(wall.payload.text as string, /Комбо/); // combo offer anchored as the entry
   assert.match(wall.payload.text as string, /Осталось/); // live countdown snapshot in the paywall
   const kb = wall.payload.reply_markup as { inline_keyboard: Array<Array<{ callback_data: string }>> };

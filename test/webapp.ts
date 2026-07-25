@@ -1895,6 +1895,44 @@ await step("style reference: a preset's curated ref rides in image_urls; a clien
   assert.ok(!JSON.stringify(injCall.input).includes("evil.test"), "a caller-supplied URL must never reach fal");
 });
 
+await step("model catalog: real provider names, and ETA only once we have MEASURED runs", async () => {
+  const eu = { id: 990094, username: "etauser" };
+  const cat0 = (await apiMe(signInitData(eu))).body.catalog as unknown as {
+    studio: { image: Array<{ key: string; label: string; note: string; etaSeconds: number }> };
+  };
+  // Real provider names, shown as-is — users search for exactly these strings.
+  const byKey = (k: string) => cat0.studio.image.find((m) => m.key === k)!;
+  assert.equal(byKey("nbpro_image").label, "Nano Banana Pro");
+  assert.equal(byKey("nb2_image").label, "Nano Banana 2");
+  assert.equal(byKey("premium_image").label, "GPT Image 2");
+  assert.equal(byKey("text_to_image").label, "Seedream 4.5");
+  assert.ok(byKey("nbpro_image").note.length > 0, "a real name still needs a line saying what it's for");
+
+  // No finished runs for this model yet → 0, and the client must fall back to
+  // its coarse copy rather than print a number we invented.
+  assert.equal(byKey("nb2_edit").etaSeconds, 0);
+
+  // Seed finished runs with a known spread; the median (not the mean) wins, so
+  // one pathological outlier can't inflate everyone's ETA.
+  for (const sec of [20, 22, 24, 26, 600]) {
+    await query(
+      `INSERT INTO generations (user_id, model, prompt, credits, status, output_url, created_at, finished_at)
+       VALUES ($1, 'nb2_edit', 'p', 4, 'ok', 'https://fal.test/o.png', now() - ($2 || ' seconds')::interval, now())`,
+      [eu.id, String(sec)],
+    );
+  }
+  const cat1 = (await apiMe(signInitData(eu))).body.catalog as unknown as {
+    studio: { image: Array<{ key: string; etaSeconds: number }> };
+  };
+  const eta = cat1.studio.image.find((m) => m.key === "nb2_edit")!.etaSeconds;
+  // Not pinned to an exact value: earlier steps in this suite also render on
+  // nb2_edit and their near-instant runs land in the same sample. What must
+  // hold is the property — the 600s outlier does NOT drag the estimate up
+  // (its mean would be ~138s), because we take the median.
+  assert.ok(eta > 0, "an ETA must appear once there are enough finished runs");
+  assert.ok(eta < 100, `median must resist the 600s outlier, got ${eta}`);
+});
+
 await step("AI disclosure: mandatory badge is always applied; promo CTA only when watermark on", async () => {
   const { deliveryStyles, buildOverlayFilter, brandForDelivery } = await import("../src/watermark.js");
   // The legal disclosure ("ai") is ALWAYS present and always first; the promo

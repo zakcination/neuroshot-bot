@@ -204,6 +204,11 @@ const SCHEMA: string[] = [
   // output_urls is a JSON-encoded array, populated ONLY when a render actually
   // produced more than one output — NULL for every ordinary single-output row.
   `ALTER TABLE generations ADD COLUMN IF NOT EXISTS output_urls TEXT`,
+  // When the render actually finished — the only way to state a wait time from
+  // MEASURED data instead of a guess. NULL on every pre-existing row and on
+  // anything still pending, so the ETA query simply has less to average until
+  // real traffic fills it in.
+  `ALTER TABLE generations ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ`,
   `CREATE TABLE IF NOT EXISTS events (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
@@ -1333,7 +1338,8 @@ export async function completeGeneration(
   outputUrls?: string[],
 ): Promise<boolean> {
   const rows = await q(
-    `UPDATE generations SET status = $1, output_url = $2, cost_usd = $3, provider_request_id = $4, output_urls = $6
+    `UPDATE generations SET status = $1, output_url = $2, cost_usd = $3, provider_request_id = $4,
+            output_urls = $6, finished_at = now()
      WHERE id = $5 AND status = 'pending' RETURNING id`,
     [
       status,
@@ -2044,4 +2050,36 @@ export async function getActiveSeason(): Promise<SeasonRow | null> {
 export async function listSeasons(): Promise<SeasonRow[]> {
   const rows = await q("SELECT id, key, theme_label, starts_at, ends_at FROM seasons ORDER BY starts_at DESC");
   return rows.map(mapSeason);
+}
+
+
+/**
+ * Median wall-clock seconds from charge to delivery, per model, over recent
+ * SUCCESSFUL renders — the honest basis for "сколько ещё ждать". Median, not
+ * mean, so one pathological 6-minute outlier doesn't inflate everyone's ETA.
+ * A model only appears once it has MIN_ETA_SAMPLES finished runs; until then
+ * the UI must fall back to its coarse "обычно 10–30 секунд" copy rather than
+ * show a number we made up.
+ */
+const MIN_ETA_SAMPLES = 5;
+export async function modelEtaSeconds(hours = 72): Promise<Record<string, number>> {
+  const rows = await q(
+    `SELECT model,
+            percentile_cont(0.5) WITHIN GROUP (
+              ORDER BY EXTRACT(EPOCH FROM (finished_at - created_at))
+            ) AS med,
+            COUNT(*)::int AS n
+     FROM generations
+     WHERE status = 'ok' AND finished_at IS NOT NULL
+       AND created_at > now() - make_interval(hours => $1)
+     GROUP BY model`,
+    [hours],
+  );
+  const out: Record<string, number> = {};
+  for (const r of rows) {
+    if (Number(r.n) < MIN_ETA_SAMPLES) continue;
+    const sec = Math.round(Number(r.med));
+    if (Number.isFinite(sec) && sec > 0) out[String(r.model)] = sec;
+  }
+  return out;
 }

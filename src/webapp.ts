@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { allPresetGating, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { allPresetGating, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { enhancePrompt } from "./enhance.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
@@ -238,7 +238,7 @@ export async function enhanceResponse(
  * (decision D4-revised): the patron is the app's single price language; real ₸
  * appears solely on pack purchase prices, where actual money changes hands.
  */
-function studioModelsOf(mode: "image" | "video"): Array<Record<string, unknown>> {
+function studioModelsOf(mode: "image" | "video", eta: Record<string, number>): Array<Record<string, unknown>> {
   const kinds = mode === "video" ? ["image_to_video"] : ["image_edit", "text_to_image"];
   return Object.values(MODELS as Record<string, ModelSpec>)
     .filter((m) => kinds.includes(m.kind))
@@ -246,8 +246,13 @@ function studioModelsOf(mode: "image" | "video"): Array<Record<string, unknown>>
     .map((m) => ({
       key: m.key,
       label: m.label,
+      // What the (real, provider-given) name doesn't say on its own.
+      note: m.note ?? "",
       kind: m.kind,
       credits: m.credits,
+      // MEASURED median seconds from our own recent runs; 0 = not enough data
+      // yet, and the client must then show its coarse copy, not a fake number.
+      etaSeconds: eta[m.key] ?? 0,
       needsImage: m.kind !== "text_to_image",
       image: m.image
         ? {
@@ -303,7 +308,7 @@ function packsPayload(): Array<Record<string, unknown>> {
  * The top 5 tapped presets (with ≥1 real tap) are flagged `trending`; a fresh
  * deploy with no taps yet simply shows no trending badges, not fake ones.
  */
-function catalogPayload(usage: Record<string, number>, gates: Record<string, number>): Record<string, unknown> {
+function catalogPayload(usage: Record<string, number>, gates: Record<string, number>, eta: Record<string, number>): Record<string, unknown> {
   const trending = new Set(
     PRESETS.map((p) => ({ id: p.id, count: usage[p.id] ?? 0 }))
       .filter((p) => p.count > 0)
@@ -375,8 +380,8 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
     // conversions on estimates; real ₸ only on pack purchases). needsImage
     // drives the adaptive input gating in the composer (D6).
     studio: {
-      image: studioModelsOf("image"),
-      video: studioModelsOf("video"),
+      image: studioModelsOf("image", eta),
+      video: studioModelsOf("video", eta),
     },
     imageModels: IMAGE_MODEL_PICKER.map((k) => {
       const spec = MODELS[k] as ModelSpec;
@@ -445,7 +450,7 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows] = await Promise.all([
+  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta] = await Promise.all([
     userDashboard(user.id),
     recentGenerations(user.id, 30),
     ensureRefCode(user.id),
@@ -455,6 +460,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     presetUsageCounts(),
     getActiveSeason(),
     allPresetGating(),
+    modelEtaSeconds(),
   ]);
   const gates = Object.fromEntries(gateRows.map((g) => [g.preset_id, g.min_level]));
   return {
@@ -465,7 +471,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     bot_username: config.webappBotUsername,
     // Pack catalog for the app's pricing section — same source as the bot.
     packs: packsPayload(),
-    catalog: catalogPayload(usage, gates),
+    catalog: catalogPayload(usage, gates, eta),
     // Combo offer deadline (ms epoch) for the live countdown.
     comboOffer: { endsAt: comboEndsAt() },
     // Reward-architecture P4a: null (the normal state) until an admin runs

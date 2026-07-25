@@ -62,7 +62,17 @@ export interface ModelSpec {
   falEndpoint: string;
   credits: number; // charge for the DEFAULT settings (5s video / one image)
   approxCostUsd: number;
+  /**
+   * The provider's REAL model name, shown as-is. Users of this category already
+   * know "Nano Banana Pro" / "Seedream" / "GPT Image" and search for exactly
+   * those strings; inventing a house name for them adds a translation step and
+   * hides which engine they are actually buying. (This reverses an earlier
+   * benefit-naming decision — see git history.) Also rendered by
+   * payments.paywallText, so it must read sensibly in a sentence.
+   */
   label: string;
+  /** One short line of what the model is FOR — the benefit the name doesn't carry. */
+  note?: string;
   /** Builds the fal input payload. imageUrl set for edit/video; opts from the composer. */
   input: (prompt: string, imageUrl?: string, opts?: GenOpts) => Record<string, unknown>;
   /** Present on image models the composer can fine-tune (aspect ratio / quality). */
@@ -169,7 +179,8 @@ export const MODELS = {
     falEndpoint: "fal-ai/nano-banana/edit",
     credits: 3,
     approxCostUsd: 0.06,
-    label: "🖼 Редактирование фото",
+    label: "Nano Banana",
+    note: "правки по фото — быстро и дёшево",
     input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), ...arParam(opts), ...countParam(4, opts) }),
     image: { aspectRatios: IMAGE_ASPECTS, maxCount: 4 },
   },
@@ -179,24 +190,26 @@ export const MODELS = {
     falEndpoint: "fal-ai/bytedance/seedream/v4.5/text-to-image",
     credits: 2,
     approxCostUsd: 0.04,
-    label: "✨ Картинка из текста",
+    label: "Seedream 4.5",
+    note: "картинка из текста",
     input: (prompt, _img, opts) => ({ prompt, ...sizeParam(opts, true), ...countParam(6, opts) }),
     image: { aspectRatios: IMAGE_ASPECTS, maxCount: 6 },
   },
   // Seedream 4.5 edit — the default scenario image engine (photo → styled scene).
   // Stronger face-anchored scene edits than v4 at the same 2 🔫 tier ($0.04/img);
   // same input contract (prompt + image_urls), so it's a drop-in over v4.
-  // Label deliberately drops the provider codename: not in a model picker, but
-  // this IS PRESET_MODEL, and payments.paywallText renders `model.label`
+  // NB this IS PRESET_MODEL, and payments.paywallText renders `model.label`
   // directly when a preset/campaign generation hits the insufficient-credits
-  // paywall — so it does reach users, just not through a picker keyboard.
+  // paywall — so the name reaches users outside any picker too. "Seedream 4.5"
+  // reads fine in that sentence.
   seedream_edit: {
     key: "seedream_edit",
     kind: "image_edit",
     falEndpoint: "fal-ai/bytedance/seedream/v4.5/edit",
     credits: 2,
     approxCostUsd: 0.04,
-    label: "🖼 Сцена по фото",
+    label: "Seedream 4.5",
+    note: "сцена по вашему фото",
     input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), ...sizeParam(opts, true), ...countParam(6, opts) }),
     image: { aspectRatios: IMAGE_ASPECTS, maxCount: 6 },
   },
@@ -206,7 +219,8 @@ export const MODELS = {
     falEndpoint: "fal-ai/kling-video/v2.5-turbo/standard/image-to-video",
     credits: 25,
     approxCostUsd: 0.5,
-    label: "🎬 Оживление фото",
+    label: "Kling 2.5 Turbo",
+    note: "оживить фото",
     // Kling 2.5-turbo has NO aspect_ratio param (ratio is inherited from the frame)
     // and no end-frame — don't advertise settings fal will silently ignore.
     input: (prompt, imageUrl, opts) => ({
@@ -222,7 +236,8 @@ export const MODELS = {
     falEndpoint: "fal-ai/gpt-image-2",
     credits: 11,
     approxCostUsd: 0.21, // high quality, 1024x1024
-    label: "💎 Премиум-картинка",
+    label: "GPT Image 2",
+    note: "текст на картинке, сложные сцены",
     input: (prompt, _img, opts) => ({ prompt, quality: "high", image_size: sizeParam(opts, false).image_size ?? "square" }),
     image: { aspectRatios: IMAGE_ASPECTS },
   },
@@ -232,7 +247,8 @@ export const MODELS = {
     falEndpoint: "openai/gpt-image-2/edit",
     credits: 11,
     approxCostUsd: 0.22, // high quality, 1024x1024
-    label: "💎 Премиум-правка",
+    label: "GPT Image 2",
+    note: "правка с текстом и типографикой",
     input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], quality: "high", ...sizeParam(opts, false) }),
     image: { aspectRatios: IMAGE_ASPECTS },
   },
@@ -244,15 +260,14 @@ export const MODELS = {
   // on mobile Stars payout and after the referral share. Re-verify before launch.
 
   // Nano Banana 2 (Google) — fast SOTA image, $0.08/img @1K.
-  // Labels are benefit/tier-named, never the fal provider codename — "Nano
-  // Banana" reads as a novelty app name to a user, not a professional tool.
   nb2_image: {
     key: "nb2_image",
     kind: "text_to_image",
     falEndpoint: "fal-ai/nano-banana-2",
     credits: 4,
     approxCostUsd: 0.08,
-    label: "🎨 Картинка — быстро",
+    label: "Nano Banana 2",
+    note: "картинка из текста, до 4K",
     input: (prompt, _img, opts) => ({ prompt, resolution: opts?.resolution ?? "1K", ...arParam(opts), ...countParam(4, opts) }),
     image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES, maxCount: 4 },
   },
@@ -262,7 +277,8 @@ export const MODELS = {
     falEndpoint: "fal-ai/nano-banana-2/edit",
     credits: 4,
     approxCostUsd: 0.08,
-    label: "🎨 Правка — быстро",
+    label: "Nano Banana 2",
+    note: "правка по фото, до 4K",
     input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), resolution: opts?.resolution ?? "1K", ...arParam(opts), ...countParam(4, opts) }),
     image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES, maxCount: 4 },
   },
@@ -273,7 +289,8 @@ export const MODELS = {
     falEndpoint: "fal-ai/nano-banana-pro",
     credits: 8,
     approxCostUsd: 0.15,
-    label: "🎨 Картинка — детально (2K)",
+    label: "Nano Banana Pro",
+    note: "максимум деталей",
     input: (prompt, _img, opts) => ({ prompt, resolution: opts?.resolution ?? "2K", ...arParam(opts), ...countParam(4, opts) }),
     image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES, maxCount: 4 },
   },
@@ -283,7 +300,8 @@ export const MODELS = {
     falEndpoint: "fal-ai/nano-banana-pro/edit",
     credits: 8,
     approxCostUsd: 0.15,
-    label: "🎨 Правка — детально (2K)",
+    label: "Nano Banana Pro",
+    note: "правка с максимумом деталей",
     input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), resolution: opts?.resolution ?? "2K", ...arParam(opts), ...countParam(4, opts) }),
     image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES, maxCount: 4 },
   },
@@ -294,7 +312,8 @@ export const MODELS = {
     falEndpoint: "fal-ai/kling-video/v3/pro/image-to-video",
     credits: 42,
     approxCostUsd: 0.84,
-    label: "🎬 Кино-движение",
+    label: "Kling 3.0 Pro",
+    note: "кинематографичное движение, финальный кадр",
     // Kling 3.0 has NO aspect_ratio param (ratio inherited from the start frame)
     // but DOES support an end frame — morph from the source image into end_image_url.
     input: (prompt, imageUrl, opts) => ({
@@ -312,7 +331,8 @@ export const MODELS = {
     falEndpoint: "bytedance/seedance-2.0/fast/image-to-video",
     credits: 61,
     approxCostUsd: 1.21,
-    label: "🎬 Эпичная сцена",
+    label: "Seedance 2.0 Fast",
+    note: "физика и сложные сцены",
     input: (prompt, imageUrl, opts) => ({
       prompt,
       image_url: imageUrl,
@@ -337,7 +357,8 @@ export const MODELS = {
     falEndpoint: "bytedance/seedance-2.0/image-to-video",
     credits: 76,
     approxCostUsd: 1.52,
-    label: "🎬 Видео со звуком",
+    label: "Seedance 2.0",
+    note: "со звуком — флагман",
     input: (prompt, imageUrl, opts) => ({
       prompt,
       image_url: imageUrl,
@@ -365,7 +386,8 @@ export const MODELS = {
     falEndpoint: "fal-ai/minimax/hailuo-2.3-fast/standard/image-to-video",
     credits: 10,
     approxCostUsd: 0.19,
-    label: "⚡ Видео — эконом",
+    label: "Hailuo 2.3 Fast",
+    note: "самое дешёвое видео",
     input: (prompt, imageUrl, opts) => ({
       prompt,
       image_url: imageUrl,
@@ -376,9 +398,8 @@ export const MODELS = {
 } satisfies Record<string, ModelSpec>;
 
 /**
- * Model pickers surfaced in the bot — a price/quality ladder, labeled by
- * OUTCOME and TIER, never the fal provider codename (a raw name like "Nano
- * Banana Pro" reads as a novelty app, not a professional tool).
+ * Model pickers surfaced in the bot — a price/quality ladder under the models'
+ * REAL names (see ModelSpec.label); `note` carries what each one is for.
  * Order = display order; each entry must be a real MODELS key of the right kind.
  * Default lineup (Jul 2026): fast SOTA image → detailed 2K → premium/GPT for
  * images; the cheap "эконом" video entry leads, then cinematic → epic → audio.

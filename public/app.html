@@ -223,6 +223,19 @@
     .mrow.on { border-color: var(--violet); box-shadow: 0 0 0 1px var(--violet); }
     .mrow .price { white-space: nowrap; color: var(--amber); font-weight: 700; font-size: 13px; }
     .mnote { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    /* Capability line: measured wait + what this engine can do that others can't. */
+    .mmeta { font-size: 10.5px; color: var(--faint); margin-top: 3px; letter-spacing: .01em; }
+    /* Collapsed model picker — the composer shows ONE engine, not the whole
+       registry, and expands only on demand. */
+    .mpick {
+      display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+      background: var(--surface); border: 1px solid rgba(124,92,255,.35); border-radius: var(--radius-s);
+      padding: 11px 12px; color: var(--ink); cursor: pointer;
+    }
+    .mpick > span:first-child { flex: 1; }
+    .mpick .price { font-size: 12px; color: var(--amber); font-weight: 700; white-space: nowrap; }
+    .mpick .mchev { color: var(--muted); font-size: 10px; }
+    .mpick + .mlist { margin-top: 8px; }
     .stublock { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 10px 12px; margin-bottom: 4px; }
     .stuchip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .stuchip > span { font-weight: 700; }
@@ -1227,14 +1240,20 @@
       }
       if (status !== 200) { toast("Что-то пошло не так — попробуйте ещё раз"); viewPick(); return; }
       setBalance(data.balance);
-      startJob(data.id, isVideo, pick.campaignId || null);
+      startJob(data.id, isVideo, pick.campaignId || null, etaFor(data.model || pick.model));
     }
 
     /** Register an independent render job and show its progress in the sheet. */
-    function startJob(id, isVideo, campaignId) {
-      const job = { id, isVideo, campaignId, started: Date.now() };
+    /** Measured ETA for a model key, from the catalog (0 = not enough data yet). */
+    function etaFor(modelKey) {
+      const all = [...((ME.catalog.studio || {}).image || []), ...((ME.catalog.studio || {}).video || [])];
+      const m = all.find((x) => x.key === modelKey);
+      return (m && m.etaSeconds) || 0;
+    }
+    function startJob(id, isVideo, campaignId, etaSec) {
+      const job = { id, isVideo, campaignId, started: Date.now(), etaSec: etaSec || 0 };
       jobs.set(id, job); updateJobsPill();
-      viewedJob = id; viewProgress(isVideo, id);
+      viewedJob = id; viewProgress(isVideo, id, job.etaSec);
       pollJob(job);
       renderGallery(1); // pending ripple card appears in «Мои работы» immediately
     }
@@ -1254,7 +1273,7 @@
       for (const g of ME.generations || []) {
         if (g.status === "pending" && !jobs.has(g.id)) {
           const isVideo = (ME.catalog.videoModels || []).some((m) => m.key === g.model) || /^dub_/.test(g.model || "");
-          const job = { id: g.id, isVideo, campaignId: null, started: Date.now(), resumed: true };
+          const job = { id: g.id, isVideo, campaignId: null, started: Date.now(), resumed: true, etaSec: etaFor(g.model) };
           jobs.set(g.id, job);
           pollJob(job);
           added++;
@@ -1264,19 +1283,43 @@
       return added;
     }
 
-    function viewProgress(isVideo, jobId) {
+    /**
+     * `etaSec` is a MEASURED median of our own recent runs for this model (0 when
+     * we don't have enough samples yet) — so the countdown is a real estimate,
+     * not decoration. With no data we keep the honest coarse copy instead of
+     * inventing a number. The counter never claims "готово": once it runs out it
+     * says "почти готово", because the truth is the poll hasn't returned yet.
+     */
+    function viewProgress(isVideo, jobId, etaSec) {
       openSheet();
+      const job = jobId ? jobs.get(jobId) : null;
+      const eta = etaSec || (job && job.etaSec) || 0;
+      const coarse = isVideo ? "Обычно 1–3 минуты." : "Обычно 10–30 секунд ✨";
       sheetBody.innerHTML = `
         <div class="progress">
           <div class="orb"></div>
           <h4>${isVideo ? "Рендерим видео…" : "Генерируем…"}</h4>
-          <p>${isVideo ? "Обычно 1–3 минуты." : "Обычно 10–30 секунд ✨"}</p>
+          <p id="etaLine">${eta ? "" : coarse}</p>
         </div>
         <div class="stack">
           <button class="btn ghost" id="hideBtn">⬇ Свернуть — рендер продолжится в фоне</button>
         </div>`;
       sheetBody.querySelector("#hideBtn").onclick = () => closeSheet();
       if (jobId) viewedJob = jobId;
+      if (eta && job) startEtaTicker(job, eta);
+    }
+    /** Ticks the remaining-time line until the job finishes or the sheet moves on. */
+    function startEtaTicker(job, eta) {
+      clearInterval(window._etaT);
+      const tick = () => {
+        const line = document.getElementById("etaLine");
+        // The sheet moved on (result, another view) or the job finished — stop.
+        if (!line || !jobs.has(job.id)) { clearInterval(window._etaT); return; }
+        const left = Math.ceil(eta - (Date.now() - job.started) / 1000);
+        line.textContent = left > 0 ? `Осталось ${waitText(left)}` : "Почти готово…";
+      };
+      tick();
+      window._etaT = setInterval(tick, 1000);
     }
 
     /** Each job polls on its own timer — jobs never block each other. */
@@ -1454,7 +1497,7 @@
         srcPreview: ctx.srcPreview || (prev ? prev.srcPreview : null),
         endPhoto: null, endGenerationId: null,
         duration: undefined, aspect: undefined, resolution: undefined, numImages: undefined,
-        showAll: false, editOpen: prev ? prev.editOpen : false, swap: false,
+        showAll: false, mopen: false, editOpen: prev ? prev.editOpen : false, swap: false,
         prevPrompt: null, // pre-enhance prompt, powers the ↩ Вернуть undo
       };
       if (!stu.modelKey) stu.modelKey = defaultStudioModel();
@@ -1511,6 +1554,32 @@
       }
       return credits;
     }
+    /** "≈40 сек" / "≈2 мин" — only ever from a MEASURED etaSeconds, never a guess. */
+    function waitText(sec) {
+      if (!sec) return "";
+      return sec < 90 ? `≈${Math.round(sec)} сек` : `≈${Math.round(sec / 60)} мин`;
+    }
+    /**
+     * The capability line under a model in the picker: measured wait, plus what
+     * distinguishes this engine (max outputs / quality tiers for images, length
+     * and end-frame for video). Only facts the registry actually declares.
+     */
+    function modelMeta(x, isVideo) {
+      const bits = [];
+      const w = waitText(x.etaSeconds);
+      if (w) bits.push(w);
+      if (isVideo && x.video) {
+        const d = x.video.durations || [];
+        if (d.length) bits.push(`${d.map((v) => v.seconds).join("/")} сек`);
+        if (x.video.endFrame) bits.push("финальный кадр");
+        if ((x.video.resolutions || []).length) bits.push(x.video.resolutions.map((r) => r.label).join("/"));
+      } else if (x.image) {
+        if (x.image.maxCount > 1) bits.push(`до ${x.image.maxCount} шт`);
+        if ((x.image.resolutions || []).length) bits.push(x.image.resolutions.map((r) => r.label).join("/"));
+      }
+      return bits.length ? `<div class="mmeta">${esc(bits.join(" · "))}</div>` : "";
+    }
+
     /** Count chip prices for the current resolution — mirrors studioPrice's math per n. */
     function stuCountOptions(m, caps) {
       const tier = stu.resolution ? (caps.resolutions || []).find((r) => r.id === stu.resolution) : null;
@@ -1538,9 +1607,14 @@
       const works = myImages().slice(0, 8);
       const srcUrl = stu.srcPreview || (stu.generationId ? ((myImages().find((g) => g.id === stu.generationId) || {}).output_url || "") : "");
       const story = isVideo ? (ME.catalog.videoStory || []) : [];
+      // One row of the model dropdown. The model's REAL name leads; everything
+      // else is metadata the user needs to choose between engines — what it's
+      // for, the wait, and the price.
       const modelRow = (x) => `
         <button class="mrow ${x.key === stu.modelKey ? "on" : ""}" data-mk="${x.key}">
           <span><b>${esc(x.label)}</b>
+            ${x.note ? `<div class="mnote">${esc(x.note)}</div>` : ""}
+            ${modelMeta(x, isVideo)}
             ${!isVideo && has && !x.needsImage ? `<div class="mnote">создаст с нуля — фото не использует</div>` : ""}
             ${!isVideo && !has && x.needsImage ? `<div class="mnote">нужно фото</div>` : ""}
             ${stu.preset && x.key === stu.preset.model ? `<div class="mnote">рекомендовано для этого стиля</div>` : ""}
@@ -1580,11 +1654,18 @@
         </div>
         ${isVideo && !has ? `<div class="sub">Для видео нужно исходное фото — добавьте его выше или сначала создайте картинку.</div>` : ""}
         ${qLabel("Модель", "model")}
-        <div class="mlist">
+        <button class="mpick" id="stuMpick" aria-expanded="${stu.mopen ? "true" : "false"}">
+          ${stu.mopen
+            ? `<span><b>Выберите модель</b></span><span class="mchev">свернуть ▲</span>`
+            : `<span><b>${esc(m.label)}</b>${m.note ? `<div class="mnote">${esc(m.note)}</div>` : ""}</span>
+               <span class="price">${isVideo ? "от " : ""}${m.credits} ${PATRON}</span>
+               <span class="mchev">▼</span>`}
+        </button>
+        ${stu.mopen ? `<div class="mlist">
           ${primary.map(modelRow).join("")}
           ${hidden.length && !stu.showAll ? `<button class="btn ghost" id="stuMore">Показать все модели (${hidden.length}) — нужно фото</button>` : ""}
           ${hidden.length && stu.showAll ? hidden.map(modelRow).join("") : ""}
-        </div>
+        </div>` : ""}
         ${caps && caps.aspectRatios && caps.aspectRatios.length > 1 ? `
           ${qLabel("Формат кадра", "aspect")}
           <div class="chips" id="stuAr">${caps.aspectRatios.map((r) =>
@@ -1652,7 +1733,10 @@
         stu.aspect = undefined; stu.resolution = undefined; stu.duration = undefined; stu.numImages = undefined; stu.showAll = false;
         clampStudioOpts(); viewStudio();
       }));
-      sheetBody.querySelectorAll("[data-mk]").forEach((b) => (b.onclick = () => { stu.modelKey = b.dataset.mk; clampStudioOpts(); viewStudio(); }));
+      bind("#stuMpick", (el) => (el.onclick = () => { stu.mopen = !stu.mopen; viewStudio(); }));
+      // Picking collapses the list again — the composer stays short, and the
+      // chosen engine is what you see when you come back to it.
+      sheetBody.querySelectorAll("[data-mk]").forEach((b) => (b.onclick = () => { stu.modelKey = b.dataset.mk; stu.mopen = false; clampStudioOpts(); viewStudio(); }));
       bind("#stuMore", (el) => (el.onclick = () => { stu.showAll = true; viewStudio(); }));
       sheetBody.querySelectorAll("#stuAr .chip").forEach((c) => (c.onclick = () => { stu.aspect = c.dataset.ar; viewStudio(); }));
       sheetBody.querySelectorAll("#stuRes .chip").forEach((c) => (c.onclick = () => { stu.resolution = c.dataset.res; viewStudio(); }));
@@ -1734,7 +1818,7 @@
       if (status !== 200) { toast("Что-то пошло не так — попробуйте ещё раз"); viewStudio(); return; }
       ME.dashboard.credits = data.balance;
       setBalance(data.balance);
-      startJob(data.id, isVideo, null);
+      startJob(data.id, isVideo, null, etaFor(m.key));
     }
 
     /**
