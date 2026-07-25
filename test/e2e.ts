@@ -989,7 +989,10 @@ await step("«Одиссея» campaign: bronze-armour still → epic scene auto
   assert.match(still.input.prompt as string, /bronze/i);
   // The whole point of the scenario: the USER is the hero, so identity is pinned
   // and the prompt never reaches for a real film, its title, or its cast.
-  assert.match(still.input.prompt as string, /Keep the person's face and identity exactly as in the photo/);
+  assert.match(still.input.prompt as string, /Keep the face and identity of EVERY person in the photo/);
+  // Plural on purpose: a couple sending one photo must get BOTH of them back
+  // as heroes, not one of them cropped out of their own picture.
+  assert.match(still.input.prompt as string, /SAME NUMBER of people/);
   const p = (still.input.prompt as string).toLowerCase();
   for (const forbidden of ["nolan", "matt damon", "movie", "2026 film"]) {
     assert.ok(!p.includes(forbidden), `odyssey prompt must not reference "${forbidden}"`);

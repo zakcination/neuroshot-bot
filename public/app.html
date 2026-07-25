@@ -1589,6 +1589,20 @@
     }
     /** Clamp opts to the selected model's declared capabilities (E6). */
     function clampStudioOpts() {
+      // A photo is attached but the selected engine draws from scratch and
+      // would ignore it. Attaching a photo is an unambiguous statement of
+      // intent — "use THIS" — so switch to an engine that actually reads it.
+      // Without this, adding a photo after the model was already chosen (or
+      // arriving from a text-to-image entry point) silently produced a picture
+      // of a stranger, billed at full price. Runs BEFORE caps are read below,
+      // so the rest of this function clamps against the model we end up on.
+      if (stu.mode === "image" && stuHasSource()) {
+        const cur = studioModel();
+        if (cur && !cur.needsImage) {
+          const edit = studioList().find((x) => x.needsImage);
+          if (edit) stu.modelKey = edit.key;
+        }
+      }
       const m = studioModel();
       if (!m) return;
       stu.modelKey = m.key;
@@ -1706,6 +1720,15 @@
       if (!isVideo && !has) {
         primary = list.filter((x) => !x.needsImage || x.key === stu.modelKey);
         hidden = list.filter((x) => x.needsImage && x.key !== stu.modelKey);
+      } else if (!isVideo && has) {
+        // The mirror case, and the reason it is an exclusion rather than a
+        // «показать все» fold: with a photo attached, an engine that draws from
+        // scratch cannot use it. Offering one behind a link only invites the
+        // user to pick it and get a stranger's face back — clampStudioOpts
+        // would then bounce the choice, which reads as a broken tap. So these
+        // engines simply aren't on the menu until the photo is removed.
+        primary = list.filter((x) => x.needsImage);
+        if (!primary.length) primary = list; // registry has no edit model — don't strand the user
       }
       const works = myImages().slice(0, 8);
       const srcUrl = stu.srcPreview || (stu.generationId ? ((myImages().find((g) => g.id === stu.generationId) || {}).output_url || "") : "");
