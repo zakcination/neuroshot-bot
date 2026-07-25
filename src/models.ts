@@ -741,6 +741,15 @@ export const PRESETS: Preset[] = [
     // committed PROP, and hair treated as sculpture. Same "choose one and
     // commit" structure as the retro look — a stacked list of ideas produces a
     // cluttered frame, one idea produces a cover.
+    //
+    // Every menu now branches MENSWEAR / WOMENSWEAR. The first version drew
+    // all four menus from womenswear vocabulary alone — voluminous sleeves,
+    // sculpted updos, a bloom held to the jaw, an elongated neck and dropped
+    // shoulder — and never once said "tailoring", which is the whole core of
+    // menswear editorial. Given a man the model had nothing register-correct
+    // to reach for, so it produced a suit plus a feminine prop: a look that
+    // belongs to neither. Half our subjects deserve their own vocabulary,
+    // not the least-wrong item from someone else's.
     aspect: "3:4",
     prompt:
       "Restage the person — or ALL the people, if the photo shows more than one — as a high-fashion magazine " +
@@ -748,18 +757,27 @@ export const PRESETS: Preset[] = [
       "posed together in the same frame. " +
       "NO brand names, NO logos, NO monograms, NO designer labels anywhere in frame — the styling must carry " +
       "the image on its own.\n" +
-      "CONCEPT — choose ONE and commit to it completely: bold monochrome colour-blocking where the outfit and " +
-      "the seamless backdrop are the same saturated hue; sculptural silhouette with exaggerated shoulders or a " +
-      "vast voluminous sleeve; sharp minimalism in raw unbleached fabric against concrete; high-contrast " +
-      "graphic black-and-white with strong geometry.\n" +
-      "PROP — one strong object, used with intent rather than held: an oversized bloom held to the jaw, a " +
-      "sheet of rippling silk caught mid-air, a shard of mirror reflecting one eye, a single vintage chair " +
-      "used as a frame within the frame.\n" +
-      "HAIR — treat it as part of the sculpture: wet-look slicked back, an architectural sculpted updo, a " +
-      "sleek deep side part, or deliberately wind-blown across the face.\n" +
-      "POSE AND EXPRESSION — an editorial attitude: an elongated neck and dropped shoulder, a hand framing the " +
-      "jaw, a cool level gaze straight down the lens or eyes closed in stillness. Confident, never smiling for " +
-      "the camera.\n" +
+      "FIRST read the person in the photo and choose the editorial REGISTER that genuinely suits them — " +
+      "MENSWEAR or WOMENSWEAR. Both are equally high fashion; pick one and take every choice below from it. " +
+      "In a mixed pair each person gets their own register, tied together by one shared concept and palette.\n" +
+      "CONCEPT — choose ONE and commit completely. Bold monochrome colour-blocking, outfit and seamless " +
+      "backdrop in the same saturated hue (either register). MENSWEAR: severe tailoring — a sharply cut " +
+      "double-breasted suit with squared shoulders, a long structured overcoat worn open over bare skin, or a " +
+      "high-necked knit under a hard-edged jacket. WOMENSWEAR: a sculptural silhouette — a vast voluminous " +
+      "sleeve, a column gown, an exaggerated shoulder line. Or, for either: sharp minimalism in raw unbleached " +
+      "fabric against concrete, or high-contrast graphic black-and-white with strong geometry.\n" +
+      "PROP — one strong object used with intent. MENSWEAR: a plain wooden chair straddled or gripped by the " +
+      "back, a cigarette-free hand pushed through the hair, a sheet of rippling silk caught mid-air behind the " +
+      "shoulders, a shard of mirror reflecting one eye. WOMENSWEAR: an oversized bloom held to the jaw, " +
+      "trailing fabric, a shard of mirror, a single vintage chair used as a frame within the frame.\n" +
+      "HAIR — part of the sculpture. MENSWEAR: wet-look slicked straight back, a hard side part, or " +
+      "deliberately dishevelled and pushed off the forehead; facial hair kept sharp and intentional. " +
+      "WOMENSWEAR: an architectural sculpted updo, a sleek deep side part, or wind-blown across the face.\n" +
+      "POSE AND EXPRESSION — editorial attitude, taken from the same register. MENSWEAR: a squared grounded " +
+      "stance with weight on one leg, hands loose or one in a pocket, shoulders wide, chin level, jaw set; or " +
+      "seated forward, elbows on knees, staring down the lens. WOMENSWEAR: an elongated neck and dropped " +
+      "shoulder, a hand framing the jaw, a long diagonal line through the body. Either way: a cool level gaze " +
+      "straight down the lens or eyes closed in stillness. Confident, never smiling for the camera.\n" +
       "LIGHT — one dramatic hard key with a deep falloff, crisp shadow edges, subtle film grain, shot on 85mm. " +
       "Cover-shoot framing — the subject sits low enough in the frame that a cover would have room above them, " +
       "but the backdrop must continue edge to edge: NO white bar, NO border, NO blank band, and NO text, " +
