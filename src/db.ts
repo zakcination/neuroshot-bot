@@ -261,6 +261,22 @@ const SCHEMA: string[] = [
     generation_id BIGINT PRIMARY KEY,
     claimed_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
+  // ONE idempotency primitive for every once-per-thing XP award, instead of a
+  // bespoke table per reward. The key encodes what was earned — 'model:seedance',
+  // 'preset:fashion', 'mode:video', 'upload', 'share:412', 'ref:99' — and the
+  // primary key is the whole guarantee: an award either inserts or it doesn't.
+  // Most of the rewards below are FREE actions (upload, share) where an
+  // un-guarded award would be an infinite XP farm, so this is load-bearing.
+  `CREATE TABLE IF NOT EXISTS xp_claims (
+    user_id BIGINT NOT NULL,
+    claim_key TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, claim_key)
+  )`,
+  // What the generation was launched FROM (preset/campaign id), so breadth XP
+  // can be awarded on COMPLETION with full context rather than at request time
+  // — a render that fails and refunds must not have earned anything.
+  `ALTER TABLE generations ADD COLUMN IF NOT EXISTS source_id TEXT`,
   // Reward-architecture P4a: the Season entity — pure infra, same "ships inert"
   // pattern as economy_config/preset_gating. No row means no active season, so
   // every consumer must treat "no active season" as the normal default state,
@@ -544,7 +560,18 @@ export async function claimWelcomeBonus(userId: number): Promise<WelcomeClaim | 
   const signup = Number(r.pending_signup_credits);
   const joinBonus = Number(r.pending_join_bonus);
   const joinVia = (r.pending_join_via as "friend" | "partner" | null) ?? null;
-  return { granted: signup + joinBonus, joinBonus, joinVia, joinMeta: (r.pending_join_meta as string | null) ?? null };
+  const joinMeta = (r.pending_join_meta as string | null) ?? null;
+  // Referral XP goes to the INVITER, keyed by the friend who just claimed — so
+  // one friend can only ever earn it once, however many times anything retries.
+  // Deliberately fires here rather than at link-click: a bonus claimed is a real
+  // human who arrived, whereas a click is free to manufacture.
+  if (joinVia === "friend" && joinMeta) {
+    const inviter = Number(joinMeta);
+    if (Number.isFinite(inviter) && inviter !== userId) {
+      await awardXpOnce(inviter, `ref:${userId}`, "referral", String(userId)).catch(() => 0);
+    }
+  }
+  return { granted: signup + joinBonus, joinBonus, joinVia, joinMeta };
 }
 
 export async function getUser(id: number): Promise<UserRow | undefined> {
@@ -1314,10 +1341,12 @@ export async function createPendingGeneration(
   model: string,
   prompt: string,
   credits: number,
+  /** Preset or campaign id this render came from, for breadth XP + analytics. */
+  sourceId?: string,
 ): Promise<number> {
   const rows = await q(
-    "INSERT INTO generations (user_id, model, prompt, credits, status) VALUES ($1, $2, $3, $4, 'pending') RETURNING id",
-    [userId, model, prompt, credits],
+    "INSERT INTO generations (user_id, model, prompt, credits, status, source_id) VALUES ($1, $2, $3, $4, 'pending', $5) RETURNING id",
+    [userId, model, prompt, credits, sourceId ?? null],
   );
   return Number(rows[0].id);
 }
@@ -2039,6 +2068,95 @@ export async function claimSaveXp(generationId: number, userId: number): Promise
     if (Number(today[0].c) >= cap) return 0;
   }
   return awardXp(userId, "save", String(generationId));
+}
+
+/**
+ * Award XP for something that can only ever be earned ONCE per user — trying a
+ * given model, a given preset, the first upload, a given invited friend.
+ *
+ * `claimKey` is the identity of the thing earned; the xp_claims primary key is
+ * the entire guarantee. Order matters and mirrors claimSaveXp: the config is
+ * read FIRST, so a claim attempted while the reward is still unconfigured does
+ * not silently burn the one slot that user will ever have for it.
+ *
+ * Returns the XP actually awarded (0 when unconfigured or already claimed).
+ */
+export async function awardXpOnce(
+  userId: number,
+  claimKey: string,
+  action: string,
+  meta?: string,
+): Promise<number> {
+  const amount = await getEconomyConfig(`xp.${action}`);
+  if (!amount) return 0;
+  const won = await q(
+    "INSERT INTO xp_claims (user_id, claim_key) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING claim_key",
+    [userId, claimKey],
+  );
+  if (!won.length) return 0;
+  return awardXp(userId, action, meta ?? claimKey);
+}
+
+/**
+ * Award XP for a REPEATABLE action, bounded by an optional rolling-24h cap
+ * (`xp.<action>.dailycap`). Used where the action is genuinely repeatable and
+ * already costs the user something real — a paid render — so the cap is a
+ * backstop rather than the main defence.
+ */
+export async function awardXpCapped(userId: number, action: string, meta?: string): Promise<number> {
+  const amount = await getEconomyConfig(`xp.${action}`);
+  if (!amount) return 0;
+  const cap = await getEconomyConfig(`xp.${action}.dailycap`);
+  if (cap != null) {
+    const today = await q(
+      "SELECT COUNT(*)::int AS c FROM xp_ledger WHERE user_id = $1 AND reason = $2 AND created_at > now() - interval '24 hours'",
+      [userId, action],
+    );
+    if (Number(today[0].c) >= cap) return 0;
+  }
+  return awardXp(userId, action, meta);
+}
+
+/**
+ * Everything a COMPLETED render earns, in one place.
+ *
+ * Called only after completeGeneration wins the pending→ok CAS, so it runs
+ * exactly once per successful render and never for one that failed and refunded.
+ * Reads the row rather than taking parameters, so every caller — web, bot,
+ * scenarios — gets identical treatment without threading context through.
+ *
+ * Breadth is the point: the once-per-model and once-per-preset awards pay for
+ * TRYING something new, which is what makes a catalogue worth exploring, and
+ * they are self-limiting — there are only so many models and styles.
+ */
+export async function awardGenerationXp(generationId: number): Promise<number> {
+  const rows = await q(
+    "SELECT user_id, model, source_id FROM generations WHERE id = $1 AND status = 'ok'",
+    [generationId],
+  );
+  if (!rows.length) return 0;
+  const userId = Number(rows[0].user_id);
+  const model = String(rows[0].model);
+  const sourceId = rows[0].source_id == null ? null : String(rows[0].source_id);
+  const spec = MODELS[model as keyof typeof MODELS] as { kind?: string } | undefined;
+  const isVideo = spec?.kind === "image_to_video" || /^dub_/.test(model);
+
+  let total = 0;
+  // Repeatable: the render itself. Paid, so money already rate-limits it.
+  total += await awardXpCapped(userId, "generate", model);
+  // One-time per engine and per mode — the "you tried something new" reward.
+  total += await awardXpOnce(userId, `model:${model}`, "model", model);
+  total += await awardXpOnce(userId, `mode:${isVideo ? "video" : "image"}`, isVideo ? "video" : "image", model);
+  if (!isVideo && spec?.kind === "text_to_image") {
+    total += await awardXpOnce(userId, "mode:text", "text", model);
+  }
+  // One-time per style, and once for discovering scenarios at all. A campaign
+  // source is "campaign:preset"; a plain preset has no colon (webapp.ts).
+  if (sourceId) {
+    total += await awardXpOnce(userId, `preset:${sourceId}`, "preset", sourceId);
+    if (sourceId.includes(":")) total += await awardXpOnce(userId, "scenario", "scenario", sourceId);
+  }
+  return total;
 }
 
 // ---- Reward-architecture Season entity (P4a) ----
