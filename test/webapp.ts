@@ -1849,6 +1849,52 @@ await step("reward-architecture P4a: /api/me exposes the active season, null by 
   assert.ok(after.season?.endsAt);
 });
 
+await step("style reference: a preset's curated ref rides in image_urls; a client-supplied one cannot", async () => {
+  const su = { id: 990093, username: "styleref" };
+  await getOrCreateUser(su.id, su.username, null, 0);
+  await addCredits(su.id, 60, "admin_grant", "test");
+  const H = { Authorization: `tma ${signInitData(su)}`, "Content-Type": "application/json" };
+
+  // A campaign preset that ships a curated reference → two entries in
+  // image_urls, the USER's photo first (it is the identity anchor).
+  const withRef = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "campaign", id: "odyssey:king", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(withRef.status, 200);
+  const refCall = falCalls.at(-1)!;
+  const urls = refCall.input.image_urls as string[];
+  assert.equal(urls.length, 2);
+  assert.equal(urls[0], "https://fal.test/storage/u-1.jpg", "the user's photo must stay first");
+  assert.match(urls[1], /\/img\/card-odyssey\.jpg$/);
+  // …and the model is told the second image is style-only, or it may blend faces.
+  assert.match(refCall.input.prompt as string, /STYLE REFERENCE ONLY/);
+  assert.match(refCall.input.prompt as string, /Do not copy any person, face or body/);
+
+  // A preset WITHOUT a styleRef stays single-image — refs are opt-in per look.
+  const noRef = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "campaign", id: "odyssey:penelope", image_url: "https://fal.test/storage/u-1.jpg" }),
+  });
+  assert.equal(noRef.status, 200);
+  assert.equal((falCalls.at(-1)!.input.image_urls as string[]).length, 1);
+  assert.ok(!(falCalls.at(-1)!.input.prompt as string).includes("STYLE REFERENCE"));
+
+  // SECURITY: a caller naming their own reference must not reach the provider —
+  // otherwise /api/generate is a "fetch any URL I name" primitive.
+  const injected = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({
+      source: "campaign", id: "odyssey:penelope", image_url: "https://fal.test/storage/u-1.jpg",
+      styleRefUrl: "https://evil.test/internal.jpg", style_ref: "https://evil.test/internal.jpg",
+    }),
+  });
+  assert.equal(injected.status, 200);
+  const injCall = falCalls.at(-1)!;
+  assert.equal((injCall.input.image_urls as string[]).length, 1, "client-named reference must be ignored");
+  assert.ok(!JSON.stringify(injCall.input).includes("evil.test"), "a caller-supplied URL must never reach fal");
+});
+
 await step("AI disclosure: mandatory badge is always applied; promo CTA only when watermark on", async () => {
   const { deliveryStyles, buildOverlayFilter, brandForDelivery } = await import("../src/watermark.js");
   // The legal disclosure ("ai") is ALWAYS present and always first; the promo

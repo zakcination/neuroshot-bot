@@ -39,6 +39,7 @@ import {
   PRESETS,
   priceFor,
   sceneModel,
+  styleRefUrl,
   VIDEO_MODEL_PICKER,
   VIDEO_STORY,
   type GenOpts,
@@ -645,6 +646,8 @@ export async function generateResponse(
   // Aspect a preset PINS (marketplace cards must be 3:4) — used as the default
   // ratio below when the user didn't pick one themselves (explicit choice wins).
   let presetAspect: string | undefined;
+  // The curated style reference this look ships with, if any (registry only).
+  let presetStyleRef: string | undefined;
   if (source === "preset") {
     const p = PRESETS.find((x) => x.id === body?.id);
     if (!p || !imageUrl) return { status: 400, body: { error: "bad_request" } };
@@ -673,6 +676,7 @@ export async function generateResponse(
     if (custom) composed += ` Extra details from the user: ${custom}.`;
     [model, prompt, crafted] = [m, composed, true];
     presetAspect = p.aspect;
+    presetStyleRef = p.styleRef;
     // Log WHICH preset was used — the web studio was the one tap surface that
     // didn't (bot logs preset: taps, the campaign branch below logs camp:preset),
     // so plain-preset usage by category (e.g. the product/маркетплейс presets)
@@ -697,6 +701,7 @@ export async function generateResponse(
     const custom = sanitizePrompt(typeof body?.custom === "string" ? body.custom : "").slice(0, 200);
     if (custom) composed += ` Extra details from the user: ${custom}.`;
     [model, prompt, crafted] = [PRESET_MODEL, composed, true];
+    presetStyleRef = p.styleRef;
     // Same "camp:preset" shape the bot's cpre: taps log — one convention for the
     // "Ваш путь в NeuroShot" roadmap's scenario signal, whichever surface it came from.
     await logEvent(userId, "preset", `${campId}:${presetId}`);
@@ -778,6 +783,12 @@ export async function generateResponse(
     numImages: body?.num_images != null ? Number(body.num_images) : undefined,
   } as GenOpts);
   if (opts === null) return { status: 400, body: { error: "bad_opts" } };
+  // Curated style reference — assigned HERE, after normalizeOpts, and only from
+  // the preset registry. normalizeOpts rebuilds opts from scratch and never
+  // copies styleRefUrl, so a client-supplied value can't survive into the
+  // provider payload (that would make /api/generate fetch arbitrary URLs).
+  const refUrl = styleRefUrl(presetStyleRef);
+  if (refUrl) opts.styleRefUrl = refUrl;
 
   const r = await startWebGeneration(userId, model, prompt, imageUrl, crafted, opts);
   if (!r.ok) {

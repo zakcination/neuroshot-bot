@@ -16,7 +16,7 @@ import {
   spendCredits,
   type UserRow,
 } from "./db.js";
-import { costUsdFor, MODELS, priceFor, type FreeScenario, type GenOpts, type ModelSpec } from "./models.js";
+import { costUsdFor, MODELS, priceFor, styleRefUrl, type FreeScenario, type GenOpts, type ModelSpec } from "./models.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
 import { paywallKeyboard, paywallText } from "./payments.js";
 import { craftPrompt } from "./promptcraft.js";
@@ -247,7 +247,7 @@ export async function runGeneration(
   model: ModelSpec,
   prompt: string,
   fileId?: string,
-  opts: { crafted?: boolean; allowFreeFirst?: boolean; animate?: string } = {},
+  opts: { crafted?: boolean; allowFreeFirst?: boolean; animate?: string; styleRef?: string } = {},
 ): Promise<void> {
   prompt = craftPrompt(model.kind, prompt, opts.crafted ?? false);
   // Nothing survived sanitation (empty / whitespace-only) → don't spend or call
@@ -306,7 +306,11 @@ export async function runGeneration(
             ? fileId
             : await telegramFileUrl(ctx, fileId)
           : undefined;
-        const r = await falRun(model, prompt, imageUrl);
+        // A curated style reference (preset registry only — never user input;
+        // see GenOpts.styleRefUrl). Silently absent when WEBAPP_URL isn't set,
+        // so the render degrades to words-only rather than failing.
+        const genOpts: GenOpts = { styleRefUrl: styleRefUrl(opts.styleRef) };
+        const r = await falRun(model, prompt, imageUrl, genOpts);
         const url = r.urls[0];
         costUsd = costUsdFor(model);
         requestId = r.requestId;

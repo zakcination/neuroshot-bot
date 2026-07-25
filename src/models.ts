@@ -6,6 +6,7 @@
  * https://fal.ai/explore/models before deploying, and prefer updating here
  * over hardcoding IDs elsewhere.
  */
+import { config } from "./config.js";
 import { UNIT_EMOJI } from "./text.js";
 
 export type ModelKind = "image_edit" | "text_to_image" | "image_to_video";
@@ -17,6 +18,17 @@ export interface GenOpts {
   endImageUrl?: string; // video END frame (Kling 3.0 / Seedance) — start frame is the source image
   resolution?: string; // quality-tier id (model-specific: "1K"/"2K"/"4K", "480p"/"720p")
   numImages?: number; // output count — image models only, clamped to image.maxCount
+  /**
+   * A curated STYLE reference image, appended after the user's photo in
+   * `image_urls` so the model can read our look (palette, light, materials)
+   * instead of inferring it from words alone.
+   *
+   * SERVER-SET ONLY. normalizeOpts deliberately does not copy this field, so a
+   * client can never put a URL here — otherwise /api/generate would become a
+   * "fetch any URL you name and hand it to our provider" primitive. It is
+   * assigned AFTER normalizeOpts, from the preset registry (styleRefUrl below).
+   */
+  styleRefUrl?: string;
 }
 
 /** A quality/resolution tier the composer can offer; `mult` scales credits AND cost. */
@@ -88,6 +100,39 @@ function arParam(opts: GenOpts | undefined): { aspect_ratio?: string } {
 function endParam(opts: GenOpts | undefined): { end_image_url?: string } {
   return opts?.endImageUrl ? { end_image_url: opts.endImageUrl } : {};
 }
+/**
+ * Resolve a preset's `styleRef` filename to an absolute URL fal can fetch.
+ * Our own art under public/img, never a caller-supplied address — the filename
+ * comes from the registry, so the set of reachable URLs is fixed at build time.
+ * Returns undefined when WEBAPP_URL isn't configured (nothing public to serve
+ * from): a style reference is an ENHANCEMENT, so its absence must degrade to a
+ * words-only render, never to a failed generation.
+ */
+export function styleRefUrl(file: string | undefined): string | undefined {
+  if (!file || !config.webappUrl) return undefined;
+  return `${config.webappUrl.replace(/\/+$/, "")}/img/${file}`;
+}
+/**
+ * The model payload's image list plus the optional style reference. Order is
+ * load-bearing: the user's photo stays FIRST (it is the identity anchor that
+ * KEEP_ID refers to) and the reference follows as supporting material.
+ */
+function refUrls(imageUrl: string | undefined, opts: GenOpts | undefined): string[] {
+  return [imageUrl, opts?.styleRefUrl].filter((u): u is string => !!u);
+}
+/**
+ * Tells the model what the second image is FOR. Without this the reference is
+ * ambiguous and the model may treat it as a second subject — blending faces,
+ * which would break the one promise the product actually makes.
+ */
+function refPrompt(prompt: string, opts: GenOpts | undefined): string {
+  if (!opts?.styleRefUrl) return prompt;
+  return (
+    `${prompt} The second image is a STYLE REFERENCE ONLY — copy its palette, lighting, ` +
+    `materials and mood. Do not copy any person, face or body from it; the subject is ` +
+    `taken solely from the first image.`
+  );
+}
 /** {num_images} for image models — clamped to the model's declared maxCount, omitted at the default of 1. */
 function countParam(maxCount: number, opts: GenOpts | undefined): { num_images?: number } {
   if (!opts?.numImages || opts.numImages <= 1) return {};
@@ -125,7 +170,7 @@ export const MODELS = {
     credits: 3,
     approxCostUsd: 0.06,
     label: "🖼 Редактирование фото",
-    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], ...arParam(opts), ...countParam(4, opts) }),
+    input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), ...arParam(opts), ...countParam(4, opts) }),
     image: { aspectRatios: IMAGE_ASPECTS, maxCount: 4 },
   },
   text_to_image: {
@@ -152,7 +197,7 @@ export const MODELS = {
     credits: 2,
     approxCostUsd: 0.04,
     label: "🖼 Сцена по фото",
-    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], ...sizeParam(opts, true), ...countParam(6, opts) }),
+    input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), ...sizeParam(opts, true), ...countParam(6, opts) }),
     image: { aspectRatios: IMAGE_ASPECTS, maxCount: 6 },
   },
   animate: {
@@ -218,7 +263,7 @@ export const MODELS = {
     credits: 4,
     approxCostUsd: 0.08,
     label: "🎨 Правка — быстро",
-    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], resolution: opts?.resolution ?? "1K", ...arParam(opts), ...countParam(4, opts) }),
+    input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), resolution: opts?.resolution ?? "1K", ...arParam(opts), ...countParam(4, opts) }),
     image: { aspectRatios: IMAGE_ASPECTS, resolutions: NB_RES, maxCount: 4 },
   },
   // Nano Banana Pro (Gemini 3 Pro) — SOTA image, $0.15/img @1K–2K.
@@ -239,7 +284,7 @@ export const MODELS = {
     credits: 8,
     approxCostUsd: 0.15,
     label: "🎨 Правка — детально (2K)",
-    input: (prompt, imageUrl, opts) => ({ prompt, image_urls: [imageUrl], resolution: opts?.resolution ?? "2K", ...arParam(opts), ...countParam(4, opts) }),
+    input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), resolution: opts?.resolution ?? "2K", ...arParam(opts), ...countParam(4, opts) }),
     image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES, maxCount: 4 },
   },
   // Kling 3.0 Pro — top image→video, $0.168/s audio-on → 5s ≈ $0.84.
@@ -530,6 +575,16 @@ export interface Preset {
   /** Which use-case menu the preset belongs to. */
   category: "photo" | "product";
   prompt: string;
+  /**
+   * Optional curated STYLE reference — a filename under public/img, resolved to
+   * an absolute URL by styleRefUrl() and appended after the user's photo in
+   * image_urls. Use it when a look is easier to SHOW the model than to describe
+   * (a specific grade, material or lighting). Two hard rules: the art must be
+   * ours, and it must contain no usable face — a reference with a face invites
+   * the model to blend identities, which is the one thing this product cannot
+   * do. Applied only on the fal-verified edit models (see the params doc P7).
+   */
+  styleRef?: string;
   /**
    * Optional per-look model override. Most presets render on the cheap
    * PRESET_MODEL (Seedream edit); looks that DEPEND on on-image text/typography
@@ -912,6 +967,16 @@ export interface CampaignPreset {
   id: string;
   label: string;
   prompt: string;
+  /**
+   * Optional curated STYLE reference — a filename under public/img, resolved to
+   * an absolute URL by styleRefUrl() and appended after the user's photo in
+   * image_urls. Use it when a look is easier to SHOW the model than to describe
+   * (a specific grade, material or lighting). Two hard rules: the art must be
+   * ours, and it must contain no usable face — a reference with a face invites
+   * the model to blend identities, which is the one thing this product cannot
+   * do. Applied only on the fal-verified edit models (see the params doc P7).
+   */
+  styleRef?: string;
   /**
    * Difficulty tier for video scenes only (unset ⇒ "simple"). "simple" motion
    * (one clean action) runs on the cheap Hailuo default; "epic" scenes with
@@ -1401,6 +1466,9 @@ export const CAMPAIGNS: Campaign[] = [
       {
         id: "king",
         label: "👑 Одиссей",
+        // Our own cover plate — shot from behind, no usable face, so it can only
+        // hand the model palette/light/materials, never an identity.
+        styleRef: "card-odyssey.jpg",
         prompt:
           "Epic cinematic film still: the person as a Bronze Age Greek king-warrior on the deck of a wooden ship " +
           "at dawn — hammered bronze cuirass with a deep-red wool cloak, leather bracers, a weathered sword at " +
@@ -1411,6 +1479,7 @@ export const CAMPAIGNS: Campaign[] = [
       {
         id: "warrior",
         label: "⚔️ Воин Трои",
+        styleRef: "card-odyssey.jpg",
         prompt:
           "Epic cinematic film still: the person as a battle-worn Bronze Age Greek warrior before the walls of a " +
           "besieged citadel — crested bronze helmet pushed back off the face, scarred bronze breastplate, round " +

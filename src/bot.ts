@@ -1519,6 +1519,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     await runGeneration(ctx, u, PRESET_MODEL, preset.prompt, u.pending_file_id, {
       crafted: true,
       allowFreeFirst: true,
+      styleRef: preset.styleRef,
       animate: c.id,
     });
   });
@@ -1736,6 +1737,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     await runGeneration(ctx, u, presetModel(preset), preset.prompt, u.pending_file_id, {
       crafted: true,
       allowFreeFirst: true,
+      styleRef: preset.styleRef,
     });
   });
 
@@ -1755,6 +1757,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     await runGeneration(ctx, u, presetModel(preset), preset.prompt, u.pending_file_id, {
       crafted: true,
       allowFreeFirst: true,
+      styleRef: preset.styleRef,
     });
   });
 
