@@ -1381,6 +1381,134 @@ export const CAMPAIGNS: Campaign[] = [
       },
     ],
   },
+  // Bronze-Age Homeric epic — our own trend drop, riding the fact that the myth
+  // is culturally in the air right now. Built on the EPIC ITSELF (Homer, public
+  // domain for ~2700 years), never on any studio's film, its title, or its cast:
+  //   • the whole product promise is that the user keeps THEIR face (KEEP_ID) —
+  //     rendering someone else's likeness would defeat the point, not serve it;
+  //   • an unreleased film has no visual reference a model can reliably reach
+  //     for, so "like the movie" yields mush while the real visual language
+  //     (hammered bronze, Aegean light, torchlit megaron, IMAX framing) yields
+  //     a shot every time.
+  // Deliberately covers both a warrior and a queen/goddess route so the core
+  // 25–34F segment gets a hero of their own, not a token option.
+  {
+    id: "odyssey",
+    label: "🏛 Одиссея — вы в эпосе",
+    header: "Кем вы будете в эпосе — один тап:",
+    ask: "Пришлите своё фото 🏛 — и станьте героем «Одиссеи»: бронза, море, свет факелов.",
+    presets: [
+      {
+        id: "king",
+        label: "👑 Одиссей",
+        prompt:
+          "Epic cinematic film still: the person as a Bronze Age Greek king-warrior on the deck of a wooden ship " +
+          "at dawn — hammered bronze cuirass with a deep-red wool cloak, leather bracers, a weathered sword at " +
+          "the hip, salt spray and rope rigging around them, the Aegean sea and distant islands behind, low-angle " +
+          "medium shot, hard morning sun with deep shadow, teal-and-bronze grade, IMAX-scale composition, " +
+          `photorealistic textures. ${KEEP_ID}`,
+      },
+      {
+        id: "warrior",
+        label: "⚔️ Воин Трои",
+        prompt:
+          "Epic cinematic film still: the person as a battle-worn Bronze Age Greek warrior before the walls of a " +
+          "besieged citadel — crested bronze helmet pushed back off the face, scarred bronze breastplate, round " +
+          "shield and spear, dust and ash in the air, ranks of soldiers blurred behind, low-angle medium shot, " +
+          `harsh side light through haze, muted bronze-and-ochre grade, photorealistic. ${KEEP_ID}`,
+      },
+      {
+        id: "athena",
+        label: "🦉 Афина — богиня войны",
+        prompt:
+          "Epic cinematic film still: the person as the grey-eyed goddess of war and wisdom — polished bronze " +
+          "armour over a flowing chiton, a tall crested helmet held at the side, an owl perched nearby, standing " +
+          "in a shaft of divine light on marble temple steps, wind moving fabric, medium shot at eye level, " +
+          `cool silver-and-bronze grade, awe-struck scale, photorealistic. ${KEEP_ID}`,
+      },
+      {
+        id: "penelope",
+        label: "🕯 Пенелопа — царица Итаки",
+        prompt:
+          "Epic cinematic film still: the person as the queen of Ithaca in a torchlit stone megaron — a rich " +
+          "draped robe with gold shoulder pins, a great loom half-woven beside them, hand resting on the thread, " +
+          "quiet unbreakable resolve on the face, firelight flickering across stone columns, medium shot, warm " +
+          `amber-and-shadow grade, painterly cinematic detail. ${KEEP_ID}`,
+      },
+      {
+        id: "horse",
+        label: "🐴 Ночь троянского коня",
+        prompt:
+          "Epic cinematic film still at night: the person in bronze armour standing before the enormous wooden " +
+          "horse inside the citadel gates, torches guttering in the wind, smoke and embers drifting, the crowd a " +
+          "dark silhouette behind, wide-to-medium shot from low angle, firelight rim on the armour against deep " +
+          `blue night, ominous grandeur, photorealistic textures. ${KEEP_ID}`,
+      },
+    ],
+    animateLabel: "🎬 Оживить эпос",
+    // Default beat is deliberately cheap and simple — wind, cloak, one turn to
+    // camera. The physics-heavy scenes below carry tier:"epic" and auto-upgrade.
+    animatePrompt:
+      "Wind drives the cloak and hair as the subject slowly turns to face the camera, chin lifting, eyes hard; " +
+      "dust and sea spray drift through hard low sunlight, slow cinematic push-in — one steady, monumental beat.",
+    animateModel: MODELS.hailuo_fast,
+    videoScenes: [
+      {
+        id: "turn",
+        label: "🌬 Ветер и взгляд",
+        prompt:
+          "The cloak snaps in a hard sea wind and the subject turns slowly to the camera, jaw set, holding the " +
+          "look; light haze and spray drift past, slow push-in — one still, monumental beat.",
+      },
+      {
+        id: "storm",
+        label: "🌊 Гнев Посейдона",
+        tier: "epic",
+        prompt:
+          "A towering wave breaks over the ship's deck as the subject braces against the mast, drenched, rigging " +
+          "whipping, the hull pitching hard under black storm sky with lightning; the camera rolls with the deck — " +
+          "roaring sea and thunder, one violent, breathtaking beat.",
+      },
+      {
+        id: "battle",
+        label: "⚔️ Стена щитов",
+        tier: "epic",
+        prompt:
+          "The subject drives forward at the head of a bronze shield wall, spears levelling, dust exploding " +
+          "underfoot, war cries and clashing bronze all around; the camera tracks alongside at low angle — one " +
+          "thunderous, chaotic charge.",
+      },
+      {
+        id: "bow",
+        label: "🏹 Великий лук",
+        tier: "epic",
+        prompt:
+          "In a torchlit hall the subject draws an enormous war bow in one slow, impossible motion, the string " +
+          "creaking, the room falling silent around them, firelight sliding across bronze; the camera pushes in " +
+          "to the eyes as the arrow is loosed — one held-breath beat.",
+      },
+    ],
+    quiz: [
+      {
+        id: "place",
+        question: "Где вы?",
+        options: [
+          { id: "sea", label: "🌊 В море", fragment: "Set the scene on the open Aegean sea aboard a wooden ship." },
+          { id: "palace", label: "🏛 Во дворце", fragment: "Set the scene inside a torchlit stone palace hall with painted columns." },
+          { id: "field", label: "⚔️ На поле битвы", fragment: "Set the scene on a dusty battlefield before high citadel walls." },
+        ],
+      },
+      {
+        id: "light",
+        question: "Какой свет?",
+        options: [
+          { id: "dawn", label: "🌅 Рассвет", fragment: "Hard low dawn light with long shadows and golden rim light." },
+          { id: "torch", label: "🔥 Факелы", fragment: "Flickering torchlight and deep shadow, warm amber on bronze." },
+          { id: "storm", label: "⛈ Гроза", fragment: "Black storm sky with cold lightning flashes and driving rain." },
+        ],
+      },
+    ],
+  },
 ];
 
 export function campaignById(id: string): Campaign | undefined {

@@ -973,6 +973,50 @@ await step("мини-фильм campaign: Seedream film still → Seedance 2.0 (
   assert.equal(await credits(actor.id), 134); // 210 − 76
 });
 
+await step("«Одиссея» campaign: bronze-armour still → epic scene auto-upgrades to Seedance; keeps the user's own face", async () => {
+  const hero: From = { id: 5503, is_bot: false, first_name: "Hero", username: "hero" };
+  await sendText(hero, "/start");
+  await pressButton(hero, "claim:welcome");
+  await payForPack(hero, "popular", 2200); // +200 → 212
+
+  await pressButton(hero, "camp:odyssey");
+  await sendPhoto(hero, "hero-1");
+  await pressButton(hero, "cpre:odyssey:king");
+  const still = falCalls.at(-1)!;
+  assert.equal(still.endpoint, "fal-ai/bytedance/seedream/v4.5/edit");
+  assert.match(still.input.prompt as string, /bronze/i);
+  // The whole point of the scenario: the USER is the hero, so identity is pinned
+  // and the prompt never reaches for a real film, its title, or its cast.
+  assert.match(still.input.prompt as string, /Keep the person's face and identity exactly as in the photo/);
+  const p = (still.input.prompt as string).toLowerCase();
+  for (const forbidden of ["nolan", "matt damon", "movie", "2026 film"]) {
+    assert.ok(!p.includes(forbidden), `odyssey prompt must not reference "${forbidden}"`);
+  }
+  assert.equal(await credits(hero.id), 210); // 212 − 2
+
+  // The default animate beat stays on the cheap engine…
+  const stillUrl = `https://fal.test/out/${falCalls.length}.png`;
+  const kb = resultPhotos().at(-1)!.payload.reply_markup as {
+    inline_keyboard: Array<Array<{ callback_data?: string }>>;
+  };
+  const camv = kb.inline_keyboard.flat().map((b) => b.callback_data).find((d) => d?.startsWith("camv:odyssey:"));
+  assert.ok(camv, "«оживить» upsell missing on the odyssey still");
+  await pressButton(hero, camv!);
+  const clip = falCalls.at(-1)!;
+  assert.equal(clip.endpoint, "fal-ai/minimax/hailuo-2.3-fast/standard/image-to-video");
+  assert.equal(clip.input.image_url, stillUrl);
+  assert.equal(await credits(hero.id), 200); // 210 − 10
+
+  // …while a physics-heavy scene (the storm) is tiered epic and must resolve to
+  // the Seedance engine, not the cheap default that can't carry it.
+  const { campaignById: campById, sceneModel: resolveScene, MODELS: M } = await import("../src/models.js");
+  const odyssey = campById("odyssey")!;
+  const storm = odyssey.videoScenes!.find((s) => s.id === "storm")!;
+  assert.equal(resolveScene(storm, odyssey.animateModel).key, "seedance_fast");
+  const calm = odyssey.videoScenes!.find((s) => s.id === "turn")!;
+  assert.equal(resolveScene(calm, odyssey.animateModel).key, M.hailuo_fast.key);
+});
+
 await step("partner attribution is exclusive: no friend-referral double payout", async () => {
   // student was acquired via c_mentor → no referrer_id → referral path never fires.
   const st = await getUser(4101);
