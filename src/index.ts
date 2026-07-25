@@ -10,6 +10,30 @@ await initDb(); // create the Postgres schema before serving
 
 const bot = createBot();
 
+/**
+ * When we last completed a getUpdates round-trip with Telegram.
+ *
+ * This is the ONLY honest liveness signal available. grammy's `isRunning()` is
+ * an intent flag — its polling loop catches every error and retries forever, so
+ * the flag stays true while every single request is failing. A health check
+ * built on it reports green during exactly the outage it exists to catch.
+ *
+ * An API transformer sees every call the bot makes, so recording the successful
+ * getUpdates calls measures the real thing: are we still talking to Telegram.
+ */
+let lastPollAt = Date.now();
+bot.api.config.use(async (prev, method, payload, signal) => {
+  const res = await prev(method, payload, signal);
+  if (method === "getUpdates" && res.ok) lastPollAt = Date.now();
+  return res;
+});
+/**
+ * Long polling uses a 30s timeout, so a healthy bot refreshes this at least
+ * every ~30s. Three missed cycles is unambiguous trouble and still far short of
+ * flapping on one slow request or a brief network blip.
+ */
+const POLL_STALE_MS = 100_000;
+
 // CEO monitoring: daily digest to admins + exception alerts (docs/monitoring.md).
 startMonitor((chatId, text) => bot.api.sendMessage(chatId, text, { parse_mode: "HTML" }), bot.api);
 
@@ -43,8 +67,9 @@ if (config.webappUrl) {
 // outage. Reporting unhealthy is what gets the machine restarted.
 // A deliberate shutdown also stops polling, and that is not a fault — the
 // machine is on its way out anyway. Only report unhealthy when polling died
-// while we still intended to be serving.
-setLivenessProbe(() => shuttingDown || bot.isRunning());
+// while we still intended to be serving. Note this asks whether Telegram
+// answered recently, NOT whether grammy thinks it is running: see lastPollAt.
+setLivenessProbe(() => shuttingDown || Date.now() - lastPollAt < POLL_STALE_MS);
 startWebApp();
 
 // Graceful shutdown: stop polling, then let detached render tails finish (deliver
