@@ -160,10 +160,17 @@ function refPrompt(prompt: string, opts: GenOpts | undefined): string {
   const extra = opts?.extraImageUrls?.length ?? 0;
   const parts: string[] = [];
   if (extra) {
+    // Phrased around IDENTITY, not headcount. An earlier version said "render
+    // exactly ONE person", which was right for extra angles of one face and
+    // flatly wrong for a couple or a family photo — it would have deleted
+    // somebody. What actually needs saying is that the extra frames are the
+    // same people again, not additional guests.
     parts.push(
-      `The first ${extra + 1} images are all photographs of the SAME single person from ` +
-      `different angles and in different lighting — read them together to get the face right. ` +
-      `Render exactly ONE person, never a group and never a collage.`,
+      `The first ${extra + 1} images are reference photographs of the SAME subject or subjects, ` +
+      `shot from different angles and in different lighting — read them together to get the ` +
+      `faces right. They show the same people repeated, NOT extra people: the result must ` +
+      `contain exactly the people who appear in them, no one added and no one dropped, ` +
+      `and must never be a collage or a contact sheet.`,
     );
   }
   if (opts?.styleRefUrl) {
@@ -687,7 +694,18 @@ export function presetModel(p: Preset): ModelSpec {
 // --- Curated-prompt guards (shared by presets, campaigns and free scenarios) ---
 // Positive phrasing per Higgsfield's prompt guide — "keep exactly", "one single
 // instance" and "exactly once" land better than "don't"/"never" negatives.
-const KEEP_ID = "Keep the person's face and identity exactly as in the photo.";
+// Written in the PLURAL on purpose. The old singular ("the person's face")
+// quietly told the model that the answer contains one human, so a photo of a
+// couple or a family came back cropped to one of them — the user's own group
+// shot, minus their people. Every curated prompt ends with this clause, so
+// stating the headcount rule here fixes all of them at once, and it must stay
+// last: it has to win against the singular phrasing inside individual prompts
+// ("the person as a Bronze Age king"), which reads as one subject.
+const KEEP_ID =
+  "Keep the face and identity of EVERY person in the photo exactly as they are. " +
+  "Keep the SAME NUMBER of people as the source photo: if it shows two or more people, " +
+  "all of them appear together in the result, each with their own real face. " +
+  "Everyone in the photo stays in the shot.";
 const KEEP_KID = "Keep the child's face and identity exactly as in the photo.";
 /**
  * Composition guard for kid+character scenes: models love to push the real
@@ -725,7 +743,9 @@ export const PRESETS: Preset[] = [
     // cluttered frame, one idea produces a cover.
     aspect: "3:4",
     prompt:
-      "Restage the person as a high-fashion magazine COVER shoot built on a concept, not on expensive clothes. " +
+      "Restage the person — or ALL the people, if the photo shows more than one — as a high-fashion magazine " +
+      "COVER shoot built on a concept, not on expensive clothes. A pair or group is styled as one editorial, " +
+      "posed together in the same frame. " +
       "NO brand names, NO logos, NO monograms, NO designer labels anywhere in frame — the styling must carry " +
       "the image on its own.\n" +
       "CONCEPT — choose ONE and commit to it completely: bold monochrome colour-blocking where the outfit and " +
@@ -828,9 +848,11 @@ export const PRESETS: Preset[] = [
     // the result vary with the request instead of being one fixed costume.
     aspect: "3:4",
     prompt:
-      "Restage the person as a full RETRO PHOTOSHOOT — not a filter on the original snapshot. Change the pose, " +
-      "the wardrobe and the expression; do not keep the pose from the source photo.\n" +
-      "WARDROBE — choose ONE complete look that genuinely suits this person and commit to it: a polka-dot " +
+      "Restage EVERYONE in the photo as a full RETRO PHOTOSHOOT — not a filter on the original snapshot. Change " +
+      "the poses, the wardrobe and the expressions; do not keep the pose from the source photo. If the photo " +
+      "shows several people, style them ALL and pose them together as one group.\n" +
+      "WARDROBE — choose ONE complete look per person that genuinely suits them, from a shared era so the " +
+      "group reads as one shoot: a polka-dot " +
       "midi dress with a nipped waist; a silk headscarf tied under the chin with cat-eye sunglasses; a wide " +
       "oversized double-breasted suit with strong SQUARED structured shoulders (tailored and sharp, never gathered or puffed) and pleated trousers; a knitted vintage cardigan " +
       "over a collared shirt; a tailored trench with leather gloves and a wide-brimmed hat. Add period " +
@@ -838,9 +860,10 @@ export const PRESETS: Preset[] = [
       "SETTING — a vintage street scene with a polished chrome-heavy retro car in frame: leaning back against " +
       "the door, seated on the bonnet, or half-out of the driver's window, with period shopfronts and signage " +
       "softly out of focus behind.\n" +
-      "POSE AND EMOTION — pick one and play it fully: a confident hand-on-hip stance with a direct look; a " +
-      "caught-mid-laugh moment with the head tilted back; a wistful glance away over the shoulder; a hand " +
-      "adjusting the hat or sunglasses. The face must be alive and acting, not a neutral passport expression.\n" +
+      "POSE AND EMOTION — pick one per person and play it fully: a confident hand-on-hip stance with a direct " +
+      "look; a caught-mid-laugh moment with the head tilted back; a wistful glance away over the shoulder; a " +
+      "hand adjusting the hat or sunglasses. Every face must be alive and acting, not a neutral passport " +
+      "expression.\n" +
       "FINISH — warm slightly-faded film colour, soft grain, gentle on-camera flash, subtle light leaks, " +
       "true-to-film skin tones, medium shot on a 35mm lens. If the user asked for a specific outfit, era, car " +
       `or mood below, THAT overrides these choices. Tack-sharp face. ${KEEP_ID}`,
@@ -880,10 +903,12 @@ export const PRESETS: Preset[] = [
     aspect: "3:4",
     prompt:
       "Restyle into a vintage black-and-white photobooth strip — one single VERTICAL strip of exactly THREE " +
-      "stacked square frames (not a grid, not four), thin white borders between them. Behind the person in every " +
-      "frame hangs a heavy pleated curtain backdrop, its folds catching the light. TOP frame: a warm natural " +
-      "half-smile toward the lens. MIDDLE frame: the same person wearing retro 70s sunglasses, chin lifted, " +
-      "playful. BOTTOM frame: a quiet three-quarter turn, eyes down. The hair is smooth, sleek and softly " +
+      "stacked square frames (not a grid, not four), thin white borders between them. EVERY person from the source " +
+      "photo appears in EVERY one of the three frames, squeezed into the booth together — if the photo shows a " +
+      "couple or a group, all of them are in each frame. Behind them hangs a heavy pleated curtain backdrop, " +
+      "its folds catching the light. TOP frame: warm natural half-smiles toward the lens. MIDDLE frame: the " +
+      "same people wearing retro 70s sunglasses, chins lifted, playful. BOTTOM frame: a quiet three-quarter " +
+      "turn, eyes down. The hair is smooth, sleek and softly " +
       "styled — controlled, close to the head, NOT frizzy, NOT puffed out, no flyaways. Hard noir lighting: a " +
       "single low key light raking across the face so bright speculars catch the cheekbones, brow and bridge of " +
       "the nose, deep black shadows on the opposite side, strong chiaroscuro contrast, rich blacks, glowing " +

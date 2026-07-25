@@ -1972,6 +1972,37 @@ await step("provider down: the breaker refuses WITHOUT charging, and clears itse
   assert.equal(providerBlocked(), false, "a successful run proves the account works again");
 });
 
+await step("prompt library: a group photo keeps everyone — no silent crop to one person", async () => {
+  const { PRESETS, CAMPAIGNS } = await import("../src/models.js");
+  // A couple or family photo used to come back with one of them deleted: the
+  // shared identity clause was written in the singular ("the person's face"),
+  // which reads as "the answer contains one human". Every curated prompt ends
+  // with that clause, so the headcount rule has to live there — and it has to
+  // survive, since the singular phrasing inside individual prompts ("the
+  // person as a Bronze Age king") pulls the other way.
+  const everyone = [
+    ...PRESETS.map((p) => [`preset:${p.id}`, p.prompt] as const),
+    ...CAMPAIGNS.flatMap((c) => c.presets.map((p) => [`campaign:${c.id}:${p.id}`, p.prompt] as const)),
+  ];
+  let checked = 0;
+  for (const [where, text] of everyone) {
+    // Kid-focused looks are deliberately single-subject (KEEP_KID + KID_FOCUS)
+    // and are exempt by design, not by oversight.
+    if (!text.includes("Keep the face and identity of EVERY person")) continue;
+    assert.match(text, /SAME NUMBER of people/, `${where} lost the headcount rule`);
+    checked++;
+  }
+  assert.ok(checked > 20, `expected the group rule on most looks, saw ${checked}`);
+
+  // The three looks the user named specifically must ALSO handle a group in
+  // their own body, not just in the trailing clause — each describes framing
+  // that a second person has to fit into.
+  const byId = (id: string) => PRESETS.find((p) => p.id === id)!.prompt;
+  assert.match(byId("photobooth_bw"), /EVERY person from the source photo appears in EVERY one of the three frames/);
+  assert.match(byId("retro90s"), /style them ALL and pose them together as one group/);
+  assert.match(byId("fashion"), /ALL the people, if the photo shows more than one/);
+});
+
 await step("prompt library: no third-party brand or magazine names reach the provider", async () => {
   const { PRESETS, CAMPAIGNS, VIDEO_STORY } = await import("../src/models.js");
   // Naming a real fashion house or magazine does two bad things at once: it
@@ -2113,8 +2144,11 @@ await step("multi-image input: extra angles ride along, are capped per model, an
   const call = falCalls.at(-1)!;
   const urls = call.input.image_urls as string[];
   assert.deepEqual(urls, [P, "https://fal.test/storage/a2.jpg", "https://fal.test/storage/a3.jpg"]);
-  assert.match(call.input.prompt as string, /first 3 images are all photographs of the SAME single person/);
-  assert.match(call.input.prompt as string, /exactly ONE person, never a group/);
+  assert.match(call.input.prompt as string, /first 3 images are reference photographs of the SAME subject/);
+  // Phrased around IDENTITY, never headcount: a couple or family photo must
+  // survive extra angles, so the clause may not assert "exactly one person".
+  assert.match(call.input.prompt as string, /no one added and no one dropped/);
+  assert.ok(!/exactly ONE person/i.test(call.input.prompt as string), "must not force a single subject");
   // Extra angles are free — the charge is the model's base price, unchanged.
   assert.equal(((await ok.json()) as { credits: number }).credits, 2);
 
@@ -2125,7 +2159,7 @@ await step("multi-image input: extra angles ride along, are capped per model, an
   });
   assert.equal(dup.status, 200);
   assert.deepEqual(falCalls.at(-1)!.input.image_urls as string[], [P]);
-  assert.ok(!(falCalls.at(-1)!.input.prompt as string).includes("SAME single person"));
+  assert.ok(!(falCalls.at(-1)!.input.prompt as string).includes("reference photographs of the SAME subject"));
 
   // Over the model's own cap → 400 with the cap echoed back, nothing charged.
   const before = (await apiMe(signInitData(mu))).body.dashboard.credits;
