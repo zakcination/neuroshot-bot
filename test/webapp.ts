@@ -34,7 +34,7 @@ process.env.RATE_LIMIT_ENHANCE_PER_MIN = "100000";
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, completeGeneration, createOrder, createPendingGeneration, getOrCreateUser, getOrder, getLevel, getUserXp, logEvent, logGeneration, query, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
+const { addCredits, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, logEvent, logGeneration, query, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
@@ -1823,6 +1823,22 @@ await step("reward-architecture P1: XP is inert until configured, then Level gat
   // Levelling up: configure a level-1 threshold at 40 XP (this user already has 50) — unlocks it.
   await setEconomyConfig("level.threshold.1", 40);
   assert.equal(await getLevel(ru.id), 1);
+});
+
+await step("reward-architecture P4a: /api/me exposes the active season, null by default", async () => {
+  const su = { id: 990092, username: "seasonuser" };
+  const before = (await apiMe(signInitData(su))).body as unknown as { season: unknown };
+  assert.equal(before.season, null);
+
+  const created = await createSeason("s-webapp-test", "Тестовый сезон", 30);
+  assert.ok(!("error" in created));
+  const after = (await apiMe(signInitData(su))).body as unknown as {
+    season: { key: string; themeLabel: string; startsAt: string; endsAt: string } | null;
+  };
+  assert.equal(after.season?.key, "s-webapp-test");
+  assert.equal(after.season?.themeLabel, "Тестовый сезон");
+  assert.ok(after.season?.startsAt);
+  assert.ok(after.season?.endsAt);
 });
 
 await step("AI disclosure: mandatory badge is always applied; promo CTA only when watermark on", async () => {

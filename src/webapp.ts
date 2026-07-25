@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getGeneration, getLevel, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { enhancePrompt } from "./enhance.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
@@ -439,7 +439,7 @@ function catalogPayload(usage: Record<string, number>): Record<string, unknown> 
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations, refCode, row, roadmap, referrals, usage] = await Promise.all([
+  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season] = await Promise.all([
     userDashboard(user.id),
     recentGenerations(user.id, 30),
     ensureRefCode(user.id),
@@ -447,6 +447,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     roadmapProgress(user.id),
     referralList(user.id),
     presetUsageCounts(),
+    getActiveSeason(),
   ]);
   return {
     // No raw tg id in ref_code — an opaque link the client builds the share URL from.
@@ -459,6 +460,10 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     catalog: catalogPayload(usage),
     // Combo offer deadline (ms epoch) for the live countdown.
     comboOffer: { endsAt: comboEndsAt() },
+    // Reward-architecture P4a: null (the normal state) until an admin runs
+    // /season_new. No quest/reward data yet — that's P4b, built once this
+    // entity exists.
+    season: season ? { key: season.key, themeLabel: season.theme_label, startsAt: season.starts_at, endsAt: season.ends_at } : null,
     // Welcome bonus (signup + join bonus) is claim-gated — see claimWelcomeBonus
     // in db.ts. The client shows a "🎁 Получить" claim button on the onboarding
     // slideshow's last slide only while claimed=false and pending>0; otherwise

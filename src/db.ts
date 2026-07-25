@@ -256,6 +256,23 @@ const SCHEMA: string[] = [
     generation_id BIGINT PRIMARY KEY,
     claimed_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
+  // Reward-architecture P4a: the Season entity — pure infra, same "ships inert"
+  // pattern as economy_config/preset_gating. No row means no active season, so
+  // every consumer must treat "no active season" as the normal default state,
+  // not an error. Theming/dates are curation (admin /season_new), never a code
+  // deploy — see neuroshot-reward-architecture-v1.md §4.3's KZ-calendar table
+  // (kept out of this public repo; only the mechanism ships here, not the
+  // actual season calendar). Quests and free-track reward claiming are NOT part
+  // of this table yet — deliberately deferred to P4b once this entity exists.
+  `CREATE TABLE IF NOT EXISTS seasons (
+    id BIGSERIAL PRIMARY KEY,
+    key TEXT NOT NULL UNIQUE,
+    theme_label TEXT NOT NULL,
+    starts_at TIMESTAMPTZ NOT NULL,
+    ends_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_seasons_active ON seasons(starts_at, ends_at)`,
 ];
 
 let schemaReady: Promise<void> | null = null;
@@ -1971,4 +1988,60 @@ export async function claimSaveXp(generationId: number, userId: number): Promise
     if (Number(today[0].c) >= cap) return 0;
   }
   return awardXp(userId, "save", String(generationId));
+}
+
+// ---- Reward-architecture Season entity (P4a) ----
+
+export interface SeasonRow {
+  id: number;
+  key: string;
+  theme_label: string;
+  starts_at: string;
+  ends_at: string;
+}
+
+function mapSeason(r: Row): SeasonRow {
+  return {
+    id: Number(r.id),
+    key: String(r.key),
+    theme_label: String(r.theme_label),
+    starts_at: String(r.starts_at),
+    ends_at: String(r.ends_at),
+  };
+}
+
+/** Admin-only (bot.ts /season_new). `days` must be positive; key must be unique. */
+export async function createSeason(
+  key: string,
+  themeLabel: string,
+  days: number,
+): Promise<SeasonRow | { error: "duplicate_key" }> {
+  try {
+    const rows = await q(
+      `INSERT INTO seasons (key, theme_label, starts_at, ends_at)
+       VALUES ($1, $2, now(), now() + ($3 || ' days')::interval)
+       RETURNING id, key, theme_label, starts_at, ends_at`,
+      [key, themeLabel, String(Math.max(1, Math.floor(days)))],
+    );
+    return mapSeason(rows[0]);
+  } catch (err) {
+    // Unique-violation on `key` — surface as a typed result rather than throwing,
+    // so the admin command can give a clean "already exists" reply.
+    if (err instanceof Error && /unique|duplicate/i.test(err.message)) return { error: "duplicate_key" };
+    throw err;
+  }
+}
+
+/** The currently running season, or null — the normal state until an admin creates one. */
+export async function getActiveSeason(): Promise<SeasonRow | null> {
+  const rows = await q(
+    "SELECT id, key, theme_label, starts_at, ends_at FROM seasons WHERE starts_at <= now() AND ends_at >= now() ORDER BY starts_at DESC LIMIT 1",
+  );
+  return rows[0] ? mapSeason(rows[0]) : null;
+}
+
+/** All seasons (past/active/upcoming), newest-first — powers the admin /season_list. */
+export async function listSeasons(): Promise<SeasonRow[]> {
+  const rows = await q("SELECT id, key, theme_label, starts_at, ends_at FROM seasons ORDER BY starts_at DESC");
+  return rows.map(mapSeason);
 }

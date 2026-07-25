@@ -31,7 +31,7 @@ process.env.DUB_USD_PER_SEC = "0.02";
 const { fal } = await import("@fal-ai/client");
 const { createBot, fastStartLessonMessages, flagshipModuleMessages } = await import("../src/bot.js");
 const { drainRenders, inFlightRenders } = await import("../src/generate.js");
-const { funnel, query, getUser, getOrCreateUser, addCredits, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay, createPendingGeneration, completeGeneration, claimFreePhone, phoneClaimedFree, setUserPhone, createOrder, getOrder, deleteUserData, getEconomyConfig, getPresetMinLevel } = await import("../src/db.js");
+const { funnel, query, getUser, getOrCreateUser, addCredits, logGeneration, partnerAccount, usersToNudge, markNudged, nudgedOnUtcDay, createPendingGeneration, completeGeneration, claimFreePhone, phoneClaimedFree, setUserPhone, createOrder, getOrder, deleteUserData, getEconomyConfig, getPresetMinLevel, getActiveSeason, listSeasons } = await import("../src/db.js");
 const { startDubbing, dubCredits, availableDubTargets } = await import("../src/dubbing.js");
 const { buildDigest, checkAlerts, nudgeText, runReengagement, runReaper, runOrderReconciler } = await import("../src/monitor.js");
 const { nUnits, nResults } = await import("../src/text.js");
@@ -1207,6 +1207,42 @@ await step("reward-architecture P0: /econ_set + /econ_gate are admin-only, DB-ba
   // Unset keys stay null — the "ships inert, no guessable default" contract.
   assert.equal(await getEconomyConfig("xp.never_set"), null);
   assert.equal(await getPresetMinLevel("never_gated_preset"), null);
+});
+
+await step("reward-architecture P4a: /season_new + /season_list are admin-only; no active season until one is created", async () => {
+  assert.equal(await getActiveSeason(), null);
+
+  await sendText(admin, "/season_list");
+  assert.match(lastText(), /пока нет/);
+
+  // Bad input rejected, nothing created.
+  await sendText(admin, "/season_new s1 0 Наурыз"); // 0 days invalid
+  assert.match(lastText(), /Формат/);
+  await sendText(admin, "/season_new s1 notanumber Наурыз");
+  assert.match(lastText(), /Формат/);
+  assert.equal(await getActiveSeason(), null);
+
+  await sendText(admin, "/season_new s1 42 Наурыз");
+  assert.match(lastText(), /Сезон «Наурыз» \(s1\) создан/);
+  const active = await getActiveSeason();
+  assert.equal(active?.key, "s1");
+  assert.equal(active?.theme_label, "Наурыз");
+
+  // Duplicate key rejected, doesn't clobber the existing season.
+  await sendText(admin, "/season_new s1 10 Другое название");
+  assert.match(lastText(), /уже существует/);
+  assert.equal((await getActiveSeason())?.theme_label, "Наурыз");
+
+  await sendText(admin, "/season_list");
+  assert.match(lastText(), /🟢 активен · Наурыз \(s1\)/);
+
+  // Non-admin: silent, no season created.
+  const before = calls("sendMessage").length;
+  await sendText(alice, "/season_new s2 10 Тест");
+  await sendText(alice, "/season_list");
+  assert.equal(calls("sendMessage").length, before);
+  const seasons = await listSeasons();
+  assert.equal(seasons.length, 1, "non-admin must not be able to create a season");
 });
 
 await step("partner v2: join → welcome (spend-only) + code; invitee pays → 15% withdrawable cashback", async () => {

@@ -11,6 +11,7 @@ import {
   allPresetGating,
   claimWelcomeBonus,
   createPartnerCode,
+  createSeason,
   deactivatePartnerCode,
   deleteUserData,
   ensureRefCode,
@@ -23,6 +24,7 @@ import {
   hasFreeScenario,
   joinPartnerProgram,
   listPartnerCodes,
+  listSeasons,
   logEvent,
   myPartnerCodes,
   myWithdrawals,
@@ -1271,6 +1273,44 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     }
     await setPresetGating(presetId, minLevel);
     await ctx.reply(`✅ ${presetId} → уровень ${minLevel}`);
+  });
+
+  // Reward-architecture P4a: the Season entity — pure curation (key/theme/
+  // dates), never a code deploy. Ships inert (no active season) until an admin
+  // runs /season_new; quests and free-track reward claiming are follow-up work
+  // that will build on top of this entity, not part of it yet.
+  bot.command("season_new", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const [key, daysS, ...themeParts] = (ctx.match ?? "").trim().split(/\s+/);
+    const days = Number(daysS);
+    const theme = themeParts.join(" ");
+    if (!key || !Number.isInteger(days) || days < 1 || !theme) {
+      await ctx.reply("Формат: /season_new <key> <дней> <тема>\nПример: /season_new s4 42 Наурыз");
+      return;
+    }
+    const result = await createSeason(key, theme, days);
+    if ("error" in result) {
+      await ctx.reply(`Сезон с ключом «${key}» уже существует.`);
+      return;
+    }
+    await ctx.reply(
+      `✅ Сезон «${result.theme_label}» (${result.key}) создан: ${new Date(result.starts_at).toLocaleDateString("ru-RU")} → ${new Date(result.ends_at).toLocaleDateString("ru-RU")}.`,
+    );
+  });
+
+  bot.command("season_list", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const seasons = await listSeasons();
+    if (!seasons.length) {
+      await ctx.reply("Сезонов пока нет — /season_new <key> <дней> <тема>");
+      return;
+    }
+    const now = Date.now();
+    const lines = seasons.map((s) => {
+      const status = now < Date.parse(s.starts_at) ? "⏳ скоро" : now > Date.parse(s.ends_at) ? "✅ прошёл" : "🟢 активен";
+      return `${status} · ${s.theme_label} (${s.key}) — ${new Date(s.starts_at).toLocaleDateString("ru-RU")} → ${new Date(s.ends_at).toLocaleDateString("ru-RU")}`;
+    });
+    await ctx.reply(`📅 <b>Сезоны</b>\n\n${lines.join("\n")}`, { parse_mode: "HTML" });
   });
 
   // Admin: the daily digest on demand — /dash [days], default 24h, cap 30d.
