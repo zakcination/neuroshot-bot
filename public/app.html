@@ -556,6 +556,15 @@
 
     /* quiz chips (story builder) */
     .quiz-q { font-size: 13px; font-weight: 700; color: var(--muted); margin: 14px 0 8px; }
+    /* Tap-to-explain tooltip trigger next to a non-obvious control. Tap, not
+       hover — there is no hover on the phones this app actually runs on. */
+    .qhint {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 16px; height: 16px; margin-left: 5px; padding: 0; vertical-align: middle;
+      border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2);
+      color: var(--muted); font: 700 10px/1 inherit; cursor: pointer;
+    }
+    .qhint:hover { color: var(--ink); border-color: rgba(124,92,255,.5); }
     .hint { font-size: 12px; color: var(--muted); margin: 6px 0 2px; opacity: .85; }
     .chips { display: flex; flex-wrap: wrap; gap: 7px; }
     .chip {
@@ -613,6 +622,11 @@
       max-width: 90vw; text-align: center;
     }
     .toast.on { opacity: 1; transform: translateX(-50%); }
+    /* A hint is a sentence, not a status pill — squarer, left-aligned, roomier.
+       Explicit width, not max-width: the base toast is `left: 50%` with auto
+       width, so shrink-to-fit caps it at HALF the viewport and a sentence
+       wraps into a narrow column. */
+    .toast.wide { border-radius: 16px; text-align: left; font-weight: 500; line-height: 1.45; width: min(92vw, 420px); }
 
     @media (prefers-reduced-motion: reduce) {
       .sky i, .orb, .shot.pending .rip { animation: none; }
@@ -678,10 +692,14 @@
       const url = "https://t.me/" + username + (payload ? "?start=" + payload : "");
       if (tg?.initData) tg.openTelegramLink(url); else location.href = url;
     }
-    function toast(msg) {
+    /** `opts.wide` = a full sentence (explanations) rather than a status pill;
+     *  `opts.ms` overrides how long it stays — a sentence needs longer to read. */
+    function toast(msg, opts) {
       const t = document.getElementById("toast");
-      t.textContent = msg; t.classList.add("on");
-      clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 2600);
+      t.textContent = msg;
+      t.classList.toggle("wide", !!(opts && opts.wide));
+      t.classList.add("on");
+      clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), (opts && opts.ms) || 2600);
     }
     function haptic(kind) { try { tg?.HapticFeedback?.notificationOccurred?.(kind); } catch (e) { /* optional */ } }
 
@@ -886,6 +904,16 @@
     const jobs = new Map(); // genId -> {id, isVideo, campaignId}
     let viewedJob = null; // job id currently displayed in the sheet (or null)
     function openSheet() { sheet.classList.add("on"); sheetBg.classList.add("on"); }
+    // Tap-to-explain "?" triggers (qLabel/HINTS). Delegated once here rather
+    // than re-bound in every view, so a hint keeps working through any
+    // re-render — and so adding a hint to a new control needs no new wiring.
+    sheetBody.addEventListener("click", (e) => {
+      const b = e.target.closest ? e.target.closest(".qhint") : null;
+      if (!b || !sheetBody.contains(b)) return;
+      e.preventDefault(); e.stopPropagation();
+      const text = HINTS[b.dataset.hint];
+      if (text) toast(text, { wide: true, ms: 6000 });
+    });
     // One-shot interceptor for the NEXT sheet close (paywall exit-offer). The
     // hook is cleared before it runs so a second close always really closes.
     let sheetCloseHook = null;
@@ -927,6 +955,31 @@
         if (st.tab === "text") { openStudio({ mode: "image", origin: "text" }); return; }
         viewPick();
       }));
+    }
+
+    /**
+     * Plain-language explanations for the composer controls that aren't
+     * self-evident to someone who has never used a generation tool. Surfaced by
+     * TAPPING the "?" next to a label (qLabel below) — a tap, not a hover,
+     * because this runs on phones. Deliberately on-demand rather than a forced
+     * step-through tour: the studio must stay ≤2 taps from a result, and the
+     * full-screen intro slideshow already covers the "what is this product"
+     * job. Anything that costs patrons says so here, in words.
+     */
+    const HINTS = {
+      photo: "Ваше фото — основа. Лицо остаётся вашим: меняются стиль, фон и свет вокруг.",
+      model: "Модель — это «движок», который рисует. Дороже обычно значит детальнее. Можно спокойно оставить ту, что уже выбрана.",
+      aspect: "Формат кадра — пропорции результата. 9:16 — для сторис, 1:1 — для ленты, «Как фото» сохранит пропорции исходника.",
+      res: "Качество — детализация и размер картинки. Выше качество — больше патронов за одну генерацию.",
+      count: "Количество — сколько разных вариантов сделать за один раз. Каждый вариант считается отдельно и стоит патронов.",
+      duration: "Длительность — сколько секунд будет видео. Дольше — дороже.",
+      endframe: "Финальный кадр — необязательно. Если добавить, видео плавно придёт от вашего фото к этому кадру.",
+    };
+    /** A section label, with a tap-to-explain "?" when we have something to say. */
+    function qLabel(text, hintKey) {
+      const hint = hintKey && HINTS[hintKey]
+        ? ` <button class="qhint" type="button" data-hint="${hintKey}" aria-label="Что это такое?">?</button>` : "";
+      return `<div class="quiz-q">${text}${hint}</div>`;
     }
 
     /**
@@ -995,7 +1048,7 @@
         // would only fail at "Создать" — the server rejects it either way, so
         // say so here, before the user invests any taps.
         const lock = presetLock(p);
-        if (lock) { haptic("error"); toast(lockText(lock)); return; }
+        if (lock) { haptic("error"); toast(lockText(lock), { wide: true, ms: 5000 }); return; }
         // Preset tap → the Studio, prefilled. A ⇄-swap re-entry keeps the photo (E7).
         const keep = !!(stu && stu.swap);
         if (stu) stu.swap = false;
@@ -1170,7 +1223,7 @@
       if (status === 402) { viewPaywall(data); return; }
       // A level-gated style: a normal, explainable state — not a failure.
       if (status === 403 && data && data.error === "level_locked") {
-        haptic("error"); toast(lockText({ need: data.requiredLevel, have: data.level })); viewPick(); return;
+        haptic("error"); toast(lockText({ need: data.requiredLevel, have: data.level }), { wide: true, ms: 5000 }); viewPick(); return;
       }
       if (status !== 200) { toast("Что-то пошло не так — попробуйте ещё раз"); viewPick(); return; }
       setBalance(data.balance);
@@ -1512,7 +1565,7 @@
             <button class="btn ghost" id="stuEnh">✨ Улучшить промпт · 1-е бесплатно</button>
             ${stu.prevPrompt != null ? `<button class="btn ghost" id="stuUndo">↩ Вернуть</button>` : ""}
           </div>` : ""}
-        <div class="quiz-q">Фото ${!isVideo && !m.needsImage ? "(не используется этой моделью)" : ""}</div>
+        ${qLabel(`Фото ${!isVideo && !m.needsImage ? "(не используется этой моделью)" : ""}`, "photo")}
         <div id="stuPhotoZone">
           ${stu.photo ? `<div class="photo-preview"><img src="${stu.photo}" alt="" /><button class="redo" id="stuRedo">↺ Другое</button></div>`
             : stu.generationId ? `<div class="photo-preview"><img src="${esc(srcUrl)}" alt="" /><button class="redo" id="stuRedo">↺ Другое</button></div>`
@@ -1526,30 +1579,30 @@
           <button data-md="video" class="${isVideo ? "on" : ""}">🎬 Видео</button>
         </div>
         ${isVideo && !has ? `<div class="sub">Для видео нужно исходное фото — добавьте его выше или сначала создайте картинку.</div>` : ""}
-        <div class="quiz-q">Модель</div>
+        ${qLabel("Модель", "model")}
         <div class="mlist">
           ${primary.map(modelRow).join("")}
           ${hidden.length && !stu.showAll ? `<button class="btn ghost" id="stuMore">Показать все модели (${hidden.length}) — нужно фото</button>` : ""}
           ${hidden.length && stu.showAll ? hidden.map(modelRow).join("") : ""}
         </div>
         ${caps && caps.aspectRatios && caps.aspectRatios.length > 1 ? `
-          <div class="quiz-q">Формат кадра</div>
+          ${qLabel("Формат кадра", "aspect")}
           <div class="chips" id="stuAr">${caps.aspectRatios.map((r) =>
             `<button class="chip ${r === (stu.aspect || caps.aspectRatios[0]) ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>` : ""}
         ${caps && caps.resolutions && caps.resolutions.length ? `
-          <div class="quiz-q">Качество</div>
+          ${qLabel("Качество", "res")}
           <div class="chips" id="stuRes">${caps.resolutions.map((r) =>
             `<button class="chip ${r.id === (stu.resolution || caps.resolutions[0].id) ? "on" : ""}" data-res="${r.id}">${esc(r.label)} · ${r.credits} ${PATRON}</button>`).join("")}</div>` : ""}
         ${!isVideo && caps && caps.maxCount ? `
-          <div class="quiz-q">Количество</div>
+          ${qLabel("Количество", "count")}
           <div class="chips" id="stuCount">${stuCountOptions(m, caps).map((c) =>
             `<button class="chip ${c.n === (stu.numImages || 1) ? "on" : ""}" data-cnt="${c.n}">${c.n} шт${c.n > 1 ? ` · ${c.credits} ${PATRON}` : ""}</button>`).join("")}</div>` : ""}
         ${isVideo && m.video ? `
-          <div class="quiz-q">Длительность</div>
+          ${qLabel("Длительность", "duration")}
           <div class="chips" id="stuDur">${m.video.durations.map((d) =>
             `<button class="chip ${d.seconds === stu.duration ? "on" : ""}" data-dur="${d.seconds}">${d.seconds} сек · ${d.credits} ${PATRON}</button>`).join("")}</div>` : ""}
         ${isVideo && m.video && m.video.endFrame ? `
-          <div class="quiz-q">Финальный кадр (необязательно)</div>
+          ${qLabel("Финальный кадр (необязательно)", "endframe")}
           <div id="stuEndZone">${stu.endPhoto ? `<div class="photo-preview"><img src="${stu.endPhoto}" alt="" /><button class="redo" id="stuEndRedo">✕ Убрать</button></div>`
             : `<label class="drop"><input type="file" accept="image/*" id="stuEndFile" />
                  <span class="em">🏁</span><b>Кадр-финал</b><span>видео плавно придёт к нему</span></label>`}</div>` : ""}
@@ -1676,7 +1729,7 @@
       const { status, data } = await api("/api/generate", { method: "POST", body: JSON.stringify(body) });
       if (status === 402) { viewPaywall(data); return; }
       if (status === 403 && data && data.error === "level_locked") {
-        haptic("error"); toast(lockText({ need: data.requiredLevel, have: data.level })); viewStudio(); return;
+        haptic("error"); toast(lockText({ need: data.requiredLevel, have: data.level }), { wide: true, ms: 5000 }); viewStudio(); return;
       }
       if (status !== 200) { toast("Что-то пошло не так — попробуйте ещё раз"); viewStudio(); return; }
       ME.dashboard.credits = data.balance;
@@ -1718,24 +1771,24 @@
 
       sheetBody.innerHTML = `
         <h3>Настройки видео</h3>
-        ${isCurated ? `<div class="quiz-q">Модель</div>
+        ${isCurated ? `${qLabel("Модель", "model")}
           <div class="chips" id="modRow">${ME.catalog.videoModels.map((v) =>
             `<button class="chip ${v.key === m.key ? "on" : ""}" data-mod="${v.key}">${esc(v.label.replace("🎬 ", ""))} · ${v.credits}+ ${PATRON}</button>`).join("")}</div>` : ""}
         ${scenes.length ? `<div class="quiz-q">Сюжет — что происходит?</div>
           <div class="chips" id="sceneRow">${scenes.map((s) =>
             `<button class="chip ${pick.scene === s.id ? "on" : ""}" data-scene="${s.id}" data-sctier="${s.tier || "simple"}" data-scmodel="${s.videoModelKey}">${esc(s.label)}${s.tier === "epic" ? ` · ⚡${s.videoCredits} ${PATRON}` : ""}</button>`).join("")}</div>
           ${scenes.some((s) => s.tier === "epic") ? `<div class="hint">⚡ — эпичная сцена на движке Seedance (звук и физика)</div>` : ""}` : ""}
-        ${ratios.length > 1 ? `<div class="quiz-q">Формат кадра</div>
+        ${ratios.length > 1 ? `${qLabel("Формат кадра", "aspect")}
         <div class="chips" id="arRow">${ratios.map((r) =>
           `<button class="chip ${r === pick.aspect_ratio ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>`
         : `<div class="hint">Формат кадра — как у исходного фото (эта модель не меняет соотношение).</div>`}
-        ${resList.length ? `<div class="quiz-q">Качество</div>
+        ${resList.length ? `${qLabel("Качество", "res")}
         <div class="chips" id="resRow">${resList.map((r) =>
           `<button class="chip ${r.id === pick.resolution ? "on" : ""}" data-res="${r.id}">${esc(r.label)}</button>`).join("")}</div>` : ""}
-        <div class="quiz-q">Длительность</div>
+        ${qLabel("Длительность", "duration")}
         <div class="chips" id="durRow">${durs.map((d) =>
           `<button class="chip ${d.seconds === pick.duration ? "on" : ""}" data-dur="${d.seconds}">${d.seconds}с · ${priceOf(d.seconds)} ${PATRON}</button>`).join("")}</div>
-        ${hasEnd ? `<div class="quiz-q">Финальный кадр — переход к другому фото (необязательно)</div>
+        ${hasEnd ? `${qLabel("Финальный кадр — переход к другому фото (необязательно)", "endframe")}
         <div id="endZone">
           <label class="drop"><input type="file" accept="image/*" id="endFile" />
             <span class="em">🎞</span><b>${pick.end_photo || pick.end_generation_id ? "Кадр выбран ✓" : "Добавить финальный кадр"}</b>
