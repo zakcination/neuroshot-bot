@@ -261,6 +261,27 @@
       text-transform: uppercase; background: var(--aurora); padding: 4px 9px; border-radius: 999px; color: #fff;
     }
     .pack.best { border-color: rgba(255,77,141,.55); box-shadow: 0 6px 30px rgba(255,77,141,.12); }
+    /* A pack too small to finish the render the user just tried. Still buyable
+       — it is a valid top-up — but visibly not the way out of this screen. */
+    .pack.short { opacity: .55; }
+
+    /* Progression card — the mobile-game "level ring + XP bar" read. The ring is
+       a conic-gradient sweep driven by --pct, so the fill needs no extra markup
+       and no SVG. */
+    .lvlcard { display: flex; align-items: center; gap: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+    .lvlcard.off { opacity: .75; }
+    .lvlring {
+      flex: 0 0 auto; width: 56px; height: 56px; border-radius: 999px; display: grid; place-items: center; position: relative;
+      background: conic-gradient(var(--violet) calc(var(--pct, 0) * 1%), rgba(255,255,255,.08) 0);
+    }
+    .lvlring::after { content: ""; position: absolute; inset: 4px; border-radius: 999px; background: var(--surface); }
+    .lvlring b { position: relative; z-index: 1; font-size: 20px; font-weight: 800; }
+    .lvlbody { flex: 1; min-width: 0; }
+    .lvltop { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .lvltop b { font-size: 15px; }
+    .lvlxp { color: var(--amber); font-weight: 700; font-size: 13px; white-space: nowrap; }
+    .lvlbar { height: 8px; border-radius: 999px; background: rgba(255,255,255,.08); overflow: hidden; margin: 8px 0 6px; }
+    .lvlbar i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--violet), var(--magenta)); transition: width .5s ease; }
 
     .refcard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 19px; }
     .refcard h3 { margin: 0 0 5px; font-size: 16px; }
@@ -997,6 +1018,43 @@
       endframe: "Финальный кадр — необязательно. Если добавить, видео плавно придёт от вашего фото к этому кадру.",
       angles: "Несколько фото ОДНОГО человека с разных сторон — модель лучше понимает лицо и точнее его сохраняет. Не добавляйте сюда других людей: получится смесь. Дополнительные фото не стоят патронов.",
     };
+    /**
+     * The progression card — the mobile-game read of "what level am I, how much
+     * XP, and how far to the next one". Everything here comes from the server's
+     * `progress` object: the XP ladder itself is private tuning, so the client
+     * is handed a POSITION on it and never the table.
+     *
+     * Three states, because a progression screen that lies is worse than none:
+     *  • not switched on (the shipped default) — say so plainly rather than
+     *    drawing an empty Level 0 bar that looks broken;
+     *  • max level — a full bar, no phantom "0 to next";
+     *  • normal — level ring, XP counter, and the exact XP left to the next.
+     */
+    function levelCardHtml(p) {
+      if (!p || !p.active) {
+        return `<div class="lvlcard off">
+          <div class="lvlring"><b>—</b></div>
+          <div class="lvlbody">
+            <div class="lvltop"><b>Уровни скоро</b></div>
+            <div class="sub">Опыт уже копится за ваши работы. Как только шкала откроется, он весь останется с вами.</div>
+          </div>
+        </div>`;
+      }
+      const pct = Math.round((p.into / p.span) * 100);
+      const maxed = p.nextAt == null;
+      const left = maxed ? 0 : p.nextAt - p.xp;
+      return `<div class="lvlcard">
+        <div class="lvlring" style="--pct:${pct}"><b>${p.level}</b></div>
+        <div class="lvlbody">
+          <div class="lvltop"><b>Уровень ${p.level}</b><span class="lvlxp">${p.xp} XP</span></div>
+          <div class="lvlbar"><i style="width:${pct}%"></i></div>
+          <div class="sub">${maxed
+            ? "Максимальный уровень — вы прошли всю шкалу 🏆"
+            : `Ещё ${left} XP до ${p.level + 1} уровня · открывает новые стили`}</div>
+        </div>
+      </div>`;
+    }
+
     /** A section label, with a tap-to-explain "?" when we have something to say. */
     function qLabel(text, hintKey) {
       const hint = hintKey && HINTS[hintKey]
@@ -2107,15 +2165,27 @@
       haptic("warning");
       // Arm the exit-offer: closing the paywall (✕ / backdrop) shows the combo
       // once, instead of silently losing the buyer. "Назад" arms it too.
-      const combo = (data.packs || []).find((p) => p.offer);
+      const packs = data.packs || [];
+      // How much this pack must ADD to finish the render the user just tried.
+      // Anything smaller leaves them stuck after paying — the failure mode this
+      // block exists to prevent. The expensive video models (Seedance) cost more
+      // than the entry pack grants, so before this the paywall would happily
+      // sell «Старт» to someone who still couldn't render afterwards.
+      const gap = Math.max(0, (data.need || 0) - (data.balance || 0));
+      const covers = (p) => p.credits >= gap;
+      // Recommend the CHEAPEST pack that actually gets them there, not a fixed
+      // slot in the list.
+      const best = packs.filter((p) => !p.offer && covers(p)).sort((a, b) => a.kzt - b.kzt)[0];
+      // The exit-offer only makes sense if the combo itself would unblock them.
+      const combo = packs.find((p) => p.offer && covers(p));
       if (combo && !exitOfferShown) sheetCloseHook = () => viewExitOffer(combo, data);
       sheetBody.innerHTML = `
         <h3>Ещё один шаг до результата ✨</h3>
         <div class="sub">Нужно ${data.need} ${PATRON}, на балансе ${data.balance}. Пополните — и результат сразу продолжит создаваться.</div>
-        <div class="packs">${(data.packs || []).map((p, i) => `
-          <button class="pack ${i === 1 ? "best" : ""}" data-pk="${p.id}">
-            ${i === 1 ? '<span class="hot">Популярный</span>' : ""}
-            <span><span class="amount">${PATRON} ${p.credits}</span><div class="per">≈ ${(p.kzt / p.credits).toFixed(0)} ₸ за патрон</div></span>
+        <div class="packs">${packs.map((p) => `
+          <button class="pack ${best && p.id === best.id ? "best" : ""} ${covers(p) ? "" : "short"}" data-pk="${p.id}">
+            ${best && p.id === best.id ? '<span class="hot">Хватит на этот кадр</span>' : ""}
+            <span><span class="amount">${PATRON} ${p.credits}</span><div class="per">≈ ${(p.kzt / p.credits).toFixed(0)} ₸ за патрон${covers(p) ? "" : ` · не хватит на этот кадр`}</div></span>
             <span class="stars">${p.kzt.toLocaleString("ru-RU")} ₸</span>
           </button>`).join("")}</div>
         <div class="row"><button class="btn ghost" id="backBtn">← Назад</button></div>`;
@@ -2509,10 +2579,10 @@
             <div class="ach"><span class="achic">🏆</span><span class="achtx">Студия освоена<small>вы прошли весь путь в NeuroShot</small></span></div>
           </section>` : ""}
 
-          ${(dash.xp || 0) > 0 ? `<section class="reveal">
+          <section class="reveal">
             <div class="sec-h"><h2>Уровень</h2></div>
-            <div class="ach"><span class="achic">⭐</span><span class="achtx">Уровень ${dash.level}<small>${dash.xp} опыта · открывает новые стили</small></span></div>
-          </section>` : ""}
+            ${levelCardHtml(d.progress)}
+          </section>
 
           <section class="reveal">
             <div class="sec-h"><h2>Мои работы</h2></div>

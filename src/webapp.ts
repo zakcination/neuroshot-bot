@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { allPresetGating, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { allPresetGating, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { enhancePrompt } from "./enhance.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
@@ -454,18 +454,20 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta] = await Promise.all([
-    userDashboard(user.id),
-    recentGenerations(user.id, 30),
-    ensureRefCode(user.id),
-    getUser(user.id),
-    roadmapProgress(user.id),
-    referralList(user.id),
-    presetUsageCounts(),
-    getActiveSeason(),
-    allPresetGating(),
-    modelEtaSeconds(),
-  ]);
+  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress] =
+    await Promise.all([
+      userDashboard(user.id),
+      recentGenerations(user.id, 30),
+      ensureRefCode(user.id),
+      getUser(user.id),
+      roadmapProgress(user.id),
+      referralList(user.id),
+      presetUsageCounts(),
+      getActiveSeason(),
+      allPresetGating(),
+      modelEtaSeconds(),
+      getLevelProgress(user.id),
+    ]);
   const gates = Object.fromEntries(gateRows.map((g) => [g.preset_id, g.min_level]));
   return {
     // No raw tg id in ref_code — an opaque link the client builds the share URL from.
@@ -482,6 +484,12 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     // /season_new. No quest/reward data yet — that's P4b, built once this
     // entity exists.
     season: season ? { key: season.key, themeLabel: season.theme_label, startsAt: season.starts_at, endsAt: season.ends_at } : null,
+    // Everything the progression screen needs, resolved server-side: the XP
+    // ladder itself is private config (economy_config), so the client is handed
+    // a position on it, never the table. `active: false` — the shipped default,
+    // since no threshold is configured — makes the UI say "not on yet" instead
+    // of drawing an empty Level 0 bar.
+    progress,
     // Welcome bonus (signup + join bonus) is claim-gated — see claimWelcomeBonus
     // in db.ts. The client shows a "🎁 Получить" claim button on the onboarding
     // slideshow's last slide only while claimed=false and pending>0; otherwise

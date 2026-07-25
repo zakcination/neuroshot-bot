@@ -39,7 +39,7 @@ process.env.RATE_LIMIT_ENHANCE_PER_MIN = "100000";
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, logEvent, logGeneration, query, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
+const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, logEvent, logGeneration, query, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
@@ -184,6 +184,10 @@ interface MeResponse {
     }>;
     imageModels: Array<{ key: string; label: string; credits: number }>;
     videoModels: Array<{ key: string; label: string; credits: number }>;
+  };
+  progress: {
+    active: boolean; xp: number; level: number; levelAt: number;
+    nextAt: number | null; into: number; span: number;
   };
 }
 
@@ -1910,6 +1914,63 @@ await step("style reference: a preset's curated ref rides in image_urls; a clien
   const injCall = falCalls.at(-1)!;
   assert.equal((injCall.input.image_urls as string[]).length, 1, "client-named reference must be ignored");
   assert.ok(!JSON.stringify(injCall.input).includes("evil.test"), "a caller-supplied URL must never reach fal");
+});
+
+await step("/api/me progress: inert by default, then a real position on the private XP ladder", async () => {
+  const pu = { id: 990096, username: "progress" };
+  await getOrCreateUser(pu.id, pu.username, null, 0);
+  type Prog = { active: boolean; xp: number; level: number; levelAt: number; nextAt: number | null; into: number; span: number };
+  // The P1 step earlier in this suite leaves a ladder configured, so start from
+  // a known-empty one — this step is about the ladder's own edge cases.
+  await query("DELETE FROM economy_config WHERE key LIKE 'level.threshold.%'");
+  const read = async () => (await apiMe(signInitData(pu))).body.progress as unknown as Prog;
+
+  // Shipped default: no level.threshold.* configured at all → inert. The UI
+  // shows "уровни скоро" rather than an empty Level 0 bar.
+  const off = await read();
+  assert.equal(off.active, false);
+  assert.equal(off.level, 0);
+
+  // A three-rung ladder. These numbers live in economy_config (private tuning),
+  // never in the repo — the client only ever receives a POSITION on them.
+  await setEconomyConfig("level.threshold.1", 100);
+  await setEconomyConfig("level.threshold.2", 300);
+  await setEconomyConfig("level.threshold.3", 600);
+
+  const zero = await read();
+  assert.equal(zero.active, true);
+  assert.equal(zero.level, 0);
+  assert.equal(zero.nextAt, 100);
+  assert.equal(zero.into, 0);
+  assert.equal(zero.span, 100, "the level-0 band runs from 0 to the first threshold");
+
+  // Mid-band: the bar must measure progress INSIDE the band, not from zero —
+  // 150 XP at level 1 is a fifth of the way to level 2, not half of 300.
+  await setEconomyConfig("xp.probe", 150);
+  await awardXp(pu.id, "probe", "mid");
+  const mid = await read();
+  assert.equal(mid.level, 1);
+  assert.equal(mid.xp, 150);
+  assert.equal(mid.levelAt, 100);
+  assert.equal(mid.nextAt, 300);
+  assert.equal(mid.into, 50);
+  assert.equal(mid.span, 200);
+
+  // Top of the configured ladder: no phantom "next", and a full bar rather
+  // than a division by zero.
+  await setEconomyConfig("xp.probe", 500);
+  await awardXp(pu.id, "probe", "max");
+  const top = await read();
+  assert.equal(top.level, 3);
+  assert.equal(top.nextAt, null);
+  assert.equal(top.into, top.span, "a maxed ladder renders as a complete bar");
+
+  // The private ladder itself must NOT be shipped to the client anywhere in the
+  // payload — only the user's position on it.
+  const body = JSON.stringify((await apiMe(signInitData(pu))).body);
+  assert.ok(!body.includes("level.threshold"), "the XP table must never reach the client");
+
+  await query("DELETE FROM economy_config WHERE key LIKE 'level.threshold.%' OR key = 'xp.probe'");
 });
 
 await step("multi-image input: extra angles ride along, are capped per model, and the host is enforced", async () => {

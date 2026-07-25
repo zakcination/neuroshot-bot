@@ -1961,6 +1961,51 @@ export async function getLevel(userId: number): Promise<number> {
 }
 
 /**
+ * Everything a progress bar needs, resolved server-side in one walk of the
+ * ladder. The client must NOT recompute this from a thresholds list — that
+ * would put the (private) XP table in the browser, which is the whole reason
+ * it lives in economy_config rather than the repo.
+ *
+ * `active` is false when no `level.threshold.*` is configured at all, which is
+ * the shipped default. The UI shows a "not switched on yet" state rather than
+ * a fake Level 0 bar — an empty progression screen reads as broken.
+ *
+ * `nextAt` is null at the top of the configured ladder (max level reached);
+ * `into`/`span` then describe a full bar, so the bar renders complete instead
+ * of dividing by zero.
+ */
+export async function getLevelProgress(userId: number): Promise<{
+  active: boolean;
+  xp: number;
+  level: number;
+  levelAt: number; // XP where the CURRENT level began (0 at level 0)
+  nextAt: number | null; // XP that unlocks the next level, null at the top
+  into: number; // XP earned inside the current band
+  span: number; // size of the current band (into/span = bar fill)
+}> {
+  const xp = await getUserXp(userId);
+  let level = 0;
+  let levelAt = 0;
+  let nextAt: number | null = null;
+  let any = false;
+  for (let n = 1; n <= 100; n++) {
+    const threshold = await getEconomyConfig(`level.threshold.${n}`);
+    if (threshold == null) break;
+    any = true;
+    if (xp >= threshold) {
+      level = n;
+      levelAt = threshold;
+    } else {
+      nextAt = threshold;
+      break;
+    }
+  }
+  const span = nextAt == null ? 1 : Math.max(1, nextAt - levelAt);
+  const into = nextAt == null ? 1 : Math.max(0, Math.min(span, xp - levelAt));
+  return { active: any, xp, level, levelAt, nextAt, into, span };
+}
+
+/**
  * Claim the one-time "save" XP for a generation — idempotent (xp_save_claims
  * is a hard PK guard, so re-tapping "Скачать" can't re-earn it) and daily-capped
  * via economy_config's `xp.save.dailycap` (unset = uncapped once xp.save itself
