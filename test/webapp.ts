@@ -1972,6 +1972,37 @@ await step("provider down: the breaker refuses WITHOUT charging, and clears itse
   assert.equal(providerBlocked(), false, "a successful run proves the account works again");
 });
 
+await step("bento birthday: pins the typography engine and holds two ages of one face", async () => {
+  const { PRESETS, presetModel } = await import("../src/models.js");
+  const { existsSync } = await import("node:fs");
+  const p = PRESETS.find((x) => x.id === "bento_birthday")!;
+
+  // The look is worthless if the icing text comes out garbled, and the registry
+  // comment is explicit that Seedream garbles text — so this preset must stay
+  // on the typography engine even though it costs more than the default.
+  const m = presetModel(p);
+  assert.equal(m.key, "premium_edit");
+  // The pin is a deliberate cost trade-off, so state it: this look bills more
+  // than a default-engine look, and that is accepted for legible icing.
+  const { PRESET_MODEL } = await import("../src/models.js");
+  assert.ok(m.credits > PRESET_MODEL.credits, "the typography engine is the pricier tier, on purpose");
+  assert.match(p.prompt, /HAPPY BIRTHDAY/);
+  assert.match(p.prompt, /correctly spelled and fully readable/);
+
+  // Two likenesses of ONE person share the frame: an adult behind the cake and
+  // a printed childhood cutout on it. The prompt must keep them apart, or the
+  // model either de-ages the real subject or adds a real child as a guest.
+  assert.match(p.prompt, /as an ADULT with their real grown-up face/);
+  assert.match(p.prompt, /FLAT PRINTED PHOTO CUTOUT/);
+  assert.match(p.prompt, /not a real child and not a second guest/);
+  // NO_CLONES ("show each person exactly once") would forbid exactly the
+  // composition this look is built on — it must not be present.
+  assert.ok(!p.prompt.includes("Show each person exactly once"), "the clone guard would break this look");
+
+  // Card art is derived from the id, so a missing file 404s in the catalog.
+  assert.ok(existsSync(new URL("../public/img/card-preset-bento_birthday.jpg", import.meta.url)));
+});
+
 await step("prompt library: a group photo keeps everyone — no silent crop to one person", async () => {
   const { PRESETS, CAMPAIGNS } = await import("../src/models.js");
   // A couple or family photo used to come back with one of them deleted: the

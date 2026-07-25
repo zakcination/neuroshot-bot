@@ -795,6 +795,45 @@ export const PRESETS: Preset[] = [
       `daylight through the window, tack-sharp face. ${KEEP_ID}`,
   },
   {
+    id: "bento_birthday",
+    label: "🎂 Бенто-торт с детским фото",
+    category: "photo",
+    // The whole look hangs on "HAPPY BIRTHDAY" being READABLE on the cake, so
+    // it pins the typography engine per the rule above — Seedream garbles text,
+    // and garbled icing is the one thing that kills this trend.
+    //
+    // Two separate likenesses of the SAME person share the frame, which is the
+    // hard part: an adult standing behind the cake, and a small printed photo
+    // cutout of them as a CHILD standing up out of the icing. The prompt has to
+    // keep them apart in three ways — the cutout is named as flat printed paper
+    // rather than a person, its scale is pinned to the cake, and the adult is
+    // stated to stay an adult. Without that separation the model either de-ages
+    // the real subject or renders an actual child as a second guest.
+    //
+    // NO_CLONES is deliberately NOT used here: it forbids the same face twice,
+    // which is exactly what this composition requires.
+    model: "premium_edit",
+    aspect: "3:4",
+    prompt:
+      "A warm night-time birthday moment, shot as a candid phone photo at a party. THE PERSON FROM THE PHOTO, " +
+      "as an ADULT with their real grown-up face, stands behind a small round minimalist bento cake, lit almost " +
+      "entirely by its candle flame. They wear a striped cone party hat with a paper pom-pom on top, elastic " +
+      "under the chin, and they are laughing or grinning, caught mid-moment as friends sing to them; a couple of " +
+      "out-of-focus hands and faces of friends edge into the frame in the dark.\n" +
+      "THE CAKE — a small cream-white bento cake on a white board, matte buttercream, with the words " +
+      "\"HAPPY BIRTHDAY\" hand-piped across the side in slightly wobbly BLACK icing letters, two lines: " +
+      "\"HAPPY\" above and \"BIRTHDAY\" below. Exactly one slim lit candle. The icing text must be clean, " +
+      "correctly spelled and fully readable.\n" +
+      "THE CAKE TOPPER — standing upright out of the top of the cake is a FLAT PRINTED PHOTO CUTOUT on paper, " +
+      "roughly the height of the cake itself: a vintage childhood portrait of THAT SAME PERSON as a small child, " +
+      "same features, same eyes, in an old-fashioned little suit, with a tiny red-and-white striped paper party " +
+      "hat sitting on the cutout's head. It is a piece of printed card stuck into the icing, with a visible cut " +
+      "paper edge — not a real child and not a second guest at the party.\n" +
+      "LIGHT AND MOOD — dark room, the candle as the only real light source, warm orange glow on the faces from " +
+      "below, deep shadows behind, slight handheld blur and phone-camera grain, genuine joyful atmosphere. " +
+      `Shot at eye level. ${KEEP_ID}`,
+  },
+  {
     id: "paris_rain",
     label: "🗼 Париж под дождём",
     category: "photo",
