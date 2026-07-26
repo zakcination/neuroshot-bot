@@ -37,7 +37,7 @@ npm run test:e2e    # full user journey against embedded Postgres (pglite)
 ```
 
 `test/e2e.ts` drives the real handlers through grammY's update pipeline — signup,
-text→image, photo→edit, the animate paywall, Stars purchase, referral payout, and
+text→image, photo→edit, the animate paywall, the Kaspi purchase flow, referral payout, and
 refund-on-provider-failure — stubbing only the Telegram API and fal.ai network edges.
 CI (`.github/workflows/ci.yml`) runs all three on every push and PR.
 
@@ -62,6 +62,10 @@ CI (`.github/workflows/ci.yml`) runs all three on every push and PR.
 | `src/bot.ts` | Bot wiring: commands, photo/text flows, pending-action state (`createBot()`, also used by the e2e harness) |
 | `src/webapp.ts` + `public/app.html` | Telegram Mini App: shared-state API + personal cabinet, over the same Postgres. Auth by `initData` HMAC **or** a Bearer session token. See `docs/web-app.md` |
 | `src/auth.ts` | Client-agnostic session tokens (JWT, HS256) — lets an installed PWA / future iOS app hit the same API outside Telegram |
+| `src/moderation.ts` | Content gate run on every upload BEFORE any spend, so a blocked photo costs nothing |
+| `src/ratelimit.ts` | Per-user limits on the cost-sensitive routes (generate / upload / enhance); polling is never limited |
+| `src/enhance.ts` | Prompt Enhancer — a stack of free rewrites per render, then 1 patron refills it. See `docs/cinema-studio-spec.md` |
+| `src/dubbing.ts` | AI video translator. **Not wired to anything** — no registry entry, no command, no route; its own spec gates it behind a Phase 0 validation that has not run. See `docs/video-translator-spec.md` and `docs/course/BLOCKERS.md` |
 | `public/` | PWA shell: `app.html`, `manifest.webmanifest`, `sw.js`, `icon.svg` (installable / offline app shell; also served statically by Vercel) |
 | `api/auth.ts` + `api/me.ts` | Vercel serverless entry points wrapping the shared web handlers — only these two routes run on Vercel today. See `docs/vercel.md` |
 | `src/index.ts` | Entrypoint: builds the bot, starts long polling + the Mini App server (if `WEBAPP_URL` set) |
@@ -81,7 +85,7 @@ CI (`.github/workflows/ci.yml`) runs all three on every push and PR.
 
 ## Roadmap (from the clone plan)
 
-1. ~~Bot MVP: 3 models, credits, Stars, referrals~~ ← you are here
+1. ~~Bot MVP: models, credits, payments (Kaspi), referrals~~ ← you are here
 2. Push notifications on new models/trends (+20–50% payback)
 3. Telegram Mini App (galleries, model picker)
 4. Web app + SEO landings per use case. Kaspi (KZT) is the live payment rail (see [`docs/kaspi.md`](docs/kaspi.md)); multi-provider expansion (YooKassa, Crypto/TON, etc.) is backlog — see `docs/product-roadmap.md` Tier F

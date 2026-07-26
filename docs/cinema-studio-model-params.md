@@ -110,7 +110,7 @@ Verified from the same schemas (2026-07-22). This drives block ③ (Inputs).
 | Modality | Available on fal? | In our registry today? | Models | Studio implication |
 |---|---|---|---|---|
 | **Image — single** | yes | ✅ yes | all edit + all i2v (start frame) | current behaviour |
-| **Image — multiple (compositing)** | yes | ⚠️ **capable but unused** | `image_urls` list on nano-banana/nb2/nbpro **/edit**; Seedream `images` list (**up to 15** total incl. outputs) | **unlock**: let ③ add 2–N reference images ("me + friend + product"). Our `input()` already emits the list form (`image_urls:[imageUrl]`) — just hardcoded to one. |
+| **Image — multiple (compositing)** | yes | ✅ **shipped 2026-07-26** | `image_urls` list on nano-banana/nb2/nbpro **/edit**; Seedream `images` list (**up to 15** total incl. outputs) | `GenOpts.extraImageUrls` + a per-model `maxInputs` cap; the composer's «Ещё ракурсы» strip adds extra angles of the same face. Server-set only — a client cannot inject arbitrary image urls. |
 | **Image — start + end frame (video)** | yes | ✅ yes (kling3, seedance*) | `image_url` + `end_image_url` | already spec'd in ⑥ |
 | **Audio input** | yes | ❌ no | Seedance `reference-to-video` (`audio_urls`), Kling lipsync / ai-avatar, Bytedance OmniHuman | **new feature track** (talking-avatar / lipsync / music-driven). Not Studio v1. NB: our *dubbing* feature already ingests audio via ElevenLabs — a separate pipeline. |
 | **Video input** | yes | ❌ no | Seedance `reference-to-video` (`video_urls`), Kling o1/o3 **video-to-video**, Bytedance video-stylize, SeedVR/Topaz upscale | **new feature track** (v2v restyle / upscale). Not Studio v1. NB: *dubbing* already ingests video via ElevenLabs. |
