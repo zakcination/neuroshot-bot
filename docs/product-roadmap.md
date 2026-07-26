@@ -169,14 +169,33 @@ verified ⬜ not started against current code:
   batch queue, team workspaces, affiliate console, scheduled auto-posting,
   spend/ROI analytics, API keys, white-label) — item 1 (personal dashboard)
   is done; everything past it is untouched, consistent with Tier E/D above.
-- `num_images` (batch variations) and GPT-Image-2 transparent background —
-  both flagged accurate-and-still-open in `docs/model-inputs.md`.
+- ~~`num_images` (batch variations)~~ — **shipped**: `GenOpts.numImages`, a
+  per-model `maxCount`, and a count selector in the composer. GPT-Image-2
+  transparent background is still open (`docs/model-inputs.md`).
 - Art. 21 legal-scope question (all AI media vs. deepfake-of-real-persons
   only) — unresolved at the law level per `docs/compliance.md`, not a code gap.
 
 ---
 
-## 🧹 Doc hygiene debt (separate workstream — batch-fixable, not urgent)
+## 🧹 Doc hygiene debt — mostly PAID (re-verified 2026-07-26)
+
+Most of what this section listed has since been fixed, and the section itself
+had become the stale doc it was complaining about. Re-checked line by line:
+
+- `README.md` — **fixed**. No "Stars" references remain, the architecture table
+  describes Kaspi correctly, and the four modules it was missing
+  (`moderation.ts`, `ratelimit.ts`, `enhance.ts`, `dubbing.ts`) are now listed.
+- `docs/watermark.md` — **already correct**. It names `brandForDelivery`, says
+  `corner_watermark.png` exists, and states that the corner style is never
+  selected by `deliveryStyles()`.
+- `docs/monitoring.md` — **already correct**. No `STAR_USD` or Stars-based
+  revenue math anywhere in it; revenue is computed in KZT.
+
+The original list is kept below for provenance. Treat it as history, not as a
+to-do — items 1–3 are done.
+
+### Original list (historical)
+
 
 The Stars→Kaspi payment migration and 3 preset-curation batches left comment/
 doc rot across the repo. None of these are functional bugs — money and

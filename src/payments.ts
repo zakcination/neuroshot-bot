@@ -337,7 +337,11 @@ export function registerPayments(bot: Bot): void {
       `🧾 <b>${pack.title}</b> — <b>${pack.kzt} ₸</b>\n\n` +
         `1️⃣ Оплатите по ссылке Kaspi:\n${link}\n\n` +
         `2️⃣ После оплаты нажмите «✅ Я оплатил» — мы проверим платёж и начислим ${UNIT_EMOJI} патроны.\n\n` +
-        `Заявка №${orderId}`,
+        `Заявка №${orderId}\n\n` +
+        // Who is taking the money and on what terms, ON the screen where the
+        // money is taken — not one tab away in an app the buyer may never open.
+        `<i>Продавец: ИП «Z8 Capital», БИН 030722500509 · komekforyou@gmail.com\n` +
+        `Условия и возврат: /refund</i>`,
       { parse_mode: "HTML", reply_markup: paidKeyboard(orderId) },
     );
   });

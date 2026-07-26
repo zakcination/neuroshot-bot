@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { achievements, allPresetGating, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { achievements, allPresetGating, certificates, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { enhancePrompt, ENHANCE_COST, ENHANCE_STACK } from "./enhance.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
@@ -454,7 +454,7 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress, finance, enhanceLeft, awards] =
+  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress, finance, enhanceLeft, awards, certs, partner] =
     await Promise.all([
       userDashboard(user.id),
       recentGenerations(user.id, 30),
@@ -470,6 +470,8 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
       referralFinance(user.id),
       enhanceChargesLeft(user.id, ENHANCE_STACK),
       achievements(user.id),
+      certificates(user.id),
+      partnerAccount(user.id),
     ]);
   const gates = Object.fromEntries(gateRows.map((g) => [g.preset_id, g.min_level]));
   return {
@@ -522,6 +524,25 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     // history (see achievements in db.ts), so it is correct retroactively and
     // does not wait on the XP economy being configured.
     achievements: awards,
+    // Course certificates: what exists, what the caller owns, what was issued.
+    // `owned` and `earned` stay separate on purpose — payment buys the course,
+    // not the certificate.
+    certificates: certs,
+    // Partner account. Codes and payout history are NOT loaded here — they are
+    // only meaningful to an enrolled partner (a tiny minority), and putting two
+    // extra queries on every /api/me for everyone else is a cost with no reader.
+    // The Друзья page fetches them on demand from /api/partner.
+    partner: {
+      joined: partner.joined,
+      invited: partner.invited,
+      paying: partner.paying,
+      earned: partner.earned,
+      withdrawable: partner.withdrawable,
+      activeCodes: partner.activeCodes,
+      maxCodes: config.partnerMaxCodes,
+      percent: Math.round(config.partnerPercent * 100),
+      withdrawMin: config.withdrawMin,
+    },
     // "Ваш путь в NeuroShot" roadmap — real completion signals, see roadmapProgress.
     roadmap,
     // The completion gift for finishing all 5 roadmap steps — claim-gated the
@@ -1020,6 +1041,54 @@ export async function deleteAccountResponse(
 }
 
 /**
+ * GET /api/partner — the enrolled partner's codes and payout history.
+ * Split out of /api/me deliberately: only an enrolled partner has anything to
+ * read here, so everyone else would pay two queries per app open for nothing.
+ */
+export async function partnerResponse(userId: number): Promise<{ status: number; body: Record<string, unknown> }> {
+  const acct = await partnerAccount(userId);
+  if (!acct.joined) return { status: 200, body: { joined: false, codes: [], withdrawals: [] } };
+  const [codes, withdrawals] = await Promise.all([myPartnerCodes(userId), myWithdrawals(userId, 10)]);
+  return {
+    status: 200,
+    body: {
+      joined: true,
+      codes: codes.map((c) => ({
+        code: c.code,
+        title: c.title,
+        percent: Math.round(c.percent * 100),
+        joined: c.joined,
+        paying: c.paying,
+        earned: c.earned,
+      })),
+      withdrawals: withdrawals.map((w) => ({ id: w.id, amount: w.amount, status: w.status, at: w.requested_at })),
+    },
+  };
+}
+
+/**
+ * POST /api/partner/withdraw — request a cash-out of the whole withdrawable
+ * balance, exactly as the bot's partner:withdraw does.
+ *
+ * The amount is NOT taken from the request body. requestWithdrawal drains the
+ * withdrawable balance and the spendable credits in one guarded statement, so
+ * letting a client name the figure would only add a way to disagree with the
+ * server about it. Same guards, same errors, one implementation.
+ */
+export async function partnerWithdrawResponse(userId: number): Promise<{ status: number; body: Record<string, unknown> }> {
+  const acct = await partnerAccount(userId);
+  if (!acct.joined) return { status: 403, body: { error: "not_partner" } };
+  const res = await requestWithdrawal(userId, acct.withdrawable, config.withdrawMin);
+  if (!res.ok) {
+    return {
+      status: res.error === "pending" ? 409 : 400,
+      body: { error: res.error, min: config.withdrawMin, withdrawable: acct.withdrawable },
+    };
+  }
+  return { status: 200, body: { id: res.id, amount: acct.withdrawable } };
+}
+
+/**
  * POST /api/order — start a Kaspi purchase: record a pending order and hand back
  * the Kaspi pay link + the order id. The app opens the link, the user pays, and
  * an admin (or, later, a Kaspi webhook) confirms via grantPurchase — so crediting
@@ -1264,6 +1333,28 @@ export function createWebApp(): Server {
           model: g.model,
           credits: g.credits,
         });
+      }
+
+      // GET /api/partner — the enrolled partner's codes + payout history.
+      if (url.pathname === "/api/partner") {
+        if (!methodIs(res, req.method, "GET")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const { status, body } = await partnerResponse(user.id);
+        return json(res, status, body);
+      }
+
+      // POST /api/partner/withdraw — cash out the whole withdrawable balance.
+      // Rate-limited with the other money-touching routes: it creates a payout
+      // obligation, so a stuck client retrying must not queue a pile of them.
+      if (url.pathname === "/api/partner/withdraw") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const rlw = hit(`withdraw:${user.id}`, config.rateLimitAuthPerMin, 60_000);
+        if (rlw.limited) return tooManyRequests(res, rlw.retryAfterMs);
+        const { status, body } = await partnerWithdrawResponse(user.id);
+        return json(res, status, body);
       }
 
       // POST /api/order — start a Kaspi purchase (pending order + pay link).

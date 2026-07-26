@@ -314,6 +314,18 @@ const SCHEMA: string[] = [
     PRIMARY KEY (user_id, campaign)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_pushes_recent ON pushes(user_id, sent_at)`,
+  // Course certificates. A row exists ONLY when a human has actually issued
+  // one, because the alternative — deriving it from "bought the course" — would
+  // hand a certificate to someone who paid and never did the work, which is
+  // what makes a certificate worth nothing. There is no completion signal in
+  // the product (homework is defended in the cohort chat), so issuance is a
+  // deliberate act, recorded here.
+  `CREATE TABLE IF NOT EXISTS certificates (
+    user_id BIGINT NOT NULL,
+    course TEXT NOT NULL,          -- 'fast' | 'flagship'
+    issued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, course)
+  )`,
   // One-time repair for the missing backfill above. granted_at was added to an
   // already-populated table, so every order confirmed BEFORE it existed reads
   // as "paid but never granted" — which is what let the reconciler re-credit
@@ -1504,6 +1516,61 @@ export async function usersToNudge(limit: number): Promise<NudgeTarget[]> {
     free_scenario_used: r.free_scenario_used === true,
     credits: Number(r.credits),
   }));
+}
+
+// ---- Course certificates ----
+
+export interface CertificateRow {
+  course: "fast" | "flagship";
+  title: string;
+  /** The user paid for this course (ledger purchase of its pack). */
+  owned: boolean;
+  /** A human has issued the certificate. Never inferred from payment. */
+  earned: boolean;
+  issuedAt: string | null;
+}
+
+const CERT_COURSES: Array<{ course: "fast" | "flagship"; pack: string; title: string }> = [
+  { course: "fast", pack: "course_fast", title: "Быстрый старт" },
+  { course: "flagship", pack: "course_flagship", title: "AI-контент под ключ" },
+];
+
+/**
+ * The user's certificate wall: what exists, what they own, what they earned.
+ *
+ * `owned` and `earned` are deliberately separate. Payment buys the course, not
+ * the certificate — inferring one from the other would issue a certificate to
+ * someone who bought access and never opened it, and a certificate anyone can
+ * buy is not a certificate. Issuance stays a human act (issueCertificate).
+ */
+export async function certificates(userId: number): Promise<CertificateRow[]> {
+  // Ownership is read from the ORDER that moved the credits: grantOrderCredits
+  // journals the amount into `ledger`, not the pack id, so the ledger alone
+  // cannot say WHICH product was bought.
+  const [issued, orders] = await Promise.all([
+    q("SELECT course, issued_at FROM certificates WHERE user_id = $1", [userId]),
+    q("SELECT pack_id FROM orders WHERE user_id = $1 AND granted_at IS NOT NULL", [userId]),
+  ]);
+  const owned = new Set(orders.map((r) => String(r.pack_id)));
+  return CERT_COURSES.map((c) => {
+    const row = issued.find((r) => String(r.course) === c.course);
+    return {
+      course: c.course,
+      title: c.title,
+      owned: owned.has(c.pack),
+      earned: Boolean(row),
+      issuedAt: row ? String(row.issued_at) : null,
+    };
+  });
+}
+
+/** Issue a certificate (admin). Idempotent — re-issuing is a no-op. */
+export async function issueCertificate(userId: number, course: "fast" | "flagship"): Promise<boolean> {
+  const won = await q(
+    "INSERT INTO certificates (user_id, course) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING course",
+    [userId, course],
+  );
+  return won.length > 0;
 }
 
 // ---- Achievements ----

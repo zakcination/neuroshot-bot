@@ -297,9 +297,20 @@ export function whatsappShareUrl(): string | null {
  * output is never silently reused as the next input (pending_file_id stays the
  * user's uploaded source). The handler resolves the result via getGeneration.
  */
-export function afterKeyboard(hasPhoto: boolean, animate?: { campId: string; genId: number }): InlineKeyboard {
+export function afterKeyboard(
+  hasPhoto: boolean,
+  animate?: { campId: string; genId: number },
+  /** Any non-campaign image result — offers the same "оживить" step via genv. */
+  genId?: number,
+): InlineKeyboard {
   const kb = new InlineKeyboard();
+  // A campaign result animates with its OWN curated motion prompt (camv); any
+  // other image result routes to the engine picker (genv). Previously only the
+  // first existed, so a preset portrait or a product card was a dead end — the
+  // user had to re-upload the delivered image, losing quality to Telegram
+  // recompression, to do the single most obvious next thing.
   if (animate) kb.text("🎬 Оживить в видео", `camv:${animate.campId}:${animate.genId}`).row();
+  else if (genId) kb.text("🎬 Оживить в видео", `genv:${genId}`).row();
   if (hasPhoto) kb.text("🎭 Ещё стиль", "menu:styles");
   kb.text("📋 Меню", "menu:main");
   const wa = whatsappShareUrl();
@@ -390,7 +401,13 @@ export async function runGeneration(
         const url = r.urls[0];
         costUsd = costUsdFor(model);
         requestId = r.requestId;
-        const after = afterKeyboard(isUpload, opts.animate && !isVideo ? { campId: opts.animate, genId } : undefined);
+        const after = afterKeyboard(
+          isUpload,
+          opts.animate && !isVideo ? { campId: opts.animate, genId } : undefined,
+          // Only still images can be animated, and only when we have a stored
+          // result to point at.
+          !isVideo && !opts.animate ? genId : undefined,
+        );
         // Every deliverable carries the mandatory AI-generated disclosure; the
         // promo CTA is added on top only when the user's watermark setting is on.
         if (isVideo) {
