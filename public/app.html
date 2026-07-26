@@ -318,18 +318,23 @@
        Built from CSS, not bitmaps: it has to look right at 44px on a shelf
        and at 200px spinning in the detail view, on any DPI, with no asset to
        download before the wall renders. Layers, outward in:
-         .bgcore  — the metal, an off-axis conic sweep so the highlight sits
-                    where a real bevelled surface would catch light;
-         .bgface  — the glyph, lifted on the Z axis so it parallaxes against
-                    the metal as the badge turns (this is what sells depth);
-         .bgholo  — the interference sheen, a wide diagonal band that travels.
+         .bgcore   — the metal rim, an off-axis conic sweep so the highlight
+                     sits where a real bevelled surface would catch light —
+                     colour is TIER (bronze/silver/gold);
+         .bgrim    — the bevel on that rim;
+         .bgaccent — the fill inside the rim — colour is GROUP, the wall's
+                     section (Apple Fitness "Close Your Rings" style: rim =
+                     prestige, fill = category, two independent signals);
+         .bgface   — the glyph, lifted on the Z axis so it parallaxes against
+                     rim + fill as the badge turns (this is what sells depth);
+         .bgholo   — the interference sheen, a wide diagonal band that travels.
        Locked badges keep the geometry and lose the colour, so the shelf reads
        as one set with holes in it rather than two unrelated groups. */
     .badge { position: relative; width: 100%; aspect-ratio: 1 / 1.12; transform-style: preserve-3d;
       filter: drop-shadow(0 6px 14px rgba(0,0,0,.45)); }
     /* A heater-shield silhouette, not a rounded square: the outline is what
        makes it read as an award at 44px, before any detail is legible. */
-    .bgcore, .bgrim, .bgholo { position: absolute; inset: 0;
+    .bgcore, .bgrim, .bgaccent, .bgholo { position: absolute; inset: 0;
       clip-path: polygon(50% 0%, 96% 9%, 100% 26%, 97% 62%, 76% 88%, 50% 100%, 24% 88%, 3% 62%, 0% 26%, 4% 9%); }
     .bgcore {
       background:
@@ -343,6 +348,11 @@
     .bgrim { border: 0; transform: translateZ(4px);
       background: linear-gradient(160deg, rgba(255,255,255,.55), transparent 26%, transparent 74%, rgba(0,0,0,.55));
       mix-blend-mode: overlay; }
+    /* Inset a touch so the rim stays visible all around — a ring of metal
+       framing a flat colour, not the colour running to the same edge as it. */
+    .bgaccent { inset: 9%; transform: translateZ(7px);
+      background: radial-gradient(120% 90% at 32% 22%, color-mix(in srgb, var(--grp) 70%, white 30%) 0%,
+        var(--grp) 55%, color-mix(in srgb, var(--grp) 75%, black 25%) 100%); }
     /* Both children share one grid cell so the artwork lands exactly on top of
        the glyph it replaces. */
     .bgface { position: absolute; inset: 0; display: grid; place-items: center; transform: translateZ(11px); }
@@ -361,9 +371,18 @@
     @keyframes holo { 0% { background-position: 140% 0; } 100% { background-position: -40% 0; } }
     .badge.locked { filter: grayscale(1) brightness(.5) contrast(.9); opacity: .55; }
     .badge.locked .bgholo { animation: none; opacity: .12; }
+    .badge.locked .bgaccent { opacity: .5; }
     .tier-bronze { --b1: #7a4a22; --b2: #e0a463; --b3: #4d2c12; }
     .tier-silver { --b1: #6f7887; --b2: #e6edf6; --b3: #444c58; }
     .tier-gold   { --b1: #8a6410; --b2: #ffdf85; --b3: #5a3f06; }
+    /* Group → fill colour, per docs/achievements.md's colour table. */
+    .grp-output      { --grp: #2fb7c3; }
+    .grp-formats     { --grp: #8b6bf0; }
+    .grp-exploration { --grp: #f2954b; }
+    .grp-engagement  { --grp: #4caf6d; }
+    .grp-support     { --grp: #e9536b; }
+    .grp-community   { --grp: #3e8ef7; }
+    .grp-progress    { --grp: #d8a73d; }
 
     /* Shelf tile beside the level card */
     .achtile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
@@ -373,6 +392,9 @@
     .achtile small { font-size: 10px; color: var(--muted); text-align: center; line-height: 1.3; }
 
     /* Wall + detail */
+    .achgroup + .achgroup { margin-top: 22px; }
+    .achgrouphead { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 14px; font-weight: 700; }
+    .achgrouphead i { width: 9px; height: 9px; border-radius: 50%; background: var(--grp); flex: none; }
     .achgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
     .achcell { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-align: center; }
     .achcell b { display: block; font-size: 11px; margin-top: 7px; font-weight: 600; }
@@ -1305,6 +1327,19 @@
     };
 
     /**
+     * Wall sections, Apple Fitness Awards style ("Close Your Rings", "Monthly
+     * Challenges"...) — order here is the order they render in. Labels and
+     * the group→colour mapping live in docs/achievements.md; this is just the
+     * client-side copy needed to render a header per section.
+     */
+    const GROUP_LABEL = {
+      output: "Работы", formats: "Форматы", exploration: "Исследование",
+      engagement: "Мастерство", support: "Поддержка", community: "Сообщество",
+      progress: "Уровень",
+    };
+    const GROUP_ORDER = ["output", "formats", "exploration", "engagement", "support", "community", "progress"];
+
+    /**
      * One badge. The <img> is attempted first and removes itself on 404, so a
      * shelf mixes produced artwork and glyph fallbacks without either looking
      * broken — the same graceful-degradation rule the preset cards use.
@@ -1317,9 +1352,10 @@
       // attribute, and an SVG carries quotes: the attribute terminates early
       // and the rest leaks into the page as text. Layering avoids the whole
       // class of problem, and a missing asset costs nothing.
-      return `<div class="badge tier-${a.tier}${a.earned ? "" : " locked"}">
+      return `<div class="badge tier-${a.tier} grp-${a.group || "output"}${a.earned ? "" : " locked"}">
         <div class="bgcore"></div>
         <div class="bgrim"></div>
+        <div class="bgaccent"></div>
         <div class="bgface">
           <svg viewBox="0 0 100 100" aria-hidden="true"><text x="50" y="52" text-anchor="middle" dominant-baseline="central">${glyph}</text></svg>
           <img src="/img/badge-${esc(a.id)}.png" alt="" onload="this.previousElementSibling.remove()" onerror="this.remove()" />
@@ -1340,19 +1376,34 @@
       </button>`;
     }
 
-    /** The wall. Locked badges stay visible — the holes are what give the
-     *  earned ones weight, and they double as a map of what the app can do. */
-    function viewAchievements() {
-      const all = (ME && ME.achievements) || [];
-      const earned = all.filter((a) => a.earned).length;
-      sheetBody.innerHTML = `<h3>Достижения</h3>
-        <div class="sub">Получено ${earned} из ${all.length}. Нажмите на значок, чтобы рассмотреть.</div>
-        <div class="achgrid" style="margin-top:14px">${all.map((a) => `
+    /** One section: a coloured dot + label, then that group's grid. Skips
+     *  groups with nothing in them so an id-typo doesn't render an empty
+     *  header — though the fixed 17 always fill every section today. */
+    function achGroupHtml(group, items) {
+      if (!items.length) return "";
+      return `<div class="achgroup grp-${esc(group)}">
+        <div class="achgrouphead"><i></i>${esc(GROUP_LABEL[group] || group)}</div>
+        <div class="achgrid">${items.map((a) => `
           <button class="achcell" data-ach="${esc(a.id)}">
             ${badgeHtml(a)}
             <b>${esc(a.title)}</b>
             <small>${a.earned ? "получено" : `${a.at}/${a.need}`}</small>
-          </button>`).join("")}</div>`;
+          </button>`).join("")}</div>
+      </div>`;
+    }
+
+    /** The wall. Locked badges stay visible — the holes are what give the
+     *  earned ones weight, and they double as a map of what the app can do.
+     *  Grouped into sections (Apple Fitness Awards style) rather than one
+     *  flat grid, so a 17-badge set reads as a handful of small, scannable
+     *  categories instead of a wall of unrelated icons. */
+    function viewAchievements() {
+      const all = (ME && ME.achievements) || [];
+      const earned = all.filter((a) => a.earned).length;
+      const groups = GROUP_ORDER.map((g) => achGroupHtml(g, all.filter((a) => a.group === g))).join("");
+      sheetBody.innerHTML = `<h3>Достижения</h3>
+        <div class="sub">Получено ${earned} из ${all.length}. Нажмите на значок, чтобы рассмотреть.</div>
+        ${groups}`;
       sheetBody.querySelectorAll("[data-ach]").forEach((b) => (b.onclick = () => viewBadge(b.dataset.ach)));
       openSheet();
     }
