@@ -38,7 +38,18 @@ const save = async (name: string, url: string) => {
 // ---- 1. subjects, through the registry's text_to_image entry --------------
 const t2i = MODELS.text_to_image;
 const subjectUrls: Record<string, string> = {};
+const { access } = await import("node:fs/promises");
 for (const s of SUBJECTS) {
+  // Re-use a subject already on disk: a verification pass should pay only for
+  // what it is verifying.
+  const cached = `${OUT}/subject-${s.id}.jpg`;
+  try {
+    await access(cached);
+    const up = await fal.storage.upload(new Blob([await (await import("node:fs/promises")).readFile(cached)]));
+    subjectUrls[s.id] = up;
+    console.log("subject", s.id, "cached");
+    continue;
+  } catch { /* not cached — render it */ }
   const r = await fal.subscribe(t2i.falEndpoint, { input: t2i.input(s.prompt, undefined, {}) });
   const url = (r.data as { images?: Array<{ url: string }> }).images?.[0]?.url;
   if (!url) { console.error("SUBJECT FAIL", s.id); continue; }
@@ -51,11 +62,6 @@ for (const s of SUBJECTS) {
 // cinematic on ALL subjects (it was dead on all four); the others only where
 // their defect showed, so the run stays cheap and answers real questions.
 const JOBS: Array<{ preset: string; subject: string }> = [
-  { preset: "cinematic", subject: "man" },
-  { preset: "cinematic", subject: "woman" },
-  { preset: "cinematic", subject: "group" },
-  { preset: "cinematic", subject: "child" },
-  { preset: "fashion", subject: "group" },      // fake magazine masthead
   { preset: "headshot", subject: "woman" },      // selfie arm + phone survive
   { preset: "bento_birthday", subject: "child" },// child replaced by an adult
 ];
@@ -67,7 +73,7 @@ for (const j of JOBS) {
   const m = presetModel(p);
   try {
     const r = await fal.subscribe(m.falEndpoint, {
-      input: m.input(p.prompt, src, { aspect: p.aspect, styleRef: p.styleRef }),
+      input: m.input(p.prompt, src, {}),
     });
     const url = (r.data as { images?: Array<{ url: string }> }).images?.[0]?.url;
     if (!url) { console.error("NO IMAGE", j.preset, j.subject); continue; }

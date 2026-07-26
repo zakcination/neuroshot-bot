@@ -2086,10 +2086,19 @@ await step("bento birthday: pins the typography engine and holds two ages of one
   assert.match(p.prompt, /HAPPY BIRTHDAY/);
   assert.match(p.prompt, /correctly spelled and fully readable/);
 
-  // Two likenesses of ONE person share the frame: an adult behind the cake and
-  // a printed childhood cutout on it. The prompt must keep them apart, or the
-  // model either de-ages the real subject or adds a real child as a guest.
-  assert.match(p.prompt, /as an ADULT with their real grown-up face/);
+  // Two likenesses of ONE person share the frame: the birthday person behind
+  // the cake and a printed younger cutout on it. The prompt must keep them
+  // apart, or the model adds a real child as a guest.
+  //
+  // The subject keeps THEIR OWN age. The previous wording — "as an ADULT with
+  // their real grown-up face" — was the defect: a seven-year-old who used this
+  // look came back as a teenager, because the prompt was ordering the model to
+  // replace the hero rather than celebrate them.
+  assert.match(p.prompt, /AT THEIR OWN AGE/);
+  assert.match(p.prompt, /must NOT be aged up/);
+  assert.doesNotMatch(p.prompt, /as an ADULT with their real grown-up face/);
+  // And the cutout must be named a PROP, so it is never read as the subject.
+  assert.match(p.prompt, /this cutout is a PROP/);
   assert.match(p.prompt, /FLAT PRINTED PHOTO CUTOUT/);
   assert.match(p.prompt, /not a real child and not a second guest/);
   // NO_CLONES ("show each person exactly once") would forbid exactly the
