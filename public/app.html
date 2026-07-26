@@ -268,6 +268,29 @@
     /* Progression card — the mobile-game "level ring + XP bar" read. The ring is
        a conic-gradient sweep driven by --pct, so the fill needs no extra markup
        and no SVG. */
+    /* Header level chip: level number + live XP, deliberately narrow so it sits
+       beside the balance without competing with it. The XP count is small and
+       sits ABOVE the bar — the bar answers "how close am I?" at a glance, the
+       number is there for whoever wants the detail. Hidden entirely while the
+       ladder is unconfigured: an empty meter in the header reads as broken. */
+    .lvlmini { display: inline-flex; align-items: center; gap: 7px; padding: 4px 9px 4px 4px;
+      border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+      cursor: pointer; font: inherit; color: inherit; }
+    .lvlmini .lvlnum { display: grid; place-items: center; width: 24px; height: 24px; flex: 0 0 24px;
+      border-radius: 999px; font-size: 12px; font-weight: 800; color: #fff;
+      background: linear-gradient(135deg, var(--violet), var(--magenta)); }
+    /* Fixed width, not min-width: otherwise the chip resizes as the XP number
+       grows a digit, and a header element that shifts under you reads as a
+       glitch. 58px holds "12 400 XP" at this size. */
+    .lvlmini .lvlmb { display: flex; flex-direction: column; gap: 3px; width: 58px; }
+    .lvlmini small { font-size: 9px; line-height: 1; letter-spacing: .02em; color: var(--muted); white-space: nowrap; }
+    .lvlmini .lvlmbar { height: 4px; border-radius: 999px; background: rgba(255,255,255,.1); overflow: hidden; }
+    .lvlmini .lvlmbar i { display: block; height: 100%; border-radius: 999px;
+      background: linear-gradient(90deg, var(--violet), var(--magenta)); transition: width .6s ease; }
+    /* A level-up is the one moment worth interrupting for: the chip pulses once
+       when the number changes, so progress is felt and not merely displayed. */
+    @keyframes lvlpop { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
+    .lvlmini.levelup .lvlnum { animation: lvlpop .6s ease; }
     .lvlcard { display: flex; align-items: center; gap: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
     .lvlcard.off { opacity: .75; }
     .lvlring {
@@ -1039,6 +1062,40 @@
      *  • max level — a full bar, no phantom "0 to next";
      *  • normal — level ring, XP counter, and the exact XP left to the next.
      */
+    /**
+     * The header chip. Returns "" while the ladder is unconfigured (progress
+     * .active === false) so the header simply doesn't carry it — the Профиль
+     * card already explains the "скоро" state in words, and a stuck 0% meter in
+     * permanent view would say the opposite.
+     */
+    function levelMiniHtml(p) {
+      if (!p || !p.active) return "";
+      const pct = p.nextAt == null ? 100 : Math.round((p.into / p.span) * 100);
+      const title = p.nextAt == null
+        ? `Максимальный уровень · ${p.xp} XP`
+        : `Уровень ${p.level} · ещё ${p.nextAt - p.xp} XP до ${p.level + 1}`;
+      return `<button class="lvlmini" id="lvlPill" title="${esc(title)}" aria-label="${esc(title)}">
+        <span class="lvlnum">${p.level}</span>
+        <span class="lvlmb"><small>${p.xp} XP</small><span class="lvlmbar"><i style="width:${pct}%"></i></span></span>
+      </button>`;
+    }
+
+    /** Repaint the header chip in place after XP moves, without a full re-render. */
+    function setLevelMini(p) {
+      const host = document.getElementById("lvlHost");
+      if (!host) return;
+      const before = host.querySelector(".lvlnum")?.textContent;
+      host.innerHTML = levelMiniHtml(p);
+      const pill = host.querySelector(".lvlmini");
+      if (!pill) return;
+      // Only celebrate a real level-up, never the first paint.
+      if (before != null && before !== String(p.level)) {
+        pill.classList.add("levelup");
+        setTimeout(() => pill.classList.remove("levelup"), 700);
+      }
+      pill.onclick = () => showPage("profile");
+    }
+
     function levelCardHtml(p) {
       if (!p || !p.active) {
         return `<div class="lvlcard off">
@@ -2403,6 +2460,9 @@
       if (s) s.innerHTML = statsHtml(data.dashboard);
       const rl = document.getElementById("refList");
       if (rl) rl.innerHTML = referralListHtml(data.referrals);
+      setLevelMini(data.progress);
+      const lc = document.getElementById("lvlCardHost");
+      if (lc) lc.innerHTML = levelCardHtml(data.progress);
       renderRoadmap(data);
     }
     function statsHtml(dash) {
@@ -2592,6 +2652,7 @@
             <span class="nm">${esc(d.user.first_name || "друг")}</span>
           </div>
           <span class="pillrow">
+            <span id="lvlHost">${levelMiniHtml(d.progress)}</span>
             <button class="pill topup" id="balancePill"><span class="plus">+</span><img class="appicon" src="/img/ic-patron.png" alt="" /> <span id="pillN">${dash.credits}</span></button>
             <span class="pill jobs" id="jobsPill" style="display:none;cursor:pointer"><img class="appicon" src="/img/ic-hourglass.png" alt="" /> <span id="jobsN">0</span></span>
           </span>
@@ -2659,7 +2720,7 @@
 
           <section class="reveal">
             <div class="sec-h"><h2>Уровень</h2></div>
-            ${levelCardHtml(d.progress)}
+            <div id="lvlCardHost">${levelCardHtml(d.progress)}</div>
           </section>
 
           <section class="reveal">
@@ -2818,6 +2879,10 @@
         if (job) { viewedJob = job.id; viewProgress(job.isVideo, job.id); }
       };
       document.getElementById("balancePill").onclick = () => showPage("buy");
+      // The chip is painted inline on first render, so bind it here; later
+      // repaints (setLevelMini) rebind their own.
+      const lvlPill0 = document.getElementById("lvlPill");
+      if (lvlPill0) lvlPill0.onclick = () => showPage("profile");
       document.querySelectorAll("[data-buy]").forEach((b) => (b.onclick = () => buyPack(b.dataset.buy, false)));
       document.querySelectorAll("[data-studio]").forEach((a) => (a.onclick = () => studio(a.dataset.studio)));
       document.querySelectorAll("[data-camp-open]").forEach((a) => (a.onclick = () => { st.tab = "scenes"; openSheet(); viewCampaign(a.dataset.campOpen); }));
