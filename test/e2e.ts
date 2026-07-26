@@ -440,6 +440,23 @@ await step("curated prompts reach the provider whole — no silent decapitation"
     "Keep the SAME NUMBER of people",
     "not a real child and not a second guest",
   ];
+
+  // A look that shows the subject more than once by design must NOT also carry
+  // the headcount rule — the brief asks for repeats and the guard forbids them,
+  // and a prompt that argues with itself gets resolved by the model, not by us.
+  // photobooth_bw is 1800 chars, so it never actually received the rule while
+  // curated prompts were truncated: un-cutting the tail is what made this live.
+  const MULTIPLIES_SUBJECT = ["pixar_me", "mini_squad", "photobooth_bw"];
+  for (const id of MULTIPLIES_SUBJECT) {
+    const preset = PRESETS.find((p) => p.id === id);
+    assert.ok(preset, `${id} is gone — update this list or the look it guards`);
+    assert.doesNotMatch(
+      preset.prompt,
+      /Keep the SAME NUMBER of people/,
+      `${id} repeats the subject on purpose and must not also demand the source headcount`,
+    );
+    assert.match(preset.prompt, /Keep the face and identity of EVERY person/, `${id} lost its identity lock`);
+  }
   for (const c of all) {
     const flat = c.prompt.replace(/\s+/g, " ").trim();
     const sent = craftPrompt(c.kind, c.prompt, true);

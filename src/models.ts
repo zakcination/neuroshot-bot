@@ -706,6 +706,30 @@ const KEEP_ID =
   "Keep the SAME NUMBER of people as the source photo: if it shows two or more people, " +
   "all of them appear together in the result, each with their own real face. " +
   "Everyone in the photo stays in the shot.";
+/**
+ * Identity lock for looks that show the subject MORE THAN ONCE by design —
+ * a photobooth strip, a squad of chibi mini-selves, a Pixar figure standing next
+ * to its real counterpart.
+ *
+ * KEEP_ID's "SAME NUMBER of people" is a headcount rule aimed at the common
+ * failure of quietly dropping someone from a group shot. On these looks it is a
+ * flat contradiction of the brief — the brief asks for repeats, the guard
+ * forbids them — and a prompt that argues with itself is resolved by the model,
+ * not by us. So the identity half is kept verbatim and the headcount half is
+ * replaced by what actually needs protecting here: nobody may be dropped, and
+ * every repeat must be the SAME person rather than an invented stranger.
+ *
+ * This mattered the moment curated prompts stopped being truncated: photobooth_bw
+ * is 1800 characters, so it had never actually received KEEP_ID in production —
+ * un-cutting the tail would have handed a three-frame strip a one-frame rule.
+ * mini_squad and pixar_me are short enough that they have been carrying the
+ * contradiction all along.
+ */
+const KEEP_ID_MULTI =
+  "Keep the face and identity of EVERY person in the photo exactly as they are. " +
+  "Nobody from the source photo may be dropped: if it shows two or more people, all of them " +
+  "appear in the result. Where this scene repeats a person, every repeat is that SAME person " +
+  "with their own real face — never a different or invented one.";
 const KEEP_KID = "Keep the child's face and identity exactly as in the photo.";
 /**
  * Composition guard for kid+character scenes: models love to push the real
@@ -933,7 +957,7 @@ export const PRESETS: Preset[] = [
       "Create a Pixar-style 3D mini-version of the person standing next to their realistic self on a minimalist " +
       "light-gray studio background with soft shadows. One figure stays a realistic human, the other is a cute Pixar " +
       "mini-character with a large head and small body, standing in front and closer to the camera; the realistic " +
-      `person rests a hand on the mini-character's head, both looking at the camera, playful modern aesthetic. ${KEEP_ID}`,
+      `person rests a hand on the mini-character's head, both looking at the camera, playful modern aesthetic. ${KEEP_ID_MULTI}`,
   },
   // Original, identity-locked looks written in NeuroShot's own voice, filling the
   // two highest-recurrence gaps the VeoSee research flagged (collectible figurine,
@@ -1036,7 +1060,7 @@ export const PRESETS: Preset[] = [
       "background are all pure greyscale. Only the table and lamplight AROUND the printed strip carry warm " +
       "colour. The finished paper strip lies at a gentle diagonal TILT on a warm " +
       "wooden table beside a coffee cup, soft lamplight and a shallow depth of field around it — a cosy, " +
-      `lived-in keepsake photographed from above. Tack-sharp face in every frame. ${KEEP_ID}`,
+      `lived-in keepsake photographed from above. Tack-sharp face in every frame. ${KEEP_ID_MULTI}`,
   },
   {
     id: "paper_doll",
@@ -1106,7 +1130,7 @@ export const PRESETS: Preset[] = [
       "Surround the person with several small chibi-style mini versions of themselves — big heads, expressive faces " +
       "— each doing a different playful activity: one sitting on their head, one cheering with arms raised, one " +
       "lifting a dumbbell, one drinking from a shaker bottle, one lying down on a phone, one climbing up their leg, " +
-      `a clean playful background, tack-sharp face. ${KEEP_ID}`,
+      `a clean playful background, tack-sharp face. ${KEEP_ID_MULTI}`,
   },
   {
     id: "sketch_journal",

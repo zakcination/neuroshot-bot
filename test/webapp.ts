@@ -2127,7 +2127,17 @@ await step("prompt library: a group photo keeps everyone — no silent crop to o
     // Kid-focused looks are deliberately single-subject (KEEP_KID + KID_FOCUS)
     // and are exempt by design, not by oversight.
     if (!text.includes("Keep the face and identity of EVERY person")) continue;
-    assert.match(text, /SAME NUMBER of people/, `${where} lost the headcount rule`);
+    // The RULE is "nobody gets dropped", and it has two phrasings. Looks that
+    // show the subject once take the headcount form ("SAME NUMBER of people").
+    // Looks that repeat the subject on purpose — a photobooth strip, a squad of
+    // mini-selves — take the no-drop form instead, because demanding the source
+    // headcount there contradicts the brief itself (see KEEP_ID_MULTI). Either
+    // satisfies the rule; neither is optional.
+    assert.match(
+      text,
+      /SAME NUMBER of people|Nobody from the source photo may be dropped/,
+      `${where} lost the no-drop rule`,
+    );
     checked++;
   }
   assert.ok(checked > 20, `expected the group rule on most looks, saw ${checked}`);
