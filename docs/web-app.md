@@ -113,12 +113,21 @@ Ordered by leverage. None of these exist in the incumbent bots today.
    one managed job with progress + per-item status. Turns a toy into a tool.
 5. **Team / agency workspaces** — a shared credit pool, member roles, per-member
    usage. The B2B management layer that unlocks agency revenue.
-6. **Affiliate console** — live referral earnings, sub-affiliates, payout
-   management (the incumbents pay referrals but expose no console).
+6. **Affiliate console** — *half shipped 2026-07-26.* The REFERRAL half is in
+   the app: the Друзья page shows what invitees actually paid us (read from
+   granted orders) against what was credited, plus withdrawable / requested /
+   already-paid-out, and `/refs` gives the owner the same table per person. The
+   PARTNER half — multiple codes, per-code funnels, and the cash-out request —
+   still lives only in the bot and has no route in the app at all. That is the
+   cheapest remaining item on this list precisely because the referral page
+   already carries the shape: partner adds a code list and a withdrawal flow on
+   top of it, not a second dashboard. Sub-affiliates remain unbuilt.
 7. **Scheduled auto-posting** — push finished content to the seller's own TG
    channel / marketplace on a calendar.
 8. **Spend & ROI analytics** — cost-per-listing, forecast, model mix — for power
-   sellers deciding where credits go.
+   sellers deciding where credits go. *(Today the app shows only total spend;
+   the per-model cost data exists — `generations.cost_usd` — but is surfaced
+   solely to the owner via `/dash`, never to the seller.)*
 9. **API keys / integrations** — wire NeuroShot into a seller's Ozon/WB listing
    flow; makes the product infrastructure, not a novelty.
 10. **White-label / reseller mode** — agencies run NeuroShot under their own
