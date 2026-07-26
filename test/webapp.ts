@@ -3082,6 +3082,11 @@ await step("release notes: shown once, never to a newcomer, and only ever moving
   await getOrCreateUser(old, "old_user", null, 0);
   await getOrCreateUser(fresh, "new_user", null, 0);
   await query("UPDATE users SET created_at = TIMESTAMPTZ '2026-01-01' WHERE id = $1", [old]);
+  // Pin the newcomer to the newest note's own DATE rather than leaning on "now":
+  // that is the case which actually bites, because a same-day id may carry a
+  // "-2" suffix and "2026-07-26" sorts BELOW "2026-07-26-2". Left as "now" this
+  // assertion only exercises the boundary on the day a note ships.
+  await query("UPDATE users SET created_at = $2::timestamptz WHERE id = $1", [fresh, newest.slice(0, 10)]);
 
   const oldMe = (await (await fetch(`${base}/api/me`, {
     headers: { Authorization: `tma ${signInitData({ id: old, username: "old_user", first_name: "O" })}` },

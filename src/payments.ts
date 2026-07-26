@@ -47,18 +47,38 @@ export function packsKeyboard(): InlineKeyboard {
  * The pack anchored on the paywall: the combo offer while it's live (the tripwire),
  * else the cheapest ladder pack once the sale ends — so an expired offer never
  * anchors the paywall.
+ *
+ * The anchor must actually CLOSE THE GAP the user is standing in front of. The
+ * combo is 36 🔫 while the video models cost 42 / 61 / 76 🔫, so anchoring it
+ * unconditionally promised a result the pack cannot buy: the buyer pays 1000 ₸,
+ * lands back on the same paywall, and asks for a refund — with an ad click burnt
+ * on the way in. So we size against the SHORTFALL (`model.credits` minus what
+ * they already hold), not against the sticker price, and step up the ladder only
+ * as far as we have to. Every campaign video scene is affected, which is exactly
+ * what paid traffic would be pointed at.
  */
-function entryPack(): Pack {
+function entryPack(model?: ModelSpec, credits = 0): Pack {
+  const shortfall = model ? Math.max(0, model.credits - credits) : 0;
+  const covers = (p: Pack): boolean => p.credits >= shortfall;
   if (comboActive()) {
-    const offer = PACKS.find((p) => p.offer);
+    const offer = PACKS.find((p) => p.offer && covers(p));
     if (offer) return offer;
   }
-  return PACKS.find((p) => !p.offer) ?? PACKS[0];
+  // Ladder packs only, in ascending price (course tiers are sold via /course and
+  // must never be anchored on a generation paywall).
+  const ladder = PACKS.filter((p) => !p.offer && !p.course);
+  return ladder.find(covers) ?? ladder[ladder.length - 1] ?? PACKS[0];
 }
 
-/** How many of `model`'s results a pack buys (≥1, for the "N результатов" framing). */
-function resultsPerPack(pack: Pack, model: ModelSpec): number {
-  return Math.max(1, Math.floor(pack.credits / model.credits));
+/**
+ * How many of `model`'s results the buyer can run ONCE THIS PACK LANDS — their
+ * remaining balance counts too, which is the number they actually experience.
+ * No clamp: a floor of 1 is what made the old copy lie. `entryPack` already
+ * guarantees ≥1 by construction (the top ladder pack is an order of magnitude
+ * above the priciest model), so an honest count is also always a positive one.
+ */
+function resultsAfterPack(pack: Pack, model: ModelSpec, credits: number): number {
+  return Math.floor((credits + pack.credits) / model.credits);
 }
 
 /** Short pack name for the CTA (strip the 🔥 and the ": …" tail). */
@@ -74,8 +94,8 @@ function packShort(pack: Pack): string {
  * countdown the Mini App shows, so urgency lands at the paywall moment.
  */
 export function paywallText(model: ModelSpec, credits: number): string {
-  const pack = entryPack();
-  const n = resultsPerPack(pack, model);
+  const pack = entryPack(model, credits);
+  const n = resultsAfterPack(pack, model, credits);
   const left = pack.offer && comboActive() ? `\n⏳ <b>Осталось: ${comboLeftText()}</b> — успейте по акции!` : "";
   return (
     `✨ <b>Ещё один шаг до результата!</b>\n\n` +
@@ -91,8 +111,9 @@ export function paywallText(model: ModelSpec, credits: number): string {
  * for someone who hasn't even collected their free patrons yet.
  */
 export function paywallKeyboard(model: ModelSpec, user?: UserRow): InlineKeyboard {
-  const pack = entryPack();
-  const n = resultsPerPack(pack, model);
+  const credits = user?.credits ?? 0;
+  const pack = entryPack(model, credits);
+  const n = resultsAfterPack(pack, model, credits);
   const kb = new InlineKeyboard();
   const pending = user ? user.pendingSignupCredits + user.pendingJoinBonus : 0;
   if (user && !user.welcomeBonusClaimed && pending > 0) {

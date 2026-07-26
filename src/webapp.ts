@@ -1055,9 +1055,13 @@ export async function deleteAccountResponse(
 function isNewAccount(createdAt: string | null): boolean {
   const newest = latestReleaseId();
   if (!newest || !createdAt) return true;
-  // Note ids are YYYY-MM-DD; comparing the account's creation DATE against it
-  // keeps this a string compare with no timezone arithmetic to get wrong.
-  return String(createdAt).slice(0, 10) >= newest;
+  // Note ids are YYYY-MM-DD[-n] (see ReleaseNote) — a second release on the same
+  // day carries a suffix. Compare DATE PREFIX to DATE PREFIX: "2026-07-26" is
+  // lexicographically BELOW "2026-07-26-2", so comparing against the full id
+  // would class an account registered that very day as older than the note and
+  // hand it the whole backlog it was never present for. String compare
+  // throughout, so there is no timezone arithmetic to get wrong.
+  return String(createdAt).slice(0, 10) >= newest.slice(0, 10);
 }
 
 /**

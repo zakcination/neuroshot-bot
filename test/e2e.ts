@@ -410,6 +410,45 @@ await step("insufficient 🔫: animate (25) with 7 shows the sales-page paywall,
   assert.equal(await credits(alice.id), 7);
 });
 
+await step("paywall never anchors a pack that cannot cover the result it promises", async () => {
+  // Regression: the anchor used to be the combo unconditionally, and the result
+  // count was clamped with Math.max(1, …). The combo is 36 🔫 while the video
+  // models cost 42 / 61 / 76 🔫 — so the paywall said "≈1 такой результат" for a
+  // pack that buys zero of them. The buyer paid, landed back on the same paywall
+  // and asked for a refund. Every campaign video scene routed through this.
+  const { paywallText, paywallKeyboard } = await import("../src/payments.js");
+  const { MODELS, PACKS } = await import("../src/models.js");
+  const packByKzt = new Map(PACKS.map((p) => [p.kzt, p]));
+  for (const model of Object.values(MODELS)) {
+    for (const held of [0, 1, model.credits - 1]) {
+      const text = paywallText(model, held);
+      // The anchored pack is the one the dominant CTA buys.
+      const kb = paywallKeyboard(model) as { inline_keyboard: Array<Array<{ callback_data?: string }>> };
+      const buy = kb.inline_keyboard.flat().find((b) => b.callback_data?.startsWith("buy:"));
+      const pack = PACKS.find((p) => `buy:${p.id}` === buy?.callback_data);
+      assert.ok(pack, `no entry-pack CTA for ${model.key}`);
+      // A course tier must never be anchored on a generation paywall.
+      assert.ok(!pack.course, `${model.key} anchored the course pack ${pack.id}`);
+      // THE INVARIANT: balance + pack must actually buy at least one of it.
+      assert.ok(
+        pack.credits >= model.credits,
+        `${model.key} (${model.credits} 🔫) anchored ${pack.id} (${pack.credits} 🔫) — cannot cover one result`,
+      );
+      // …and the number printed in the copy has to be the true one.
+      const price = Number(/за (\d+) ₸/.exec(text)?.[1]);
+      const shown = Number(/<b>≈?\s*(\d+)/.exec(text)?.[1] ?? /(\d+)\s*результат/.exec(text)?.[1]);
+      const anchored = packByKzt.get(price);
+      assert.ok(anchored, `paywall price ${price} ₸ matches no pack for ${model.key}`);
+      assert.equal(
+        shown,
+        Math.floor((held + anchored.credits) / model.credits),
+        `${model.key} with ${held} 🔫: copy overstates what ${anchored.id} buys`,
+      );
+      assert.ok(shown >= 1, `${model.key} with ${held} 🔫: paywall promises ${shown} results`);
+    }
+  }
+});
+
 await step("purchase: /buy → Kaspi order → admin confirm credits the pack", async () => {
   await sendText(alice, "/buy");
   const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
