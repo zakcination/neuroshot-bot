@@ -301,6 +301,11 @@ const SCHEMA: string[] = [
   // nothing on the row says who believed it. Every pending→paid transition
   // stamps it; NULL only on rows predating this column.
   `ALTER TABLE orders ADD COLUMN IF NOT EXISTS approved_via TEXT`,
+  // The newest release note this user has read. NULL means "has never seen
+  // any" — but a brand-new account must not be greeted with a history of
+  // changes it never lived through, so the read side stamps newcomers as
+  // caught-up rather than showing them the backlog (see markReleaseSeen).
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS seen_release TEXT`,
   // Every proactive message the bot sends, and every personal offer redeemed.
   // One table because these are the same question asked twice: "what have we
   // already sent this person, and did it lead anywhere?" The primary key makes
@@ -1516,6 +1521,34 @@ export async function usersToNudge(limit: number): Promise<NudgeTarget[]> {
     free_scenario_used: r.free_scenario_used === true,
     credits: Number(r.credits),
   }));
+}
+
+/** Mark the user as caught up with release notes up to `id`. */
+export async function markReleaseSeen(userId: number, id: string): Promise<void> {
+  // Only ever moves forward: an out-of-order call (two tabs, a stale client)
+  // must not un-see a newer note.
+  await q(
+    "UPDATE users SET seen_release = $2 WHERE id = $1 AND (seen_release IS NULL OR seen_release < $2)",
+    [userId, id],
+  );
+}
+
+/**
+ * The newest note this user has read, plus when the account was created.
+ * Both in one read because the caller needs the second only to decide whether
+ * a NULL first means "hasn't read the backlog" or "wasn't here for it".
+ */
+export async function releaseState(userId: number): Promise<{ seen: string | null; createdAt: string | null }> {
+  const rows = await q("SELECT seen_release, created_at FROM users WHERE id = $1", [userId]);
+  return {
+    seen: rows[0]?.seen_release == null ? null : String(rows[0].seen_release),
+    // Normalised to ISO, NOT String(...): the driver hands back a Date, and
+    // String(new Date()) is "Wed Jan 01 2026 …" — comparing the first ten
+    // characters of that against a YYYY-MM-DD note id makes every existing
+    // account look newer than every note, silently hiding release notes from
+    // exactly the people they are written for.
+    createdAt: rows[0]?.created_at == null ? null : new Date(rows[0].created_at as string).toISOString(),
+  };
 }
 
 // ---- Course certificates ----

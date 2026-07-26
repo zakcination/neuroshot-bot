@@ -723,9 +723,23 @@ export const PRESETS: Preset[] = [
     id: "headshot",
     label: "💼 Бизнес-портрет",
     category: "photo",
+    // "Restyle" left the POSE alone, so a selfie went in and a selfie in a
+    // blazer came out — arm still raised, phone still in frame. A corporate
+    // headshot is defined as much by its posture as by its wardrobe, and most
+    // of what people upload is a selfie, so the restaging has to be explicit:
+    // drop the arm, remove the device, square the shoulders, put the camera on
+    // a tripod at eye level. Naming what must LEAVE the frame is what makes
+    // this work — an edit model keeps whatever you don't ask it to remove.
     prompt:
-      "Restyle into a professional corporate headshot: a tailored suit, soft studio key light with an 85mm lens " +
-      `look, clean neutral-gray backdrop, shallow depth of field, a confident expression, tack-sharp face. ${KEEP_ID}`,
+      "Restage as a professional corporate headshot taken by a photographer — NOT a selfie.\n" +
+      "POSE: both arms DOWN and relaxed at the sides or lightly crossed; shoulders squared to the camera and " +
+      "slightly turned; chin level; a calm, confident expression.\n" +
+      "REMOVE from the frame entirely: any raised arm, any hand near the face, any phone, camera or held object, " +
+      "and any selfie framing or wide-angle distortion. If the source is a selfie, rebuild the shot as if a " +
+      "photographer stood two metres away with the camera on a tripod at eye level.\n" +
+      "WARDROBE: a well-fitted tailored jacket over a plain top, no logos.\n" +
+      "LIGHT: soft studio key with gentle fill, clean neutral-gray seamless backdrop, 85mm lens look, shallow " +
+      `depth of field, tack-sharp face. ${KEEP_ID}`,
   },
   {
     id: "fashion",
@@ -873,7 +887,14 @@ export const PRESETS: Preset[] = [
     aspect: "3:4",
     prompt:
       "A warm night-time birthday moment, shot as a candid phone photo at a party. THE PERSON FROM THE PHOTO, " +
-      "as an ADULT with their real grown-up face, stands behind a small round minimalist bento cake, lit almost " +
+      // "as an ADULT with their real grown-up face" aged up every child who
+      // used this look — it told the model to replace the hero rather than
+      // celebrate them. The birthday person is whoever is in the photo, at the
+      // age they are in it; only the paper cutout is younger, and it is a
+      // PROP, so it must be described as one and never as the subject.
+      "AT THEIR OWN AGE exactly as in the source photo — if the photo is of a child, the birthday person is that " +
+      "child and must NOT be aged up; if of an adult, they stay an adult — " +
+      "stands behind a small round minimalist bento cake, lit almost " +
       "entirely by its candle flame. They wear a striped cone party hat with a paper pom-pom on top, elastic " +
       "under the chin, and they are laughing or grinning, caught mid-moment as friends sing to them; a couple of " +
       "out-of-focus hands and faces of friends edge into the frame in the dark.\n" +
@@ -882,7 +903,9 @@ export const PRESETS: Preset[] = [
       "\"HAPPY\" above and \"BIRTHDAY\" below. Exactly one slim lit candle. The icing text must be clean, " +
       "correctly spelled and fully readable.\n" +
       "THE CAKE TOPPER — standing upright out of the top of the cake is a FLAT PRINTED PHOTO CUTOUT on paper, " +
-      "roughly the height of the cake itself: a vintage childhood portrait of THAT SAME PERSON as a small child, " +
+      "roughly the height of the cake itself: a vintage baby-or-toddler portrait of THAT SAME PERSON at a much " +
+      "YOUNGER age than they are in the source photo — this cutout is a PROP on the cake, never the birthday " +
+      "person themselves, " +
       "same features, same eyes, in an old-fashioned little suit, with a tiny red-and-white striped paper party " +
       "hat sitting on the cutout's head. It is a piece of printed card stuck into the icing, with a visible cut " +
       "paper edge — not a real child and not a second guest at the party.\n" +
