@@ -1508,8 +1508,22 @@ export async function usersToNudge(limit: number): Promise<NudgeTarget[]> {
 
 // ---- Achievements ----
 
+/** Section on the wall (Apple Fitness's "Close Your Rings" / "Monthly
+ *  Challenges" grouping) — independent of tier: group picks the fill colour
+ *  (client-side GROUP_COLOR), tier picks the frame metal. Order here is the
+ *  order groups render in on the wall. */
+export type AchievementGroup =
+  | "output"
+  | "formats"
+  | "exploration"
+  | "engagement"
+  | "support"
+  | "community"
+  | "progress";
+
 export interface Achievement {
   id: string;
+  group: AchievementGroup;
   title: string;
   hint: string; // what earns it — shown while locked, so the set reads as a map
   tier: "bronze" | "silver" | "gold";
@@ -1583,31 +1597,32 @@ export async function achievements(userId: number): Promise<Achievement[]> {
 
   const make = (
     id: string,
+    group: AchievementGroup,
     title: string,
     hint: string,
     tier: Achievement["tier"],
     at: number,
     need: number,
-  ): Achievement => ({ id, title, hint, tier, at: Math.min(at, need), need, earned: at >= need });
+  ): Achievement => ({ id, group, title, hint, tier, at: Math.min(at, need), need, earned: at >= need });
 
   return [
-    make("first_render", "Первый кадр", "Создайте первую работу", "bronze", total, 1),
-    make("ten_renders", "Десять работ", "Создайте 10 работ", "silver", total, 10),
-    make("fifty_renders", "Полсотни", "Создайте 50 работ", "gold", total, 50),
-    make("first_video", "Оживший кадр", "Сделайте первое видео", "silver", videos, 1),
-    make("first_text", "Из слов", "Нарисуйте картинку по описанию", "bronze", texts, 1),
-    make("explorer", "Исследователь", "Попробуйте 3 разные модели", "silver", models.size, 3),
-    make("polymath", "Все инструменты", "Попробуйте 10 разных моделей", "gold", models.size, 10),
-    make("stylist", "Стилист", "Попробуйте 5 разных стилей", "silver", presets.size, 5),
-    make("scenarist", "Сценарист", "Соберите сюжет по сценарию", "silver", scenarios, 1),
-    make("uploader", "Своё фото", "Загрузите собственное фото", "bronze", ev("upload"), 1),
-    make("wordsmith", "Редактор", "Улучшите промпт", "bronze", ev("enhance"), 1),
-    make("sharer", "Показал миру", "Поделитесь работой", "bronze", ev("share"), 1),
-    make("first_purchase", "Первый пакет", "Пополните патроны", "silver", purchases, 1),
-    make("patron", "Постоянный", "Три пополнения", "gold", purchases, 3),
-    make("inviter", "Пригласил друга", "Друг по вашей ссылке создаст работу", "silver", invited, 1),
-    make("circle", "Свой круг", "Пятеро друзей по вашей ссылке", "gold", invited, 5),
-    make("level_3", "Третий уровень", "Дойдите до 3 уровня", "silver", level, 3),
+    make("first_render", "output", "Первая работа", "Создайте первую работу", "bronze", total, 1),
+    make("ten_renders", "output", "10 работ", "Создайте 10 работ", "silver", total, 10),
+    make("fifty_renders", "output", "50 работ", "Создайте 50 работ", "gold", total, 50),
+    make("first_video", "formats", "Первое видео", "Сделайте первое видео", "silver", videos, 1),
+    make("first_text", "formats", "Текст в картинку", "Нарисуйте картинку по описанию", "bronze", texts, 1),
+    make("scenarist", "formats", "Первый сценарий", "Соберите сюжет по сценарию", "silver", scenarios, 1),
+    make("explorer", "exploration", "3 модели", "Попробуйте 3 разные модели", "silver", models.size, 3),
+    make("polymath", "exploration", "10 моделей", "Попробуйте 10 разных моделей", "gold", models.size, 10),
+    make("stylist", "exploration", "5 стилей", "Попробуйте 5 разных стилей", "silver", presets.size, 5),
+    make("uploader", "engagement", "Первое фото", "Загрузите собственное фото", "bronze", ev("upload"), 1),
+    make("wordsmith", "engagement", "Первое улучшение", "Улучшите промпт", "bronze", ev("enhance"), 1),
+    make("sharer", "engagement", "Первая отправка", "Поделитесь работой", "bronze", ev("share"), 1),
+    make("first_purchase", "support", "Первое пополнение", "Пополните патроны", "silver", purchases, 1),
+    make("patron", "support", "3 пополнения", "Три пополнения", "gold", purchases, 3),
+    make("inviter", "community", "Первый друг", "Друг по вашей ссылке создаст работу", "silver", invited, 1),
+    make("circle", "community", "5 друзей", "Пятеро друзей по вашей ссылке", "gold", invited, 5),
+    make("level_3", "progress", "3 уровень", "Дойдите до 3 уровня", "silver", level, 3),
   ];
 }
 
