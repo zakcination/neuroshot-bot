@@ -1345,6 +1345,83 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     await ctx.reply(`✅ ${key} = ${value}`);
   });
 
+  // Turning the Level system on means writing a whole ladder plus the earn
+  // rates — a dozen-plus keys. One /econ_set per key is why it stays off: the
+  // work isn't hard, it's just long enough to never get done, and until the
+  // FIRST level.threshold.N exists getLevelProgress reports inactive and every
+  // user sees "Уровни скоро". This sets them in one message.
+  // /econ_bulk ключ=знач ключ=знач …  (values come from the operator, never
+  // from the repo — the ladder is commercial config, not source.)
+  bot.command("econ_bulk", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const pairs = (ctx.match ?? "").trim().split(/\s+/).filter(Boolean);
+    if (!pairs.length) {
+      await ctx.reply(
+        "Формат: /econ_bulk ключ=знач ключ=знач …\n" +
+          "Пример: /econ_bulk level.threshold.1=100 level.threshold.2=300 xp.save=25\n" +
+          "Текущие значения: /econ · проверить уровни: /econ_levels",
+      );
+      return;
+    }
+    const set: string[] = [];
+    const bad: string[] = [];
+    for (const p of pairs) {
+      const eq = p.indexOf("=");
+      const key = eq > 0 ? p.slice(0, eq) : "";
+      const value = Number(p.slice(eq + 1));
+      // All-or-nothing per pair, not per message: a typo in one key must not
+      // silently drop it while the rest land, leaving a ladder with a hole.
+      if (!key || !Number.isInteger(value)) {
+        bad.push(p);
+        continue;
+      }
+      await setEconomyConfig(key, value);
+      set.push(`${key} = ${value}`);
+    }
+    await ctx.reply(
+      (set.length ? `✅ Записано (${set.length}):\n` + set.map((x) => `• ${x}`).join("\n") : "Ничего не записано.") +
+        (bad.length ? `\n\n⚠️ Не разобрано: ${bad.join(", ")}` : "") +
+        `\n\nПроверить: /econ_levels`,
+    );
+  });
+
+  // Is the Level system actually ON, and what does the ladder look like right
+  // now? The Mini App decides purely on "does level.threshold.1 exist", so this
+  // answers "почему я не вижу уровни" without guessing.
+  bot.command("econ_levels", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const values = await allEconomyConfig();
+    const ladder = values
+      .filter((r) => r.key.startsWith("level.threshold."))
+      .map((r) => ({ n: Number(r.key.slice("level.threshold.".length)), xp: r.value }))
+      .filter((r) => Number.isInteger(r.n) && r.n > 0)
+      .sort((a, b) => a.n - b.n);
+    const earn = values.filter((r) => r.key.startsWith("xp."));
+    // A ladder is only read up to its first gap (getLevelProgress stops there),
+    // so a missing rung silently truncates every level above it — worth saying.
+    const gapAt = ladder.findIndex((r, i) => r.n !== i + 1);
+    if (!ladder.length) {
+      await ctx.reply(
+        "🔒 <b>Уровни выключены.</b>\n\nНи одного порога не задано, поэтому в приложении показывается «Уровни скоро».\n\n" +
+          "Включаются одной командой — задайте пороги подряд с 1-го:\n" +
+          "<code>/econ_bulk level.threshold.1=… level.threshold.2=… …</code>\n" +
+          "и начисление: <code>xp.save</code>, <code>xp.generate</code> и другие ключи <code>xp.*</code>.",
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+    await ctx.reply(
+      `🎚 <b>Уровни включены</b> — ${gapAt === -1 ? ladder.length : gapAt} доступно пользователям\n` +
+        ladder.map((r) => `• ур. ${r.n} — ${r.xp} XP`).join("\n") +
+        (gapAt !== -1
+          ? `\n\n⚠️ Пропущен порог ${gapAt + 1} — всё, что выше, не читается. Задайте его, чтобы открыть остальные.`
+          : "") +
+        `\n\n<b>Начисление XP:</b>\n` +
+        (earn.length ? earn.map((r) => `• ${r.key} = ${r.value}`).join("\n") : "(не задано — XP не начисляется)"),
+      { parse_mode: "HTML" },
+    );
+  });
+
   bot.command("econ_gate", async (ctx) => {
     if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
     const [presetId, lvlS] = (ctx.match ?? "").trim().split(/\s+/);
