@@ -291,6 +291,22 @@
        when the number changes, so progress is felt and not merely displayed. */
     @keyframes lvlpop { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
     .lvlmini.levelup .lvlnum { animation: lvlpop .6s ease; }
+    /* XP in flight. Fixed-positioned so it can cross any scroll container on
+       its way to the header, and pointer-events:none so it can never intercept
+       a tap it happens to fly over. */
+    .xpfly { position: fixed; z-index: 90; pointer-events: none;
+      padding: 5px 11px; border-radius: 999px; font-size: 13px; font-weight: 800; color: #fff;
+      background: linear-gradient(135deg, var(--violet), var(--magenta));
+      box-shadow: 0 6px 20px rgba(0,0,0,.45); white-space: nowrap; }
+    /* The bar's own fill is already transitioned (.lvlmbar i), so the count-up
+       and the fill move together without any extra choreography. */
+    .lvlmini.xpland .lvlnum { animation: lvlpop .5s ease; }
+    @media (prefers-reduced-motion: reduce) {
+      .xpfly { transition: none !important; }
+      .achstage .badge { animation: none; }
+      .bgholo { animation: none; }
+    }
+
     /* Level ⇄ Achievements: one row, 70/30. The level bar is the thing you
        check; the badge shelf is the thing you're drawn to. Giving the shelf a
        third of the width makes it an invitation rather than a competitor. */
@@ -1158,6 +1174,106 @@
       </button>`;
     }
 
+    /**
+     * Fly "+N XP" from wherever it was earned up to the header chip, then let
+     * the chip count up and the bar fill to the new position.
+     *
+     * Why bother: XP that simply appears has already happened by the time you
+     * look at it, and reads as bookkeeping. Watching it travel from the thing
+     * you just did to the meter is what makes the meter feel like yours.
+     *
+     * Degrades to nothing, deliberately, in three cases — the chip is absent
+     * (the ladder isn't switched on), the browser has no Web Animations API,
+     * or the user asked for reduced motion. In all three the numbers still
+     * update; only the flight is skipped.
+     */
+    function flyXp(delta, originEl, after) {
+      const chip = document.querySelector("#lvlHost .lvlmini");
+      const reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (!chip || delta <= 0 || reduce || !document.body.animate) { after && after(); return; }
+
+      const to = chip.getBoundingClientRect();
+      // Fall back to the middle of the viewport when the origin is off-screen
+      // or gone (a result card can be replaced before the poll returns).
+      const r = originEl && originEl.isConnected ? originEl.getBoundingClientRect() : null;
+      const from = r && r.width
+        ? { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+        : { x: innerWidth / 2, y: innerHeight * 0.55 };
+
+      const pill = document.createElement("div");
+      pill.className = "xpfly";
+      pill.textContent = `+${delta} XP`;
+      pill.style.left = from.x + "px";
+      pill.style.top = from.y + "px";
+      document.body.appendChild(pill);
+
+      const dx = to.left + to.width / 2 - from.x;
+      const dy = to.top + to.height / 2 - from.y;
+      const anim = pill.animate(
+        [
+          { transform: "translate(-50%,-50%) scale(.6)", opacity: 0 },
+          { transform: "translate(-50%,-50%) scale(1.15)", opacity: 1, offset: 0.16 },
+          // Arc: rise before crossing, so it reads as thrown rather than dragged.
+          { transform: `translate(calc(-50% + ${dx * 0.55}px), calc(-50% + ${dy * 0.25 - 46}px)) scale(1)`, opacity: 1, offset: 0.6 },
+          { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(.45)`, opacity: 0 },
+        ],
+        { duration: 1000, easing: "cubic-bezier(.4,.05,.25,1)" },
+      );
+      anim.onfinish = () => {
+        pill.remove();
+        chip.classList.add("xpland");
+        setTimeout(() => chip.classList.remove("xpland"), 500);
+        haptic("success");
+        after && after();
+      };
+      // A cancelled animation (tab hidden, element torn down) must still land
+      // the numbers, or the meter silently stops matching the account.
+      anim.oncancel = () => { pill.remove(); after && after(); };
+    }
+
+    /** Count the chip's XP label from one value to another as the bar fills. */
+    function countXpTo(progress, fromXp) {
+      const host = document.getElementById("lvlHost");
+      if (!host) return;
+      const label = host.querySelector(".lvlmini small");
+      if (!label) { setLevelMini(progress); return; }
+      const start = performance.now();
+      const dur = 700;
+      const tick = (t) => {
+        const k = Math.min(1, (t - start) / dur);
+        const shown = Math.round(fromXp + (progress.xp - fromXp) * k);
+        label.textContent = `${shown} XP`;
+        if (k < 1) requestAnimationFrame(tick);
+        else setLevelMini(progress); // settle on the authoritative render
+      };
+      // Fill the bar immediately: its CSS transition runs over the same window,
+      // so the number and the bar arrive together.
+      const bar = host.querySelector(".lvlmbar i");
+      if (bar) bar.style.width = (progress.nextAt == null ? 100 : Math.round((progress.into / progress.span) * 100)) + "%";
+      requestAnimationFrame(tick);
+    }
+
+    /**
+     * Compare the XP we last rendered against what the server now reports and,
+     * if it grew, play the gain. The DELTA comes from the server's own numbers
+     * rather than being predicted client-side — the client has no idea which
+     * rewards fired (breadth bonuses, daily caps, an unconfigured reward paying
+     * nothing), and a guessed +N that disagrees with the real total is worse
+     * than no animation at all.
+     */
+    let lastXpSeen = null;
+    function playXpGain(progress, originEl) {
+      if (!progress || !progress.active) { lastXpSeen = progress ? progress.xp : null; return; }
+      const before = lastXpSeen;
+      lastXpSeen = progress.xp;
+      // First paint of the session has nothing to compare against, and a lost
+      // level (impossible today, but XP is append-only by design) must not
+      // animate backwards.
+      if (before == null || progress.xp <= before) { setLevelMini(progress); return; }
+      const delta = progress.xp - before;
+      flyXp(delta, originEl, () => countXpTo(progress, before));
+    }
+
     /** Repaint the header chip in place after XP moves, without a full re-render. */
     function setLevelMini(p) {
       const host = document.getElementById("lvlHost");
@@ -1659,7 +1775,13 @@
         if (!jobs.has(job.id)) return; // already finished elsewhere
         const { status, data } = await api("/api/generations/" + job.id);
         if (status === 200 && data.status === "ok") {
-          jobs.delete(job.id); updateJobsPill(); refreshMe(); renderGallery(1); haptic("success");
+          // The XP a finished render earns should visibly come FROM the render:
+          // the open result if the user is looking at it, else the jobs pill,
+          // which is where their attention was.
+          jobs.delete(job.id); updateJobsPill();
+          xpOrigin = (viewedJob === job.id && sheet.classList.contains("on"))
+            ? sheetBody : document.getElementById("jobsPill");
+          refreshMe(); renderGallery(1); haptic("success");
           if (viewedJob === job.id && sheet.classList.contains("on")) viewResult(data, job);
           else toast("✨ Готово! Работа уже в «Мои работы»");
           return;
@@ -2656,6 +2778,10 @@
     }
 
     // ————— page —————
+    // Where the next XP gain should fly FROM — set by whatever caused it just
+    // before triggering a refresh. Consumed once, so a later refresh that
+    // happens to coincide with unrelated XP doesn't launch from a stale card.
+    let xpOrigin = null;
     async function refreshMe() {
       const { status, data } = await api("/api/me");
       if (status !== 200) return;
@@ -2668,7 +2794,11 @@
       if (s) s.innerHTML = statsHtml(data.dashboard);
       const rl = document.getElementById("refList");
       if (rl) rl.innerHTML = referralListHtml(data.referrals);
-      setLevelMini(data.progress);
+      // Route the repaint through playXpGain: it animates when XP grew and
+      // falls back to a plain repaint otherwise, so there is exactly ONE place
+      // that decides how the header reflects progress.
+      playXpGain(data.progress, xpOrigin);
+      xpOrigin = null;
       const lc = document.getElementById("lvlCardHost");
       if (lc) lc.innerHTML = levelCardHtml(data.progress);
       const at = document.getElementById("achTileHost");
