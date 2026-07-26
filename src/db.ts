@@ -301,6 +301,33 @@ const SCHEMA: string[] = [
   // nothing on the row says who believed it. Every pending→paid transition
   // stamps it; NULL only on rows predating this column.
   `ALTER TABLE orders ADD COLUMN IF NOT EXISTS approved_via TEXT`,
+  // One-time repair for the missing backfill above. granted_at was added to an
+  // already-populated table, so every order confirmed BEFORE it existed reads
+  // as "paid but never granted" — which is what let the reconciler re-credit
+  // the whole payment history (fake digest revenue, duplicate referral payouts,
+  // a second course invite to a months-old buyer).
+  //
+  // Stamped from EVIDENCE, not assumed: only orders whose buyer actually has a
+  // matching 'purchase' row in the ledger (same user, same tenge amount) are
+  // marked granted, at the time they were confirmed. An order with no such row
+  // stays NULL — it might be a genuinely stuck grant, and marking that one
+  // "granted" would quietly rob a real buyer. Those surface in /payments for a
+  // human instead.
+  //
+  // The hard cutoff makes this a repair rather than a standing rule: it can
+  // only ever touch rows that predate this migration, so a future order whose
+  // grant really does crash can never be silently written off by a coincidental
+  // older ledger row of the same amount. Idempotent — after the first run these
+  // rows are no longer NULL.
+  `UPDATE orders o SET granted_at = o.processed_at
+     WHERE o.status = 'paid' AND o.granted_at IS NULL
+       AND o.processed_at IS NOT NULL
+       AND o.processed_at < TIMESTAMPTZ '2026-07-26 08:00:00+00'
+       AND EXISTS (
+         SELECT 1 FROM ledger l
+         WHERE l.user_id = o.user_id AND l.reason = 'purchase'
+           AND l.meta = o.amount_kzt::text
+       )`,
 ];
 
 let schemaReady: Promise<void> | null = null;

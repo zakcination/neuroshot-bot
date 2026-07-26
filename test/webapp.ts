@@ -2754,5 +2754,60 @@ await step("reconciler: recovers a fresh interrupted grant, never re-grants hist
   assert.equal((await staleGrantedOrders(5, 48)).length, 0);
 });
 
+await step("granted_at backfill: stamps orders the ledger proves were credited, leaves the rest alone", async () => {
+  // Re-runs the shipped repair statement verbatim against rows shaped like the
+  // ones it exists for. Two orders, identical except for one fact: whether the
+  // ledger says the buyer was ever credited.
+  await query("DELETE FROM orders");
+  await query("DELETE FROM ledger WHERE reason = 'purchase'");
+  const paid = 990800;
+  const stuck = 990801;
+  await getOrCreateUser(paid, "was_credited", null, 0);
+  await getOrCreateUser(stuck, "never_credited", null, 0);
+
+  const credited = await createOrder(paid, "start", 3700);
+  const uncredited = await createOrder(stuck, "start", 3700);
+  for (const id of [credited, uncredited]) {
+    await resolveOrder(id, true, "admin");
+    await query(
+      "UPDATE orders SET granted_at = NULL, processed_at = TIMESTAMPTZ '2026-05-01 12:00:00+00' WHERE id = $1",
+      [id],
+    );
+  }
+  // Only the first buyer has proof of credit — exactly what a pre-migration
+  // order that WAS granted looks like.
+  await query("INSERT INTO ledger (user_id, delta, reason, meta) VALUES ($1, 60, 'purchase', '3700')", [paid]);
+
+  const REPAIR = `UPDATE orders o SET granted_at = o.processed_at
+     WHERE o.status = 'paid' AND o.granted_at IS NULL
+       AND o.processed_at IS NOT NULL
+       AND o.processed_at < TIMESTAMPTZ '2026-07-26 08:00:00+00'
+       AND EXISTS (
+         SELECT 1 FROM ledger l
+         WHERE l.user_id = o.user_id AND l.reason = 'purchase'
+           AND l.meta = o.amount_kzt::text
+       )`;
+  await query(REPAIR);
+
+  const after = await getOrder(credited);
+  assert.ok(after?.granted_at, "an order the ledger proves was credited must be stamped");
+  assert.equal(
+    new Date(after!.granted_at!).toISOString(),
+    new Date(after!.processed_at!).toISOString(),
+    "stamped with the confirmation time, not now()",
+  );
+  assert.equal((await getOrder(uncredited))?.granted_at, null, "an unproven order must NOT be written off");
+
+  // Stamped rows drop out of the reconciler's sight — which is the whole point.
+  assert.ok(!(await staleGrantedOrders(1, 24 * 365)).some((o) => o.id === credited));
+  // The unproven one is still visible to a human.
+  assert.ok((await abandonedPaidOrders(1)).some((o) => o.id === uncredited));
+
+  // Idempotent: running it again changes nothing.
+  const before = (await getOrder(credited))!.granted_at;
+  await query(REPAIR);
+  assert.equal((await getOrder(credited))!.granted_at, before);
+});
+
 await new Promise<void>((r) => server.close(() => r()));
 console.log(`\nAll ${passed} web-app checks passed. ✨`);
