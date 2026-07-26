@@ -1506,6 +1506,111 @@ export async function usersToNudge(limit: number): Promise<NudgeTarget[]> {
   }));
 }
 
+// ---- Achievements ----
+
+export interface Achievement {
+  id: string;
+  title: string;
+  hint: string; // what earns it — shown while locked, so the set reads as a map
+  tier: "bronze" | "silver" | "gold";
+  earned: boolean;
+  at: number; // progress so far
+  need: number; // progress required
+}
+
+/**
+ * The user's milestone wall, derived entirely from what they actually DID.
+ *
+ * Deliberately NOT read from xp_claims, even though that table already records
+ * once-per-thing awards in exactly this shape. xp_claims is only written while
+ * the XP economy is configured (awardXpOnce reads the config first and returns
+ * early when a reward is unset), so anything built on it alone shows an empty
+ * wall today and, worse, would never backfill: a user's real history would be
+ * permanently missing from their own profile. Deriving from generations /
+ * events / ledger costs a few cheap aggregates and is retroactive by
+ * construction — every badge someone has already earned is there the moment
+ * this ships.
+ *
+ * Locked badges are returned too, with their progress. A wall of unknowns is
+ * what makes the earned ones mean something, and it doubles as the clearest
+ * description of what the product can do.
+ */
+export async function achievements(userId: number): Promise<Achievement[]> {
+  const [gens, evt, buys, friends, level] = await Promise.all([
+    q(
+      `SELECT model, source_id, COUNT(*)::int AS c
+       FROM generations WHERE user_id = $1 AND status = 'ok' GROUP BY 1, 2`,
+      [userId],
+    ),
+    q(
+      `SELECT type, COUNT(*)::int AS c FROM events
+       WHERE user_id = $1 AND type IN ('upload', 'share', 'enhance') GROUP BY 1`,
+      [userId],
+    ),
+    q("SELECT COUNT(*)::int AS c FROM ledger WHERE user_id = $1 AND reason = 'purchase'", [userId]),
+    q(
+      `SELECT COUNT(*)::int AS c FROM users u
+       WHERE u.referrer_id = $1
+         AND EXISTS (SELECT 1 FROM generations g WHERE g.user_id = u.id AND g.status = 'ok')`,
+      [userId],
+    ),
+    getLevel(userId),
+  ]);
+
+  let total = 0;
+  let videos = 0;
+  let texts = 0;
+  const models = new Set<string>();
+  const presets = new Set<string>();
+  let scenarios = 0;
+  for (const row of gens) {
+    const c = Number(row.c);
+    const key = String(row.model);
+    const spec = MODELS[key as keyof typeof MODELS] as { kind?: string } | undefined;
+    total += c;
+    models.add(key);
+    if (spec?.kind === "image_to_video" || /^dub_/.test(key)) videos += c;
+    if (spec?.kind === "text_to_image") texts += c;
+    const src = row.source_id == null ? null : String(row.source_id);
+    if (src) {
+      presets.add(src);
+      if (src.includes(":")) scenarios += c;
+    }
+  }
+  const ev = (t: string) => Number(evt.find((r) => r.type === t)?.c ?? 0);
+  const purchases = Number(buys[0]?.c ?? 0);
+  const invited = Number(friends[0]?.c ?? 0);
+
+  const make = (
+    id: string,
+    title: string,
+    hint: string,
+    tier: Achievement["tier"],
+    at: number,
+    need: number,
+  ): Achievement => ({ id, title, hint, tier, at: Math.min(at, need), need, earned: at >= need });
+
+  return [
+    make("first_render", "Первый кадр", "Создайте первую работу", "bronze", total, 1),
+    make("ten_renders", "Десять работ", "Создайте 10 работ", "silver", total, 10),
+    make("fifty_renders", "Полсотни", "Создайте 50 работ", "gold", total, 50),
+    make("first_video", "Оживший кадр", "Сделайте первое видео", "silver", videos, 1),
+    make("first_text", "Из слов", "Нарисуйте картинку по описанию", "bronze", texts, 1),
+    make("explorer", "Исследователь", "Попробуйте 3 разные модели", "silver", models.size, 3),
+    make("polymath", "Все инструменты", "Попробуйте 10 разных моделей", "gold", models.size, 10),
+    make("stylist", "Стилист", "Попробуйте 5 разных стилей", "silver", presets.size, 5),
+    make("scenarist", "Сценарист", "Соберите сюжет по сценарию", "silver", scenarios, 1),
+    make("uploader", "Своё фото", "Загрузите собственное фото", "bronze", ev("upload"), 1),
+    make("wordsmith", "Редактор", "Улучшите промпт", "bronze", ev("enhance"), 1),
+    make("sharer", "Показал миру", "Поделитесь работой", "bronze", ev("share"), 1),
+    make("first_purchase", "Первый пакет", "Пополните патроны", "silver", purchases, 1),
+    make("patron", "Постоянный", "Три пополнения", "gold", purchases, 3),
+    make("inviter", "Пригласил друга", "Друг по вашей ссылке создаст работу", "silver", invited, 1),
+    make("circle", "Свой круг", "Пятеро друзей по вашей ссылке", "gold", invited, 5),
+    make("level_3", "Третий уровень", "Дойдите до 3 уровня", "silver", level, 3),
+  ];
+}
+
 // ---- Proactive messaging: budget, targeting, attribution ----
 
 /**

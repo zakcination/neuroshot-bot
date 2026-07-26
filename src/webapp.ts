@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { allPresetGating, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { achievements, allPresetGating, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { enhancePrompt, ENHANCE_COST, ENHANCE_STACK } from "./enhance.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
@@ -454,7 +454,7 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress, finance, enhanceLeft] =
+  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress, finance, enhanceLeft, awards] =
     await Promise.all([
       userDashboard(user.id),
       recentGenerations(user.id, 30),
@@ -469,6 +469,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
       getLevelProgress(user.id),
       referralFinance(user.id),
       enhanceChargesLeft(user.id, ENHANCE_STACK),
+      achievements(user.id),
     ]);
   const gates = Object.fromEntries(gateRows.map((g) => [g.preset_id, g.min_level]));
   return {
@@ -517,6 +518,10 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     // It used to be labelled "1-е бесплатно" from a hardcoded string — which
     // kept promising a free attempt to people who had already spent theirs.
     enhance: { left: enhanceLeft, stack: ENHANCE_STACK, cost: ENHANCE_COST },
+    // The milestone wall — earned AND locked, with progress. Derived from real
+    // history (see achievements in db.ts), so it is correct retroactively and
+    // does not wait on the XP economy being configured.
+    achievements: awards,
     // "Ваш путь в NeuroShot" roadmap — real completion signals, see roadmapProgress.
     roadmap,
     // The completion gift for finishing all 5 roadmap steps — claim-gated the
@@ -962,6 +967,11 @@ export async function sendResponse(
   // Sharing a result out of the app — once per generation. Free and
   // unverifiable, so the generation id is the only thing keeping it honest.
   await awardXpOnce(userId, `share:${g.id}`, "share", String(g.id)).catch(() => 0);
+  // Logged as an event too, NOT only as an XP claim: xp_claims is written only
+  // while the XP economy is configured, so anything derived from it alone is
+  // invisible until then — including achievements, which must reflect what the
+  // user actually did whether or not the ladder is switched on.
+  await logEvent(userId, "share", String(g.id)).catch(() => {});
   return { status: 200, body: { ok: true } };
 }
 

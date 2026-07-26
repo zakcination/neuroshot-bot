@@ -39,7 +39,7 @@ process.env.RATE_LIMIT_ENHANCE_PER_MIN = "100000";
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, awardPurchaseXp, staleGrantedOrders, abandonedPaidOrders, claimPush, releasePush, usersForPaywallPush, offerBonusFor, claimOfferRedemption, pushReport, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
+const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, awardPurchaseXp, staleGrantedOrders, abandonedPaidOrders, claimPush, releasePush, usersForPaywallPush, offerBonusFor, claimOfferRedemption, pushReport, achievements, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
@@ -2907,6 +2907,43 @@ await step("push offer: live only inside its window, redeemable once, and off by
   const rep = (await pushReport()).find((r) => r.campaign === "paywall");
   assert.ok(rep);
   assert.equal(rep!.converted, 0);
+});
+
+await step("achievements: derived from real history, so they are correct retroactively", async () => {
+  // The point of deriving from generations/events/ledger rather than xp_claims:
+  // xp_claims is only written while the XP economy is CONFIGURED, so a wall
+  // built on it would be empty today and could never backfill — a user's real
+  // history would be permanently missing from their own profile.
+  await query("DELETE FROM economy_config WHERE key LIKE 'xp.%'"); // XP stays OFF for this whole step
+  const u = 991000;
+  await getOrCreateUser(u, "achiever", null, 0);
+
+  const before = await achievements(u);
+  assert.ok(before.length > 0, "locked badges must still be listed — the holes are the map");
+  assert.equal(before.every((a) => !a.earned), true, "a fresh account has earned nothing");
+  const firstRender = before.find((a) => a.id === "first_render");
+  assert.ok(firstRender && firstRender.need === 1 && firstRender.at === 0);
+
+  // Real history, recorded the ordinary way.
+  await logGeneration(u, "text_to_image", "x", 2, "ok", "https://fal.media/a.jpg");
+  await logEvent(u, "upload", "1");
+  await logEvent(u, "share", "1");
+
+  const after = await achievements(u);
+  const by = (id: string) => after.find((a) => a.id === id)!;
+  assert.equal(by("first_render").earned, true, "a completed render must earn the first badge");
+  assert.equal(by("first_text").earned, true, "a text-to-image render must be recognised by model kind");
+  assert.equal(by("uploader").earned, true);
+  assert.equal(by("sharer").earned, true, "sharing must count even with the XP economy switched off");
+  assert.equal(by("ten_renders").earned, false);
+  assert.equal(by("ten_renders").at, 1, "locked badges must carry real progress, not zero");
+
+  // Progress never overstates itself past the requirement.
+  assert.ok(after.every((a) => a.at <= a.need));
+
+  // A FAILED render is not an achievement.
+  await logGeneration(u, "text_to_image", "x", 2, "error");
+  assert.equal((await achievements(u)).find((a) => a.id === "ten_renders")!.at, 1);
 });
 
 await new Promise<void>((r) => server.close(() => r()));

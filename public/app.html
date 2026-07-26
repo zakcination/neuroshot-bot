@@ -291,6 +291,84 @@
        when the number changes, so progress is felt and not merely displayed. */
     @keyframes lvlpop { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
     .lvlmini.levelup .lvlnum { animation: lvlpop .6s ease; }
+    /* Level ⇄ Achievements: one row, 70/30. The level bar is the thing you
+       check; the badge shelf is the thing you're drawn to. Giving the shelf a
+       third of the width makes it an invitation rather than a competitor. */
+    .lvlrow { display: grid; grid-template-columns: 70fr 30fr; gap: 10px; align-items: stretch; }
+    .lvlrow > * { min-width: 0; }
+    @media (max-width: 340px) { .lvlrow { grid-template-columns: 1fr; } }
+
+    /* --- Holographic badge ---------------------------------------------
+       Built from CSS, not bitmaps: it has to look right at 44px on a shelf
+       and at 200px spinning in the detail view, on any DPI, with no asset to
+       download before the wall renders. Layers, outward in:
+         .bgcore  — the metal, an off-axis conic sweep so the highlight sits
+                    where a real bevelled surface would catch light;
+         .bgface  — the glyph, lifted on the Z axis so it parallaxes against
+                    the metal as the badge turns (this is what sells depth);
+         .bgholo  — the interference sheen, a wide diagonal band that travels.
+       Locked badges keep the geometry and lose the colour, so the shelf reads
+       as one set with holes in it rather than two unrelated groups. */
+    .badge { position: relative; width: 100%; aspect-ratio: 1 / 1.12; transform-style: preserve-3d;
+      filter: drop-shadow(0 6px 14px rgba(0,0,0,.45)); }
+    /* A heater-shield silhouette, not a rounded square: the outline is what
+       makes it read as an award at 44px, before any detail is legible. */
+    .bgcore, .bgrim, .bgholo { position: absolute; inset: 0;
+      clip-path: polygon(50% 0%, 96% 9%, 100% 26%, 97% 62%, 76% 88%, 50% 100%, 24% 88%, 3% 62%, 0% 26%, 4% 9%); }
+    .bgcore {
+      background:
+        radial-gradient(120% 80% at 30% 12%, rgba(255,255,255,.75) 0%, transparent 42%),
+        conic-gradient(from 205deg at 34% 26%,
+          var(--b3) 0deg, var(--b2) 58deg, var(--b1) 120deg, var(--b3) 190deg,
+          var(--b2) 250deg, var(--b1) 312deg, var(--b3) 360deg);
+    }
+    /* Bevel: a bright inner edge on the lit side, dark on the shadow side —
+       the cue that tells the eye this is metal with thickness. */
+    .bgrim { border: 0; transform: translateZ(4px);
+      background: linear-gradient(160deg, rgba(255,255,255,.55), transparent 26%, transparent 74%, rgba(0,0,0,.55));
+      mix-blend-mode: overlay; }
+    /* Both children share one grid cell so the artwork lands exactly on top of
+       the glyph it replaces. */
+    .bgface { position: absolute; inset: 0; display: grid; place-items: center; transform: translateZ(11px); }
+    .bgface > * { grid-area: 1 / 1; }
+    /* SVG, so the glyph scales with the badge instead of with the inherited
+       font-size — a percentage font-size would silently stay tiny. */
+    .bgface svg { width: 62%; height: 62%; overflow: visible; filter: drop-shadow(0 2px 4px rgba(0,0,0,.5)); }
+    .bgface svg text { font-size: 64px; }
+    .bgface img { width: 62%; height: 62%; object-fit: contain; filter: drop-shadow(0 2px 3px rgba(0,0,0,.5)); }
+    .bgholo {
+      background: linear-gradient(112deg, transparent 30%, rgba(255,255,255,.75) 44%,
+        rgba(150,215,255,.65) 50%, rgba(255,170,240,.5) 56%, transparent 70%);
+      mix-blend-mode: screen; transform: translateZ(15px);
+      background-size: 300% 300%; animation: holo 4.5s linear infinite;
+    }
+    @keyframes holo { 0% { background-position: 140% 0; } 100% { background-position: -40% 0; } }
+    .badge.locked { filter: grayscale(1) brightness(.5) contrast(.9); opacity: .55; }
+    .badge.locked .bgholo { animation: none; opacity: .12; }
+    .tier-bronze { --b1: #7a4a22; --b2: #e0a463; --b3: #4d2c12; }
+    .tier-silver { --b1: #6f7887; --b2: #e6edf6; --b3: #444c58; }
+    .tier-gold   { --b1: #8a6410; --b2: #ffdf85; --b3: #5a3f06; }
+
+    /* Shelf tile beside the level card */
+    .achtile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+      background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+      padding: 12px 8px; cursor: pointer; font: inherit; color: inherit; }
+    .achtile .badge { width: 54px; }
+    .achtile small { font-size: 10px; color: var(--muted); text-align: center; line-height: 1.3; }
+
+    /* Wall + detail */
+    .achgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .achcell { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-align: center; }
+    .achcell b { display: block; font-size: 11px; margin-top: 7px; font-weight: 600; }
+    .achcell small { display: block; font-size: 10px; color: var(--muted); }
+    .achstage { display: grid; place-items: center; padding: 18px 0 6px; perspective: 900px; touch-action: pan-y; }
+    .achstage .badge { width: 190px; animation: spin 9s linear infinite; }
+    .achstage.dragging .badge { animation: none; }
+    @keyframes spin { from { transform: rotateY(0deg); } to { transform: rotateY(360deg); } }
+    .achmeta { text-align: center; }
+    .achmeta h3 { margin: 4px 0 2px; }
+    .achmeta .sub { margin-bottom: 10px; }
+
     .lvlcard { display: flex; align-items: center; gap: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
     .lvlcard.off { opacity: .75; }
     .lvlring {
@@ -1094,6 +1172,119 @@
         setTimeout(() => pill.classList.remove("levelup"), 700);
       }
       pill.onclick = () => showPage("profile");
+    }
+
+    /**
+     * Emoji glyph per badge. Deliberately data, not art files: the wall must
+     * render fully on first paint even before any bespoke artwork exists, and
+     * a badge whose art hasn't been produced yet would otherwise be a hole in
+     * the set. `/img/badge-<id>.png` is picked up automatically once it does
+     * exist (see badgeHtml), so replacing these is a drop-in, not a rewrite.
+     */
+    const BADGE_GLYPH = {
+      first_render: "📸", ten_renders: "🎞", fifty_renders: "🏛", first_video: "🎬",
+      first_text: "✍️", explorer: "🧭", polymath: "🛠", stylist: "🎨", scenarist: "📖",
+      uploader: "🖼", wordsmith: "✨", sharer: "📡", first_purchase: "🎟",
+      patron: "👑", inviter: "🤝", circle: "🫂", level_3: "🔺",
+    };
+
+    /**
+     * One badge. The <img> is attempted first and removes itself on 404, so a
+     * shelf mixes produced artwork and glyph fallbacks without either looking
+     * broken — the same graceful-degradation rule the preset cards use.
+     */
+    function badgeHtml(a) {
+      const glyph = BADGE_GLYPH[a.id] || "\u2605";
+      // The glyph is ALWAYS rendered, and bespoke artwork — once it exists —
+      // simply covers it and removes it on load. The reverse (img first,
+      // swapped in on error) needs the fallback markup inside an HTML
+      // attribute, and an SVG carries quotes: the attribute terminates early
+      // and the rest leaks into the page as text. Layering avoids the whole
+      // class of problem, and a missing asset costs nothing.
+      return `<div class="badge tier-${a.tier}${a.earned ? "" : " locked"}">
+        <div class="bgcore"></div>
+        <div class="bgrim"></div>
+        <div class="bgface">
+          <svg viewBox="0 0 100 100" aria-hidden="true"><text x="50" y="52" text-anchor="middle" dominant-baseline="central">${glyph}</text></svg>
+          <img src="/img/badge-${esc(a.id)}.png" alt="" onload="this.previousElementSibling.remove()" onerror="this.remove()" />
+        </div>
+        <div class="bgholo"></div>
+      </div>`;
+    }
+
+    /** The 30% tile: the newest earned badge, and how far the set has gone. */
+    function achTileHtml(list) {
+      const all = list || [];
+      const earned = all.filter((a) => a.earned);
+      const face = earned[earned.length - 1] || all[0];
+      if (!face) return "";
+      return `<button class="achtile" id="achTile">
+        ${badgeHtml(face)}
+        <small>${earned.length} из ${all.length}<br>достижений</small>
+      </button>`;
+    }
+
+    /** The wall. Locked badges stay visible — the holes are what give the
+     *  earned ones weight, and they double as a map of what the app can do. */
+    function viewAchievements() {
+      const all = (ME && ME.achievements) || [];
+      const earned = all.filter((a) => a.earned).length;
+      sheetBody.innerHTML = `<h3>Достижения</h3>
+        <div class="sub">Получено ${earned} из ${all.length}. Нажмите на значок, чтобы рассмотреть.</div>
+        <div class="achgrid" style="margin-top:14px">${all.map((a) => `
+          <button class="achcell" data-ach="${esc(a.id)}">
+            ${badgeHtml(a)}
+            <b>${esc(a.title)}</b>
+            <small>${a.earned ? "получено" : `${a.at}/${a.need}`}</small>
+          </button>`).join("")}</div>`;
+      sheetBody.querySelectorAll("[data-ach]").forEach((b) => (b.onclick = () => viewBadge(b.dataset.ach)));
+      openSheet();
+    }
+
+    /**
+     * One badge, large and turning. It rotates on its own so the material and
+     * the glyph's parallax are visible without being asked for, and a drag
+     * takes over the moment the user touches it — an object you can turn reads
+     * as a thing you own, which a flat icon never does.
+     */
+    function viewBadge(id) {
+      const all = (ME && ME.achievements) || [];
+      const a = all.find((x) => x.id === id);
+      if (!a) return;
+      const pct = Math.round((Math.min(a.at, a.need) / Math.max(1, a.need)) * 100);
+      sheetBody.innerHTML = `<h3>${esc(a.title)}</h3>
+        <div class="achstage" id="achStage">${badgeHtml(a)}</div>
+        <div class="achmeta">
+          <div class="sub">${a.earned ? "Получено" : esc(a.hint)}</div>
+          ${a.earned ? "" : `<div class="lvlbar"><i style="width:${pct}%"></i></div><div class="sub">${a.at} из ${a.need}</div>`}
+          <button class="btn ghost" id="achBack">← Все достижения</button>
+        </div>`;
+      document.getElementById("achBack").onclick = viewAchievements;
+
+      // Drag to spin. Pointer events cover touch and mouse in one path; the
+      // stage keeps its own angle so releasing doesn't snap back to where the
+      // CSS animation would have been.
+      const stage = document.getElementById("achStage");
+      const el = stage.querySelector(".badge");
+      let dragging = false, startX = 0, angle = 0;
+      stage.addEventListener("pointerdown", (e) => {
+        dragging = true; startX = e.clientX; stage.classList.add("dragging");
+        stage.setPointerCapture(e.pointerId);
+      });
+      stage.addEventListener("pointermove", (e) => {
+        if (!dragging) return;
+        el.style.transform = `rotateY(${angle + (e.clientX - startX) * 0.8}deg)`;
+      });
+      const release = (e) => {
+        if (!dragging) return;
+        dragging = false;
+        angle += (e.clientX - startX) * 0.8;
+        // Hand it back to the ambient spin, continuing from where it was let go.
+        el.style.transform = "";
+        stage.classList.remove("dragging");
+      };
+      stage.addEventListener("pointerup", release);
+      stage.addEventListener("pointercancel", release);
     }
 
     function levelCardHtml(p) {
@@ -2480,6 +2671,12 @@
       setLevelMini(data.progress);
       const lc = document.getElementById("lvlCardHost");
       if (lc) lc.innerHTML = levelCardHtml(data.progress);
+      const at = document.getElementById("achTileHost");
+      if (at) {
+        at.innerHTML = achTileHtml(data.achievements);
+        const t = document.getElementById("achTile");
+        if (t) t.onclick = viewAchievements;
+      }
       renderRoadmap(data);
     }
     function statsHtml(dash) {
@@ -2730,14 +2927,12 @@
             <div class="stats" id="statsRow">${statsHtml(dash)}</div>
           </section>
 
-          ${roadmapGraduated(d, ROADMAP_STEPS) ? `<section class="reveal">
-            <div class="sec-h"><h2>Достижения</h2></div>
-            <div class="ach"><span class="achic">🏆</span><span class="achtx">Студия освоена<small>вы прошли весь путь в NeuroShot</small></span></div>
-          </section>` : ""}
-
           <section class="reveal">
-            <div class="sec-h"><h2>Уровень</h2></div>
-            <div id="lvlCardHost">${levelCardHtml(d.progress)}</div>
+            <div class="sec-h"><h2>Уровень и достижения</h2></div>
+            <div class="lvlrow">
+              <div id="lvlCardHost">${levelCardHtml(d.progress)}</div>
+              <div id="achTileHost">${achTileHtml(d.achievements)}</div>
+            </div>
           </section>
 
           <section class="reveal">
@@ -2900,6 +3095,8 @@
       // repaints (setLevelMini) rebind their own.
       const lvlPill0 = document.getElementById("lvlPill");
       if (lvlPill0) lvlPill0.onclick = () => showPage("profile");
+      const achTile0 = document.getElementById("achTile");
+      if (achTile0) achTile0.onclick = viewAchievements;
       document.querySelectorAll("[data-buy]").forEach((b) => (b.onclick = () => buyPack(b.dataset.buy, false)));
       document.querySelectorAll("[data-studio]").forEach((a) => (a.onclick = () => studio(a.dataset.studio)));
       document.querySelectorAll("[data-camp-open]").forEach((a) => (a.onclick = () => { st.tab = "scenes"; openSheet(); viewCampaign(a.dataset.campOpen); }));
