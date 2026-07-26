@@ -410,6 +410,51 @@ await step("insufficient 🔫: animate (25) with 7 shows the sales-page paywall,
   assert.equal(await credits(alice.id), 7);
 });
 
+await step("curated prompts reach the provider whole — no silent decapitation", async () => {
+  // Regression: sanitizePrompt applied the UNTRUSTED-input cap (1500) to our own
+  // curated prompts. Because prompts are written transformation-first with the
+  // invariants LAST, the five longest lost their tail — and the tail is where the
+  // identity lock lives. fashion shipped with 51% of its prompt missing. Nothing
+  // failed, nothing logged; the model simply stopped being told to keep the face.
+  const { PRESETS, CAMPAIGNS, FREE_SCENARIOS } = await import("../src/models.js");
+  const { craftPrompt, CURATED_PROMPT_MAX } = await import("../src/promptcraft.js");
+  type Curated = { id: string; kind: "image_edit" | "text_to_image" | "image_to_video"; prompt: string };
+  const all: Curated[] = [];
+  for (const p of PRESETS) all.push({ id: `preset:${p.id}`, kind: "image_edit", prompt: p.prompt });
+  type Scene = { id: string; prompt?: string };
+  type Camp = { id: string; scenes?: Scene[]; videoScenes?: Scene[] };
+  for (const c of CAMPAIGNS as unknown as Camp[]) {
+    for (const s of c.scenes ?? []) if (s.prompt) all.push({ id: `camp:${c.id}/${s.id}`, kind: "image_edit", prompt: s.prompt });
+    for (const v of c.videoScenes ?? []) if (v.prompt) all.push({ id: `vid:${c.id}/${v.id}`, kind: "image_to_video", prompt: v.prompt });
+  }
+  for (const f of FREE_SCENARIOS) {
+    all.push({ id: `free:${f.id}/img`, kind: "image_edit", prompt: f.imagePrompt });
+    all.push({ id: `free:${f.id}/vid`, kind: "image_to_video", prompt: f.videoPrompt });
+  }
+  assert.ok(all.length > 40, `expected the whole curated catalogue, saw ${all.length}`);
+  // The clauses that carry the product's promise. If a prompt states one, the
+  // text actually sent must still state it — that is the assertion the old
+  // truncation would have failed on five presets.
+  const INVARIANTS = [
+    "Keep the face and identity of EVERY person",
+    "Keep the SAME NUMBER of people",
+    "not a real child and not a second guest",
+  ];
+  for (const c of all) {
+    const flat = c.prompt.replace(/\s+/g, " ").trim();
+    const sent = craftPrompt(c.kind, c.prompt, true);
+    assert.ok(
+      flat.length <= CURATED_PROMPT_MAX,
+      `${c.id} is ${flat.length} chars — over the ${CURATED_PROMPT_MAX} curated budget; shorten it rather than let it be cut`,
+    );
+    assert.equal(sent.length, flat.length, `${c.id}: ${flat.length - sent.length} characters silently dropped`);
+    for (const clause of INVARIANTS) {
+      if (!flat.includes(clause)) continue;
+      assert.ok(sent.includes(clause), `${c.id}: "${clause}" never reaches the provider`);
+    }
+  }
+});
+
 await step("paywall never anchors a pack that cannot cover the result it promises", async () => {
   // Regression: the anchor used to be the combo unconditionally, and the result
   // count was clamped with Math.max(1, …). The combo is 36 🔫 while the video

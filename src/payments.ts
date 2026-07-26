@@ -17,7 +17,7 @@ import {
   type UserRow,
 } from "./db.js";
 import { kaspiVerifyOrder } from "./kaspi.js";
-import { PACKS, packById, REFERRAL_MILESTONES, type ModelSpec, type Pack } from "./models.js";
+import { MODELS, PACKS, packById, REFERRAL_MILESTONES, type ModelSpec, type Pack } from "./models.js";
 import { comboActive, comboLeftText } from "./offer.js";
 import { nResults, nUnits, UNIT_EMOJI } from "./text.js";
 
@@ -398,10 +398,29 @@ export function registerPayments(bot: Bot): void {
   });
 }
 
+/**
+ * The price crib on the balance screen, DERIVED from the registry rather than
+ * typed out. The hand-written version had drifted to "Видео 25–76" while the
+ * cheapest video actually costs 10 🔫 — quoting a floor 2.5× too high on the
+ * one screen where people decide whether video is worth paying for. Reading the
+ * numbers from MODELS means a re-priced or newly added model can never leave a
+ * stale figure in front of a buyer.
+ */
+function priceCrib(): string {
+  const of = (kinds: ModelSpec["kind"][]): number[] =>
+    Object.values(MODELS)
+      .filter((m) => kinds.includes(m.kind))
+      .map((m) => m.credits);
+  const range = (xs: number[]): string => {
+    const lo = Math.min(...xs);
+    const hi = Math.max(...xs);
+    return lo === hi ? `${lo}` : `${lo}–${hi}`;
+  };
+  return `Картинка ${range(of(["text_to_image", "image_edit"]))} · Видео ${range(of(["image_to_video"]))} ${UNIT_EMOJI}`;
+}
+
 export async function sendBalance(ctx: Context, credits: number): Promise<void> {
-  await ctx.reply(
-    `💰 Баланс: ${UNIT_EMOJI} ${nUnits(credits)}\n\n` +
-      `Картинка от 2 · Премиум-фото 11 · Видео 25–76 ${UNIT_EMOJI}`,
-    { reply_markup: packsKeyboard() },
-  );
+  await ctx.reply(`💰 Баланс: ${UNIT_EMOJI} ${nUnits(credits)}\n\n` + priceCrib(), {
+    reply_markup: packsKeyboard(),
+  });
 }
