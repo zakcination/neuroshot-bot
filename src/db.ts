@@ -707,6 +707,116 @@ export async function referralStats(
   return { invited: Number(c[0].invited), paying: Number(c[0].paying), earned: Number(e[0].earned) };
 }
 
+/**
+ * The money side of an invite link, for ONE person: what their invitees have
+ * actually paid us, against what we have credited them for it.
+ *
+ * `broughtKzt` is read from granted ORDERS, not from the cashback we paid —
+ * those are two independent facts, and a referral program you can't audit is one
+ * where the only visible number is the one you're paying out. Attribution
+ * matches the payout rule in grantPurchase exactly: a buyer belongs to the
+ * partner code they arrived on, else to their inviter — never both, so no tenge
+ * is counted twice across the two tracks.
+ */
+export interface ReferralFinance {
+  invited: number;
+  paying: number;
+  broughtPayments: number; // granted purchases by attributed buyers
+  broughtKzt: number; // ₸ those purchases were worth
+  earned: number; // 🔫 credited for them (friend track + partner cashback)
+  withdrawable: number; // 🔫 available to request right now
+  pendingPayout: number; // 🔫 sitting in an unprocessed withdrawal request
+  paidOut: number; // 🔫 already paid out
+}
+
+/** Attribution SQL shared by the per-user and owner-wide finance reads. */
+const ATTRIBUTED_BUYER = `
+  SELECT COALESCE(pc.user_id, u.referrer_id) AS owner_id, o.amount_kzt
+  FROM orders o
+  JOIN users u ON u.id = o.user_id
+  LEFT JOIN partner_codes pc ON pc.code = u.partner_code
+  WHERE o.granted_at IS NOT NULL AND COALESCE(pc.user_id, u.referrer_id) IS NOT NULL`;
+
+/** Reasons that represent money we owe a referrer, across both tracks. */
+const PAYOUT_REASONS = "'referral','referral_bonus','referral_milestone','partner','partner_welcome'";
+
+export async function referralFinance(userId: number): Promise<ReferralFinance> {
+  const brought = await q(
+    `SELECT COUNT(*)::int AS payments, COALESCE(SUM(amount_kzt),0)::int AS kzt
+     FROM (${ATTRIBUTED_BUYER}) a WHERE a.owner_id = $1`,
+    [userId],
+  );
+  const funnel = await q(
+    `SELECT COUNT(*)::int AS invited,
+            COALESCE(SUM(CASE WHEN ref_first_purchase_at IS NOT NULL THEN 1 ELSE 0 END),0)::int AS paying
+     FROM users
+     WHERE referrer_id = $1
+        OR partner_code IN (SELECT code FROM partner_codes WHERE user_id = $1)`,
+    [userId],
+  );
+  const earned = await q(
+    `SELECT COALESCE(SUM(delta),0)::int AS e FROM ledger
+     WHERE user_id = $1 AND reason IN (${PAYOUT_REASONS})`,
+    [userId],
+  );
+  const wd = await q(
+    `SELECT COALESCE(SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END),0)::int AS pending,
+            COALESCE(SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END),0)::int AS paid
+     FROM withdrawals WHERE user_id = $1`,
+    [userId],
+  );
+  const bal = await q("SELECT partner_withdrawable FROM users WHERE id = $1", [userId]);
+  return {
+    invited: Number(funnel[0].invited),
+    paying: Number(funnel[0].paying),
+    broughtPayments: Number(brought[0].payments),
+    broughtKzt: Number(brought[0].kzt),
+    earned: Number(earned[0].e),
+    withdrawable: Number(bal[0]?.partner_withdrawable ?? 0),
+    pendingPayout: Number(wd[0].pending),
+    paidOut: Number(wd[0].paid),
+  };
+}
+
+export interface ReferrerLedgerRow extends ReferralFinance {
+  userId: number;
+  username: string | null;
+}
+
+/**
+ * Owner view: every person who has brought us at least one paid buyer OR is
+ * owed something, ranked by revenue brought. This is the table that has to
+ * balance before any close-circle referral push goes out — you cannot promise
+ * people a percentage without being able to see, per person, what came in and
+ * what is still owed.
+ */
+export async function referrerLedger(limit = 30): Promise<ReferrerLedgerRow[]> {
+  const rows = await q(
+    `WITH brought AS (
+       SELECT owner_id, COUNT(*)::int AS payments, COALESCE(SUM(amount_kzt),0)::int AS kzt
+       FROM (${ATTRIBUTED_BUYER}) a GROUP BY owner_id
+     ), owed AS (
+       SELECT u.id AS owner_id, u.partner_withdrawable::int AS withdrawable
+       FROM users u WHERE u.partner_withdrawable > 0
+     )
+     SELECT COALESCE(b.owner_id, o.owner_id) AS owner_id
+     FROM brought b FULL OUTER JOIN owed o ON o.owner_id = b.owner_id
+     ORDER BY COALESCE(b.kzt, 0) DESC, COALESCE(o.withdrawable, 0) DESC
+     LIMIT ${Math.max(1, Math.floor(limit))}`,
+  );
+  const out: ReferrerLedgerRow[] = [];
+  for (const r of rows) {
+    const id = Number(r.owner_id);
+    const name = await q("SELECT username FROM users WHERE id = $1", [id]);
+    out.push({
+      userId: id,
+      username: name[0]?.username == null ? null : String(name[0].username),
+      ...(await referralFinance(id)),
+    });
+  }
+  return out;
+}
+
 // ---- Creator / partner program (negotiated per-deal terms) ----
 
 export interface PartnerCodeRow {

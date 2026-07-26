@@ -33,6 +33,7 @@ import {
   pendingOrders,
   presetUsageCounts,
   purchaseLedgerCount,
+  referrerLedger,
   resolveOrder,
   partnerStats,
   pendingWithdrawals,
@@ -1167,6 +1168,45 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     } else {
       await ctx.reply(`↩️ Заявка №${id} отклонена.`);
     }
+  });
+
+  // Admin: the referral P&L — who brought how much, and what we still owe them.
+  // /refs [сколько строк]. This has to balance before any close-circle referral
+  // push goes out: you cannot promise people a percentage without being able to
+  // show, per person, what came in against what is owed. Revenue is read from
+  // granted ORDERS and the payout from the ledger — two independent facts, so
+  // the ratio between them is a real check, not a tautology.
+  bot.command("refs", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const arg = Number((ctx.match ?? "").trim());
+    const limit = Number.isFinite(arg) && arg > 0 ? Math.min(50, Math.floor(arg)) : 15;
+    const rows = await referrerLedger(limit);
+    if (!rows.length) {
+      await ctx.reply("Пока никто не привёл платящих пользователей и никому ничего не начислено.");
+      return;
+    }
+    const money = (n: number) => n.toLocaleString("ru-RU");
+    const lines = rows.map((r) => {
+      const who = r.username ? `@${r.username}` : String(r.userId);
+      const owed = r.withdrawable + r.pendingPayout;
+      return (
+        `<b>${who}</b> · привёл ${r.paying}/${r.invited} · <b>${money(r.broughtKzt)} ₸</b> (${r.broughtPayments} покупок)\n` +
+        `   начислено ${r.earned} ${UNIT_EMOJI} · к выплате <b>${owed}</b> ${UNIT_EMOJI}` +
+        (r.paidOut > 0 ? ` · выплачено ${r.paidOut} ${UNIT_EMOJI}` : "")
+      );
+    });
+    const totalKzt = rows.reduce((a, r) => a + r.broughtKzt, 0);
+    const totalEarned = rows.reduce((a, r) => a + r.earned, 0);
+    const totalOwed = rows.reduce((a, r) => a + r.withdrawable + r.pendingPayout, 0);
+    const totalPaid = rows.reduce((a, r) => a + r.paidOut, 0);
+    await ctx.reply(
+      `🤝 <b>Реферальная математика</b> (топ ${rows.length})\n\n` +
+        lines.join("\n") +
+        `\n\n<b>Итого</b>: привели ${money(totalKzt)} ₸ · начислено ${totalEarned} ${UNIT_EMOJI} · ` +
+        `к выплате <b>${totalOwed}</b> ${UNIT_EMOJI} · выплачено ${totalPaid} ${UNIT_EMOJI}\n` +
+        `Заявки на вывод: /payouts`,
+      { parse_mode: "HTML" },
+    );
   });
 
   // Admin: enroll a user into the partner program. Partnerships are admin-served,

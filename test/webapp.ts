@@ -39,7 +39,7 @@ process.env.RATE_LIMIT_ENHANCE_PER_MIN = "100000";
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
+const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
@@ -2563,6 +2563,50 @@ await step("Kaspi verify: a paid-looking status with no amount is NOT auto-grant
     delete process.env.KASPI_API_BASE;
     delete process.env.KASPI_API_TOKEN;
   }
+});
+
+await step("referral finance: revenue brought in is read from orders, not from the payout", async () => {
+  // What makes this auditable is that the two sides come from different places:
+  // brought-in ₸ from granted ORDERS, cashback from the LEDGER. If the payout
+  // were the only number, nobody could check the program — including the owner.
+  await query("DELETE FROM orders");
+  await query("DELETE FROM ledger WHERE reason = 'purchase'");
+
+  const inviter = 990400;
+  const friend = 990401;
+  const stranger = 990402;
+  await getOrCreateUser(inviter, "inviter", null, 0);
+  await getOrCreateUser(friend, "friend", null, 0);
+  await getOrCreateUser(stranger, "stranger", null, 0);
+  await query("UPDATE users SET referrer_id = $1 WHERE id = $2", [inviter, friend]);
+
+  // The friend buys; a stranger with no inviter also buys.
+  for (const buyer of [friend, stranger]) {
+    const id = await createOrder(buyer, "start", 3700);
+    await resolveOrder(id, true, "admin");
+    await grantOrderCredits(id, buyer, 60, 3700);
+  }
+
+  const f = await referralFinance(inviter);
+  assert.equal(f.invited, 1);
+  assert.equal(f.broughtPayments, 1, "the stranger's purchase must not be attributed to anyone");
+  assert.equal(f.broughtKzt, 3700);
+  // Cashback here is 0 — grantOrderCredits alone doesn't pay referrers (that's
+  // grantPurchase). The point stands: revenue is visible even when the payout
+  // side is empty, which is exactly the case a payout-only view would hide.
+  assert.equal(f.earned, 0);
+
+  // An order that was never GRANTED is not revenue, however it was resolved.
+  const ungranted = await createOrder(friend, "start", 3700);
+  await resolveOrder(ungranted, true, "admin");
+  assert.equal((await referralFinance(inviter)).broughtKzt, 3700, "an ungranted order counted as revenue");
+
+  // The owner-wide ledger ranks by money brought and includes the inviter.
+  const led = await referrerLedger(10);
+  const mine = led.find((r) => r.userId === inviter);
+  assert.ok(mine, "inviter missing from the referral ledger");
+  assert.equal(mine!.broughtKzt, 3700);
+  assert.ok(!led.some((r) => r.userId === stranger), "a buyer with no inviter is not a referrer");
 });
 
 await new Promise<void>((r) => server.close(() => r()));
