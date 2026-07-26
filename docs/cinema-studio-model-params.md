@@ -22,7 +22,7 @@ The four Studio selectors and what each maps to in a fal schema:
 | `nb2_image` / `nb2_edit` | `fal-ai/nano-banana-2(/edit)` | `aspect_ratio` Enum, default **auto**; supports extreme 4:1,1:4,8:1,1:8 | **`0.5K,1K,2K,4K`** (default 1K) — 0.5K=0.75×, 2K=1.5×, 4K=2× | **1–4** | native multi-res |
 | `nbpro_image` / `nbpro_edit` | `fal-ai/nano-banana-pro(/edit)` | `aspect_ratio` Enum, default **1:1** (t2i) / **auto** (edit) | **`1K,2K,4K`** (default **1K**) — 4K double rate | **1–4** | — |
 | `text_to_image` / `seedream_edit` | `fal-ai/bytedance/seedream/v4.5(/edit)` | `image_size` Enum: `square_hd, square, portrait_4_3, portrait_16_9, landscape_4_3, landscape_16_9, auto_2K, auto_4K` | via `image_size` presets | **1–6** (+ `max_images` 1–6, up to 15 total) | our `sizeParam()` mapping is correct |
-| `premium_image` / `premium_edit` | `fal-ai/gpt-image-2`, `openai/gpt-image-2/edit` | ⚠️ **not in fal docs** (docs show `gpt-image-1.5`) | ? | ? | **confirm endpoint + params + pricing** |
+| `premium_image` / `premium_edit` | `fal-ai/gpt-image-2`, `openai/gpt-image-2/edit` | `image_size` (t2i default `landscape_4_3`, edit default `auto`) | via `image_size`; `quality` Enum `auto,low,medium,high` (default `high`) | **`num_images`** (we cap at 2 — most expensive tier) | ✅ verified 2026-07-26 by queue-schema probe. Edit takes `image_urls` **array** + optional `mask_url`. |
 
 **Every documented image model supports `num_images` (count)** — nano-banana family **1–4**, Seedream **1–6**. Our registry encodes **no count parameter at all** (`GenOpts` has no `numImages`). This is the single biggest gap for the "count" selector you asked for.
 
@@ -36,7 +36,7 @@ The four Studio selectors and what each maps to in a fal schema:
 | `kling3` | `fal-ai/kling-video/v3/pro/i2v` | `5,10` (5) | — | — (i2v inherits from start frame; the 16:9/9:16/1:1 enum is the *t2v* tab only) | **yes** (`end_image_url`) |
 | `seedance_fast` | `bytedance/seedance-2.0/fast/i2v` | **`4–15` or `auto`** (auto) | **`480p,720p`** (720p) | `auto,21:9,16:9,4:3,1:1,3:4,9:16` | yes |
 | `seedance` | `bytedance/seedance-2.0/i2v` | **`4–15` or `auto`** (auto) | **`480p,720p`** (720p) | `auto,21:9,16:9,4:3,1:1,3:4,9:16` | yes |
-| `hailuo_fast` | `fal-ai/minimax/hailuo-2.3-fast/standard/i2v` | ⚠️ **not in fal docs** (docs show `fal-ai/minimax-video`) | ? | ? | **confirm endpoint + duration + pricing** |
+| `hailuo_fast` | `fal-ai/minimax/hailuo-2.3-fast/standard/image-to-video` | **`6,10`** (6) | — | — (inherits from start frame) | ✅ verified 2026-07-26. Also takes `prompt_optimizer` (default true). |
 
 ---
 
