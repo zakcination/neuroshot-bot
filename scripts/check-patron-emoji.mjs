@@ -14,6 +14,16 @@
  *     everything else must interpolate ${PATRON}.
  *
  * Pure static scan, no deps. Exit 1 (with a fix hint) on any violation.
+ *
+ * KNOWN LIMITATION — read this before trusting a surprising report. The lexer
+ * below has no REGEX-LITERAL state (telling `/` division from `/` regex needs
+ * real parsing). A regex containing a quote — `/[&<>"]/` — therefore opens a
+ * phantom string that swallows the rest of the file, and the emoji is then
+ * reported at some unrelated line, usually inside a comment that was fine all
+ * along. If a reported line looks innocent, search upwards for a regex literal
+ * with a quote in it: that is the actual cause. Writing the offending code
+ * without a regex is the cheaper fix; teaching this scanner to parse JS is not
+ * worth it for a guard this small.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";

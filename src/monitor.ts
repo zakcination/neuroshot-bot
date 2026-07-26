@@ -11,16 +11,19 @@ import type { Api } from "grammy";
 import { config } from "./config.js";
 import {
   addCredits,
+  claimPush,
   logEvent,
   markNudged,
   nudgedOnUtcDay,
   query,
   reapStalePending,
+  releasePush,
   staleGrantedOrders,
+  usersForPaywallPush,
   usersToNudge,
   type NudgeTarget,
 } from "./db.js";
-import { cheapestModel, CREDIT_COST_BASIS, MODELS, packById } from "./models.js";
+import { cheapestModel, CREDIT_COST_BASIS, MODELS, packById, PACKS } from "./models.js";
 import { grantPurchase } from "./payments.js";
 import { UNIT_EMOJI } from "./text.js";
 
@@ -342,7 +345,7 @@ export async function runReaper(send: SendFn): Promise<number> {
  * Exported for tests. Returns how many orders were successfully (re)granted.
  */
 export async function runOrderReconciler(api: Api): Promise<number> {
-  const stale = await staleGrantedOrders(config.orderGrantStaleMinutes);
+  const stale = await staleGrantedOrders(config.orderGrantStaleMinutes, config.orderGrantMaxAgeHours);
   let granted = 0;
   for (const order of stale) {
     const pack = packById(order.pack_id);
@@ -386,6 +389,56 @@ export async function runReengagement(send: SendFn): Promise<number> {
 }
 
 /**
+ * The message someone sees after reaching the paywall and walking away. It has
+ * one job: remove the last obstacle, which is not desire — they already picked
+ * a result and tapped create — but the price being an unknown quantity. So it
+ * names the cheapest pack, in tenge, and what that buys.
+ *
+ * No urgency theatre, no fake scarcity. This person has already been told what
+ * they cannot do; a countdown on top of that is how a bot gets blocked.
+ */
+export function paywallPushText(bonus: number): string {
+  const pack = PACKS.find((p) => !p.offer && !p.course) ?? PACKS[0];
+  const model = cheapestModel("image_edit");
+  const per = Math.max(1, Math.floor(pack.credits / model.credits));
+  const gift =
+    bonus > 0
+      ? `\n\n🎁 И <b>+${bonus} ${UNIT_EMOJI} сверху</b> к любому пакету — в ближайшие ${config.pushOfferHours} ч.`
+      : "";
+  return (
+    `✨ Вы были в шаге от результата.\n\n` +
+    `«${pack.title}» — <b>${pack.kzt} ₸</b>, это примерно <b>${per}</b> готовых работ. ` +
+    `Оплата картой Kaspi, патроны не сгорают.${gift}`
+  );
+}
+
+/**
+ * Conversion sweep: one message to people who reached the paywall, never
+ * bought, and have already seen the product work. Every send passes the global
+ * weekly budget (claimPush) — this track does not get its own allowance.
+ *
+ * The slot is claimed BEFORE sending and released if the send throws, so a
+ * blocked user doesn't permanently consume the one push this campaign will
+ * ever give them, and a transient Telegram error doesn't either.
+ */
+export async function runConversionPush(send: SendFn): Promise<number> {
+  if (config.pushPerWeek <= 0) return 0;
+  const targets = await usersForPaywallPush(config.pushBatch);
+  let delivered = 0;
+  for (const id of targets) {
+    if (!(await claimPush(id, "paywall", config.pushPerWeek))) continue;
+    const ok = await send(id, paywallPushText(config.pushOfferBonus)).then(() => true).catch(() => false);
+    if (ok) {
+      delivered++;
+      await logEvent(id, "push", "paywall").catch(() => {});
+    } else {
+      await releasePush(id, "paywall");
+    }
+  }
+  return delivered;
+}
+
+/**
  * Background loop: daily digest at config.digestHourUtc + alert checks every
  * 10 minutes (each alert key fires at most once per 24h). Failures are logged
  * and never crash the bot.
@@ -393,6 +446,7 @@ export async function runReengagement(send: SendFn): Promise<number> {
 export function startMonitor(send: SendFn, api: Api): NodeJS.Timeout {
   let lastDigestDay = "";
   let lastNudgeDay = "";
+  let lastPushDay = "";
   let ticking = false; // re-entrancy guard: ticks fire on a timer and aren't awaited
   const lastAlertAt = new Map<string, number>();
 
@@ -423,6 +477,16 @@ export function startMonitor(send: SendFn, api: Api): NodeJS.Timeout {
       if (now.getUTCMinutes() % 5 === 0) {
         const reaped = await runReaper(send);
         if (reaped > 0) console.log(`reaper: refunded ${reaped} stuck generation(s)`);
+      }
+      // Conversion push: once a day, on the same hour as the re-engagement
+      // sweep. Same hour on purpose — the weekly budget is shared, so running
+      // them together makes "how many messages did this person get today"
+      // answerable by looking at one moment rather than reconstructing a
+      // timeline.
+      if (config.reengageEnabled && now.getUTCHours() === config.reengageHourUtc && lastPushDay !== day) {
+        lastPushDay = day;
+        const n = await runConversionPush(send);
+        if (n > 0) console.log(`conversion push: messaged ${n} paywall drop-off(s)`);
       }
       // Order reconciler: every 5 minutes, retry orders paid but never granted.
       if (now.getUTCMinutes() % 5 === 0) {

@@ -65,6 +65,15 @@ export const config = {
   // endpoint + response shape against Kaspi's merchant docs — see docs/kaspi.md.
   kaspiApiBase: (process.env.KASPI_API_BASE ?? "").replace(/\/+$/, ""),
   kaspiApiToken: process.env.KASPI_API_TOKEN ?? "",
+  // Master switch for granting patrons with NO human in the loop. Default OFF,
+  // even when the merchant API above is configured. «Я оплатил» is a button the
+  // BUYER presses, so auto-grant trusts one external endpoint completely — a
+  // wrong base URL, a changed response shape, or a staging endpoint that
+  // answers optimistically all turn into free patrons, and nobody is asked.
+  // Off, that same tap pings an admin instead, carrying whatever Kaspi said —
+  // which costs one tap and cannot leak money. Turn on only after watching the
+  // verifier agree with reality on real payments (docs/kaspi.md).
+  kaspiAutoGrant: /^(1|true|yes)$/i.test(process.env.KASPI_AUTOGRANT ?? ""),
   // ₸ per USD — used ONLY for the digest's gross-margin estimate, never pricing.
   kztPerUsd: Number(process.env.KZT_PER_USD ?? 480),
   // Launch combo offer window: the "🔥 Комбо-сет" sale ends this many days after
@@ -83,6 +92,22 @@ export const config = {
   reengageHourUtc: Number(process.env.REENGAGE_HOUR_UTC ?? 7),
   // Max users nudged per daily sweep (keeps the send gentle + rate-limit-safe).
   reengageBatch: Number(process.env.REENGAGE_BATCH ?? 50),
+  // --- Conversion pushes ---
+  // The HARD ceiling on proactive messages per user per week, counted across
+  // EVERY push track at once. A messaging channel earns a little per message
+  // and loses everything at once — a blocked bot is permanent — so this is a
+  // product decision, not a per-campaign knob. Campaigns compete for a slot
+  // inside it. 0 disables all proactive messaging.
+  pushPerWeek: Number(process.env.PUSH_PER_WEEK ?? 2),
+  pushBatch: Number(process.env.PUSH_BATCH ?? 50),
+  // Bonus patrons attached to the paywall push, live for pushOfferHours from
+  // the moment it is sent. Ships at 0 — the mechanism deploys inert, and the
+  // number is a pricing decision made with data, not a constant in the repo.
+  // Turning it on before the push is known to convert would be discounting
+  // blind: you cannot tell a discount that WON a sale from one that was handed
+  // to someone who would have paid anyway.
+  pushOfferBonus: Number(process.env.PUSH_OFFER_BONUS ?? 0),
+  pushOfferHours: Number(process.env.PUSH_OFFER_HOURS ?? 48),
   // Reaper: a generation still 'pending' beyond this many minutes is treated as a
   // render whose process died (renders take 1–3 min); it's failed and refunded.
   genStaleMinutes: Number(process.env.GEN_STALE_MINUTES ?? 15),
@@ -91,6 +116,12 @@ export const config = {
   // design — unlike a stuck render, this means a customer already PAID and got
   // nothing, so it's worse to sit on than a slow render.
   orderGrantStaleMinutes: Number(process.env.ORDER_GRANT_STALE_MINUTES ?? 5),
+  // How far back the reconciler is allowed to reach. It exists to finish a
+  // grant interrupted MINUTES ago by a crash — it has no business resurrecting
+  // an order from last month. Without an upper bound it re-grants history: the
+  // granted_at column was added to an existing table with no backfill, so every
+  // order already marked 'paid' reads as "paid but never granted" forever.
+  orderGrantMaxAgeHours: Number(process.env.ORDER_GRANT_MAX_AGE_HOURS ?? 48),
   // Identity-gate the free hook (docs/growth-product.md): require a verified phone
   // before the free scenario and tie the gift to the PHONE, so multi-account
   // farming needs multiple real numbers (Higgsfield banned 40k farmed accounts).

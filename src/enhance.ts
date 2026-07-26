@@ -5,19 +5,27 @@
  * fal's `fal-ai/any-llm` endpoint — the SAME fal client + FAL_KEY the renders
  * use, so there is no new provider dependency or secret.
  *
- * Pricing (decision D2): the FIRST enhance after each generation start is
- * FREE; every further enhance costs 1 patron. "Free" is derived from the
- * events log (no schema change): free iff the user's most recent
- * 'enhance'/'gen_start' event is a gen_start — i.e. every render re-arms one
- * free enhance. A paid enhance is charged atomically up front and refunded
- * if the provider fails (the call is synchronous, so the catch-path refund
- * runs exactly once).
+ * Pricing: a STACK of ENHANCE_STACK charges rather than a single free shot.
+ * One rewrite is rarely the one you keep — you read it and want to nudge it
+ * again — so charging on the second tap taxes the moment the feature starts
+ * being useful. Each render refills the stack (a new idea deserves a fresh
+ * one); when it runs out, 1 patron refills it in full, so the patron buys a
+ * round of iteration rather than a single tap.
+ *
+ * The count is derived from the events log (no schema change, nothing to drift)
+ * — see enhanceChargesLeft. A paid refill is charged atomically up front and
+ * refunded if the provider fails; the call is synchronous, so the catch-path
+ * refund runs exactly once, and no 'enhance' event is logged, leaving the
+ * stack exactly as it was before the tap.
  */
 import { fal } from "@fal-ai/client";
-import { addCredits, enhanceIsFree, getUser, logEvent, spendCredits } from "./db.js";
+import { addCredits, enhanceChargesLeft, getUser, logEvent, spendCredits } from "./db.js";
 
-/** Patrons per PAID enhance (the first one after a render is free). */
+/** Patrons for a refill once the stack is empty — buys ENHANCE_STACK charges. */
 export const ENHANCE_COST = 1;
+
+/** Charges per stack. Refilled by a render, or by paying ENHANCE_COST. */
+export const ENHANCE_STACK = 2;
 
 /**
  * LLM used for the rewrite — cheap + fast tier on fal's any-llm router.
@@ -44,30 +52,38 @@ export async function runEnhance(raw: string): Promise<string> {
 }
 
 export type EnhanceResult =
-  | { ok: true; prompt: string; charged: number; free: boolean; balance: number }
+  | { ok: true; prompt: string; charged: number; free: boolean; balance: number; left: number }
   | { ok: false; error: "empty" | "insufficient" };
 
 /**
- * Enhance a prompt for `userId`: decide free-vs-paid, charge atomically when
- * paid, run the LLM, refund on provider failure (rethrown for the route to
- * map onto 502 — the client keeps the original prompt).
+ * Enhance a prompt for `userId`: spend a charge if the stack has one, else buy
+ * a whole new stack for ENHANCE_COST, run the LLM, refund on provider failure
+ * (rethrown for the route to map onto 502 — the client keeps its prompt).
+ *
+ * `left` is what remains AFTER this call, so the caller can label the button
+ * with the truth instead of a fixed string. The old label said "1-е бесплатно"
+ * forever, including to someone who had already used it.
  */
 export async function enhancePrompt(userId: number, raw: string, runner: (raw: string) => Promise<string> = runEnhance): Promise<EnhanceResult> {
   const text = raw.trim().slice(0, 500);
   if (!text) return { ok: false, error: "empty" };
-  const free = await enhanceIsFree(userId);
+  const free = (await enhanceChargesLeft(userId, ENHANCE_STACK)) > 0;
   if (!free && !(await spendCredits(userId, ENHANCE_COST, "enhance"))) {
     await logEvent(userId, "paywall", "enhance");
     return { ok: false, error: "insufficient" };
   }
   try {
     const prompt = await runner(text);
+    // The refill event is logged BEFORE the consuming one, so the arithmetic
+    // reads the same way it happened: paid → full stack → this tap spends one.
+    if (!free) await logEvent(userId, "enhance_refill", "paid");
     await logEvent(userId, "enhance", free ? "free" : "paid");
     const balance = (await getUser(userId))?.credits ?? 0;
-    return { ok: true, prompt, charged: free ? 0 : ENHANCE_COST, free, balance };
+    const left = await enhanceChargesLeft(userId, ENHANCE_STACK);
+    return { ok: true, prompt, charged: free ? 0 : ENHANCE_COST, free, balance, left };
   } catch (err) {
-    // Paid + provider failed → give the patron back. No 'enhance' event is
-    // logged, so the user's free/paid state is exactly as before the tap.
+    // Paid + provider failed → give the patron back. Neither event is logged,
+    // so the stack is exactly as it was before the tap.
     if (!free) await addCredits(userId, ENHANCE_COST, "refund", "enhance");
     throw err;
   }

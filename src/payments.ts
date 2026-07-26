@@ -2,10 +2,14 @@ import type { Api, Bot, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import {
+  addCredits,
+  awardPurchaseXp,
+  claimOfferRedemption,
   createOrder,
   getOrder,
   grantOrderCredits,
   logEvent,
+  offerBonusFor,
   resolveOrder,
   type ApprovalPath,
   rewardPartnerOnPurchase,
@@ -171,6 +175,13 @@ async function inviteToCourseCohort(api: Api, userId: number, tier: "fast" | "fl
 export async function grantPurchase(api: Api, userId: number, pack: Pack, orderId: number): Promise<void> {
   if (!(await grantOrderCredits(orderId, userId, pack.credits, pack.kzt))) return;
   await logEvent(userId, "purchase", `${pack.id}:${pack.kzt}`);
+  // XP for the money, and the inviter's share of it. Runs behind the same
+  // claim as the credits, so it can only ever fire for a purchase that really
+  // landed — never for a refunded or half-granted one. Never fatal: a failure
+  // here must not roll back credits the buyer has already been told about.
+  await awardPurchaseXp(userId, orderId, pack.kzt).catch((err) =>
+    console.error(`[xp] purchase XP failed for order #${orderId}:`, err),
+  );
 
   // Attribution is exclusive: a buyer came via a creator code OR a friend link.
   const partnerPayout = await rewardPartnerOnPurchase(userId, pack.credits);
@@ -199,8 +210,25 @@ export async function grantPurchase(api: Api, userId: number, pack: Pack, orderI
       lines.push(`🏆 +${nUnits(m.bonus)} — ${m.friends} ваших друзей уже покупают!`);
     if (lines.length) await api.sendMessage(payout.referrerId, lines.join("\n")).catch(() => {});
   }
+  // Personal offer from a conversion push, if one is still live. Claimed
+  // separately from the credit grant so it can be at most once per user ever,
+  // and read from the push itself so the window can never disagree with what
+  // the user was actually told. Ships inert (bonus 0) — the mechanism deploys
+  // ahead of the decision about the number.
+  let bonus = 0;
+  if (config.pushOfferBonus > 0 && (await offerBonusFor(userId, config.pushOfferHours))) {
+    if (await claimOfferRedemption(userId)) {
+      bonus = config.pushOfferBonus;
+      await addCredits(userId, bonus, "push_offer", pack.id);
+    }
+  }
   await api
-    .sendMessage(userId, `✅ Начислено ${UNIT_EMOJI} ${nUnits(pack.credits)}. Пришлите фото или напишите идею!`)
+    .sendMessage(
+      userId,
+      `✅ Начислено ${UNIT_EMOJI} ${nUnits(pack.credits)}.` +
+        (bonus > 0 ? ` Плюс бонус по вашему предложению: ${UNIT_EMOJI} ${nUnits(bonus)}!` : "") +
+        ` Пришлите фото или напишите идею!`,
+    )
     .catch(() => {});
 
   if (pack.course) await inviteToCourseCohort(api, userId, pack.course);
@@ -261,7 +289,7 @@ export async function claimOrderPaid(api: Api, orderId: number, who: string): Pr
   if (!order) return { kind: "not_found" };
   if (order.status === "paid") return { kind: "already" };
   const status = await kaspiVerifyOrder(order);
-  if (status === "paid") {
+  if (status === "paid" && config.kaspiAutoGrant) {
     const pack = await settleApprovedOrder(api, orderId, "kaspi_api");
     return { kind: "granted", credits: pack ? pack.credits : null };
   }
@@ -270,9 +298,16 @@ export async function claimOrderPaid(api: Api, orderId: number, who: string): Pr
   // through to the admin ping there is the difference between a buyer waiting a
   // few minutes and a buyer who paid being told forever that we see no payment.
   if (status === "pending" || status === "failed") return { kind: "pending", failed: status === "failed" };
+  // Everything else — including "Kaspi says paid but auto-grant is off" — goes
+  // to a human. The verifier's own verdict rides along so the decision is one
+  // informed tap rather than a fresh investigation.
+  const hint = status === "paid" ? "\n✅ Kaspi подтверждает оплату (авто-начисление выключено)." : "";
   for (const adminId of config.adminIds)
     await api
-      .sendMessage(adminId, `💸 Заявка №${orderId}: ${who} отметил оплату. Проверьте Kaspi → /order ${orderId} ok|no`)
+      .sendMessage(
+        adminId,
+        `💸 Заявка №${orderId}: ${who} отметил оплату.${hint}\nПроверьте Kaspi → /order ${orderId} ok|no`,
+      )
       .catch(() => {});
   return { kind: "admin" };
 }

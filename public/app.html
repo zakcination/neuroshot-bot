@@ -268,6 +268,123 @@
     /* Progression card — the mobile-game "level ring + XP bar" read. The ring is
        a conic-gradient sweep driven by --pct, so the fill needs no extra markup
        and no SVG. */
+    /* Header level chip: level number + live XP, deliberately narrow so it sits
+       beside the balance without competing with it. The XP count is small and
+       sits ABOVE the bar — the bar answers "how close am I?" at a glance, the
+       number is there for whoever wants the detail. Hidden entirely while the
+       ladder is unconfigured: an empty meter in the header reads as broken. */
+    .lvlmini { display: inline-flex; align-items: center; gap: 7px; padding: 4px 9px 4px 4px;
+      border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+      cursor: pointer; font: inherit; color: inherit; }
+    .lvlmini .lvlnum { display: grid; place-items: center; width: 24px; height: 24px; flex: 0 0 24px;
+      border-radius: 999px; font-size: 12px; font-weight: 800; color: #fff;
+      background: linear-gradient(135deg, var(--violet), var(--magenta)); }
+    /* Fixed width, not min-width: otherwise the chip resizes as the XP number
+       grows a digit, and a header element that shifts under you reads as a
+       glitch. 58px holds "12 400 XP" at this size. */
+    .lvlmini .lvlmb { display: flex; flex-direction: column; gap: 3px; width: 58px; }
+    .lvlmini small { font-size: 9px; line-height: 1; letter-spacing: .02em; color: var(--muted); white-space: nowrap; }
+    .lvlmini .lvlmbar { height: 4px; border-radius: 999px; background: rgba(255,255,255,.1); overflow: hidden; }
+    .lvlmini .lvlmbar i { display: block; height: 100%; border-radius: 999px;
+      background: linear-gradient(90deg, var(--violet), var(--magenta)); transition: width .6s ease; }
+    /* A level-up is the one moment worth interrupting for: the chip pulses once
+       when the number changes, so progress is felt and not merely displayed. */
+    @keyframes lvlpop { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
+    .lvlmini.levelup .lvlnum { animation: lvlpop .6s ease; }
+    /* XP in flight. Fixed-positioned so it can cross any scroll container on
+       its way to the header, and pointer-events:none so it can never intercept
+       a tap it happens to fly over. */
+    .xpfly { position: fixed; z-index: 90; pointer-events: none;
+      padding: 5px 11px; border-radius: 999px; font-size: 13px; font-weight: 800; color: #fff;
+      background: linear-gradient(135deg, var(--violet), var(--magenta));
+      box-shadow: 0 6px 20px rgba(0,0,0,.45); white-space: nowrap; }
+    /* The bar's own fill is already transitioned (.lvlmbar i), so the count-up
+       and the fill move together without any extra choreography. */
+    .lvlmini.xpland .lvlnum { animation: lvlpop .5s ease; }
+    @media (prefers-reduced-motion: reduce) {
+      .xpfly { transition: none !important; }
+      .achstage .badge { animation: none; }
+      .bgholo { animation: none; }
+    }
+
+    /* Level ⇄ Achievements: one row, 70/30. The level bar is the thing you
+       check; the badge shelf is the thing you're drawn to. Giving the shelf a
+       third of the width makes it an invitation rather than a competitor. */
+    .lvlrow { display: grid; grid-template-columns: 70fr 30fr; gap: 10px; align-items: stretch; }
+    .lvlrow > * { min-width: 0; }
+    @media (max-width: 340px) { .lvlrow { grid-template-columns: 1fr; } }
+
+    /* --- Holographic badge ---------------------------------------------
+       Built from CSS, not bitmaps: it has to look right at 44px on a shelf
+       and at 200px spinning in the detail view, on any DPI, with no asset to
+       download before the wall renders. Layers, outward in:
+         .bgcore  — the metal, an off-axis conic sweep so the highlight sits
+                    where a real bevelled surface would catch light;
+         .bgface  — the glyph, lifted on the Z axis so it parallaxes against
+                    the metal as the badge turns (this is what sells depth);
+         .bgholo  — the interference sheen, a wide diagonal band that travels.
+       Locked badges keep the geometry and lose the colour, so the shelf reads
+       as one set with holes in it rather than two unrelated groups. */
+    .badge { position: relative; width: 100%; aspect-ratio: 1 / 1.12; transform-style: preserve-3d;
+      filter: drop-shadow(0 6px 14px rgba(0,0,0,.45)); }
+    /* A heater-shield silhouette, not a rounded square: the outline is what
+       makes it read as an award at 44px, before any detail is legible. */
+    .bgcore, .bgrim, .bgholo { position: absolute; inset: 0;
+      clip-path: polygon(50% 0%, 96% 9%, 100% 26%, 97% 62%, 76% 88%, 50% 100%, 24% 88%, 3% 62%, 0% 26%, 4% 9%); }
+    .bgcore {
+      background:
+        radial-gradient(120% 80% at 30% 12%, rgba(255,255,255,.75) 0%, transparent 42%),
+        conic-gradient(from 205deg at 34% 26%,
+          var(--b3) 0deg, var(--b2) 58deg, var(--b1) 120deg, var(--b3) 190deg,
+          var(--b2) 250deg, var(--b1) 312deg, var(--b3) 360deg);
+    }
+    /* Bevel: a bright inner edge on the lit side, dark on the shadow side —
+       the cue that tells the eye this is metal with thickness. */
+    .bgrim { border: 0; transform: translateZ(4px);
+      background: linear-gradient(160deg, rgba(255,255,255,.55), transparent 26%, transparent 74%, rgba(0,0,0,.55));
+      mix-blend-mode: overlay; }
+    /* Both children share one grid cell so the artwork lands exactly on top of
+       the glyph it replaces. */
+    .bgface { position: absolute; inset: 0; display: grid; place-items: center; transform: translateZ(11px); }
+    .bgface > * { grid-area: 1 / 1; }
+    /* SVG, so the glyph scales with the badge instead of with the inherited
+       font-size — a percentage font-size would silently stay tiny. */
+    .bgface svg { width: 62%; height: 62%; overflow: visible; filter: drop-shadow(0 2px 4px rgba(0,0,0,.5)); }
+    .bgface svg text { font-size: 64px; }
+    .bgface img { width: 62%; height: 62%; object-fit: contain; filter: drop-shadow(0 2px 3px rgba(0,0,0,.5)); }
+    .bgholo {
+      background: linear-gradient(112deg, transparent 30%, rgba(255,255,255,.75) 44%,
+        rgba(150,215,255,.65) 50%, rgba(255,170,240,.5) 56%, transparent 70%);
+      mix-blend-mode: screen; transform: translateZ(15px);
+      background-size: 300% 300%; animation: holo 4.5s linear infinite;
+    }
+    @keyframes holo { 0% { background-position: 140% 0; } 100% { background-position: -40% 0; } }
+    .badge.locked { filter: grayscale(1) brightness(.5) contrast(.9); opacity: .55; }
+    .badge.locked .bgholo { animation: none; opacity: .12; }
+    .tier-bronze { --b1: #7a4a22; --b2: #e0a463; --b3: #4d2c12; }
+    .tier-silver { --b1: #6f7887; --b2: #e6edf6; --b3: #444c58; }
+    .tier-gold   { --b1: #8a6410; --b2: #ffdf85; --b3: #5a3f06; }
+
+    /* Shelf tile beside the level card */
+    .achtile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+      background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+      padding: 12px 8px; cursor: pointer; font: inherit; color: inherit; }
+    .achtile .badge { width: 54px; }
+    .achtile small { font-size: 10px; color: var(--muted); text-align: center; line-height: 1.3; }
+
+    /* Wall + detail */
+    .achgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .achcell { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-align: center; }
+    .achcell b { display: block; font-size: 11px; margin-top: 7px; font-weight: 600; }
+    .achcell small { display: block; font-size: 10px; color: var(--muted); }
+    .achstage { display: grid; place-items: center; padding: 18px 0 6px; perspective: 900px; touch-action: pan-y; }
+    .achstage .badge { width: 190px; animation: spin 9s linear infinite; }
+    .achstage.dragging .badge { animation: none; }
+    @keyframes spin { from { transform: rotateY(0deg); } to { transform: rotateY(360deg); } }
+    .achmeta { text-align: center; }
+    .achmeta h3 { margin: 4px 0 2px; }
+    .achmeta .sub { margin-bottom: 10px; }
+
     .lvlcard { display: flex; align-items: center; gap: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
     .lvlcard.off { opacity: .75; }
     .lvlring {
@@ -1039,6 +1156,253 @@
      *  • max level — a full bar, no phantom "0 to next";
      *  • normal — level ring, XP counter, and the exact XP left to the next.
      */
+    /**
+     * The header chip. Returns "" while the ladder is unconfigured (progress
+     * .active === false) so the header simply doesn't carry it — the Профиль
+     * card already explains the "скоро" state in words, and a stuck 0% meter in
+     * permanent view would say the opposite.
+     */
+    function levelMiniHtml(p) {
+      if (!p || !p.active) return "";
+      const pct = p.nextAt == null ? 100 : Math.round((p.into / p.span) * 100);
+      const title = p.nextAt == null
+        ? `Максимальный уровень · ${p.xp} XP`
+        : `Уровень ${p.level} · ещё ${p.nextAt - p.xp} XP до ${p.level + 1}`;
+      return `<button class="lvlmini" id="lvlPill" title="${esc(title)}" aria-label="${esc(title)}">
+        <span class="lvlnum">${p.level}</span>
+        <span class="lvlmb"><small>${p.xp} XP</small><span class="lvlmbar"><i style="width:${pct}%"></i></span></span>
+      </button>`;
+    }
+
+    /**
+     * Fly "+N XP" from wherever it was earned up to the header chip, then let
+     * the chip count up and the bar fill to the new position.
+     *
+     * Why bother: XP that simply appears has already happened by the time you
+     * look at it, and reads as bookkeeping. Watching it travel from the thing
+     * you just did to the meter is what makes the meter feel like yours.
+     *
+     * Degrades to nothing, deliberately, in three cases — the chip is absent
+     * (the ladder isn't switched on), the browser has no Web Animations API,
+     * or the user asked for reduced motion. In all three the numbers still
+     * update; only the flight is skipped.
+     */
+    function flyXp(delta, originEl, after) {
+      const chip = document.querySelector("#lvlHost .lvlmini");
+      const reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (!chip || delta <= 0 || reduce || !document.body.animate) { after && after(); return; }
+
+      const to = chip.getBoundingClientRect();
+      // Fall back to the middle of the viewport when the origin is off-screen
+      // or gone (a result card can be replaced before the poll returns).
+      const r = originEl && originEl.isConnected ? originEl.getBoundingClientRect() : null;
+      const from = r && r.width
+        ? { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+        : { x: innerWidth / 2, y: innerHeight * 0.55 };
+
+      const pill = document.createElement("div");
+      pill.className = "xpfly";
+      pill.textContent = `+${delta} XP`;
+      pill.style.left = from.x + "px";
+      pill.style.top = from.y + "px";
+      document.body.appendChild(pill);
+
+      const dx = to.left + to.width / 2 - from.x;
+      const dy = to.top + to.height / 2 - from.y;
+      const anim = pill.animate(
+        [
+          { transform: "translate(-50%,-50%) scale(.6)", opacity: 0 },
+          { transform: "translate(-50%,-50%) scale(1.15)", opacity: 1, offset: 0.16 },
+          // Arc: rise before crossing, so it reads as thrown rather than dragged.
+          { transform: `translate(calc(-50% + ${dx * 0.55}px), calc(-50% + ${dy * 0.25 - 46}px)) scale(1)`, opacity: 1, offset: 0.6 },
+          { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(.45)`, opacity: 0 },
+        ],
+        { duration: 1000, easing: "cubic-bezier(.4,.05,.25,1)" },
+      );
+      anim.onfinish = () => {
+        pill.remove();
+        chip.classList.add("xpland");
+        setTimeout(() => chip.classList.remove("xpland"), 500);
+        haptic("success");
+        after && after();
+      };
+      // A cancelled animation (tab hidden, element torn down) must still land
+      // the numbers, or the meter silently stops matching the account.
+      anim.oncancel = () => { pill.remove(); after && after(); };
+    }
+
+    /** Count the chip's XP label from one value to another as the bar fills. */
+    function countXpTo(progress, fromXp) {
+      const host = document.getElementById("lvlHost");
+      if (!host) return;
+      const label = host.querySelector(".lvlmini small");
+      if (!label) { setLevelMini(progress); return; }
+      const start = performance.now();
+      const dur = 700;
+      const tick = (t) => {
+        const k = Math.min(1, (t - start) / dur);
+        const shown = Math.round(fromXp + (progress.xp - fromXp) * k);
+        label.textContent = `${shown} XP`;
+        if (k < 1) requestAnimationFrame(tick);
+        else setLevelMini(progress); // settle on the authoritative render
+      };
+      // Fill the bar immediately: its CSS transition runs over the same window,
+      // so the number and the bar arrive together.
+      const bar = host.querySelector(".lvlmbar i");
+      if (bar) bar.style.width = (progress.nextAt == null ? 100 : Math.round((progress.into / progress.span) * 100)) + "%";
+      requestAnimationFrame(tick);
+    }
+
+    /**
+     * Compare the XP we last rendered against what the server now reports and,
+     * if it grew, play the gain. The DELTA comes from the server's own numbers
+     * rather than being predicted client-side — the client has no idea which
+     * rewards fired (breadth bonuses, daily caps, an unconfigured reward paying
+     * nothing), and a guessed +N that disagrees with the real total is worse
+     * than no animation at all.
+     */
+    let lastXpSeen = null;
+    function playXpGain(progress, originEl) {
+      if (!progress || !progress.active) { lastXpSeen = progress ? progress.xp : null; return; }
+      const before = lastXpSeen;
+      lastXpSeen = progress.xp;
+      // First paint of the session has nothing to compare against, and a lost
+      // level (impossible today, but XP is append-only by design) must not
+      // animate backwards.
+      if (before == null || progress.xp <= before) { setLevelMini(progress); return; }
+      const delta = progress.xp - before;
+      flyXp(delta, originEl, () => countXpTo(progress, before));
+    }
+
+    /** Repaint the header chip in place after XP moves, without a full re-render. */
+    function setLevelMini(p) {
+      const host = document.getElementById("lvlHost");
+      if (!host) return;
+      const before = host.querySelector(".lvlnum")?.textContent;
+      host.innerHTML = levelMiniHtml(p);
+      const pill = host.querySelector(".lvlmini");
+      if (!pill) return;
+      // Only celebrate a real level-up, never the first paint.
+      if (before != null && before !== String(p.level)) {
+        pill.classList.add("levelup");
+        setTimeout(() => pill.classList.remove("levelup"), 700);
+      }
+      pill.onclick = () => showPage("profile");
+    }
+
+    /**
+     * Emoji glyph per badge. Deliberately data, not art files: the wall must
+     * render fully on first paint even before any bespoke artwork exists, and
+     * a badge whose art hasn't been produced yet would otherwise be a hole in
+     * the set. `/img/badge-<id>.png` is picked up automatically once it does
+     * exist (see badgeHtml), so replacing these is a drop-in, not a rewrite.
+     */
+    const BADGE_GLYPH = {
+      first_render: "📸", ten_renders: "🎞", fifty_renders: "🏛", first_video: "🎬",
+      first_text: "✍️", explorer: "🧭", polymath: "🛠", stylist: "🎨", scenarist: "📖",
+      uploader: "🖼", wordsmith: "✨", sharer: "📡", first_purchase: "🎟",
+      patron: "👑", inviter: "🤝", circle: "🫂", level_3: "🔺",
+    };
+
+    /**
+     * One badge. The <img> is attempted first and removes itself on 404, so a
+     * shelf mixes produced artwork and glyph fallbacks without either looking
+     * broken — the same graceful-degradation rule the preset cards use.
+     */
+    function badgeHtml(a) {
+      const glyph = BADGE_GLYPH[a.id] || "\u2605";
+      // The glyph is ALWAYS rendered, and bespoke artwork — once it exists —
+      // simply covers it and removes it on load. The reverse (img first,
+      // swapped in on error) needs the fallback markup inside an HTML
+      // attribute, and an SVG carries quotes: the attribute terminates early
+      // and the rest leaks into the page as text. Layering avoids the whole
+      // class of problem, and a missing asset costs nothing.
+      return `<div class="badge tier-${a.tier}${a.earned ? "" : " locked"}">
+        <div class="bgcore"></div>
+        <div class="bgrim"></div>
+        <div class="bgface">
+          <svg viewBox="0 0 100 100" aria-hidden="true"><text x="50" y="52" text-anchor="middle" dominant-baseline="central">${glyph}</text></svg>
+          <img src="/img/badge-${esc(a.id)}.png" alt="" onload="this.previousElementSibling.remove()" onerror="this.remove()" />
+        </div>
+        <div class="bgholo"></div>
+      </div>`;
+    }
+
+    /** The 30% tile: the newest earned badge, and how far the set has gone. */
+    function achTileHtml(list) {
+      const all = list || [];
+      const earned = all.filter((a) => a.earned);
+      const face = earned[earned.length - 1] || all[0];
+      if (!face) return "";
+      return `<button class="achtile" id="achTile">
+        ${badgeHtml(face)}
+        <small>${earned.length} из ${all.length}<br>достижений</small>
+      </button>`;
+    }
+
+    /** The wall. Locked badges stay visible — the holes are what give the
+     *  earned ones weight, and they double as a map of what the app can do. */
+    function viewAchievements() {
+      const all = (ME && ME.achievements) || [];
+      const earned = all.filter((a) => a.earned).length;
+      sheetBody.innerHTML = `<h3>Достижения</h3>
+        <div class="sub">Получено ${earned} из ${all.length}. Нажмите на значок, чтобы рассмотреть.</div>
+        <div class="achgrid" style="margin-top:14px">${all.map((a) => `
+          <button class="achcell" data-ach="${esc(a.id)}">
+            ${badgeHtml(a)}
+            <b>${esc(a.title)}</b>
+            <small>${a.earned ? "получено" : `${a.at}/${a.need}`}</small>
+          </button>`).join("")}</div>`;
+      sheetBody.querySelectorAll("[data-ach]").forEach((b) => (b.onclick = () => viewBadge(b.dataset.ach)));
+      openSheet();
+    }
+
+    /**
+     * One badge, large and turning. It rotates on its own so the material and
+     * the glyph's parallax are visible without being asked for, and a drag
+     * takes over the moment the user touches it — an object you can turn reads
+     * as a thing you own, which a flat icon never does.
+     */
+    function viewBadge(id) {
+      const all = (ME && ME.achievements) || [];
+      const a = all.find((x) => x.id === id);
+      if (!a) return;
+      const pct = Math.round((Math.min(a.at, a.need) / Math.max(1, a.need)) * 100);
+      sheetBody.innerHTML = `<h3>${esc(a.title)}</h3>
+        <div class="achstage" id="achStage">${badgeHtml(a)}</div>
+        <div class="achmeta">
+          <div class="sub">${a.earned ? "Получено" : esc(a.hint)}</div>
+          ${a.earned ? "" : `<div class="lvlbar"><i style="width:${pct}%"></i></div><div class="sub">${a.at} из ${a.need}</div>`}
+          <button class="btn ghost" id="achBack">← Все достижения</button>
+        </div>`;
+      document.getElementById("achBack").onclick = viewAchievements;
+
+      // Drag to spin. Pointer events cover touch and mouse in one path; the
+      // stage keeps its own angle so releasing doesn't snap back to where the
+      // CSS animation would have been.
+      const stage = document.getElementById("achStage");
+      const el = stage.querySelector(".badge");
+      let dragging = false, startX = 0, angle = 0;
+      stage.addEventListener("pointerdown", (e) => {
+        dragging = true; startX = e.clientX; stage.classList.add("dragging");
+        stage.setPointerCapture(e.pointerId);
+      });
+      stage.addEventListener("pointermove", (e) => {
+        if (!dragging) return;
+        el.style.transform = `rotateY(${angle + (e.clientX - startX) * 0.8}deg)`;
+      });
+      const release = (e) => {
+        if (!dragging) return;
+        dragging = false;
+        angle += (e.clientX - startX) * 0.8;
+        // Hand it back to the ambient spin, continuing from where it was let go.
+        el.style.transform = "";
+        stage.classList.remove("dragging");
+      };
+      stage.addEventListener("pointerup", release);
+      stage.addEventListener("pointercancel", release);
+    }
+
     function levelCardHtml(p) {
       if (!p || !p.active) {
         return `<div class="lvlcard off">
@@ -1411,7 +1775,13 @@
         if (!jobs.has(job.id)) return; // already finished elsewhere
         const { status, data } = await api("/api/generations/" + job.id);
         if (status === 200 && data.status === "ok") {
-          jobs.delete(job.id); updateJobsPill(); refreshMe(); renderGallery(1); haptic("success");
+          // The XP a finished render earns should visibly come FROM the render:
+          // the open result if the user is looking at it, else the jobs pill,
+          // which is where their attention was.
+          jobs.delete(job.id); updateJobsPill();
+          xpOrigin = (viewedJob === job.id && sheet.classList.contains("on"))
+            ? sheetBody : document.getElementById("jobsPill");
+          refreshMe(); renderGallery(1); haptic("success");
           if (viewedJob === job.id && sheet.classList.contains("on")) viewResult(data, job);
           else toast("✨ Готово! Работа уже в «Мои работы»");
           return;
@@ -1591,6 +1961,18 @@
       clampStudioOpts();
       openSheet(); viewStudio();
     }
+    /**
+     * The enhancer button label, always derived from the real remaining stack.
+     * It used to be the fixed string "1-е бесплатно", which kept promising a
+     * free attempt to people who had already spent theirs — the feature looked
+     * broken at exactly the moment it started charging.
+     */
+    function enhLabel() {
+      const e = (ME && ME.enhance) || { left: 0, stack: 2, cost: 1 };
+      if (e.left > 0) return `✨ Улучшить промпт · осталось ${e.left} из ${e.stack}`;
+      return `✨ Улучшить промпт · ${e.cost} ${PATRON} за ${e.stack} попытки`;
+    }
+
     function studioList() { return (ME.catalog.studio && ME.catalog.studio[stu.mode]) || []; }
     function studioModel() { return studioList().find((m) => m.key === stu.modelKey) || studioList()[0]; }
     function stuHasSource() { return !!(stu.photo || stu.generationId); }
@@ -1779,7 +2161,7 @@
           ${!isVideo && !stuHasSource() ? `<div class="sub">Фото не нужно — опишите картинку словами, ИИ нарисует её с нуля.</div>` : ""}
           <textarea class="prompt" id="stuPrompt" placeholder="${isVideo ? "камера медленно приближается, ветер в волосах…" : "флакон духов на мокром чёрном мраморе…"}">${esc(stu.prompt)}</textarea>
           <div class="row" style="margin-top:6px">
-            <button class="btn ghost" id="stuEnh">✨ Улучшить промпт · 1-е бесплатно</button>
+            <button class="btn ghost" id="stuEnh">${enhLabel()}</button>
             ${stu.prevPrompt != null ? `<button class="btn ghost" id="stuUndo">↩ Вернуть</button>` : ""}
           </div>` : ""}
         ${qLabel(`Фото ${!isVideo && !m.needsImage ? "(не используется этой моделью)" : ""}`, "photo")}
@@ -1866,8 +2248,13 @@
         if (status !== 200) { toast("Не получилось улучшить — попробуйте ещё раз"); viewStudio(); return; }
         stu.prevPrompt = raw; stu.prompt = data.prompt;
         ME.dashboard.credits = data.balance; setBalance(data.balance);
+        // Server-authoritative remaining count — the label must never be a
+        // client-side guess about what the user is entitled to.
+        if (ME.enhance) ME.enhance.left = data.left;
         haptic("success");
-        toast(data.free ? "✨ Улучшено — бесплатно" : `✨ Улучшено · −1 ${PATRON}`);
+        toast(data.free
+          ? `✨ Улучшено · осталось ${data.left}`
+          : `✨ Улучшено · −${ME.enhance ? ME.enhance.cost : 1} ${PATRON}, ещё ${data.left} в запасе`);
         viewStudio();
       }));
       bind("#stuUndo", (el) => (el.onclick = () => { stu.prompt = stu.prevPrompt; stu.prevPrompt = null; viewStudio(); }));
@@ -2391,6 +2778,10 @@
     }
 
     // ————— page —————
+    // Where the next XP gain should fly FROM — set by whatever caused it just
+    // before triggering a refresh. Consumed once, so a later refresh that
+    // happens to coincide with unrelated XP doesn't launch from a stale card.
+    let xpOrigin = null;
     async function refreshMe() {
       const { status, data } = await api("/api/me");
       if (status !== 200) return;
@@ -2403,6 +2794,19 @@
       if (s) s.innerHTML = statsHtml(data.dashboard);
       const rl = document.getElementById("refList");
       if (rl) rl.innerHTML = referralListHtml(data.referrals);
+      // Route the repaint through playXpGain: it animates when XP grew and
+      // falls back to a plain repaint otherwise, so there is exactly ONE place
+      // that decides how the header reflects progress.
+      playXpGain(data.progress, xpOrigin);
+      xpOrigin = null;
+      const lc = document.getElementById("lvlCardHost");
+      if (lc) lc.innerHTML = levelCardHtml(data.progress);
+      const at = document.getElementById("achTileHost");
+      if (at) {
+        at.innerHTML = achTileHtml(data.achievements);
+        const t = document.getElementById("achTile");
+        if (t) t.onclick = viewAchievements;
+      }
       renderRoadmap(data);
     }
     function statsHtml(dash) {
@@ -2592,6 +2996,7 @@
             <span class="nm">${esc(d.user.first_name || "друг")}</span>
           </div>
           <span class="pillrow">
+            <span id="lvlHost">${levelMiniHtml(d.progress)}</span>
             <button class="pill topup" id="balancePill"><span class="plus">+</span><img class="appicon" src="/img/ic-patron.png" alt="" /> <span id="pillN">${dash.credits}</span></button>
             <span class="pill jobs" id="jobsPill" style="display:none;cursor:pointer"><img class="appicon" src="/img/ic-hourglass.png" alt="" /> <span id="jobsN">0</span></span>
           </span>
@@ -2652,14 +3057,12 @@
             <div class="stats" id="statsRow">${statsHtml(dash)}</div>
           </section>
 
-          ${roadmapGraduated(d, ROADMAP_STEPS) ? `<section class="reveal">
-            <div class="sec-h"><h2>Достижения</h2></div>
-            <div class="ach"><span class="achic">🏆</span><span class="achtx">Студия освоена<small>вы прошли весь путь в NeuroShot</small></span></div>
-          </section>` : ""}
-
           <section class="reveal">
-            <div class="sec-h"><h2>Уровень</h2></div>
-            ${levelCardHtml(d.progress)}
+            <div class="sec-h"><h2>Уровень и достижения</h2></div>
+            <div class="lvlrow">
+              <div id="lvlCardHost">${levelCardHtml(d.progress)}</div>
+              <div id="achTileHost">${achTileHtml(d.achievements)}</div>
+            </div>
           </section>
 
           <section class="reveal">
@@ -2818,6 +3221,12 @@
         if (job) { viewedJob = job.id; viewProgress(job.isVideo, job.id); }
       };
       document.getElementById("balancePill").onclick = () => showPage("buy");
+      // The chip is painted inline on first render, so bind it here; later
+      // repaints (setLevelMini) rebind their own.
+      const lvlPill0 = document.getElementById("lvlPill");
+      if (lvlPill0) lvlPill0.onclick = () => showPage("profile");
+      const achTile0 = document.getElementById("achTile");
+      if (achTile0) achTile0.onclick = viewAchievements;
       document.querySelectorAll("[data-buy]").forEach((b) => (b.onclick = () => buyPack(b.dataset.buy, false)));
       document.querySelectorAll("[data-studio]").forEach((a) => (a.onclick = () => studio(a.dataset.studio)));
       document.querySelectorAll("[data-camp-open]").forEach((a) => (a.onclick = () => { st.tab = "scenes"; openSheet(); viewCampaign(a.dataset.campOpen); }));

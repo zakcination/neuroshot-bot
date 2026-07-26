@@ -301,6 +301,46 @@ const SCHEMA: string[] = [
   // nothing on the row says who believed it. Every pending→paid transition
   // stamps it; NULL only on rows predating this column.
   `ALTER TABLE orders ADD COLUMN IF NOT EXISTS approved_via TEXT`,
+  // Every proactive message the bot sends, and every personal offer redeemed.
+  // One table because these are the same question asked twice: "what have we
+  // already sent this person, and did it lead anywhere?" The primary key makes
+  // each campaign strictly once-per-user, and the timestamps are what enforces
+  // the weekly message budget — a cap that has to be counted across ALL push
+  // tracks, not per feature, or each new track silently doubles the noise.
+  `CREATE TABLE IF NOT EXISTS pushes (
+    user_id BIGINT NOT NULL,
+    campaign TEXT NOT NULL,
+    sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, campaign)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_pushes_recent ON pushes(user_id, sent_at)`,
+  // One-time repair for the missing backfill above. granted_at was added to an
+  // already-populated table, so every order confirmed BEFORE it existed reads
+  // as "paid but never granted" — which is what let the reconciler re-credit
+  // the whole payment history (fake digest revenue, duplicate referral payouts,
+  // a second course invite to a months-old buyer).
+  //
+  // Stamped from EVIDENCE, not assumed: only orders whose buyer actually has a
+  // matching 'purchase' row in the ledger (same user, same tenge amount) are
+  // marked granted, at the time they were confirmed. An order with no such row
+  // stays NULL — it might be a genuinely stuck grant, and marking that one
+  // "granted" would quietly rob a real buyer. Those surface in /payments for a
+  // human instead.
+  //
+  // The hard cutoff makes this a repair rather than a standing rule: it can
+  // only ever touch rows that predate this migration, so a future order whose
+  // grant really does crash can never be silently written off by a coincidental
+  // older ledger row of the same amount. Idempotent — after the first run these
+  // rows are no longer NULL.
+  `UPDATE orders o SET granted_at = o.processed_at
+     WHERE o.status = 'paid' AND o.granted_at IS NULL
+       AND o.processed_at IS NOT NULL
+       AND o.processed_at < TIMESTAMPTZ '2026-07-26 08:00:00+00'
+       AND EXISTS (
+         SELECT 1 FROM ledger l
+         WHERE l.user_id = o.user_id AND l.reason = 'purchase'
+           AND l.meta = o.amount_kzt::text
+       )`,
 ];
 
 let schemaReady: Promise<void> | null = null;
@@ -1168,6 +1208,8 @@ export interface OrderRow {
   approved_via: string | null;
   /** When credits actually landed (grantOrderCredits' claim), null if never. */
   granted_at: string | null;
+  /** When the order was resolved paid/rejected, null while pending. */
+  processed_at: string | null;
 }
 
 /** The paths that can flip an order pending→paid. Recorded on the order. */
@@ -1183,10 +1225,12 @@ function mapOrder(r: Row): OrderRow {
     created_at: String(r.created_at),
     approved_via: r.approved_via == null ? null : String(r.approved_via),
     granted_at: r.granted_at == null ? null : String(r.granted_at),
+    processed_at: r.processed_at == null ? null : String(r.processed_at),
   };
 }
 
-const ORDER_COLS = "id, user_id, pack_id, amount_kzt, status, created_at, approved_via, granted_at";
+const ORDER_COLS =
+  "id, user_id, pack_id, amount_kzt, status, created_at, approved_via, granted_at, processed_at";
 
 /** Record a pending Kaspi purchase; returns the new order id. */
 export async function createOrder(userId: number, packId: string, amountKzt: number): Promise<number> {
@@ -1251,6 +1295,9 @@ export interface PaidOrderRow {
   kzt: number;
   approved_via: string | null;
   granted_at: string;
+  /** When it was CONFIRMED paid. Far earlier than granted_at ⇒ a back-fill. */
+  processed_at: string | null;
+  created_at: string;
 }
 
 export async function grantedOrders(hours: number, limit = 40): Promise<PaidOrderRow[]> {
@@ -1269,6 +1316,8 @@ export async function grantedOrders(hours: number, limit = 40): Promise<PaidOrde
       kzt: o.amount_kzt,
       approved_via: o.approved_via,
       granted_at: String(o.granted_at),
+      processed_at: o.processed_at,
+      created_at: o.created_at,
     };
   });
 }
@@ -1320,14 +1369,42 @@ export async function grantOrderCredits(
  * between resolveOrder's pending→paid win and grantPurchase's credit/payout
  * work leaves exactly this shape: status='paid', granted_at NULL. Feeds the
  * reconciler sweep in monitor.ts, which retries grantPurchase for each.
+ *
+ * `maxAgeHours` is the upper bound, and it is not optional in spirit: this
+ * sweep finishes work interrupted MINUTES ago, and re-granting an order from
+ * last month is never recovery. It matters because granted_at was added to an
+ * existing table with no backfill — so every order marked 'paid' BEFORE that
+ * migration reads as "paid but never granted" forever, and an unbounded sweep
+ * re-credits all of them at once: fresh 'purchase' ledger rows (which the daily
+ * digest then reports as revenue that nobody paid that day), duplicate referral
+ * payouts, and a second course-cohort invite to someone who bought months ago.
+ * Anything older is left for a human — see abandonedPaidOrders.
  */
-export async function staleGrantedOrders(minutes: number): Promise<OrderRow[]> {
+export async function staleGrantedOrders(minutes: number, maxAgeHours: number): Promise<OrderRow[]> {
   const rows = await q(
     `SELECT ${ORDER_COLS} FROM orders
      WHERE status = 'paid' AND granted_at IS NULL
        AND processed_at < now() - ($1 || ' minutes')::interval
+       AND processed_at > now() - ($2 || ' hours')::interval
      ORDER BY id`,
-    [String(Math.max(1, Math.floor(minutes)))],
+    [String(Math.max(1, Math.floor(minutes))), String(Math.max(1, Math.floor(maxAgeHours)))],
+  );
+  return rows.map(mapOrder);
+}
+
+/**
+ * Paid-but-ungranted orders too old for the reconciler to touch. Reported, never
+ * auto-granted: at this age we cannot tell a genuinely stuck grant from a row
+ * that predates the granted_at column and was credited long ago. Crediting on a
+ * guess is the failure we just removed; a human deciding is cheap.
+ */
+export async function abandonedPaidOrders(maxAgeHours: number, limit = 20): Promise<OrderRow[]> {
+  const rows = await q(
+    `SELECT ${ORDER_COLS} FROM orders
+     WHERE status = 'paid' AND granted_at IS NULL
+       AND processed_at <= now() - ($1 || ' hours')::interval
+     ORDER BY id DESC LIMIT ${Math.max(1, Math.floor(limit))}`,
+    [String(Math.max(1, Math.floor(maxAgeHours)))],
   );
   return rows.map(mapOrder);
 }
@@ -1426,6 +1503,235 @@ export async function usersToNudge(limit: number): Promise<NudgeTarget[]> {
     id: Number(r.id),
     free_scenario_used: r.free_scenario_used === true,
     credits: Number(r.credits),
+  }));
+}
+
+// ---- Achievements ----
+
+export interface Achievement {
+  id: string;
+  title: string;
+  hint: string; // what earns it — shown while locked, so the set reads as a map
+  tier: "bronze" | "silver" | "gold";
+  earned: boolean;
+  at: number; // progress so far
+  need: number; // progress required
+}
+
+/**
+ * The user's milestone wall, derived entirely from what they actually DID.
+ *
+ * Deliberately NOT read from xp_claims, even though that table already records
+ * once-per-thing awards in exactly this shape. xp_claims is only written while
+ * the XP economy is configured (awardXpOnce reads the config first and returns
+ * early when a reward is unset), so anything built on it alone shows an empty
+ * wall today and, worse, would never backfill: a user's real history would be
+ * permanently missing from their own profile. Deriving from generations /
+ * events / ledger costs a few cheap aggregates and is retroactive by
+ * construction — every badge someone has already earned is there the moment
+ * this ships.
+ *
+ * Locked badges are returned too, with their progress. A wall of unknowns is
+ * what makes the earned ones mean something, and it doubles as the clearest
+ * description of what the product can do.
+ */
+export async function achievements(userId: number): Promise<Achievement[]> {
+  const [gens, evt, buys, friends, level] = await Promise.all([
+    q(
+      `SELECT model, source_id, COUNT(*)::int AS c
+       FROM generations WHERE user_id = $1 AND status = 'ok' GROUP BY 1, 2`,
+      [userId],
+    ),
+    q(
+      `SELECT type, COUNT(*)::int AS c FROM events
+       WHERE user_id = $1 AND type IN ('upload', 'share', 'enhance') GROUP BY 1`,
+      [userId],
+    ),
+    q("SELECT COUNT(*)::int AS c FROM ledger WHERE user_id = $1 AND reason = 'purchase'", [userId]),
+    q(
+      `SELECT COUNT(*)::int AS c FROM users u
+       WHERE u.referrer_id = $1
+         AND EXISTS (SELECT 1 FROM generations g WHERE g.user_id = u.id AND g.status = 'ok')`,
+      [userId],
+    ),
+    getLevel(userId),
+  ]);
+
+  let total = 0;
+  let videos = 0;
+  let texts = 0;
+  const models = new Set<string>();
+  const presets = new Set<string>();
+  let scenarios = 0;
+  for (const row of gens) {
+    const c = Number(row.c);
+    const key = String(row.model);
+    const spec = MODELS[key as keyof typeof MODELS] as { kind?: string } | undefined;
+    total += c;
+    models.add(key);
+    if (spec?.kind === "image_to_video" || /^dub_/.test(key)) videos += c;
+    if (spec?.kind === "text_to_image") texts += c;
+    const src = row.source_id == null ? null : String(row.source_id);
+    if (src) {
+      presets.add(src);
+      if (src.includes(":")) scenarios += c;
+    }
+  }
+  const ev = (t: string) => Number(evt.find((r) => r.type === t)?.c ?? 0);
+  const purchases = Number(buys[0]?.c ?? 0);
+  const invited = Number(friends[0]?.c ?? 0);
+
+  const make = (
+    id: string,
+    title: string,
+    hint: string,
+    tier: Achievement["tier"],
+    at: number,
+    need: number,
+  ): Achievement => ({ id, title, hint, tier, at: Math.min(at, need), need, earned: at >= need });
+
+  return [
+    make("first_render", "Первый кадр", "Создайте первую работу", "bronze", total, 1),
+    make("ten_renders", "Десять работ", "Создайте 10 работ", "silver", total, 10),
+    make("fifty_renders", "Полсотни", "Создайте 50 работ", "gold", total, 50),
+    make("first_video", "Оживший кадр", "Сделайте первое видео", "silver", videos, 1),
+    make("first_text", "Из слов", "Нарисуйте картинку по описанию", "bronze", texts, 1),
+    make("explorer", "Исследователь", "Попробуйте 3 разные модели", "silver", models.size, 3),
+    make("polymath", "Все инструменты", "Попробуйте 10 разных моделей", "gold", models.size, 10),
+    make("stylist", "Стилист", "Попробуйте 5 разных стилей", "silver", presets.size, 5),
+    make("scenarist", "Сценарист", "Соберите сюжет по сценарию", "silver", scenarios, 1),
+    make("uploader", "Своё фото", "Загрузите собственное фото", "bronze", ev("upload"), 1),
+    make("wordsmith", "Редактор", "Улучшите промпт", "bronze", ev("enhance"), 1),
+    make("sharer", "Показал миру", "Поделитесь работой", "bronze", ev("share"), 1),
+    make("first_purchase", "Первый пакет", "Пополните патроны", "silver", purchases, 1),
+    make("patron", "Постоянный", "Три пополнения", "gold", purchases, 3),
+    make("inviter", "Пригласил друга", "Друг по вашей ссылке создаст работу", "silver", invited, 1),
+    make("circle", "Свой круг", "Пятеро друзей по вашей ссылке", "gold", invited, 5),
+    make("level_3", "Третий уровень", "Дойдите до 3 уровня", "silver", level, 3),
+  ];
+}
+
+// ---- Proactive messaging: budget, targeting, attribution ----
+
+/**
+ * Claim the right to send `campaign` to `userId`, respecting the GLOBAL weekly
+ * budget across every push track. Returns false if the campaign was already
+ * sent or the budget is spent.
+ *
+ * The budget is checked BEFORE the claim is written, so a user at their limit
+ * doesn't silently burn the one slot they will ever have for that campaign —
+ * the same ordering mistake awardXpOnce exists to avoid. Order matters again on
+ * failure: nothing is written, so the campaign stays available for next week.
+ *
+ * Why a hard cap at all: a messaging channel earns nothing per message and
+ * loses everything at once — a blocked bot is permanent, and no conversion
+ * campaign is worth trading a user for. The cap is the product decision; each
+ * campaign only competes for a slot within it.
+ */
+export async function claimPush(userId: number, campaign: string, perWeek: number): Promise<boolean> {
+  const cap = Math.max(0, Math.floor(perWeek));
+  if (cap === 0) return false;
+  const recent = await q(
+    "SELECT COUNT(*)::int AS c FROM pushes WHERE user_id = $1 AND sent_at > now() - interval '7 days'",
+    [userId],
+  );
+  if (Number(recent[0]?.c ?? 0) >= cap) return false;
+  const won = await q(
+    "INSERT INTO pushes (user_id, campaign) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING campaign",
+    [userId, campaign],
+  );
+  return won.length > 0;
+}
+
+/** Release a claimed push slot — used when the send itself failed. */
+export async function releasePush(userId: number, campaign: string): Promise<void> {
+  await q("DELETE FROM pushes WHERE user_id = $1 AND campaign = $2", [userId, campaign]);
+}
+
+/**
+ * The strongest purchase intent this product can observe: someone who reached
+ * the paywall — they picked a result, configured it and tapped create — and
+ * then didn't buy. They already want the thing; nothing needs to be sold to
+ * them except the last step.
+ *
+ * Deliberately narrow. Only users who have NEVER purchased (an existing
+ * customer hitting a paywall needs a top-up prompt in-app, not a DM), who saw
+ * it recently enough to remember what they wanted, and who have actually
+ * rendered something — someone who never saw a result has no reason to trust
+ * the price.
+ */
+export async function usersForPaywallPush(limit: number, days = 3): Promise<number[]> {
+  const rows = await q(
+    `SELECT DISTINCT e.user_id
+     FROM events e
+     WHERE e.type = 'paywall'
+       AND e.created_at > now() - ($2 || ' days')::interval
+       AND NOT EXISTS (SELECT 1 FROM ledger l WHERE l.user_id = e.user_id AND l.reason = 'purchase')
+       AND EXISTS (SELECT 1 FROM generations g WHERE g.user_id = e.user_id AND g.status = 'ok')
+       AND NOT EXISTS (SELECT 1 FROM pushes p WHERE p.user_id = e.user_id AND p.campaign = 'paywall')
+     ORDER BY e.user_id
+     LIMIT $1`,
+    [Math.max(0, Math.floor(limit)), String(Math.max(1, Math.floor(days)))],
+  );
+  return rows.map((r) => Number(r.user_id));
+}
+
+/**
+ * Is a personal offer live for this buyer, and has it not been redeemed? The
+ * offer's lifetime is measured from the push that announced it — no extra
+ * column, and no way for the window to disagree with what the user was told.
+ */
+export async function offerBonusFor(userId: number, hours: number): Promise<boolean> {
+  const rows = await q(
+    `SELECT 1 FROM pushes
+     WHERE user_id = $1 AND campaign = 'paywall'
+       AND sent_at > now() - ($2 || ' hours')::interval
+       AND NOT EXISTS (SELECT 1 FROM pushes r WHERE r.user_id = $1 AND r.campaign = 'offer_redeemed')`,
+    [userId, String(Math.max(1, Math.floor(hours)))],
+  );
+  return rows.length > 0;
+}
+
+/** Claim the one-time redemption of a personal offer. False if already used. */
+export async function claimOfferRedemption(userId: number): Promise<boolean> {
+  const won = await q(
+    "INSERT INTO pushes (user_id, campaign) VALUES ($1, 'offer_redeemed') ON CONFLICT DO NOTHING RETURNING campaign",
+    [userId],
+  );
+  return won.length > 0;
+}
+
+export interface PushReport {
+  campaign: string;
+  sent: number;
+  converted: number; // of those, how many purchased AFTER the push
+  kzt: number; // what those purchases were worth
+}
+
+/**
+ * Did the push actually sell anything? Conversion is counted only for orders
+ * granted AFTER the push, so a customer who had already bought can never be
+ * credited to a campaign that reached them later.
+ */
+export async function pushReport(): Promise<PushReport[]> {
+  const rows = await q(
+    `SELECT p.campaign,
+            COUNT(*)::int AS sent,
+            COUNT(o.id)::int AS converted,
+            COALESCE(SUM(o.amount_kzt), 0)::int AS kzt
+     FROM pushes p
+     LEFT JOIN LATERAL (
+       SELECT id, amount_kzt FROM orders
+       WHERE user_id = p.user_id AND granted_at IS NOT NULL AND granted_at > p.sent_at
+       ORDER BY granted_at LIMIT 1
+     ) o ON true
+     GROUP BY p.campaign ORDER BY sent DESC`,
+  );
+  return rows.map((r) => ({
+    campaign: String(r.campaign),
+    sent: Number(r.sent),
+    converted: Number(r.converted),
+    kzt: Number(r.kzt),
   }));
 }
 
@@ -1725,19 +2031,31 @@ export async function galleryPage(
 }
 
 /**
- * Prompt Enhancer free-rule (Cinema Studio ②, decision D2): the FIRST enhance
- * after each generation start is free. Derived from the events log — free iff
- * the user's most recent 'enhance'/'gen_start' event is a gen_start (every
- * render re-arms one free enhance), or neither exists yet (a brand-new user's
- * very first enhance is free). No schema change, no extra counter to drift.
+ * How many enhances the user can still run without paying — a small stack
+ * rather than a single free shot, because one rewrite is rarely the one you
+ * keep: you try, read it, and want to nudge it again. Charging on the second
+ * tap taxes exactly the moment the feature starts working.
+ *
+ * Derived from the events log, so there is still no schema change and no
+ * counter that can drift out of sync with what actually happened. The stack
+ * refills to full on two events, and NOTHING else touches it:
+ *   • 'gen_start'      — a new render is a new idea, so a fresh stack;
+ *   • 'enhance_refill' — the user paid a patron for another stack.
+ * Everything logged after the most recent of those, of type 'enhance', has
+ * consumed one charge.
  */
-export async function enhanceIsFree(userId: number): Promise<boolean> {
+export async function enhanceChargesLeft(userId: number, capacity: number): Promise<number> {
+  const cap = Math.max(1, Math.floor(capacity));
   const rows = await q(
-    `SELECT type FROM events WHERE user_id = $1 AND type IN ('enhance','gen_start')
-     ORDER BY id DESC LIMIT 1`,
+    `SELECT COUNT(*)::int AS used FROM events
+     WHERE user_id = $1 AND type = 'enhance'
+       AND id > COALESCE((
+         SELECT MAX(id) FROM events
+         WHERE user_id = $1 AND type IN ('gen_start', 'enhance_refill')
+       ), 0)`,
     [userId],
   );
-  return rows.length === 0 || rows[0].type === "gen_start";
+  return Math.max(0, cap - Number(rows[0]?.used ?? 0));
 }
 
 /**
@@ -2149,12 +2467,102 @@ export async function getUserXp(userId: number): Promise<number> {
 export async function awardXp(userId: number, action: string, meta?: string): Promise<number> {
   const amount = await getEconomyConfig(`xp.${action}`);
   if (!amount) return 0;
+  return addXp(userId, amount, action, meta);
+}
+
+/**
+ * Credit an already-decided amount of XP and journal it, in one statement.
+ *
+ * Separate from awardXp because a few rewards are PROPORTIONAL — spend-scaled
+ * XP can't come from a single `xp.<action>` value. Callers of this are
+ * responsible for their own idempotency; awardXp/awardXpOnce/awardXpCapped
+ * remain the way in for flat rewards.
+ */
+async function addXp(userId: number, amount: number, action: string, meta?: string): Promise<number> {
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  const delta = Math.floor(amount);
   await q(
     `WITH upd AS (UPDATE users SET xp = xp + $1 WHERE id = $2 RETURNING id)
      INSERT INTO xp_ledger (user_id, delta, reason, meta) SELECT $2, $1, $3, $4 FROM upd`,
-    [amount, userId, action, meta ?? null],
+    [delta, userId, action, meta ?? null],
   );
-  return amount;
+  return delta;
+}
+
+/**
+ * XP for money spent, and the referrer's share of it.
+ *
+ * Two config keys decide the buyer's rate: `xp.purchase.step` (₸ per unit) and
+ * `xp.purchase` (XP per unit) — so "каждые 25 ₸ = 10 XP" is a setting, not a
+ * constant in this repo. `xp.refpurchase` pays whoever brought the buyer, at
+ * the same step. BOTH sides need their keys set; a step without a rate (or vice
+ * versa) awards nothing, and /econ_levels calls that half-configured state out
+ * rather than letting it look switched on.
+ *
+ * `xp.purchase.max` / `xp.refpurchase.max` cap ONE order's award, and they are
+ * the load-bearing part of the design, not a safety detail. XP buys Levels, and
+ * Levels unlock styles — so uncapped, a single large top-up buys the whole
+ * ladder outright, the progression stops meaning "you have used this product"
+ * and starts meaning "you paid", and every user who earns their levels is
+ * looking at a scoreboard someone else skipped. The cap keeps a big purchase
+ * worth roughly a good week of real use instead of months of it. Unset = no
+ * cap, which is why /econ_levels says so out loud.
+ *
+ * Attribution matches grantPurchase exactly — the partner code the buyer
+ * arrived on, else their inviter, never both — so one purchase can never pay
+ * two people.
+ *
+ * Idempotent per ORDER on each side independently (`purchase:<id>` /
+ * `refpurchase:<id>` in xp_claims), so the reconciler, a duplicate webhook and
+ * an admin re-running `/order N ok` can all reach this without re-awarding.
+ * Called only after grantOrderCredits wins its claim, so XP exists only where
+ * money actually moved.
+ */
+export async function awardPurchaseXp(buyerId: number, orderId: number, kzt: number): Promise<number> {
+  const step = await getEconomyConfig("xp.purchase.step");
+  if (!step || step <= 0) return 0;
+  const units = Math.floor(Math.max(0, kzt) / step);
+  if (units <= 0) return 0;
+
+  let total = 0;
+  const claim = async (userId: number, key: string): Promise<boolean> => {
+    const won = await q(
+      "INSERT INTO xp_claims (user_id, claim_key) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING claim_key",
+      [userId, key],
+    );
+    return won.length > 0;
+  };
+
+  const cap = async (raw: number, key: string): Promise<number> => {
+    const limit = await getEconomyConfig(key);
+    return limit != null && limit > 0 ? Math.min(raw, limit) : raw;
+  };
+
+  const buyerRate = await getEconomyConfig("xp.purchase");
+  if (buyerRate && (await claim(buyerId, `purchase:${orderId}`))) {
+    total += await addXp(buyerId, await cap(units * buyerRate, "xp.purchase.max"), "purchase", String(orderId));
+  }
+
+  const refRate = await getEconomyConfig("xp.refpurchase");
+  if (refRate) {
+    const owner = await q(
+      `SELECT COALESCE(pc.user_id, u.referrer_id) AS owner_id
+       FROM users u LEFT JOIN partner_codes pc ON pc.code = u.partner_code
+       WHERE u.id = $1`,
+      [buyerId],
+    );
+    const ownerId = owner[0]?.owner_id == null ? null : Number(owner[0].owner_id);
+    // Self-referral would be a free XP loop: buy, pay yourself the share.
+    if (ownerId && ownerId !== buyerId && (await claim(ownerId, `refpurchase:${orderId}`))) {
+      total += await addXp(
+        ownerId,
+        await cap(units * refRate, "xp.refpurchase.max"),
+        "refpurchase",
+        `${orderId}:${buyerId}`,
+      );
+    }
+  }
+  return total;
 }
 
 /**

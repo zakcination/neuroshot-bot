@@ -39,11 +39,11 @@ process.env.RATE_LIMIT_ENHANCE_PER_MIN = "100000";
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
+const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, awardPurchaseXp, staleGrantedOrders, abandonedPaidOrders, claimPush, releasePush, usersForPaywallPush, offerBonusFor, claimOfferRedemption, pushReport, achievements, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
-const { settleApprovedOrder } = await import("../src/payments.js");
+const { claimOrderPaid, settleApprovedOrder } = await import("../src/payments.js");
 const { hit } = await import("../src/ratelimit.js");
 const { config } = await import("../src/config.js");
 const { Api } = await import("grammy");
@@ -754,51 +754,61 @@ await step("Studio preset: personalization is sanitized+appended; model override
   assert.equal(bad.status, 400);
 });
 
-await step("Prompt Enhancer: first free → 1 🔫 → 402; provider failure refunds; a render re-arms the free one", async () => {
+await step("Prompt Enhancer: a stack of 2, refilled by a render or by 1 🔫; the count is always reported", async () => {
   // A FRESH user so the enhance/gen_start event history is fully controlled.
   const enh = { id: 990077, username: "enhancer", first_name: "Enh" };
   await getOrCreateUser(enh.id, enh.username, null, 0);
   const H = { Authorization: `tma ${signInitData(enh)}`, "Content-Type": "application/json" };
   const call = (prompt: string) => fetch(`${base}/api/enhance`, { method: "POST", headers: H, body: JSON.stringify({ prompt }) });
+  const meLeft = async () =>
+    ((await (await fetch(`${base}/api/me`, { headers: H })).json()) as { enhance: { left: number } }).enhance.left;
 
-  // Empty prompt → 400, nothing charged.
+  // Empty prompt → 400, nothing charged and nothing consumed.
   assert.equal((await call("   ")).status, 400);
-  // 1st enhance ever → FREE, upgraded prompt back, balance untouched (0).
-  const r1 = await call("кот в очках");
-  assert.equal(r1.status, 200);
-  const d1 = (await r1.json()) as { prompt: string; charged: number; free: boolean; balance: number };
+  assert.equal(await meLeft(), 2, "a rejected prompt must not eat a charge");
+
+  // One rewrite is rarely the one you keep, so the SECOND tap is still free.
+  const d1 = (await (await call("кот в очках")).json()) as { charged: number; free: boolean; balance: number; left: number; prompt: string };
   assert.equal(d1.free, true);
   assert.equal(d1.charged, 0);
-  assert.equal(d1.balance, 0);
+  assert.equal(d1.left, 1, "the response must report what is left, not just free/paid");
   assert.match(d1.prompt, /Cinematic.*кот в очках/);
-  // 2nd enhance with 0 🔫 → 402 paywall (the free one is spent).
-  assert.equal((await call("кот в очках, неон")).status, 402);
-  // With 1 🔫 the 2nd enhance charges exactly 1.
+  const d2 = (await (await call("кот в очках, неон")).json()) as { free: boolean; left: number };
+  assert.equal(d2.free, true, "the second tap of a fresh stack is still free");
+  assert.equal(d2.left, 0);
+  assert.equal(await meLeft(), 0, "/api/me must agree with the enhance response");
+
+  // Empty stack + no patrons → paywall, not a silent failure.
+  assert.equal((await call("и ещё раз")).status, 402);
+
+  // 1 🔫 buys a WHOLE new stack, not a single tap — the patron pays for a round
+  // of iteration, which is how the feature is actually used.
   await addCredits(enh.id, 1, "admin_grant", "test");
-  const r2 = await call("кот в очках, неон");
-  assert.equal(r2.status, 200);
-  const d2 = (await r2.json()) as { charged: number; free: boolean; balance: number };
-  assert.equal(d2.free, false);
-  assert.equal(d2.charged, 1);
-  assert.equal(d2.balance, 0);
-  // Provider failure on a PAID enhance → 502 and the patron comes back.
+  const d3 = (await (await call("кот в очках, неон")).json()) as { charged: number; free: boolean; balance: number; left: number };
+  assert.equal(d3.free, false);
+  assert.equal(d3.charged, 1);
+  assert.equal(d3.balance, 0);
+  assert.equal(d3.left, 1, "a paid refill must leave the rest of the stack available");
+  assert.equal(((await (await call("ещё вариант")).json()) as { free: boolean }).free, true);
+
+  // Provider failure on a PAID tap → 502, the patron comes back, and the stack
+  // is exactly as it was — a failed tap must cost neither money nor a charge.
   await addCredits(enh.id, 1, "admin_grant", "test");
   anyLlmFail = true;
-  const rf = await call("ещё раз");
+  assert.equal((await call("ещё раз")).status, 502);
   anyLlmFail = false;
-  assert.equal(rf.status, 502);
-  const balAfterFail = (await query("SELECT credits FROM users WHERE id = $1", [enh.id]))[0];
-  assert.equal(Number(balAfterFail.credits), 1); // refunded — net zero for the failed tap
-  // A generation start RE-ARMS the free enhance (D2: per-generation).
+  assert.equal(Number((await query("SELECT credits FROM users WHERE id = $1", [enh.id]))[0].credits), 1);
+  assert.equal(await meLeft(), 0, "a failed tap must not consume a charge");
+
+  // A render refills the stack in full — a new idea deserves a fresh one.
   await addCredits(enh.id, 2, "admin_grant", "test"); // 1 + 2 = 3; t2i costs 2 → 1 left
   const gen = await fetch(`${base}/api/generate`, {
     method: "POST", headers: H,
     body: JSON.stringify({ source: "model", model: "text_to_image", prompt: "домик у моря" }),
   });
   assert.equal(gen.status, 200);
-  const r3 = await call("домик у моря, но зимой");
-  assert.equal(r3.status, 200);
-  assert.equal(((await r3.json()) as { free: boolean }).free, true);
+  assert.equal(await meLeft(), 2, "a render must refill the whole stack");
+  assert.equal(((await (await call("домик у моря, но зимой")).json()) as { free: boolean }).free, true);
 });
 
 await step("/api/me exposes PENDING generations — the reload-safe resume contract", async () => {
@@ -2607,6 +2617,333 @@ await step("referral finance: revenue brought in is read from orders, not from t
   assert.ok(mine, "inviter missing from the referral ledger");
   assert.equal(mine!.broughtKzt, 3700);
   assert.ok(!led.some((r) => r.userId === stranger), "a buyer with no inviter is not a referrer");
+});
+
+await step("purchase XP: scales with money spent, pays the inviter, and never twice per order", async () => {
+  await query("DELETE FROM orders");
+  await query("DELETE FROM ledger WHERE reason = 'purchase'");
+  await query("DELETE FROM economy_config WHERE key LIKE 'xp.%'");
+  await query("DELETE FROM xp_claims");
+
+  const inviter = 990500;
+  const buyer = 990501;
+  const loner = 990502;
+  for (const [id, name] of [[inviter, "xp_inviter"], [buyer, "xp_buyer"], [loner, "xp_loner"]] as const) {
+    await getOrCreateUser(id as number, name as string, null, 0);
+    await query("UPDATE users SET xp = 0 WHERE id = $1", [id]);
+  }
+  await query("UPDATE users SET referrer_id = $1 WHERE id = $2", [inviter, buyer]);
+
+  // Unconfigured is inert — the shipped default must award nothing.
+  const o0 = await createOrder(buyer, "start", 3700);
+  assert.equal(await awardPurchaseXp(buyer, o0, 3700), 0);
+  assert.equal(await getUserXp(buyer), 0);
+
+  // A step with no rate is a HALF-config: still nothing, no silent guessing.
+  await setEconomyConfig("xp.purchase.step", 25);
+  const o1 = await createOrder(buyer, "start", 3700);
+  assert.equal(await awardPurchaseXp(buyer, o1, 3700), 0);
+
+  await setEconomyConfig("xp.purchase", 10);
+  await setEconomyConfig("xp.refpurchase", 5);
+
+  // 3700 ₸ / 25 = 148 units → buyer 1480, inviter 740.
+  const o2 = await createOrder(buyer, "start", 3700);
+  await awardPurchaseXp(buyer, o2, 3700);
+  assert.equal(await getUserXp(buyer), 1480);
+  assert.equal(await getUserXp(inviter), 740);
+
+  // Re-running the same order (reconciler, duplicate webhook, /order N ok twice)
+  // must be a full no-op on BOTH sides.
+  await awardPurchaseXp(buyer, o2, 3700);
+  assert.equal(await getUserXp(buyer), 1480, "purchase XP awarded twice for one order");
+  assert.equal(await getUserXp(inviter), 740, "referral XP awarded twice for one order");
+
+  // A second, larger order pays again and scales with the amount.
+  const o3 = await createOrder(buyer, "pro", 7500);
+  await awardPurchaseXp(buyer, o3, 7500);
+  assert.equal(await getUserXp(buyer), 1480 + 300 * 10);
+
+  // The cap is what keeps Levels a record of USE rather than of spend: a big
+  // top-up must not buy the ladder outright.
+  await setEconomyConfig("xp.purchase.max", 500);
+  await setEconomyConfig("xp.refpurchase.max", 250);
+  const before = await getUserXp(buyer);
+  const big = await createOrder(buyer, "pro", 20000); // 800 units → 8000 XP uncapped
+  await awardPurchaseXp(buyer, big, 20000);
+  assert.equal((await getUserXp(buyer)) - before, 500, "a large purchase blew past the per-order cap");
+  await query("DELETE FROM economy_config WHERE key LIKE 'xp.%.max'");
+
+  // A buyer with no inviter pays XP to nobody — and a purchase under one step
+  // rounds down to zero rather than paying for a rounding error.
+  const o4 = await createOrder(loner, "start", 3700);
+  await awardPurchaseXp(loner, o4, 3700);
+  assert.equal(await getUserXp(loner), 1480);
+  const o5 = await createOrder(loner, "start", 10);
+  assert.equal(await awardPurchaseXp(loner, o5, 10), 0);
+
+  await query("DELETE FROM economy_config WHERE key LIKE 'xp.%'");
+});
+
+await step("auto-grant is OFF by default: «Я оплатил» always reaches a human", async () => {
+  // The failure this prevents: «Я оплатил» is pressed by the BUYER, so granting
+  // on the merchant API's word alone trusts one external endpoint completely.
+  // Even when it says "paid", an unconfigured auto-grant must ping an admin
+  // instead of moving credits.
+  const buyer = 990600;
+  await getOrCreateUser(buyer, "autogrant", null, 0);
+  const id = await createOrder(buyer, "start", 3700);
+
+  const realFetch = globalThis.fetch;
+  const { config: live } = await import("../src/config.js");
+  const prev = { base: live.kaspiApiBase, token: live.kaspiApiToken, auto: live.kaspiAutoGrant };
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ status: "paid", amount: 3700 }), {
+      status: 200, headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+  (live as { kaspiApiBase: string }).kaspiApiBase = "https://merchant.test";
+  (live as { kaspiApiToken: string }).kaspiApiToken = "t";
+  const pinged: number[] = [];
+  const api = { sendMessage: async (chatId: number) => { pinged.push(chatId); return {}; } } as unknown as InstanceType<typeof Api>;
+  // CI has no ADMIN_IDS, so the ping loop would have nobody to send to and the
+  // assertion below would pass or fail on the environment rather than the code.
+  const prevAdmins = [...live.adminIds];
+  (live as { adminIds: number[] }).adminIds = [424242];
+  try {
+    (live as { kaspiAutoGrant: boolean }).kaspiAutoGrant = false;
+    const off = await claimOrderPaid(api, id, "tester");
+    assert.equal(off.kind, "admin", "a paid verdict must still go to a human while auto-grant is off");
+    assert.ok(pinged.length > 0, "admins were not pinged");
+    assert.equal((await getOrder(id))?.status, "pending", "credits moved with no human in the loop");
+
+    // Explicitly switched on, the same verdict grants — the switch is real, not
+    // a permanent disable dressed up as a flag.
+    (live as { kaspiAutoGrant: boolean }).kaspiAutoGrant = true;
+    const on = await claimOrderPaid(api, id, "tester");
+    assert.equal(on.kind, "granted");
+    assert.equal((await getOrder(id))?.approved_via, "kaspi_api");
+  } finally {
+    globalThis.fetch = realFetch;
+    (live as { kaspiApiBase: string }).kaspiApiBase = prev.base;
+    (live as { kaspiApiToken: string }).kaspiApiToken = prev.token;
+    (live as { kaspiAutoGrant: boolean }).kaspiAutoGrant = prev.auto;
+    (live as { adminIds: number[] }).adminIds = prevAdmins;
+  }
+});
+
+await step("reconciler: recovers a fresh interrupted grant, never re-grants history", async () => {
+  // The bug this closes. granted_at was added to an existing `orders` table with
+  // NO backfill, so every order already marked 'paid' reads as "paid but never
+  // granted" forever. An unbounded reconciler sweep re-credits all of them at
+  // once — fresh 'purchase' ledger rows the digest reports as today's revenue,
+  // duplicate referral payouts, and a second course-cohort invite to somebody
+  // who bought months ago. Recovery has to have an upper bound in time.
+  await query("DELETE FROM orders");
+  const buyer = 990700;
+  await getOrCreateUser(buyer, "reconcile", null, 0);
+
+  const fresh = await createOrder(buyer, "start", 3700);
+  await resolveOrder(fresh, true, "admin"); // paid, grant never ran
+  await query("UPDATE orders SET processed_at = now() - interval '30 minutes' WHERE id = $1", [fresh]);
+
+  const ancient = await createOrder(buyer, "start", 3700);
+  await resolveOrder(ancient, true, "admin");
+  await query("UPDATE orders SET processed_at = now() - interval '90 days' WHERE id = $1", [ancient]);
+
+  const due = await staleGrantedOrders(5, 48);
+  assert.deepEqual(due.map((o) => o.id), [fresh], "the sweep must reach the fresh order and ONLY the fresh one");
+
+  // The old one isn't lost — it's surfaced for a human instead of credited on a
+  // guess, because at that age "stuck" and "granted before we tracked it" look
+  // identical from the database.
+  const old = await abandonedPaidOrders(48);
+  assert.deepEqual(old.map((o) => o.id), [ancient]);
+
+  // A grant that already landed is never swept again, at any age.
+  await grantOrderCredits(fresh, buyer, 60, 3700);
+  assert.equal((await staleGrantedOrders(5, 48)).length, 0);
+});
+
+await step("granted_at backfill: stamps orders the ledger proves were credited, leaves the rest alone", async () => {
+  // Re-runs the shipped repair statement verbatim against rows shaped like the
+  // ones it exists for. Two orders, identical except for one fact: whether the
+  // ledger says the buyer was ever credited.
+  await query("DELETE FROM orders");
+  await query("DELETE FROM ledger WHERE reason = 'purchase'");
+  const paid = 990800;
+  const stuck = 990801;
+  await getOrCreateUser(paid, "was_credited", null, 0);
+  await getOrCreateUser(stuck, "never_credited", null, 0);
+
+  const credited = await createOrder(paid, "start", 3700);
+  const uncredited = await createOrder(stuck, "start", 3700);
+  for (const id of [credited, uncredited]) {
+    await resolveOrder(id, true, "admin");
+    await query(
+      "UPDATE orders SET granted_at = NULL, processed_at = TIMESTAMPTZ '2026-05-01 12:00:00+00' WHERE id = $1",
+      [id],
+    );
+  }
+  // Only the first buyer has proof of credit — exactly what a pre-migration
+  // order that WAS granted looks like.
+  await query("INSERT INTO ledger (user_id, delta, reason, meta) VALUES ($1, 60, 'purchase', '3700')", [paid]);
+
+  const REPAIR = `UPDATE orders o SET granted_at = o.processed_at
+     WHERE o.status = 'paid' AND o.granted_at IS NULL
+       AND o.processed_at IS NOT NULL
+       AND o.processed_at < TIMESTAMPTZ '2026-07-26 08:00:00+00'
+       AND EXISTS (
+         SELECT 1 FROM ledger l
+         WHERE l.user_id = o.user_id AND l.reason = 'purchase'
+           AND l.meta = o.amount_kzt::text
+       )`;
+  await query(REPAIR);
+
+  const after = await getOrder(credited);
+  assert.ok(after?.granted_at, "an order the ledger proves was credited must be stamped");
+  assert.equal(
+    new Date(after!.granted_at!).toISOString(),
+    new Date(after!.processed_at!).toISOString(),
+    "stamped with the confirmation time, not now()",
+  );
+  assert.equal((await getOrder(uncredited))?.granted_at, null, "an unproven order must NOT be written off");
+
+  // Stamped rows drop out of the reconciler's sight — which is the whole point.
+  assert.ok(!(await staleGrantedOrders(1, 24 * 365)).some((o) => o.id === credited));
+  // The unproven one is still visible to a human.
+  assert.ok((await abandonedPaidOrders(1)).some((o) => o.id === uncredited));
+
+  // Idempotent: running it again changes nothing.
+  const before = (await getOrder(credited))!.granted_at;
+  await query(REPAIR);
+  assert.equal((await getOrder(credited))!.granted_at, before);
+});
+
+await step("registered bot commands: every advertised command actually has a handler", async () => {
+  // The command menu and the handlers are two separate lists in two files, so
+  // they drift silently — an advertised command with no handler just does
+  // nothing when tapped, which reads as a broken bot rather than a missing
+  // feature. Cheap to check, and it catches the drift at the only moment it is
+  // still free to fix.
+  const fs = await import("node:fs/promises");
+  const index = await fs.readFile(new URL("../src/index.ts", import.meta.url), "utf8");
+  const bot = await fs.readFile(new URL("../src/bot.ts", import.meta.url), "utf8");
+  const payments = await fs.readFile(new URL("../src/payments.ts", import.meta.url), "utf8");
+  const advertised = [...index.matchAll(/\{\s*command:\s*"([a-z_]+)"/g)].map((m) => m[1]);
+  assert.ok(advertised.includes("whoami"), "whoami must be in the public command menu");
+  const handled = new Set(
+    [...(bot + payments).matchAll(/bot\.command\(\s*"([a-z_]+)"/g)].map((m) => m[1]),
+  );
+  const missing = advertised.filter((c) => !handled.has(c));
+  assert.deepEqual(missing, [], `advertised with no handler: ${missing.join(", ")}`);
+});
+
+await step("conversion push: one weekly budget for all campaigns, and only real intent is targeted", async () => {
+  await query("DELETE FROM pushes");
+  await query("DELETE FROM events WHERE type IN ('paywall','push')");
+
+  const hot = 990900;    // saw the paywall, rendered before, never bought
+  const buyer = 990901;  // saw the paywall but is already a customer
+  const cold = 990902;   // saw the paywall having never produced anything
+  for (const [id, name] of [[hot, "hot"], [buyer, "already_paid"], [cold, "cold"]] as const) {
+    await getOrCreateUser(id as number, name as string, null, 0);
+    await logEvent(id as number, "paywall", "test");
+  }
+  await logGeneration(hot, "text_to_image", "x", 2, "ok", "https://fal.media/a.jpg");
+  await logGeneration(buyer, "text_to_image", "x", 2, "ok", "https://fal.media/b.jpg");
+  await query("INSERT INTO ledger (user_id, delta, reason, meta) VALUES ($1, 60, 'purchase', '3700')", [buyer]);
+
+  const targets = await usersForPaywallPush(50);
+  assert.ok(targets.includes(hot), "someone who hit the paywall and never bought must be targeted");
+  assert.ok(!targets.includes(buyer), "an existing customer must not get a first-purchase push");
+  assert.ok(!targets.includes(cold), "someone who never saw a result has no reason to trust the price");
+
+  // The budget is GLOBAL: a second campaign competes for the same slots, it
+  // does not get its own allowance. With a cap of 1, campaign B is refused.
+  assert.equal(await claimPush(hot, "paywall", 1), true);
+  assert.equal(await claimPush(hot, "other_campaign", 1), false, "a second track must not exceed the shared cap");
+  // …and being refused must NOT burn that campaign — it is still available
+  // once the budget frees up.
+  assert.equal(await claimPush(hot, "other_campaign", 2), true);
+  // Same campaign twice is always refused, budget or not.
+  assert.equal(await claimPush(hot, "paywall", 9), false);
+  // A cap of 0 disables proactive messaging entirely.
+  assert.equal(await claimPush(cold, "paywall", 0), false);
+
+  // A failed send releases the slot, so a blocked user doesn't permanently
+  // consume the one push this campaign will ever give them.
+  await releasePush(hot, "other_campaign");
+  assert.equal(await claimPush(hot, "other_campaign", 5), true);
+
+  // Targeting is idempotent: an already-pushed user drops out of the list.
+  assert.ok(!(await usersForPaywallPush(50)).includes(hot));
+});
+
+await step("push offer: live only inside its window, redeemable once, and off by default", async () => {
+  await query("DELETE FROM pushes");
+  const u = 990910;
+  await getOrCreateUser(u, "offeree", null, 0);
+
+  assert.equal(await offerBonusFor(u, 48), false, "no push → no offer");
+  await claimPush(u, "paywall", 2);
+  assert.equal(await offerBonusFor(u, 48), true);
+
+  // The window is measured from the push itself, so it can never disagree with
+  // what the user was told.
+  await query("UPDATE pushes SET sent_at = now() - interval '72 hours' WHERE user_id = $1 AND campaign = 'paywall'", [u]);
+  assert.equal(await offerBonusFor(u, 48), false, "an expired offer must not pay out");
+  await query("UPDATE pushes SET sent_at = now() WHERE user_id = $1 AND campaign = 'paywall'", [u]);
+
+  // Redeemable exactly once, whatever retries the payment path performs.
+  assert.equal(await claimOfferRedemption(u), true);
+  assert.equal(await claimOfferRedemption(u), false, "the bonus was granted twice");
+  assert.equal(await offerBonusFor(u, 48), false, "a redeemed offer must stop being live");
+
+  // The mechanism ships inert — the number is a pricing decision, not a default.
+  const { config: live } = await import("../src/config.js");
+  assert.equal(live.pushOfferBonus, 0, "a bonus must not ship switched on");
+
+  // Reporting never credits a purchase that predates the push.
+  const rep = (await pushReport()).find((r) => r.campaign === "paywall");
+  assert.ok(rep);
+  assert.equal(rep!.converted, 0);
+});
+
+await step("achievements: derived from real history, so they are correct retroactively", async () => {
+  // The point of deriving from generations/events/ledger rather than xp_claims:
+  // xp_claims is only written while the XP economy is CONFIGURED, so a wall
+  // built on it would be empty today and could never backfill — a user's real
+  // history would be permanently missing from their own profile.
+  await query("DELETE FROM economy_config WHERE key LIKE 'xp.%'"); // XP stays OFF for this whole step
+  const u = 991000;
+  await getOrCreateUser(u, "achiever", null, 0);
+
+  const before = await achievements(u);
+  assert.ok(before.length > 0, "locked badges must still be listed — the holes are the map");
+  assert.equal(before.every((a) => !a.earned), true, "a fresh account has earned nothing");
+  const firstRender = before.find((a) => a.id === "first_render");
+  assert.ok(firstRender && firstRender.need === 1 && firstRender.at === 0);
+
+  // Real history, recorded the ordinary way.
+  await logGeneration(u, "text_to_image", "x", 2, "ok", "https://fal.media/a.jpg");
+  await logEvent(u, "upload", "1");
+  await logEvent(u, "share", "1");
+
+  const after = await achievements(u);
+  const by = (id: string) => after.find((a) => a.id === id)!;
+  assert.equal(by("first_render").earned, true, "a completed render must earn the first badge");
+  assert.equal(by("first_text").earned, true, "a text-to-image render must be recognised by model kind");
+  assert.equal(by("uploader").earned, true);
+  assert.equal(by("sharer").earned, true, "sharing must count even with the XP economy switched off");
+  assert.equal(by("ten_renders").earned, false);
+  assert.equal(by("ten_renders").at, 1, "locked badges must carry real progress, not zero");
+
+  // Progress never overstates itself past the requirement.
+  assert.ok(after.every((a) => a.at <= a.need));
+
+  // A FAILED render is not an achievement.
+  await logGeneration(u, "text_to_image", "x", 2, "error");
+  assert.equal((await achievements(u)).find((a) => a.id === "ten_renders")!.at, 1);
 });
 
 await new Promise<void>((r) => server.close(() => r()));

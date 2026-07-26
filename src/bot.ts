@@ -29,10 +29,14 @@ import {
   myPartnerCodes,
   myWithdrawals,
   partnerAccount,
+  abandonedPaidOrders,
+  getLevel,
+  getOrder,
   grantedOrders,
   pendingOrders,
   presetUsageCounts,
   purchaseLedgerCount,
+  pushReport,
   referrerLedger,
   resolveOrder,
   partnerStats,
@@ -51,6 +55,7 @@ import {
   type UserRow,
 } from "./db.js";
 import { isUploadedSource as isReusableUpload, modelByKey, runFreeScenario, runGeneration } from "./generate.js";
+import { kaspiVerifyOrder } from "./kaspi.js";
 import { buildDigest, formatDigest } from "./monitor.js";
 import {
   CAMPAIGNS,
@@ -72,6 +77,22 @@ import {
 } from "./models.js";
 import { grantPurchase, registerPayments, sendBalance } from "./payments.js";
 import { nUnits, UNIT_EMOJI, withPhotoTip } from "./text.js";
+
+/**
+ * Telegram-supplied names go into a parse_mode:HTML body — escape before they
+ * do. Written without a regex literal on purpose: the patron-emoji CI guard
+ * (scripts/check-patron-emoji.mjs) lexes sources by hand and has no
+ * regex-literal state, so a `/[&<>"]/` here puts it inside a phantom string
+ * for the rest of the file and it misreports a comment far below. Chained
+ * replaceAll costs nothing at this size and keeps that guard honest.
+ */
+function escapeHtml(s: string): string {
+  return s
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
 
 async function user(
   ctx: { from?: { id: number; username?: string } },
@@ -769,6 +790,44 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   bot.command("balance", async (ctx) => sendBalance(ctx, (await user(ctx)).credits));
   bot.command("buy", async (ctx) => sendBalance(ctx, (await user(ctx)).credits));
 
+  // Who am I — the @userinfobot answer, plus what THIS product knows about the
+  // account. Exists for a practical reason: every support conversation starts
+  // with "what's your id?", and Telegram gives people no way to see their own.
+  // Same reason ADMIN_IDS needs an id the owner has no obvious way to look up.
+  //
+  // Strictly self-service: it reports the caller's own account and nothing
+  // else. The only way it ever describes someone else is a forwarded message,
+  // and then only what Telegram itself chose to attach — a sender who hides
+  // their account stays hidden, and we say so rather than appearing to fail.
+  const whoami = async (ctx: Context): Promise<void> => {
+    if (!ctx.from) return;
+    const f = ctx.from;
+    const u = await user(ctx);
+    const level = await getLevel(f.id);
+    const code = await ensureRefCode(f.id);
+    const lines = [
+      "🪪 <b>Ваши данные</b>",
+      "",
+      `• ID: <code>${f.id}</code>`,
+      `• Имя: ${escapeHtml(f.first_name ?? "—")}${f.last_name ? " " + escapeHtml(f.last_name) : ""}`,
+      `• Username: ${f.username ? "@" + escapeHtml(f.username) : "не задан"}`,
+      `• Язык: ${f.language_code ?? "—"}`,
+    ];
+    if (f.is_premium) lines.push("• Telegram Premium: да");
+    lines.push(
+      "",
+      "🎯 <b>Аккаунт в NeuroShot</b>",
+      `• Баланс: ${nUnits(u.credits)}`,
+      `• Уровень: ${level > 0 ? level : "пока не открыт"}`,
+      `• Реферальная ссылка: <code>https://t.me/${ctx.me.username}?start=${code}</code>`,
+      "",
+      "<i>ID можно скопировать нажатием. Он нужен, если пишете в поддержку.</i>",
+    );
+    await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
+  };
+  bot.command("whoami", whoami);
+  bot.command("id", whoami);
+
   bot.command("ref", async (ctx) => sendRefLink(ctx));
 
   // Self-serve data deletion (Privacy Policy §4/§5) — a confirm step gates the
@@ -1116,7 +1175,11 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
     const arg = Number((ctx.match ?? "").trim());
     const hours = Number.isFinite(arg) && arg > 0 ? Math.min(720, Math.floor(arg)) : 24;
-    const [orders, ledger] = await Promise.all([grantedOrders(hours), purchaseLedgerCount(hours)]);
+    const [orders, ledger, abandoned] = await Promise.all([
+      grantedOrders(hours),
+      purchaseLedgerCount(hours),
+      abandonedPaidOrders(config.orderGrantMaxAgeHours),
+    ]);
     const via = (v: string | null) =>
       v === "admin"
         ? "вручную (/order)"
@@ -1127,9 +1190,26 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
             : v === "reconciler"
               ? "довыдача (сверка)"
               : "неизвестно (до включения аудита)";
-    const lines = orders.map(
-      (o) => `№${o.order_id} · ${o.user_id} · ${o.pack_id} · ${o.kzt} ₸ · ${via(o.approved_via)}`,
-    );
+    // The gap between "confirmed paid" and "credits landed" is the tell. A
+    // grant that lands hours or days after the confirmation is a BACK-FILL by
+    // the reconciler sweep, not a new payment — and it shows up in the digest
+    // as fresh revenue on the day it was back-filled, which is exactly how a
+    // day can report money that nobody paid that day.
+    const ageH = (o: (typeof orders)[number]) =>
+      o.processed_at ? (Date.parse(o.granted_at) - Date.parse(o.processed_at)) / 3_600_000 : null;
+    const lines = orders.map((o) => {
+      const gap = ageH(o);
+      const late =
+        gap != null && gap > 1
+          ? `\n   ⚠️ подтверждена ${new Date(o.processed_at!).toLocaleString("ru-RU")}, начислена на ${Math.round(gap)} ч позже — довыдача, не новая оплата`
+          : "";
+      return `№${o.order_id} · ${o.user_id} · ${o.pack_id} · ${o.kzt} ₸ · ${via(o.approved_via)}${late}`;
+    });
+    const backfilled = orders.filter((o) => (ageH(o) ?? 0) > 1).length;
+    const backfillNote = backfilled
+      ? `\n\n↩️ Из них ${backfilled} — довыдача по старым заявкам (сверка добирает подтверждённые, но не начисленные). ` +
+        `Это НЕ деньги, поступившие за эти сутки; в сводке они всё равно считаются днём начисления.`
+      : "";
     const mismatch =
       ledger.rows !== orders.length
         ? `\n\n⚠️ Расхождение: в журнале ${ledger.rows} записей «purchase», а заявок с начислением — ${orders.length}. ` +
@@ -1139,7 +1219,15 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       `💳 <b>Начисленные оплаты за ${hours} ч</b>\n` +
         `Журнал: <b>${ledger.rows}</b> на <b>${ledger.kzt} ₸</b> (эту цифру показывает сводка)\n\n` +
         (lines.length ? lines.join("\n") : "Заявок с начислением нет.") +
-        mismatch,
+        backfillNote +
+        mismatch +
+        (abandoned.length
+          ? `\n\n🗄 Старые заявки «оплачена, но без начисления» (${abandoned.length}): ` +
+            abandoned.map((o) => `№${o.id}`).join(", ") +
+            `\nАвтоматически они НЕ начисляются — в таком возрасте нельзя отличить зависшее начисление от заявки, ` +
+            `которая была оплачена и начислена ещё до появления учёта. Решайте вручную: /order &lt;id&gt; ok|no`
+          : "") +
+        `\n\nДиагностика приёма оплат: /kaspi_check &lt;id заявки&gt;`,
       { parse_mode: "HTML" },
     );
   });
@@ -1168,6 +1256,80 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     } else {
       await ctx.reply(`↩️ Заявка №${id} отклонена.`);
     }
+  });
+
+  // Admin: which payment-acceptance paths are live, and what the merchant API
+  // says about ONE order right now. Reports booleans and a verdict, never a
+  // secret. This exists because "why was this granted without asking me?" has
+  // exactly three possible answers and no way to tell them apart from the
+  // outside. /kaspi_check <id заявки>
+  bot.command("kaspi_check", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const id = Number((ctx.match ?? "").trim());
+    const on = (v: boolean) => (v ? "включено" : "выключено");
+    const paths =
+      `🔐 <b>Пути начисления</b>\n` +
+      `• Вебхук Kaspi (подписанный): <b>${on(Boolean(config.kaspiApiSecret))}</b>\n` +
+      `• Авто-проверка «Я оплатил»: <b>${on(Boolean(config.kaspiApiBase && config.kaspiApiToken))}</b>\n` +
+      `• Авто-начисление без человека: <b>${on(config.kaspiAutoGrant)}</b>\n` +
+      `• Ручное подтверждение <code>/order id ok</code>: включено всегда\n` +
+      `• Довыдача по сверке (старые подтверждённые заявки): включена всегда`;
+    if (!Number.isInteger(id) || id <= 0) {
+      await ctx.reply(paths + `\n\nПроверить конкретную заявку: /kaspi_check &lt;id&gt;`, { parse_mode: "HTML" });
+      return;
+    }
+    const order = await getOrder(id);
+    if (!order) {
+      await ctx.reply(paths + `\n\nЗаявка №${id} не найдена.`, { parse_mode: "HTML" });
+      return;
+    }
+    const verdict = await kaspiVerifyOrder(order);
+    const label: Record<string, string> = {
+      paid: "оплачена",
+      pending: "ещё не оплачена",
+      failed: "не прошла / отклонена",
+      unknown: "нет ответа (API не настроен или недоступен)",
+    };
+    await ctx.reply(
+      paths +
+        `\n\n🧾 <b>Заявка №${order.id}</b> · ${order.pack_id} · ${order.amount_kzt} ₸\n` +
+        `• создана: ${new Date(order.created_at).toLocaleString("ru-RU")}\n` +
+        `• статус: <b>${order.status}</b>` +
+        (order.processed_at ? ` (подтверждена ${new Date(order.processed_at).toLocaleString("ru-RU")})` : "") +
+        `\n• начислено: ${order.granted_at ? new Date(order.granted_at).toLocaleString("ru-RU") : "нет"}\n` +
+        `• кем подтверждена: ${order.approved_via ?? "неизвестно (до включения аудита)"}\n` +
+        `• Kaspi сейчас говорит: <b>${label[verdict]}</b>`,
+      { parse_mode: "HTML" },
+    );
+  });
+
+  // Admin: did the pushes sell anything? Conversion counts only orders granted
+  // AFTER the push, so a customer who had already bought can never be credited
+  // to a campaign that reached them later — the flattering mistake this report
+  // exists to avoid. Read this BEFORE putting money into PUSH_OFFER_BONUS: a
+  // discount attached to a push that doesn't convert is just money handed to
+  // people who would have paid anyway.
+  bot.command("pushes", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const rows = await pushReport();
+    if (!rows.length) {
+      await ctx.reply(
+        `📣 Пушей ещё не отправлялось.\n\nЛимит: ${config.pushPerWeek} сообщений на человека в неделю (на все кампании вместе).` +
+          (config.pushPerWeek === 0 ? " Сейчас проактивные сообщения выключены." : ""),
+      );
+      return;
+    }
+    const lines = rows.map((r) => {
+      const pct = r.sent > 0 ? Math.round((r.converted / r.sent) * 100) : 0;
+      return `• <b>${r.campaign}</b>: отправлено ${r.sent} · купили ${r.converted} (${pct}%) · ${r.kzt} ₸`;
+    });
+    await ctx.reply(
+      `📣 <b>Проактивные сообщения</b>\n\n` +
+        lines.join("\n") +
+        `\n\nЛимит: ${config.pushPerWeek}/неделю на человека, на все кампании вместе.` +
+        `\nБонус к предложению: ${config.pushOfferBonus > 0 ? `${config.pushOfferBonus} ${UNIT_EMOJI} на ${config.pushOfferHours} ч` : "выключен"}.`,
+      { parse_mode: "HTML" },
+    );
   });
 
   // Admin: the referral P&L — who brought how much, and what we still owe them.
@@ -1397,6 +1559,31 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       .filter((r) => Number.isInteger(r.n) && r.n > 0)
       .sort((a, b) => a.n - b.n);
     const earn = values.filter((r) => r.key.startsWith("xp."));
+    const get = (k: string) => values.find((r) => r.key === k)?.value ?? null;
+    // Spend-scaled XP needs BOTH a step and a rate. One without the other reads
+    // as "configured" in the list above but awards nothing, so say it plainly.
+    const step = get("xp.purchase.step");
+    const halfSpend: string[] = [];
+    if (step == null && (get("xp.purchase") != null || get("xp.refpurchase") != null))
+      halfSpend.push("задан xp.purchase / xp.refpurchase, но нет xp.purchase.step — XP за оплату НЕ начисляется");
+    if (step != null && get("xp.purchase") == null && get("xp.refpurchase") == null)
+      halfSpend.push("задан xp.purchase.step, но нет ни xp.purchase, ни xp.refpurchase — шаг ни на что не влияет");
+    const capNote = (raw: number | null, key: string, who: string) => {
+      if (raw == null) return "";
+      const lim = get(key);
+      return lim == null
+        ? `\n⚠️ Потолок за одну покупку не задан (${key}) — крупный платёж купит уровни целиком: ${who}`
+        : `\n• потолок за одну покупку (${who}): ${lim} XP`;
+    };
+    const spendLine =
+      step != null && (get("xp.purchase") != null || get("xp.refpurchase") != null)
+        ? `\n\n<b>XP за оплату:</b> каждые ${step} ₸ → ${get("xp.purchase") ?? 0} XP покупателю` +
+          (get("xp.refpurchase") != null ? ` · ${get("xp.refpurchase")} XP пригласившему` : "") +
+          capNote(get("xp.purchase"), "xp.purchase.max", "покупатель") +
+          capNote(get("xp.refpurchase"), "xp.refpurchase.max", "пригласивший")
+        : halfSpend.length
+          ? `\n\n⚠️ ${halfSpend.join("; ")}`
+          : "";
     // A ladder is only read up to its first gap (getLevelProgress stops there),
     // so a missing rung silently truncates every level above it — worth saying.
     const gapAt = ladder.findIndex((r, i) => r.n !== i + 1);
@@ -1417,7 +1604,8 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
           ? `\n\n⚠️ Пропущен порог ${gapAt + 1} — всё, что выше, не читается. Задайте его, чтобы открыть остальные.`
           : "") +
         `\n\n<b>Начисление XP:</b>\n` +
-        (earn.length ? earn.map((r) => `• ${r.key} = ${r.value}`).join("\n") : "(не задано — XP не начисляется)"),
+        (earn.length ? earn.map((r) => `• ${r.key} = ${r.value}`).join("\n") : "(не задано — XP не начисляется)") +
+        spendLine,
       { parse_mode: "HTML" },
     );
   });
@@ -1921,6 +2109,53 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   });
 
   // ---- Text in → prompt for a pending action, or plain text-to-image ----
+
+  // A FORWARDED message answers "who sent this?" — the other half of what
+  // @userinfobot does. Reports only what Telegram itself attached: a sender who
+  // hides their account in forwards is simply absent from the payload, and we
+  // say that plainly instead of looking broken. Runs before the prompt handler
+  // because a forward is never a generation prompt.
+  bot.on("message:forward_origin", async (ctx, next) => {
+    const origin = ctx.message.forward_origin;
+    // A forwarded PHOTO is almost always someone sending us a picture to work
+    // with — the core flow of the whole product. Answering it with sender
+    // metadata instead of a render would be a regression dressed as a feature,
+    // so media forwards fall straight through to the normal handlers.
+    if (ctx.message.photo || ctx.message.video || ctx.message.document) return next();
+    if (origin.type === "user") {
+      const u = origin.sender_user;
+      await ctx.reply(
+        `↩️ <b>Автор пересланного сообщения</b>\n\n` +
+          `• ID: <code>${u.id}</code>\n` +
+          `• Имя: ${escapeHtml(u.first_name ?? "—")}${u.last_name ? " " + escapeHtml(u.last_name) : ""}\n` +
+          `• Username: ${u.username ? "@" + escapeHtml(u.username) : "не задан"}` +
+          (u.is_bot ? "\n• Это бот" : ""),
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+    if (origin.type === "channel") {
+      await ctx.reply(
+        `↩️ <b>Пересланное из канала</b>\n\n` +
+          `• ID канала: <code>${origin.chat.id}</code>\n` +
+          `• Название: ${escapeHtml(origin.chat.title ?? "—")}` +
+          (origin.chat.username ? `\n• @${escapeHtml(origin.chat.username)}` : ""),
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+    if (origin.type === "hidden_user") {
+      await ctx.reply(
+        `↩️ Автор скрыл свой аккаунт в пересылках — Telegram не передаёт его ID. ` +
+          `Видно только подпись: ${escapeHtml(origin.sender_user_name)}`,
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+    // Anything else (e.g. a forward from a group) isn't a person — let the
+    // normal handlers deal with the message content.
+    await next();
+  });
 
   bot.on("message:text", async (ctx) => {
     const u = await user(ctx);
