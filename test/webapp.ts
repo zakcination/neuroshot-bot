@@ -39,7 +39,7 @@ process.env.RATE_LIMIT_ENHANCE_PER_MIN = "100000";
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, awardPurchaseXp, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
+const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, awardPurchaseXp, staleGrantedOrders, abandonedPaidOrders, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
@@ -2719,6 +2719,39 @@ await step("auto-grant is OFF by default: «Я оплатил» always reaches a
     (live as { kaspiAutoGrant: boolean }).kaspiAutoGrant = prev.auto;
     (live as { adminIds: number[] }).adminIds = prevAdmins;
   }
+});
+
+await step("reconciler: recovers a fresh interrupted grant, never re-grants history", async () => {
+  // The bug this closes. granted_at was added to an existing `orders` table with
+  // NO backfill, so every order already marked 'paid' reads as "paid but never
+  // granted" forever. An unbounded reconciler sweep re-credits all of them at
+  // once — fresh 'purchase' ledger rows the digest reports as today's revenue,
+  // duplicate referral payouts, and a second course-cohort invite to somebody
+  // who bought months ago. Recovery has to have an upper bound in time.
+  await query("DELETE FROM orders");
+  const buyer = 990700;
+  await getOrCreateUser(buyer, "reconcile", null, 0);
+
+  const fresh = await createOrder(buyer, "start", 3700);
+  await resolveOrder(fresh, true, "admin"); // paid, grant never ran
+  await query("UPDATE orders SET processed_at = now() - interval '30 minutes' WHERE id = $1", [fresh]);
+
+  const ancient = await createOrder(buyer, "start", 3700);
+  await resolveOrder(ancient, true, "admin");
+  await query("UPDATE orders SET processed_at = now() - interval '90 days' WHERE id = $1", [ancient]);
+
+  const due = await staleGrantedOrders(5, 48);
+  assert.deepEqual(due.map((o) => o.id), [fresh], "the sweep must reach the fresh order and ONLY the fresh one");
+
+  // The old one isn't lost — it's surfaced for a human instead of credited on a
+  // guess, because at that age "stuck" and "granted before we tracked it" look
+  // identical from the database.
+  const old = await abandonedPaidOrders(48);
+  assert.deepEqual(old.map((o) => o.id), [ancient]);
+
+  // A grant that already landed is never swept again, at any age.
+  await grantOrderCredits(fresh, buyer, 60, 3700);
+  assert.equal((await staleGrantedOrders(5, 48)).length, 0);
 });
 
 await new Promise<void>((r) => server.close(() => r()));

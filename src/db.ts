@@ -1329,14 +1329,42 @@ export async function grantOrderCredits(
  * between resolveOrder's pending→paid win and grantPurchase's credit/payout
  * work leaves exactly this shape: status='paid', granted_at NULL. Feeds the
  * reconciler sweep in monitor.ts, which retries grantPurchase for each.
+ *
+ * `maxAgeHours` is the upper bound, and it is not optional in spirit: this
+ * sweep finishes work interrupted MINUTES ago, and re-granting an order from
+ * last month is never recovery. It matters because granted_at was added to an
+ * existing table with no backfill — so every order marked 'paid' BEFORE that
+ * migration reads as "paid but never granted" forever, and an unbounded sweep
+ * re-credits all of them at once: fresh 'purchase' ledger rows (which the daily
+ * digest then reports as revenue that nobody paid that day), duplicate referral
+ * payouts, and a second course-cohort invite to someone who bought months ago.
+ * Anything older is left for a human — see abandonedPaidOrders.
  */
-export async function staleGrantedOrders(minutes: number): Promise<OrderRow[]> {
+export async function staleGrantedOrders(minutes: number, maxAgeHours: number): Promise<OrderRow[]> {
   const rows = await q(
     `SELECT ${ORDER_COLS} FROM orders
      WHERE status = 'paid' AND granted_at IS NULL
        AND processed_at < now() - ($1 || ' minutes')::interval
+       AND processed_at > now() - ($2 || ' hours')::interval
      ORDER BY id`,
-    [String(Math.max(1, Math.floor(minutes)))],
+    [String(Math.max(1, Math.floor(minutes))), String(Math.max(1, Math.floor(maxAgeHours)))],
+  );
+  return rows.map(mapOrder);
+}
+
+/**
+ * Paid-but-ungranted orders too old for the reconciler to touch. Reported, never
+ * auto-granted: at this age we cannot tell a genuinely stuck grant from a row
+ * that predates the granted_at column and was credited long ago. Crediting on a
+ * guess is the failure we just removed; a human deciding is cheap.
+ */
+export async function abandonedPaidOrders(maxAgeHours: number, limit = 20): Promise<OrderRow[]> {
+  const rows = await q(
+    `SELECT ${ORDER_COLS} FROM orders
+     WHERE status = 'paid' AND granted_at IS NULL
+       AND processed_at <= now() - ($1 || ' hours')::interval
+     ORDER BY id DESC LIMIT ${Math.max(1, Math.floor(limit))}`,
+    [String(Math.max(1, Math.floor(maxAgeHours)))],
   );
   return rows.map(mapOrder);
 }

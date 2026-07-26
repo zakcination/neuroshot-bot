@@ -100,6 +100,12 @@ export const config = {
   // design — unlike a stuck render, this means a customer already PAID and got
   // nothing, so it's worse to sit on than a slow render.
   orderGrantStaleMinutes: Number(process.env.ORDER_GRANT_STALE_MINUTES ?? 5),
+  // How far back the reconciler is allowed to reach. It exists to finish a
+  // grant interrupted MINUTES ago by a crash — it has no business resurrecting
+  // an order from last month. Without an upper bound it re-grants history: the
+  // granted_at column was added to an existing table with no backfill, so every
+  // order already marked 'paid' reads as "paid but never granted" forever.
+  orderGrantMaxAgeHours: Number(process.env.ORDER_GRANT_MAX_AGE_HOURS ?? 48),
   // Identity-gate the free hook (docs/growth-product.md): require a verified phone
   // before the free scenario and tie the gift to the PHONE, so multi-account
   // farming needs multiple real numbers (Higgsfield banned 40k farmed accounts).

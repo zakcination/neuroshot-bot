@@ -342,7 +342,7 @@ export async function runReaper(send: SendFn): Promise<number> {
  * Exported for tests. Returns how many orders were successfully (re)granted.
  */
 export async function runOrderReconciler(api: Api): Promise<number> {
-  const stale = await staleGrantedOrders(config.orderGrantStaleMinutes);
+  const stale = await staleGrantedOrders(config.orderGrantStaleMinutes, config.orderGrantMaxAgeHours);
   let granted = 0;
   for (const order of stale) {
     const pack = packById(order.pack_id);

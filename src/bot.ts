@@ -29,6 +29,7 @@ import {
   myPartnerCodes,
   myWithdrawals,
   partnerAccount,
+  abandonedPaidOrders,
   getOrder,
   grantedOrders,
   pendingOrders,
@@ -1118,7 +1119,11 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
     const arg = Number((ctx.match ?? "").trim());
     const hours = Number.isFinite(arg) && arg > 0 ? Math.min(720, Math.floor(arg)) : 24;
-    const [orders, ledger] = await Promise.all([grantedOrders(hours), purchaseLedgerCount(hours)]);
+    const [orders, ledger, abandoned] = await Promise.all([
+      grantedOrders(hours),
+      purchaseLedgerCount(hours),
+      abandonedPaidOrders(config.orderGrantMaxAgeHours),
+    ]);
     const via = (v: string | null) =>
       v === "admin"
         ? "вручную (/order)"
@@ -1160,6 +1165,12 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
         (lines.length ? lines.join("\n") : "Заявок с начислением нет.") +
         backfillNote +
         mismatch +
+        (abandoned.length
+          ? `\n\n🗄 Старые заявки «оплачена, но без начисления» (${abandoned.length}): ` +
+            abandoned.map((o) => `№${o.id}`).join(", ") +
+            `\nАвтоматически они НЕ начисляются — в таком возрасте нельзя отличить зависшее начисление от заявки, ` +
+            `которая была оплачена и начислена ещё до появления учёта. Решайте вручную: /order &lt;id&gt; ok|no`
+          : "") +
         `\n\nДиагностика приёма оплат: /kaspi_check &lt;id заявки&gt;`,
       { parse_mode: "HTML" },
     );
