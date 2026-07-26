@@ -1269,6 +1269,29 @@ await step("free scenario: princess renders the WHOLE chain free (Seedream → H
   assert.equal(falCalls.length, falAfter);
 });
 
+await step("campaign-tagged slugs route like their base link and keep the full tag for attribution", async () => {
+  const { entryLinkFor, ENTRY_LINKS } = await import("../src/models.js");
+  // A media plan needs one link per CREATIVE to answer "which creative brought
+  // the money", so the slug carries channel/wave/creative after the route. Exact
+  // lookup dropped every one of those into the generic welcome.
+  for (const base of Object.keys(ENTRY_LINKS)) {
+    assert.deepEqual(entryLinkFor(`${base}_tg1_cr07`), ENTRY_LINKS[base], `${base} + tag lost its route`);
+  }
+  // The delimiter is load-bearing: a longer slug that merely STARTS with a route
+  // name is a different slug, not that route.
+  assert.equal(entryLinkFor("src_productx"), null);
+  assert.equal(entryLinkFor("src_"), null);
+  assert.equal(entryLinkFor("tiktok_jan"), null);
+
+  // Routing on a tag must not rewrite what gets stored: first-touch attribution
+  // needs the FULL slug, otherwise every creative collapses into its base route.
+  const tagged: From = { id: 6201, is_bot: false, first_name: "Tagged", username: "tagged" };
+  await sendText(tagged, "/start src_revive_tg1_cr07");
+  assert.match(lastText(), /старое фото/i);
+  const row = await query("SELECT source FROM users WHERE id = $1", [tagged.id]);
+  assert.equal(row[0].source, "src_revive_tg1_cr07");
+});
+
 await step("persona entry link: /start src_football routes straight to the football free scenario", async () => {
   const finn: From = { id: 6200, is_bot: false, first_name: "Finn", username: "finn" };
   await sendText(finn, "/start src_football");

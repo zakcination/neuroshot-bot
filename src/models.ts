@@ -1965,7 +1965,22 @@ export const ENTRY_LINKS: Record<string, EntryRoute> = {
 /** Resolve an acquisition-source slug to its pre-selected first action, if any. */
 export function entryLinkFor(source: string | null | undefined): EntryRoute | null {
   if (!source) return null;
-  return ENTRY_LINKS[source] ?? null;
+  const exact = ENTRY_LINKS[source];
+  if (exact) return exact;
+  // Campaign-tagged slugs: a media plan needs one link PER CREATIVE to answer
+  // "which creative brought the money", so the slug carries channel/wave/creative
+  // after the route — src_revive_tg1_cr07. Exact-match lookup dropped every one of
+  // those into the generic welcome, which looks like the route is broken and
+  // quietly destroys per-creative attribution. Match on a "_"-delimited prefix so
+  // the tag rides along in `source` (still recorded for first-touch) without
+  // changing where the click lands.
+  //
+  // Longest key first: if one route key is ever a prefix of another, the more
+  // specific one must win. The delimiter check means src_products could never be
+  // captured by a src_product route.
+  const keys = Object.keys(ENTRY_LINKS).sort((a, b) => b.length - a.length);
+  const hit = keys.find((k) => source.startsWith(`${k}_`));
+  return hit ? ENTRY_LINKS[hit] : null;
 }
 
 /**
