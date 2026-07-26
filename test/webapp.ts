@@ -39,7 +39,7 @@ process.env.RATE_LIMIT_ENHANCE_PER_MIN = "100000";
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, awardPurchaseXp, staleGrantedOrders, abandonedPaidOrders, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
+const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, awardPurchaseXp, staleGrantedOrders, abandonedPaidOrders, claimPush, releasePush, usersForPaywallPush, offerBonusFor, claimOfferRedemption, pushReport, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
@@ -2836,6 +2836,77 @@ await step("registered bot commands: every advertised command actually has a han
   );
   const missing = advertised.filter((c) => !handled.has(c));
   assert.deepEqual(missing, [], `advertised with no handler: ${missing.join(", ")}`);
+});
+
+await step("conversion push: one weekly budget for all campaigns, and only real intent is targeted", async () => {
+  await query("DELETE FROM pushes");
+  await query("DELETE FROM events WHERE type IN ('paywall','push')");
+
+  const hot = 990900;    // saw the paywall, rendered before, never bought
+  const buyer = 990901;  // saw the paywall but is already a customer
+  const cold = 990902;   // saw the paywall having never produced anything
+  for (const [id, name] of [[hot, "hot"], [buyer, "already_paid"], [cold, "cold"]] as const) {
+    await getOrCreateUser(id as number, name as string, null, 0);
+    await logEvent(id as number, "paywall", "test");
+  }
+  await logGeneration(hot, "text_to_image", "x", 2, "ok", "https://fal.media/a.jpg");
+  await logGeneration(buyer, "text_to_image", "x", 2, "ok", "https://fal.media/b.jpg");
+  await query("INSERT INTO ledger (user_id, delta, reason, meta) VALUES ($1, 60, 'purchase', '3700')", [buyer]);
+
+  const targets = await usersForPaywallPush(50);
+  assert.ok(targets.includes(hot), "someone who hit the paywall and never bought must be targeted");
+  assert.ok(!targets.includes(buyer), "an existing customer must not get a first-purchase push");
+  assert.ok(!targets.includes(cold), "someone who never saw a result has no reason to trust the price");
+
+  // The budget is GLOBAL: a second campaign competes for the same slots, it
+  // does not get its own allowance. With a cap of 1, campaign B is refused.
+  assert.equal(await claimPush(hot, "paywall", 1), true);
+  assert.equal(await claimPush(hot, "other_campaign", 1), false, "a second track must not exceed the shared cap");
+  // …and being refused must NOT burn that campaign — it is still available
+  // once the budget frees up.
+  assert.equal(await claimPush(hot, "other_campaign", 2), true);
+  // Same campaign twice is always refused, budget or not.
+  assert.equal(await claimPush(hot, "paywall", 9), false);
+  // A cap of 0 disables proactive messaging entirely.
+  assert.equal(await claimPush(cold, "paywall", 0), false);
+
+  // A failed send releases the slot, so a blocked user doesn't permanently
+  // consume the one push this campaign will ever give them.
+  await releasePush(hot, "other_campaign");
+  assert.equal(await claimPush(hot, "other_campaign", 5), true);
+
+  // Targeting is idempotent: an already-pushed user drops out of the list.
+  assert.ok(!(await usersForPaywallPush(50)).includes(hot));
+});
+
+await step("push offer: live only inside its window, redeemable once, and off by default", async () => {
+  await query("DELETE FROM pushes");
+  const u = 990910;
+  await getOrCreateUser(u, "offeree", null, 0);
+
+  assert.equal(await offerBonusFor(u, 48), false, "no push → no offer");
+  await claimPush(u, "paywall", 2);
+  assert.equal(await offerBonusFor(u, 48), true);
+
+  // The window is measured from the push itself, so it can never disagree with
+  // what the user was told.
+  await query("UPDATE pushes SET sent_at = now() - interval '72 hours' WHERE user_id = $1 AND campaign = 'paywall'", [u]);
+  assert.equal(await offerBonusFor(u, 48), false, "an expired offer must not pay out");
+  await query("UPDATE pushes SET sent_at = now() WHERE user_id = $1 AND campaign = 'paywall'", [u]);
+
+  // Redeemable exactly once, whatever retries the payment path performs.
+  assert.equal(await claimOfferRedemption(u), true);
+  assert.equal(await claimOfferRedemption(u), false, "the bonus was granted twice");
+  assert.equal(await offerBonusFor(u, 48), false, "a redeemed offer must stop being live");
+
+  // The mechanism ships inert — the number is a pricing decision, not a default.
+  const { config: live } = await import("../src/config.js");
+  assert.equal(live.pushOfferBonus, 0, "a bonus must not ship switched on");
+
+  // Reporting never credits a purchase that predates the push.
+  const rep = (await pushReport()).find((r) => r.campaign === "paywall");
+  assert.ok(rep);
+  assert.equal(rep!.converted, 0);
 });
 
 await new Promise<void>((r) => server.close(() => r()));

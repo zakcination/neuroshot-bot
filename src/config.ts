@@ -92,6 +92,22 @@ export const config = {
   reengageHourUtc: Number(process.env.REENGAGE_HOUR_UTC ?? 7),
   // Max users nudged per daily sweep (keeps the send gentle + rate-limit-safe).
   reengageBatch: Number(process.env.REENGAGE_BATCH ?? 50),
+  // --- Conversion pushes ---
+  // The HARD ceiling on proactive messages per user per week, counted across
+  // EVERY push track at once. A messaging channel earns a little per message
+  // and loses everything at once — a blocked bot is permanent — so this is a
+  // product decision, not a per-campaign knob. Campaigns compete for a slot
+  // inside it. 0 disables all proactive messaging.
+  pushPerWeek: Number(process.env.PUSH_PER_WEEK ?? 2),
+  pushBatch: Number(process.env.PUSH_BATCH ?? 50),
+  // Bonus patrons attached to the paywall push, live for pushOfferHours from
+  // the moment it is sent. Ships at 0 — the mechanism deploys inert, and the
+  // number is a pricing decision made with data, not a constant in the repo.
+  // Turning it on before the push is known to convert would be discounting
+  // blind: you cannot tell a discount that WON a sale from one that was handed
+  // to someone who would have paid anyway.
+  pushOfferBonus: Number(process.env.PUSH_OFFER_BONUS ?? 0),
+  pushOfferHours: Number(process.env.PUSH_OFFER_HOURS ?? 48),
   // Reaper: a generation still 'pending' beyond this many minutes is treated as a
   // render whose process died (renders take 1–3 min); it's failed and refunded.
   genStaleMinutes: Number(process.env.GEN_STALE_MINUTES ?? 15),

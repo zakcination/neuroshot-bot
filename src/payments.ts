@@ -2,11 +2,14 @@ import type { Api, Bot, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import {
+  addCredits,
   awardPurchaseXp,
+  claimOfferRedemption,
   createOrder,
   getOrder,
   grantOrderCredits,
   logEvent,
+  offerBonusFor,
   resolveOrder,
   type ApprovalPath,
   rewardPartnerOnPurchase,
@@ -207,8 +210,25 @@ export async function grantPurchase(api: Api, userId: number, pack: Pack, orderI
       lines.push(`🏆 +${nUnits(m.bonus)} — ${m.friends} ваших друзей уже покупают!`);
     if (lines.length) await api.sendMessage(payout.referrerId, lines.join("\n")).catch(() => {});
   }
+  // Personal offer from a conversion push, if one is still live. Claimed
+  // separately from the credit grant so it can be at most once per user ever,
+  // and read from the push itself so the window can never disagree with what
+  // the user was actually told. Ships inert (bonus 0) — the mechanism deploys
+  // ahead of the decision about the number.
+  let bonus = 0;
+  if (config.pushOfferBonus > 0 && (await offerBonusFor(userId, config.pushOfferHours))) {
+    if (await claimOfferRedemption(userId)) {
+      bonus = config.pushOfferBonus;
+      await addCredits(userId, bonus, "push_offer", pack.id);
+    }
+  }
   await api
-    .sendMessage(userId, `✅ Начислено ${UNIT_EMOJI} ${nUnits(pack.credits)}. Пришлите фото или напишите идею!`)
+    .sendMessage(
+      userId,
+      `✅ Начислено ${UNIT_EMOJI} ${nUnits(pack.credits)}.` +
+        (bonus > 0 ? ` Плюс бонус по вашему предложению: ${UNIT_EMOJI} ${nUnits(bonus)}!` : "") +
+        ` Пришлите фото или напишите идею!`,
+    )
     .catch(() => {});
 
   if (pack.course) await inviteToCourseCohort(api, userId, pack.course);

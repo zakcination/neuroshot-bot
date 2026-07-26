@@ -36,6 +36,7 @@ import {
   pendingOrders,
   presetUsageCounts,
   purchaseLedgerCount,
+  pushReport,
   referrerLedger,
   resolveOrder,
   partnerStats,
@@ -1298,6 +1299,35 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
         `\n• начислено: ${order.granted_at ? new Date(order.granted_at).toLocaleString("ru-RU") : "нет"}\n` +
         `• кем подтверждена: ${order.approved_via ?? "неизвестно (до включения аудита)"}\n` +
         `• Kaspi сейчас говорит: <b>${label[verdict]}</b>`,
+      { parse_mode: "HTML" },
+    );
+  });
+
+  // Admin: did the pushes sell anything? Conversion counts only orders granted
+  // AFTER the push, so a customer who had already bought can never be credited
+  // to a campaign that reached them later — the flattering mistake this report
+  // exists to avoid. Read this BEFORE putting money into PUSH_OFFER_BONUS: a
+  // discount attached to a push that doesn't convert is just money handed to
+  // people who would have paid anyway.
+  bot.command("pushes", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const rows = await pushReport();
+    if (!rows.length) {
+      await ctx.reply(
+        `📣 Пушей ещё не отправлялось.\n\nЛимит: ${config.pushPerWeek} сообщений на человека в неделю (на все кампании вместе).` +
+          (config.pushPerWeek === 0 ? " Сейчас проактивные сообщения выключены." : ""),
+      );
+      return;
+    }
+    const lines = rows.map((r) => {
+      const pct = r.sent > 0 ? Math.round((r.converted / r.sent) * 100) : 0;
+      return `• <b>${r.campaign}</b>: отправлено ${r.sent} · купили ${r.converted} (${pct}%) · ${r.kzt} ₸`;
+    });
+    await ctx.reply(
+      `📣 <b>Проактивные сообщения</b>\n\n` +
+        lines.join("\n") +
+        `\n\nЛимит: ${config.pushPerWeek}/неделю на человека, на все кампании вместе.` +
+        `\nБонус к предложению: ${config.pushOfferBonus > 0 ? `${config.pushOfferBonus} ${UNIT_EMOJI} на ${config.pushOfferHours} ч` : "выключен"}.`,
       { parse_mode: "HTML" },
     );
   });

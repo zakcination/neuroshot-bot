@@ -301,6 +301,19 @@ const SCHEMA: string[] = [
   // nothing on the row says who believed it. Every pending→paid transition
   // stamps it; NULL only on rows predating this column.
   `ALTER TABLE orders ADD COLUMN IF NOT EXISTS approved_via TEXT`,
+  // Every proactive message the bot sends, and every personal offer redeemed.
+  // One table because these are the same question asked twice: "what have we
+  // already sent this person, and did it lead anywhere?" The primary key makes
+  // each campaign strictly once-per-user, and the timestamps are what enforces
+  // the weekly message budget — a cap that has to be counted across ALL push
+  // tracks, not per feature, or each new track silently doubles the noise.
+  `CREATE TABLE IF NOT EXISTS pushes (
+    user_id BIGINT NOT NULL,
+    campaign TEXT NOT NULL,
+    sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, campaign)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_pushes_recent ON pushes(user_id, sent_at)`,
   // One-time repair for the missing backfill above. granted_at was added to an
   // already-populated table, so every order confirmed BEFORE it existed reads
   // as "paid but never granted" — which is what let the reconciler re-credit
@@ -1490,6 +1503,130 @@ export async function usersToNudge(limit: number): Promise<NudgeTarget[]> {
     id: Number(r.id),
     free_scenario_used: r.free_scenario_used === true,
     credits: Number(r.credits),
+  }));
+}
+
+// ---- Proactive messaging: budget, targeting, attribution ----
+
+/**
+ * Claim the right to send `campaign` to `userId`, respecting the GLOBAL weekly
+ * budget across every push track. Returns false if the campaign was already
+ * sent or the budget is spent.
+ *
+ * The budget is checked BEFORE the claim is written, so a user at their limit
+ * doesn't silently burn the one slot they will ever have for that campaign —
+ * the same ordering mistake awardXpOnce exists to avoid. Order matters again on
+ * failure: nothing is written, so the campaign stays available for next week.
+ *
+ * Why a hard cap at all: a messaging channel earns nothing per message and
+ * loses everything at once — a blocked bot is permanent, and no conversion
+ * campaign is worth trading a user for. The cap is the product decision; each
+ * campaign only competes for a slot within it.
+ */
+export async function claimPush(userId: number, campaign: string, perWeek: number): Promise<boolean> {
+  const cap = Math.max(0, Math.floor(perWeek));
+  if (cap === 0) return false;
+  const recent = await q(
+    "SELECT COUNT(*)::int AS c FROM pushes WHERE user_id = $1 AND sent_at > now() - interval '7 days'",
+    [userId],
+  );
+  if (Number(recent[0]?.c ?? 0) >= cap) return false;
+  const won = await q(
+    "INSERT INTO pushes (user_id, campaign) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING campaign",
+    [userId, campaign],
+  );
+  return won.length > 0;
+}
+
+/** Release a claimed push slot — used when the send itself failed. */
+export async function releasePush(userId: number, campaign: string): Promise<void> {
+  await q("DELETE FROM pushes WHERE user_id = $1 AND campaign = $2", [userId, campaign]);
+}
+
+/**
+ * The strongest purchase intent this product can observe: someone who reached
+ * the paywall — they picked a result, configured it and tapped create — and
+ * then didn't buy. They already want the thing; nothing needs to be sold to
+ * them except the last step.
+ *
+ * Deliberately narrow. Only users who have NEVER purchased (an existing
+ * customer hitting a paywall needs a top-up prompt in-app, not a DM), who saw
+ * it recently enough to remember what they wanted, and who have actually
+ * rendered something — someone who never saw a result has no reason to trust
+ * the price.
+ */
+export async function usersForPaywallPush(limit: number, days = 3): Promise<number[]> {
+  const rows = await q(
+    `SELECT DISTINCT e.user_id
+     FROM events e
+     WHERE e.type = 'paywall'
+       AND e.created_at > now() - ($2 || ' days')::interval
+       AND NOT EXISTS (SELECT 1 FROM ledger l WHERE l.user_id = e.user_id AND l.reason = 'purchase')
+       AND EXISTS (SELECT 1 FROM generations g WHERE g.user_id = e.user_id AND g.status = 'ok')
+       AND NOT EXISTS (SELECT 1 FROM pushes p WHERE p.user_id = e.user_id AND p.campaign = 'paywall')
+     ORDER BY e.user_id
+     LIMIT $1`,
+    [Math.max(0, Math.floor(limit)), String(Math.max(1, Math.floor(days)))],
+  );
+  return rows.map((r) => Number(r.user_id));
+}
+
+/**
+ * Is a personal offer live for this buyer, and has it not been redeemed? The
+ * offer's lifetime is measured from the push that announced it — no extra
+ * column, and no way for the window to disagree with what the user was told.
+ */
+export async function offerBonusFor(userId: number, hours: number): Promise<boolean> {
+  const rows = await q(
+    `SELECT 1 FROM pushes
+     WHERE user_id = $1 AND campaign = 'paywall'
+       AND sent_at > now() - ($2 || ' hours')::interval
+       AND NOT EXISTS (SELECT 1 FROM pushes r WHERE r.user_id = $1 AND r.campaign = 'offer_redeemed')`,
+    [userId, String(Math.max(1, Math.floor(hours)))],
+  );
+  return rows.length > 0;
+}
+
+/** Claim the one-time redemption of a personal offer. False if already used. */
+export async function claimOfferRedemption(userId: number): Promise<boolean> {
+  const won = await q(
+    "INSERT INTO pushes (user_id, campaign) VALUES ($1, 'offer_redeemed') ON CONFLICT DO NOTHING RETURNING campaign",
+    [userId],
+  );
+  return won.length > 0;
+}
+
+export interface PushReport {
+  campaign: string;
+  sent: number;
+  converted: number; // of those, how many purchased AFTER the push
+  kzt: number; // what those purchases were worth
+}
+
+/**
+ * Did the push actually sell anything? Conversion is counted only for orders
+ * granted AFTER the push, so a customer who had already bought can never be
+ * credited to a campaign that reached them later.
+ */
+export async function pushReport(): Promise<PushReport[]> {
+  const rows = await q(
+    `SELECT p.campaign,
+            COUNT(*)::int AS sent,
+            COUNT(o.id)::int AS converted,
+            COALESCE(SUM(o.amount_kzt), 0)::int AS kzt
+     FROM pushes p
+     LEFT JOIN LATERAL (
+       SELECT id, amount_kzt FROM orders
+       WHERE user_id = p.user_id AND granted_at IS NOT NULL AND granted_at > p.sent_at
+       ORDER BY granted_at LIMIT 1
+     ) o ON true
+     GROUP BY p.campaign ORDER BY sent DESC`,
+  );
+  return rows.map((r) => ({
+    campaign: String(r.campaign),
+    sent: Number(r.sent),
+    converted: Number(r.converted),
+    kzt: Number(r.kzt),
   }));
 }
 
