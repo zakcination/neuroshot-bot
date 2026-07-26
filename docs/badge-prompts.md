@@ -9,12 +9,16 @@
 
 ## Модель
 
-**Nano Banana Pro.** Это литеральный предметный рендер — металл, фаска, блик; та
-же категория, что продуктовая съёмка, а не стилизация. Soul Cinema заточен под
-портрет, Flux уводит в иллюстративность и теряет материал.
+**Higgsfield MCP, `gpt_image_2`** (`quality: "high"`) — то, чем реально
+сгенерирован текущий набор в `public/img/badge-*.png`. **`nano_banana_2`**
+("Nano Banana Pro") — равноценная альтернатива того же уровня, см.
+`docs/achievements.md`. Не fal.ai (тот аккаунт держит рендеры пользователей,
+а не арт продукта).
 
-Альтернатива, если захотите рисованный набор вместо «фотографии металла»:
-**Flux 2**, тот же системный блок, добавить `illustrated, flat-shaded`.
+Ни та, ни другая модель не отдают настоящий альфа-канал по промпту — обе
+рисуют шахматную сетку как пиксели вместо прозрачности. Обязательный шаг
+после генерации: Higgsfield `remove_background` по `job_id`, затем обрезка по
+альфа-каналу и центрирование — см. «Как генерировать».
 
 ## Главное: набор, а не 17 значков
 
@@ -28,14 +32,24 @@
 
 ### Системный блок (дословно, во всех 17)
 
+Держите в синхроне с шаблоном промпта в `docs/achievements.md` — это одна и
+та же генерация, описанная в двух местах; поменяли слово тут, поменяйте и там.
+
+**Никакой формы медальона в самой картинке** — ни щита, ни монеты, ни диска,
+ни рамки. Рамку (тир, `.bgcore`/`.bgrim`) и заливку (группа, `.bgaccent`)
+рисует CSS в `public/app.html`; картинка — только сам предмет, парящий в
+кадре сам по себе, без подложки под ним.
+
 ```
-Premium 3D achievement medallion, heater-shield silhouette, centred frontal
-view, orthographic — no perspective distortion, no tilt, no rotation. Single
-soft key light from the upper left at 45 degrees, subtle cool fill from the
-lower right, deep bevelled edges catching a thin specular rim. Product-render
-quality, sharp micro-detail, shallow relief. Isolated on a fully transparent
-background. Square composition, object centred and filling 62 percent of the
-frame. No text, no letters, no numbers, no logos, no background scenery.
+Sculpted as a small premium 3D relief charm, centred frontal view,
+orthographic — no perspective distortion, no tilt, no rotation. Single soft
+key light from the upper left at 45 degrees, subtle cool fill from the lower
+right, deep bevelled edges catching a thin specular rim. Product-render
+quality, sharp micro-detail, shallow relief. Isolated object floating alone
+with nothing behind it — no coin, no medal plate, no disc, no enclosing
+frame, no border, no badge shape, no keyring loop. Transparent background.
+Square composition, object centred and filling 60 percent of the frame. No
+text, no letters, no numbers, no logos, no background scenery.
 ```
 
 ### Материал по тиру (одна строка, дословно)
@@ -47,9 +61,7 @@ frame. No text, no letters, no numbers, no logos, no background scenery.
 ### Сборка промпта
 
 ```
-<СИСТЕМНЫЙ БЛОК>
-Subject in relief on the shield face: <СЮЖЕТ>.
-<МАТЕРИАЛ ТИРА>
+<СЮЖЕТ>. <СИСТЕМНЫЙ БЛОК> <МАТЕРИАЛ ТИРА>
 ```
 
 ## Сюжеты
