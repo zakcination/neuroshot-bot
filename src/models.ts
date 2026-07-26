@@ -795,9 +795,48 @@ export const PRESETS: Preset[] = [
     id: "cinematic",
     label: "🎥 Кино-портрет",
     category: "photo",
+    aspect: "3:4",
+    // The old prompt asked for a GRADE and a LENS — "35mm anamorphic, dramatic
+    // side lighting, teal-and-amber" — and gave the model no film to be a still
+    // FROM: no place, no moment, no wardrobe, no blocking. So it did the only
+    // thing available and pushed colour onto the photo it already had. In the
+    // 4-subject grid this was the one preset that changed nothing on any of
+    // them; it read as a filter, because that is all it asked for.
+    //
+    // What makes a frame read as cinema is not the grade. It is DEPTH (lights
+    // receding behind the subject), an INTERRUPTED MOMENT (a still is always
+    // cut out of a movement), MOTIVATED LIGHT (from a named thing in the scene,
+    // not from nowhere), and COSTUME that implies a story. Those are what this
+    // now asks for; the grade follows from the scene instead of replacing it.
+    //
+    // Genre is a choose-ONE menu for the same reason as the fashion look: a
+    // stacked list averages into the same murky frame every time. And it
+    // branches by subject, because neo-noir is wrong for a child and a family
+    // photo is not a lone-figure-in-the-rain shot — the earlier failure of
+    // giving every subject one vocabulary is exactly what that produced.
     prompt:
-      "Restyle into a cinematic movie-still portrait: a 35mm anamorphic film look, dramatic soft side lighting, a " +
-      `gentle teal-and-amber grade that keeps skin tones natural, tack-sharp face. ${KEEP_ID}`,
+      "Restage the person — or ALL the people, if the photo shows more than one — inside a single frame from a " +
+      "film, as if the camera were rolling and this frame was cut out of a moving scene. Not a colour filter on " +
+      "the existing photo: build the SHOT.\n" +
+      "FIRST read who is in the photo and choose the register that suits them — an ADULT drama, or, if the " +
+      "subject is a CHILD, a warm family-film register with no danger, no smoking, no bars or nightlife. A pair " +
+      "or a group is staged together as one scene, each person given something to be doing.\n" +
+      "GENRE — choose ONE and commit completely. NEO-NOIR: a wet night street, neon signage bleeding across the " +
+      "puddles, the subject in a dark coat with the collar up, caught mid-turn. WARM DRAMA: a lived-in kitchen or " +
+      "a train compartment at dusk, low sun through a window, a quiet look away from the camera. PERIOD: a hotel " +
+      "lobby or a station platform, tailored wool, luggage in the frame, someone about to leave. SCI-FI: a " +
+      "corridor of cold practical lights, a technical jacket, a face lit by a screen just out of frame. " +
+      "FAMILY-FILM (for a child or a family): a summer field at golden hour or a bright cluttered living room, " +
+      "mid-laugh, mid-run.\n" +
+      "DEPTH is mandatory: put light sources BEHIND the subject that recede into the distance and fall out of " +
+      "focus — street lamps, windows, signage, headlights. A flat backdrop reads as a portrait, never as a film.\n" +
+      "MOMENT, not a pose: the subject is interrupted — turning, rising, pausing in a doorway, listening to " +
+      "someone outside the frame. Eyes need not meet the camera.\n" +
+      "BLOCKING: place them off-centre with room to look into, and let one soft out-of-focus element cross the " +
+      "foreground — a shoulder, a railing, rain, glass.\n" +
+      "LIGHT must be MOTIVATED — it comes from something visible in the scene, and its colour follows that " +
+      "source. Skin stays natural; the grade comes from the location's own light, not from a preset wash. " +
+      `Anamorphic 35mm frame, shallow depth of field, fine film grain, tack-sharp face. ${KEEP_ID}`,
   },
   // Curated one-tap looks for the prompt library: high-recurrence, single-photo,
   // identity-locked scenarios from a market that already pays for them (product +
