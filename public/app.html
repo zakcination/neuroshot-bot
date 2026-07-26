@@ -975,7 +975,7 @@
     }
 
     const TABS = [
-      ["shoot", "📸 Фотосессия"], ["product", "🛍 Товар"], ["scenes", "🎉 Сценарии"], ["video", "🎬 Видео"], ["text", "✨ Из текста"],
+      ["shoot", "📸 Фотосессия"], ["product", "🛍 Товар"], ["scenes", "🎉 Сценарии"], ["video", "🎬 Видео"], ["text", "✨ По описанию"],
     ];
 
     function studio(tab) {
@@ -1086,13 +1086,16 @@
       if (st.tab === "video" || st.tab === "text") st.tab = "shoot";
       if (st.tab === "shoot" || st.tab === "product") {
         // Style Gallery: marketplace-style cards (preview photo, price, real
-        // usage/trending) — see docs/prompt-library.md. Trending (a genuine
-        // top-tap signal from the server, never fabricated) sorts first so the
-        // most-picked looks lead; ties keep the catalog's declared order.
+        // usage/trending) — see docs/prompt-library.md. Ordered by ACTUAL taps,
+        // most-used first, so whatever is trending right now surfaces on its own
+        // without anyone curating a list. usageCount comes from the events log
+        // (never fabricated), so before there's traffic every count is 0 and the
+        // catalog's declared order stands — a fresh deploy looks intentional,
+        // not randomly shuffled.
         const cat = st.tab === "shoot" ? "photo" : "product";
         const list = c.presets.filter((p) => p.category === cat)
           .map((p, i) => ({ p, i }))
-          .sort((a, b) => (b.p.trending - a.p.trending) || (a.i - b.i))
+          .sort((a, b) => (b.p.usageCount - a.p.usageCount) || (a.i - b.i))
           .map(({ p }) => p);
         inner = `<div class="pcards">${list.map((p) => {
           const lock = presetLock(p); // null = open (the default for every style)
@@ -1764,6 +1767,7 @@
         ${stu.preset && isVideo ? `<div class="sub">Стиль применяется к фото. Для видео опишите движение ниже.</div>` : ""}
         ${!stu.preset || isVideo ? `
           <div class="quiz-q">${isVideo ? "Движение (необязательно)" : "Что нарисовать?"}</div>
+          ${!isVideo && !stuHasSource() ? `<div class="sub">Фото не нужно — опишите картинку словами, ИИ нарисует её с нуля.</div>` : ""}
           <textarea class="prompt" id="stuPrompt" placeholder="${isVideo ? "камера медленно приближается, ветер в волосах…" : "флакон духов на мокром чёрном мраморе…"}">${esc(stu.prompt)}</textarea>
           <div class="row" style="margin-top:6px">
             <button class="btn ghost" id="stuEnh">✨ Улучшить промпт · 1-е бесплатно</button>
@@ -2573,9 +2577,14 @@
             <div class="sec-h"><h2>Что создаём</h2></div>
             <div class="rail">
               <a class="act" data-studio="shoot" style="background-image:url('/img/card-shoot.jpg')"><span class="em"><img class="appicon" src="/img/ic-camera.png" alt="" /></span><b>AI-фотосессия</b><span>от ${d.catalog.presetCredits} ${PATRON} · прямо здесь</span></a>
-              <a class="act" data-studio="product" style="background-image:url('/img/card-product.jpg')"><span class="em"><img class="appicon" src="/img/ic-bag.png" alt="" /></span><b>Карточка товара</b><span>для маркетплейса</span></a>
+              <!-- Second slot, not last: this is the only card that needs NO
+                   photo, so it's the shortest path to a first result — and the
+                   label has to say that outright. "Из текста" described the
+                   input format, which told a first-time user nothing about what
+                   they'd get. -->
+              <a class="act" data-studio="text" style="background-image:url('/img/card-text.jpg')"><span class="em"><img class="appicon" src="/img/ic-sparkle.png" alt="" /></span><b>Картинка по описанию</b><span>без фото · от ${d.catalog.imageModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} ${PATRON}</span></a>
               <a class="act" data-studio="video" style="background-image:url('/img/card-video.jpg')"><span class="em"><img class="appicon" src="/img/ic-film.png" alt="" /></span><b>Оживить фото</b><span>видео от ${d.catalog.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} ${PATRON}</span></a>
-              <a class="act" data-studio="text" style="background-image:url('/img/card-text.jpg')"><span class="em"><img class="appicon" src="/img/ic-sparkle.png" alt="" /></span><b>Из текста</b><span>от ${d.catalog.imageModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} ${PATRON}</span></a>
+              <a class="act" data-studio="product" style="background-image:url('/img/card-product.jpg')"><span class="em"><img class="appicon" src="/img/ic-bag.png" alt="" /></span><b>Карточка товара</b><span>для маркетплейса</span></a>
             </div>
           </section>
 
