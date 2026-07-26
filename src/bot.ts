@@ -1397,6 +1397,22 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       .filter((r) => Number.isInteger(r.n) && r.n > 0)
       .sort((a, b) => a.n - b.n);
     const earn = values.filter((r) => r.key.startsWith("xp."));
+    const get = (k: string) => values.find((r) => r.key === k)?.value ?? null;
+    // Spend-scaled XP needs BOTH a step and a rate. One without the other reads
+    // as "configured" in the list above but awards nothing, so say it plainly.
+    const step = get("xp.purchase.step");
+    const halfSpend: string[] = [];
+    if (step == null && (get("xp.purchase") != null || get("xp.refpurchase") != null))
+      halfSpend.push("задан xp.purchase / xp.refpurchase, но нет xp.purchase.step — XP за оплату НЕ начисляется");
+    if (step != null && get("xp.purchase") == null && get("xp.refpurchase") == null)
+      halfSpend.push("задан xp.purchase.step, но нет ни xp.purchase, ни xp.refpurchase — шаг ни на что не влияет");
+    const spendLine =
+      step != null && (get("xp.purchase") != null || get("xp.refpurchase") != null)
+        ? `\n\n<b>XP за оплату:</b> каждые ${step} ₸ → ${get("xp.purchase") ?? 0} XP покупателю` +
+          (get("xp.refpurchase") != null ? ` · ${get("xp.refpurchase")} XP пригласившему` : "")
+        : halfSpend.length
+          ? `\n\n⚠️ ${halfSpend.join("; ")}`
+          : "";
     // A ladder is only read up to its first gap (getLevelProgress stops there),
     // so a missing rung silently truncates every level above it — worth saying.
     const gapAt = ladder.findIndex((r, i) => r.n !== i + 1);
@@ -1417,7 +1433,8 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
           ? `\n\n⚠️ Пропущен порог ${gapAt + 1} — всё, что выше, не читается. Задайте его, чтобы открыть остальные.`
           : "") +
         `\n\n<b>Начисление XP:</b>\n` +
-        (earn.length ? earn.map((r) => `• ${r.key} = ${r.value}`).join("\n") : "(не задано — XP не начисляется)"),
+        (earn.length ? earn.map((r) => `• ${r.key} = ${r.value}`).join("\n") : "(не задано — XP не начисляется)") +
+        spendLine,
       { parse_mode: "HTML" },
     );
   });

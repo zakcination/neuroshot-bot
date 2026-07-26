@@ -2149,12 +2149,83 @@ export async function getUserXp(userId: number): Promise<number> {
 export async function awardXp(userId: number, action: string, meta?: string): Promise<number> {
   const amount = await getEconomyConfig(`xp.${action}`);
   if (!amount) return 0;
+  return addXp(userId, amount, action, meta);
+}
+
+/**
+ * Credit an already-decided amount of XP and journal it, in one statement.
+ *
+ * Separate from awardXp because a few rewards are PROPORTIONAL — spend-scaled
+ * XP can't come from a single `xp.<action>` value. Callers of this are
+ * responsible for their own idempotency; awardXp/awardXpOnce/awardXpCapped
+ * remain the way in for flat rewards.
+ */
+async function addXp(userId: number, amount: number, action: string, meta?: string): Promise<number> {
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  const delta = Math.floor(amount);
   await q(
     `WITH upd AS (UPDATE users SET xp = xp + $1 WHERE id = $2 RETURNING id)
      INSERT INTO xp_ledger (user_id, delta, reason, meta) SELECT $2, $1, $3, $4 FROM upd`,
-    [amount, userId, action, meta ?? null],
+    [delta, userId, action, meta ?? null],
   );
-  return amount;
+  return delta;
+}
+
+/**
+ * XP for money spent, and the referrer's share of it.
+ *
+ * Two config keys decide the buyer's rate: `xp.purchase.step` (₸ per unit) and
+ * `xp.purchase` (XP per unit) — so "каждые 25 ₸ = 10 XP" is a setting, not a
+ * constant in this repo. `xp.refpurchase` pays whoever brought the buyer, at
+ * the same step. BOTH sides need their keys set; a step without a rate (or vice
+ * versa) awards nothing, and /econ_levels calls that half-configured state out
+ * rather than letting it look switched on.
+ *
+ * Attribution matches grantPurchase exactly — the partner code the buyer
+ * arrived on, else their inviter, never both — so one purchase can never pay
+ * two people.
+ *
+ * Idempotent per ORDER on each side independently (`purchase:<id>` /
+ * `refpurchase:<id>` in xp_claims), so the reconciler, a duplicate webhook and
+ * an admin re-running `/order N ok` can all reach this without re-awarding.
+ * Called only after grantOrderCredits wins its claim, so XP exists only where
+ * money actually moved.
+ */
+export async function awardPurchaseXp(buyerId: number, orderId: number, kzt: number): Promise<number> {
+  const step = await getEconomyConfig("xp.purchase.step");
+  if (!step || step <= 0) return 0;
+  const units = Math.floor(Math.max(0, kzt) / step);
+  if (units <= 0) return 0;
+
+  let total = 0;
+  const claim = async (userId: number, key: string): Promise<boolean> => {
+    const won = await q(
+      "INSERT INTO xp_claims (user_id, claim_key) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING claim_key",
+      [userId, key],
+    );
+    return won.length > 0;
+  };
+
+  const buyerRate = await getEconomyConfig("xp.purchase");
+  if (buyerRate && (await claim(buyerId, `purchase:${orderId}`))) {
+    total += await addXp(buyerId, units * buyerRate, "purchase", String(orderId));
+  }
+
+  const refRate = await getEconomyConfig("xp.refpurchase");
+  if (refRate) {
+    const owner = await q(
+      `SELECT COALESCE(pc.user_id, u.referrer_id) AS owner_id
+       FROM users u LEFT JOIN partner_codes pc ON pc.code = u.partner_code
+       WHERE u.id = $1`,
+      [buyerId],
+    );
+    const ownerId = owner[0]?.owner_id == null ? null : Number(owner[0].owner_id);
+    // Self-referral would be a free XP loop: buy, pay yourself the share.
+    if (ownerId && ownerId !== buyerId && (await claim(ownerId, `refpurchase:${orderId}`))) {
+      total += await addXp(ownerId, units * refRate, "refpurchase", `${orderId}:${buyerId}`);
+    }
+  }
+  return total;
 }
 
 /**

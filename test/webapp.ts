@@ -39,7 +39,7 @@ process.env.RATE_LIMIT_ENHANCE_PER_MIN = "100000";
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
+const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, awardPurchaseXp, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
@@ -2607,6 +2607,62 @@ await step("referral finance: revenue brought in is read from orders, not from t
   assert.ok(mine, "inviter missing from the referral ledger");
   assert.equal(mine!.broughtKzt, 3700);
   assert.ok(!led.some((r) => r.userId === stranger), "a buyer with no inviter is not a referrer");
+});
+
+await step("purchase XP: scales with money spent, pays the inviter, and never twice per order", async () => {
+  await query("DELETE FROM orders");
+  await query("DELETE FROM ledger WHERE reason = 'purchase'");
+  await query("DELETE FROM economy_config WHERE key LIKE 'xp.%'");
+  await query("DELETE FROM xp_claims");
+
+  const inviter = 990500;
+  const buyer = 990501;
+  const loner = 990502;
+  for (const [id, name] of [[inviter, "xp_inviter"], [buyer, "xp_buyer"], [loner, "xp_loner"]] as const) {
+    await getOrCreateUser(id as number, name as string, null, 0);
+    await query("UPDATE users SET xp = 0 WHERE id = $1", [id]);
+  }
+  await query("UPDATE users SET referrer_id = $1 WHERE id = $2", [inviter, buyer]);
+
+  // Unconfigured is inert — the shipped default must award nothing.
+  const o0 = await createOrder(buyer, "start", 3700);
+  assert.equal(await awardPurchaseXp(buyer, o0, 3700), 0);
+  assert.equal(await getUserXp(buyer), 0);
+
+  // A step with no rate is a HALF-config: still nothing, no silent guessing.
+  await setEconomyConfig("xp.purchase.step", 25);
+  const o1 = await createOrder(buyer, "start", 3700);
+  assert.equal(await awardPurchaseXp(buyer, o1, 3700), 0);
+
+  await setEconomyConfig("xp.purchase", 10);
+  await setEconomyConfig("xp.refpurchase", 5);
+
+  // 3700 ₸ / 25 = 148 units → buyer 1480, inviter 740.
+  const o2 = await createOrder(buyer, "start", 3700);
+  await awardPurchaseXp(buyer, o2, 3700);
+  assert.equal(await getUserXp(buyer), 1480);
+  assert.equal(await getUserXp(inviter), 740);
+
+  // Re-running the same order (reconciler, duplicate webhook, /order N ok twice)
+  // must be a full no-op on BOTH sides.
+  await awardPurchaseXp(buyer, o2, 3700);
+  assert.equal(await getUserXp(buyer), 1480, "purchase XP awarded twice for one order");
+  assert.equal(await getUserXp(inviter), 740, "referral XP awarded twice for one order");
+
+  // A second, larger order pays again and scales with the amount.
+  const o3 = await createOrder(buyer, "pro", 7500);
+  await awardPurchaseXp(buyer, o3, 7500);
+  assert.equal(await getUserXp(buyer), 1480 + 300 * 10);
+
+  // A buyer with no inviter pays XP to nobody — and a purchase under one step
+  // rounds down to zero rather than paying for a rounding error.
+  const o4 = await createOrder(loner, "start", 3700);
+  await awardPurchaseXp(loner, o4, 3700);
+  assert.equal(await getUserXp(loner), 1480);
+  const o5 = await createOrder(loner, "start", 10);
+  assert.equal(await awardPurchaseXp(loner, o5, 10), 0);
+
+  await query("DELETE FROM economy_config WHERE key LIKE 'xp.%'");
 });
 
 await new Promise<void>((r) => server.close(() => r()));

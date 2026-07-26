@@ -2,6 +2,7 @@ import type { Api, Bot, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import {
+  awardPurchaseXp,
   createOrder,
   getOrder,
   grantOrderCredits,
@@ -171,6 +172,13 @@ async function inviteToCourseCohort(api: Api, userId: number, tier: "fast" | "fl
 export async function grantPurchase(api: Api, userId: number, pack: Pack, orderId: number): Promise<void> {
   if (!(await grantOrderCredits(orderId, userId, pack.credits, pack.kzt))) return;
   await logEvent(userId, "purchase", `${pack.id}:${pack.kzt}`);
+  // XP for the money, and the inviter's share of it. Runs behind the same
+  // claim as the credits, so it can only ever fire for a purchase that really
+  // landed — never for a refunded or half-granted one. Never fatal: a failure
+  // here must not roll back credits the buyer has already been told about.
+  await awardPurchaseXp(userId, orderId, pack.kzt).catch((err) =>
+    console.error(`[xp] purchase XP failed for order #${orderId}:`, err),
+  );
 
   // Attribution is exclusive: a buyer came via a creator code OR a friend link.
   const partnerPayout = await rewardPartnerOnPurchase(userId, pack.credits);
