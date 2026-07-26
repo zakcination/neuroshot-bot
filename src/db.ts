@@ -2190,6 +2190,15 @@ async function addXp(userId: number, amount: number, action: string, meta?: stri
  * versa) awards nothing, and /econ_levels calls that half-configured state out
  * rather than letting it look switched on.
  *
+ * `xp.purchase.max` / `xp.refpurchase.max` cap ONE order's award, and they are
+ * the load-bearing part of the design, not a safety detail. XP buys Levels, and
+ * Levels unlock styles — so uncapped, a single large top-up buys the whole
+ * ladder outright, the progression stops meaning "you have used this product"
+ * and starts meaning "you paid", and every user who earns their levels is
+ * looking at a scoreboard someone else skipped. The cap keeps a big purchase
+ * worth roughly a good week of real use instead of months of it. Unset = no
+ * cap, which is why /econ_levels says so out loud.
+ *
  * Attribution matches grantPurchase exactly — the partner code the buyer
  * arrived on, else their inviter, never both — so one purchase can never pay
  * two people.
@@ -2215,9 +2224,14 @@ export async function awardPurchaseXp(buyerId: number, orderId: number, kzt: num
     return won.length > 0;
   };
 
+  const cap = async (raw: number, key: string): Promise<number> => {
+    const limit = await getEconomyConfig(key);
+    return limit != null && limit > 0 ? Math.min(raw, limit) : raw;
+  };
+
   const buyerRate = await getEconomyConfig("xp.purchase");
   if (buyerRate && (await claim(buyerId, `purchase:${orderId}`))) {
-    total += await addXp(buyerId, units * buyerRate, "purchase", String(orderId));
+    total += await addXp(buyerId, await cap(units * buyerRate, "xp.purchase.max"), "purchase", String(orderId));
   }
 
   const refRate = await getEconomyConfig("xp.refpurchase");
@@ -2231,7 +2245,12 @@ export async function awardPurchaseXp(buyerId: number, orderId: number, kzt: num
     const ownerId = owner[0]?.owner_id == null ? null : Number(owner[0].owner_id);
     // Self-referral would be a free XP loop: buy, pay yourself the share.
     if (ownerId && ownerId !== buyerId && (await claim(ownerId, `refpurchase:${orderId}`))) {
-      total += await addXp(ownerId, units * refRate, "refpurchase", `${orderId}:${buyerId}`);
+      total += await addXp(
+        ownerId,
+        await cap(units * refRate, "xp.refpurchase.max"),
+        "refpurchase",
+        `${orderId}:${buyerId}`,
+      );
     }
   }
   return total;

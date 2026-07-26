@@ -1472,10 +1472,19 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       halfSpend.push("задан xp.purchase / xp.refpurchase, но нет xp.purchase.step — XP за оплату НЕ начисляется");
     if (step != null && get("xp.purchase") == null && get("xp.refpurchase") == null)
       halfSpend.push("задан xp.purchase.step, но нет ни xp.purchase, ни xp.refpurchase — шаг ни на что не влияет");
+    const capNote = (raw: number | null, key: string, who: string) => {
+      if (raw == null) return "";
+      const lim = get(key);
+      return lim == null
+        ? `\n⚠️ Потолок за одну покупку не задан (${key}) — крупный платёж купит уровни целиком: ${who}`
+        : `\n• потолок за одну покупку (${who}): ${lim} XP`;
+    };
     const spendLine =
       step != null && (get("xp.purchase") != null || get("xp.refpurchase") != null)
         ? `\n\n<b>XP за оплату:</b> каждые ${step} ₸ → ${get("xp.purchase") ?? 0} XP покупателю` +
-          (get("xp.refpurchase") != null ? ` · ${get("xp.refpurchase")} XP пригласившему` : "")
+          (get("xp.refpurchase") != null ? ` · ${get("xp.refpurchase")} XP пригласившему` : "") +
+          capNote(get("xp.purchase"), "xp.purchase.max", "покупатель") +
+          capNote(get("xp.refpurchase"), "xp.refpurchase.max", "пригласивший")
         : halfSpend.length
           ? `\n\n⚠️ ${halfSpend.join("; ")}`
           : "";

@@ -2654,6 +2654,16 @@ await step("purchase XP: scales with money spent, pays the inviter, and never tw
   await awardPurchaseXp(buyer, o3, 7500);
   assert.equal(await getUserXp(buyer), 1480 + 300 * 10);
 
+  // The cap is what keeps Levels a record of USE rather than of spend: a big
+  // top-up must not buy the ladder outright.
+  await setEconomyConfig("xp.purchase.max", 500);
+  await setEconomyConfig("xp.refpurchase.max", 250);
+  const before = await getUserXp(buyer);
+  const big = await createOrder(buyer, "pro", 20000); // 800 units → 8000 XP uncapped
+  await awardPurchaseXp(buyer, big, 20000);
+  assert.equal((await getUserXp(buyer)) - before, 500, "a large purchase blew past the per-order cap");
+  await query("DELETE FROM economy_config WHERE key LIKE 'xp.%.max'");
+
   // A buyer with no inviter pays XP to nobody — and a purchase under one step
   // rounds down to zero rather than paying for a rounding error.
   const o4 = await createOrder(loner, "start", 3700);
@@ -2685,6 +2695,10 @@ await step("auto-grant is OFF by default: «Я оплатил» always reaches a
   (live as { kaspiApiToken: string }).kaspiApiToken = "t";
   const pinged: number[] = [];
   const api = { sendMessage: async (chatId: number) => { pinged.push(chatId); return {}; } } as unknown as InstanceType<typeof Api>;
+  // CI has no ADMIN_IDS, so the ping loop would have nobody to send to and the
+  // assertion below would pass or fail on the environment rather than the code.
+  const prevAdmins = [...live.adminIds];
+  (live as { adminIds: number[] }).adminIds = [424242];
   try {
     (live as { kaspiAutoGrant: boolean }).kaspiAutoGrant = false;
     const off = await claimOrderPaid(api, id, "tester");
@@ -2703,6 +2717,7 @@ await step("auto-grant is OFF by default: «Я оплатил» always reaches a
     (live as { kaspiApiBase: string }).kaspiApiBase = prev.base;
     (live as { kaspiApiToken: string }).kaspiApiToken = prev.token;
     (live as { kaspiAutoGrant: boolean }).kaspiAutoGrant = prev.auto;
+    (live as { adminIds: number[] }).adminIds = prevAdmins;
   }
 });
 
