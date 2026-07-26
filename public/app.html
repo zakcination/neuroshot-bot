@@ -293,6 +293,15 @@
     .setrow input[type=checkbox]:checked { background: var(--amber); }
     .setrow input[type=checkbox]::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; transition: transform .2s; }
     .setrow input[type=checkbox]:checked::after { transform: translateX(18px); }
+    /* Referral finance card: the two numbers a promoter actually asks for —
+       what their invitees paid us, and what we owe them for it. */
+    .fincard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 15px; margin-top: 12px; }
+    .finrow { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+    .finrow:last-child { border-bottom: 0; }
+    .finrow span { color: var(--muted); }
+    .finrow b { font-size: 15px; white-space: nowrap; }
+    .finrow.owed b { color: var(--accent, #7cf); }
+    .finnote { margin: 10px 2px 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
     .linkrow { display: flex; gap: 9px; }
     .linkbox {
       flex: 1; min-width: 0; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-s);
@@ -975,7 +984,7 @@
     }
 
     const TABS = [
-      ["shoot", "📸 Фотосессия"], ["product", "🛍 Товар"], ["scenes", "🎉 Сценарии"], ["video", "🎬 Видео"], ["text", "✨ Из текста"],
+      ["shoot", "📸 Фотосессия"], ["product", "🛍 Товар"], ["scenes", "🎉 Сценарии"], ["video", "🎬 Видео"], ["text", "✨ По описанию"],
     ];
 
     function studio(tab) {
@@ -1086,13 +1095,16 @@
       if (st.tab === "video" || st.tab === "text") st.tab = "shoot";
       if (st.tab === "shoot" || st.tab === "product") {
         // Style Gallery: marketplace-style cards (preview photo, price, real
-        // usage/trending) — see docs/prompt-library.md. Trending (a genuine
-        // top-tap signal from the server, never fabricated) sorts first so the
-        // most-picked looks lead; ties keep the catalog's declared order.
+        // usage/trending) — see docs/prompt-library.md. Ordered by ACTUAL taps,
+        // most-used first, so whatever is trending right now surfaces on its own
+        // without anyone curating a list. usageCount comes from the events log
+        // (never fabricated), so before there's traffic every count is 0 and the
+        // catalog's declared order stands — a fresh deploy looks intentional,
+        // not randomly shuffled.
         const cat = st.tab === "shoot" ? "photo" : "product";
         const list = c.presets.filter((p) => p.category === cat)
           .map((p, i) => ({ p, i }))
-          .sort((a, b) => (b.p.trending - a.p.trending) || (a.i - b.i))
+          .sort((a, b) => (b.p.usageCount - a.p.usageCount) || (a.i - b.i))
           .map(({ p }) => p);
         inner = `<div class="pcards">${list.map((p) => {
           const lock = presetLock(p); // null = open (the default for every style)
@@ -1764,6 +1776,7 @@
         ${stu.preset && isVideo ? `<div class="sub">Стиль применяется к фото. Для видео опишите движение ниже.</div>` : ""}
         ${!stu.preset || isVideo ? `
           <div class="quiz-q">${isVideo ? "Движение (необязательно)" : "Что нарисовать?"}</div>
+          ${!isVideo && !stuHasSource() ? `<div class="sub">Фото не нужно — опишите картинку словами, ИИ нарисует её с нуля.</div>` : ""}
           <textarea class="prompt" id="stuPrompt" placeholder="${isVideo ? "камера медленно приближается, ветер в волосах…" : "флакон духов на мокром чёрном мраморе…"}">${esc(stu.prompt)}</textarea>
           <div class="row" style="margin-top:6px">
             <button class="btn ghost" id="stuEnh">✨ Улучшить промпт · 1-е бесплатно</button>
@@ -2411,6 +2424,31 @@
       if (!t) return "";
       return new Date(t).toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
     }
+    /**
+     * The money half of the Друзья page. broughtKzt is read server-side from
+     * granted ORDERS, not from the cashback we paid — showing only the payout
+     * would make the program impossible to check, and an invite program you
+     * can't check is one you won't confidently promote to your own circle.
+     * Cash-out rows appear only once there IS payout activity, so an ordinary
+     * inviter isn't shown a withdrawal UI that doesn't apply to them.
+     */
+    function refFinanceHtml(f) {
+      if (!f) return "";
+      const hasPayout = (f.withdrawable + f.pendingPayout + f.paidOut) > 0;
+      const rows = [
+        `<div class="finrow"><span>Друзья купили пакетов</span><b>${f.broughtPayments} на ${f.broughtKzt.toLocaleString("ru-RU")} ₸</b></div>`,
+        `<div class="finrow owed"><span>Начислено вам</span><b>${f.earned} ${PATRON}</b></div>`,
+      ];
+      if (hasPayout) {
+        rows.push(`<div class="finrow"><span>Доступно к выводу</span><b>${f.withdrawable} ${PATRON}</b></div>`);
+        if (f.pendingPayout > 0) rows.push(`<div class="finrow"><span>Заявка на выплату</span><b>${f.pendingPayout} ${PATRON}</b></div>`);
+        if (f.paidOut > 0) rows.push(`<div class="finrow"><span>Уже выплачено</span><b>${f.paidOut} ${PATRON}</b></div>`);
+      }
+      const note = f.broughtKzt === 0
+        ? `<p class="finnote">Пока никто из приглашённых не купил пакет. Как только купят — здесь появится сумма их покупок и ваше вознаграждение, до тенге.</p>`
+        : `<p class="finnote">Слева — что ваши друзья реально оплатили, справа — что начислено вам. Обе цифры считаются независимо, поэтому их всегда можно сверить.</p>`;
+      return `<div class="fincard">${rows.join("")}</div>${note}`;
+    }
     function referralListHtml(referrals) {
       const list = referrals || [];
       if (!list.length) {
@@ -2573,9 +2611,14 @@
             <div class="sec-h"><h2>Что создаём</h2></div>
             <div class="rail">
               <a class="act" data-studio="shoot" style="background-image:url('/img/card-shoot.jpg')"><span class="em"><img class="appicon" src="/img/ic-camera.png" alt="" /></span><b>AI-фотосессия</b><span>от ${d.catalog.presetCredits} ${PATRON} · прямо здесь</span></a>
-              <a class="act" data-studio="product" style="background-image:url('/img/card-product.jpg')"><span class="em"><img class="appicon" src="/img/ic-bag.png" alt="" /></span><b>Карточка товара</b><span>для маркетплейса</span></a>
+              <!-- Second slot, not last: this is the only card that needs NO
+                   photo, so it's the shortest path to a first result — and the
+                   label has to say that outright. "Из текста" described the
+                   input format, which told a first-time user nothing about what
+                   they'd get. -->
+              <a class="act" data-studio="text" style="background-image:url('/img/card-text.jpg')"><span class="em"><img class="appicon" src="/img/ic-sparkle.png" alt="" /></span><b>Картинка по описанию</b><span>без фото · от ${d.catalog.imageModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} ${PATRON}</span></a>
               <a class="act" data-studio="video" style="background-image:url('/img/card-video.jpg')"><span class="em"><img class="appicon" src="/img/ic-film.png" alt="" /></span><b>Оживить фото</b><span>видео от ${d.catalog.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} ${PATRON}</span></a>
-              <a class="act" data-studio="text" style="background-image:url('/img/card-text.jpg')"><span class="em"><img class="appicon" src="/img/ic-sparkle.png" alt="" /></span><b>Из текста</b><span>от ${d.catalog.imageModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} ${PATRON}</span></a>
+              <a class="act" data-studio="product" style="background-image:url('/img/card-product.jpg')"><span class="em"><img class="appicon" src="/img/ic-bag.png" alt="" /></span><b>Карточка товара</b><span>для маркетплейса</span></a>
             </div>
           </section>
 
@@ -2651,6 +2694,7 @@
               <div class="stat"><div class="n">${dash.referralPaying}</div><div class="l">покупают</div></div>
               <div class="stat"><div class="n">${dash.referralEarned}</div><div class="l">${PATRON} заработано</div></div>
             </div>
+            ${refFinanceHtml(d.referralFinance)}
           </section>
           <section class="reveal">
             <div class="sec-h"><h2>Ваши друзья</h2></div>

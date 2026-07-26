@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { allPresetGating, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { allPresetGating, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { enhancePrompt } from "./enhance.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
@@ -454,7 +454,7 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress] =
+  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress, finance] =
     await Promise.all([
       userDashboard(user.id),
       recentGenerations(user.id, 30),
@@ -467,6 +467,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
       allPresetGating(),
       modelEtaSeconds(),
       getLevelProgress(user.id),
+      referralFinance(user.id),
     ]);
   const gates = Object.fromEntries(gateRows.map((g) => [g.preset_id, g.min_level]));
   return {
@@ -506,6 +507,11 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     // Per-referral drill-down for the Друзья page — who joined and whether they
     // went inactive / used-free / paid. Aggregate counts stay in `dashboard`.
     referrals,
+    // The money side of the same page: what the caller's invitees have actually
+    // PAID (read from granted orders, independent of the cashback we credited)
+    // against what we credited and still owe them. Sent to the referrer because
+    // an invite program nobody can audit is one nobody trusts enough to promote.
+    referralFinance: finance,
     // "Ваш путь в NeuroShot" roadmap — real completion signals, see roadmapProgress.
     roadmap,
     // The completion gift for finishing all 5 roadmap steps — claim-gated the
@@ -1098,7 +1104,7 @@ export async function kaspiCallbackResponse(
   const amount = payload.amount != null ? Number(payload.amount) : order.amount_kzt;
   if (!Number.isFinite(amount) || amount !== order.amount_kzt) return { status: 400, body: { error: "amount_mismatch" } };
 
-  const won = await resolveOrder(orderId, true);
+  const won = await resolveOrder(orderId, true, "webhook");
   if (!won) return { status: 200, body: { ok: true, already: "resolved" } };
   await grant(order.user_id, pack, orderId);
   return { status: 200, body: { ok: true, granted: pack.credits } };

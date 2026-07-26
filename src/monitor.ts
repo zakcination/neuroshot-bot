@@ -30,6 +30,14 @@ export interface Digest {
   hours: number;
   newBySource: Array<{ source: string; users: number }>;
   paysBySource: Array<{ source: string; payments: number; kzt: number }>;
+  /**
+   * How each granted order was CONFIRMED (orders.approved_via), for the same
+   * window. Read independently of `payments` (which counts ledger rows) so the
+   * digest can say out loud when the two disagree — a purchase in the ledger
+   * with no order behind it is the only shape a phantom payment can take, and
+   * it should be visible in the digest itself, not just under an admin command.
+   */
+  paysByPath: Array<{ path: string; payments: number }>;
   newUsers: number;
   newActivated: number; // of the new users, how many started a generation
   paywallViews: number;
@@ -86,6 +94,12 @@ export async function buildDigest(hours = 24): Promise<Digest> {
     `SELECT COUNT(*)::int AS c FROM ledger WHERE reason = 'refund' AND created_at > now() - $1::interval`,
     [win],
   );
+  const pathRows = await query(
+    `SELECT COALESCE(approved_via, 'unknown') AS path, COUNT(*)::int AS payments
+     FROM orders WHERE granted_at IS NOT NULL AND granted_at > now() - $1::interval
+     GROUP BY 1 ORDER BY 2 DESC`,
+    [win],
+  );
   const liability = await query(`SELECT COALESCE(SUM(credits), 0)::int AS c FROM users`);
 
   let genOk = 0;
@@ -115,6 +129,7 @@ export async function buildDigest(hours = 24): Promise<Digest> {
   return {
     hours,
     newBySource: newRows.map((r) => ({ source: String(r.source), users: num(r.users) })),
+    paysByPath: pathRows.map((r) => ({ path: String(r.path), payments: num(r.payments) })),
     paysBySource: payRows.map((r) => ({
       source: String(r.source),
       payments: num(r.payments),
@@ -136,6 +151,15 @@ export async function buildDigest(hours = 24): Promise<Digest> {
   };
 }
 
+/** Human labels for orders.approved_via in the digest's provenance line. */
+const PATH_LABEL: Record<string, string> = {
+  admin: "вручную",
+  webhook: "вебхук",
+  kaspi_api: "авто-проверка",
+  reconciler: "сверка",
+  unknown: "без метки",
+};
+
 /** The 6 numbers, one message, payers split from freeloaders. */
 export function formatDigest(d: Digest): string {
   const bySrc = d.newBySource.length
@@ -144,6 +168,18 @@ export function formatDigest(d: Digest): string {
   const paySrc = d.paysBySource.length
     ? d.paysBySource.map((s) => `${s.source}: ${s.payments} (${s.kzt} ₸)`).join(" · ")
     : "—";
+  // Provenance line: only when there ARE payments, and only worth a line at all
+  // because "N оплат" with no way to ask "confirmed by whom?" is exactly how a
+  // payment that never happened stays unexplained. A count mismatch between the
+  // ledger (what `payments` counts) and granted orders is called out inline.
+  const pathTotal = d.paysByPath.reduce((a, p) => a + p.payments, 0);
+  const payPath = d.payments > 0
+    ? "\n🔎 Подтверждено: " +
+      (d.paysByPath.length ? d.paysByPath.map((p) => `${PATH_LABEL[p.path] ?? p.path} ${p.payments}`).join(" · ") : "—") +
+      (pathTotal !== d.payments
+        ? ` ⚠️ заявок с начислением ${pathTotal}, а записей об оплате ${d.payments} — проверьте /payments ${d.hours}`
+        : "")
+    : "";
   const errRate = d.genOk + d.genError > 0
     ? Math.round((d.genError / (d.genOk + d.genError)) * 100)
     : 0;
@@ -152,7 +188,7 @@ export function formatDigest(d: Digest): string {
     `👥 Новых: <b>${d.newUsers}</b> (${bySrc})`,
     `⚡ Активация (первая генерация): <b>${d.newActivated}/${d.newUsers}</b>`,
     `🧱 Пейволл: <b>${d.paywallViews}</b> показов · ${d.paywallUsers} чел.`,
-    `💳 Оплат: <b>${d.payments}</b> на <b>${d.kzt} ₸</b> — ${paySrc}`,
+    `💳 Оплат: <b>${d.payments}</b> на <b>${d.kzt} ₸</b> — ${paySrc}${payPath}`,
     `📈 Выручка ≈ $${d.revenueUsd.toFixed(2)} · себестоимость ≈ $${d.costUsd.toFixed(2)} · ` +
       (d.marginPct == null ? "маржа: — (нет оплат)" : `маржа <b>${d.marginPct}%</b>`),
     `🎨 Генераций: ${d.genOk} ok / ${d.genError} err (${errRate}%) · возвратов: ${d.refunds}`,

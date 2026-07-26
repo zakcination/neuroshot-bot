@@ -29,8 +29,11 @@ import {
   myPartnerCodes,
   myWithdrawals,
   partnerAccount,
+  grantedOrders,
   pendingOrders,
   presetUsageCounts,
+  purchaseLedgerCount,
+  referrerLedger,
   resolveOrder,
   partnerStats,
   pendingWithdrawals,
@@ -1096,7 +1099,47 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     await ctx.reply(
       "🧾 <b>Заявки на оплату (Kaspi)</b>\n" +
         rows.map((r) => `№${r.id} · пользователь ${r.user_id} · ${r.pack_id} · ${r.amount_kzt} ₸`).join("\n") +
-        "\n\nПодтвердить: /order <id> ok  или  /order <id> no",
+        "\n\nПодтвердить: /order <id> ok  или  /order <id> no" +
+        "\nУже начисленные оплаты: /payments 24",
+      { parse_mode: "HTML" },
+    );
+  });
+
+  // Admin: audit what the digest's «💳 Оплат» line is actually counting.
+  // /payments [часов] — every order that MOVED CREDITS in the window, with the
+  // path that confirmed it, plus the raw ledger count for the same window. The
+  // two numbers are read independently on purpose: the digest counts ledger
+  // rows, this lists orders, and a gap between them means credits were journaled
+  // as a purchase by something outside the order flow — the only shape a
+  // "payment that never happened" can actually take.
+  bot.command("payments", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const arg = Number((ctx.match ?? "").trim());
+    const hours = Number.isFinite(arg) && arg > 0 ? Math.min(720, Math.floor(arg)) : 24;
+    const [orders, ledger] = await Promise.all([grantedOrders(hours), purchaseLedgerCount(hours)]);
+    const via = (v: string | null) =>
+      v === "admin"
+        ? "вручную (/order)"
+        : v === "webhook"
+          ? "вебхук Kaspi"
+          : v === "kaspi_api"
+            ? "авто-проверка Kaspi"
+            : v === "reconciler"
+              ? "довыдача (сверка)"
+              : "неизвестно (до включения аудита)";
+    const lines = orders.map(
+      (o) => `№${o.order_id} · ${o.user_id} · ${o.pack_id} · ${o.kzt} ₸ · ${via(o.approved_via)}`,
+    );
+    const mismatch =
+      ledger.rows !== orders.length
+        ? `\n\n⚠️ Расхождение: в журнале ${ledger.rows} записей «purchase», а заявок с начислением — ${orders.length}. ` +
+          `Сводка считает журнал, поэтому именно эта разница и выглядит как «оплата, которой не было».`
+        : "";
+    await ctx.reply(
+      `💳 <b>Начисленные оплаты за ${hours} ч</b>\n` +
+        `Журнал: <b>${ledger.rows}</b> на <b>${ledger.kzt} ₸</b> (эту цифру показывает сводка)\n\n` +
+        (lines.length ? lines.join("\n") : "Заявок с начислением нет.") +
+        mismatch,
       { parse_mode: "HTML" },
     );
   });
@@ -1109,7 +1152,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       await ctx.reply("Формат: /order <id> ok|no");
       return;
     }
-    const order = await resolveOrder(id, verdict === "ok");
+    const order = await resolveOrder(id, verdict === "ok", "admin");
     if (!order) {
       await ctx.reply(`Заявка №${id} не найдена или уже обработана.`);
       return;
@@ -1125,6 +1168,45 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     } else {
       await ctx.reply(`↩️ Заявка №${id} отклонена.`);
     }
+  });
+
+  // Admin: the referral P&L — who brought how much, and what we still owe them.
+  // /refs [сколько строк]. This has to balance before any close-circle referral
+  // push goes out: you cannot promise people a percentage without being able to
+  // show, per person, what came in against what is owed. Revenue is read from
+  // granted ORDERS and the payout from the ledger — two independent facts, so
+  // the ratio between them is a real check, not a tautology.
+  bot.command("refs", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const arg = Number((ctx.match ?? "").trim());
+    const limit = Number.isFinite(arg) && arg > 0 ? Math.min(50, Math.floor(arg)) : 15;
+    const rows = await referrerLedger(limit);
+    if (!rows.length) {
+      await ctx.reply("Пока никто не привёл платящих пользователей и никому ничего не начислено.");
+      return;
+    }
+    const money = (n: number) => n.toLocaleString("ru-RU");
+    const lines = rows.map((r) => {
+      const who = r.username ? `@${r.username}` : String(r.userId);
+      const owed = r.withdrawable + r.pendingPayout;
+      return (
+        `<b>${who}</b> · привёл ${r.paying}/${r.invited} · <b>${money(r.broughtKzt)} ₸</b> (${r.broughtPayments} покупок)\n` +
+        `   начислено ${r.earned} ${UNIT_EMOJI} · к выплате <b>${owed}</b> ${UNIT_EMOJI}` +
+        (r.paidOut > 0 ? ` · выплачено ${r.paidOut} ${UNIT_EMOJI}` : "")
+      );
+    });
+    const totalKzt = rows.reduce((a, r) => a + r.broughtKzt, 0);
+    const totalEarned = rows.reduce((a, r) => a + r.earned, 0);
+    const totalOwed = rows.reduce((a, r) => a + r.withdrawable + r.pendingPayout, 0);
+    const totalPaid = rows.reduce((a, r) => a + r.paidOut, 0);
+    await ctx.reply(
+      `🤝 <b>Реферальная математика</b> (топ ${rows.length})\n\n` +
+        lines.join("\n") +
+        `\n\n<b>Итого</b>: привели ${money(totalKzt)} ₸ · начислено ${totalEarned} ${UNIT_EMOJI} · ` +
+        `к выплате <b>${totalOwed}</b> ${UNIT_EMOJI} · выплачено ${totalPaid} ${UNIT_EMOJI}\n` +
+        `Заявки на вывод: /payouts`,
+      { parse_mode: "HTML" },
+    );
   });
 
   // Admin: enroll a user into the partner program. Partnerships are admin-served,
@@ -1261,6 +1343,83 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     }
     await setEconomyConfig(key, value);
     await ctx.reply(`✅ ${key} = ${value}`);
+  });
+
+  // Turning the Level system on means writing a whole ladder plus the earn
+  // rates — a dozen-plus keys. One /econ_set per key is why it stays off: the
+  // work isn't hard, it's just long enough to never get done, and until the
+  // FIRST level.threshold.N exists getLevelProgress reports inactive and every
+  // user sees "Уровни скоро". This sets them in one message.
+  // /econ_bulk ключ=знач ключ=знач …  (values come from the operator, never
+  // from the repo — the ladder is commercial config, not source.)
+  bot.command("econ_bulk", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const pairs = (ctx.match ?? "").trim().split(/\s+/).filter(Boolean);
+    if (!pairs.length) {
+      await ctx.reply(
+        "Формат: /econ_bulk ключ=знач ключ=знач …\n" +
+          "Пример: /econ_bulk level.threshold.1=100 level.threshold.2=300 xp.save=25\n" +
+          "Текущие значения: /econ · проверить уровни: /econ_levels",
+      );
+      return;
+    }
+    const set: string[] = [];
+    const bad: string[] = [];
+    for (const p of pairs) {
+      const eq = p.indexOf("=");
+      const key = eq > 0 ? p.slice(0, eq) : "";
+      const value = Number(p.slice(eq + 1));
+      // All-or-nothing per pair, not per message: a typo in one key must not
+      // silently drop it while the rest land, leaving a ladder with a hole.
+      if (!key || !Number.isInteger(value)) {
+        bad.push(p);
+        continue;
+      }
+      await setEconomyConfig(key, value);
+      set.push(`${key} = ${value}`);
+    }
+    await ctx.reply(
+      (set.length ? `✅ Записано (${set.length}):\n` + set.map((x) => `• ${x}`).join("\n") : "Ничего не записано.") +
+        (bad.length ? `\n\n⚠️ Не разобрано: ${bad.join(", ")}` : "") +
+        `\n\nПроверить: /econ_levels`,
+    );
+  });
+
+  // Is the Level system actually ON, and what does the ladder look like right
+  // now? The Mini App decides purely on "does level.threshold.1 exist", so this
+  // answers "почему я не вижу уровни" without guessing.
+  bot.command("econ_levels", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const values = await allEconomyConfig();
+    const ladder = values
+      .filter((r) => r.key.startsWith("level.threshold."))
+      .map((r) => ({ n: Number(r.key.slice("level.threshold.".length)), xp: r.value }))
+      .filter((r) => Number.isInteger(r.n) && r.n > 0)
+      .sort((a, b) => a.n - b.n);
+    const earn = values.filter((r) => r.key.startsWith("xp."));
+    // A ladder is only read up to its first gap (getLevelProgress stops there),
+    // so a missing rung silently truncates every level above it — worth saying.
+    const gapAt = ladder.findIndex((r, i) => r.n !== i + 1);
+    if (!ladder.length) {
+      await ctx.reply(
+        "🔒 <b>Уровни выключены.</b>\n\nНи одного порога не задано, поэтому в приложении показывается «Уровни скоро».\n\n" +
+          "Включаются одной командой — задайте пороги подряд с 1-го:\n" +
+          "<code>/econ_bulk level.threshold.1=… level.threshold.2=… …</code>\n" +
+          "и начисление: <code>xp.save</code>, <code>xp.generate</code> и другие ключи <code>xp.*</code>.",
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+    await ctx.reply(
+      `🎚 <b>Уровни включены</b> — ${gapAt === -1 ? ladder.length : gapAt} доступно пользователям\n` +
+        ladder.map((r) => `• ур. ${r.n} — ${r.xp} XP`).join("\n") +
+        (gapAt !== -1
+          ? `\n\n⚠️ Пропущен порог ${gapAt + 1} — всё, что выше, не читается. Задайте его, чтобы открыть остальные.`
+          : "") +
+        `\n\n<b>Начисление XP:</b>\n` +
+        (earn.length ? earn.map((r) => `• ${r.key} = ${r.value}`).join("\n") : "(не задано — XP не начисляется)"),
+      { parse_mode: "HTML" },
+    );
   });
 
   bot.command("econ_gate", async (ctx) => {

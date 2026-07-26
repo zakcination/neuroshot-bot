@@ -4,6 +4,36 @@ One process runs both the bot (Telegram long polling — no inbound port needed)
 and the Mini App server. The only thing that needs to be public is the Mini App,
 which Caddy fronts with automatic HTTPS.
 
+## Release policy — batch, don't drip
+
+Merging to `main` auto-deploys, so every merged PR is a release. Shipping each
+finished change on its own turned that into several deploys a day, and the cost
+isn't the deploy — it's that nobody can tell which change moved a number, and a
+user-visible surface keeps shifting under people who are mid-session.
+
+**Accumulate 2–4 features per release.** A batch goes out when it has:
+
+- 2–4 user-visible changes that were verified together (`npm test`, and the app
+  opened once on a real device if any of them touched the Mini App), **or**
+- one change that is genuinely urgent on its own.
+
+What always ships immediately, alone, without waiting for a batch:
+
+- anything that stops users spending money or losing it — payment, crediting,
+  refund and balance bugs;
+- security fixes and data-handling corrections;
+- a broken render path (the whole product is the render).
+
+Everything else waits for the next batch. Write the batch as ONE pull request
+with the features listed in the body, so the deploy and the changelog are the
+same artifact — and when a metric moves the day after, there are 2–4 candidates
+to look at, not fifteen.
+
+Config-only changes (`/econ_bulk`, `/econ_gate`, `/season_new`, pack prices in
+the admin surface) are **not** releases and never need one. That's the point of
+keeping the economy in config: turning the reward ladder on or retuning it is a
+message to the bot, not a deploy.
+
 ## Option A — Docker Compose + Caddy on a VPS (recommended)
 
 Brings up the app + a TLS reverse proxy with one command. Fits the "runs on any
