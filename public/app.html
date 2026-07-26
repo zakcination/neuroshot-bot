@@ -310,9 +310,28 @@
     /* Level ⇄ Achievements: one row, 70/30. The level bar is the thing you
        check; the badge shelf is the thing you're drawn to. Giving the shelf a
        third of the width makes it an invitation rather than a competitor. */
-    .lvlrow { display: grid; grid-template-columns: 70fr 30fr; gap: 10px; align-items: stretch; }
+    /* Level gets its own full-width row: it is the number you check, and it
+       reads badly squeezed. Achievements and certificates share the row below —
+       two shelves of the same kind, one earned by using the product, one by
+       finishing a course. */
+    .lvlrow { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: stretch; margin-top: 10px; }
     .lvlrow > * { min-width: 0; }
     @media (max-width: 340px) { .lvlrow { grid-template-columns: 1fr; } }
+    /* Certificate: a seal, not a shield — a different object class from the
+       achievement badges, so the two shelves never read as one set. */
+    .seal { position: relative; width: 100%; aspect-ratio: 1; display: grid; place-items: center; }
+    .seal i { position: absolute; inset: 0; border-radius: 999px;
+      background: radial-gradient(120% 90% at 32% 20%, rgba(255,255,255,.6) 0%, transparent 45%),
+        conic-gradient(from 210deg, #6b5a25, #e9d08a, #8a7433, #f3e3ae, #6b5a25);
+      box-shadow: inset 0 -6px 12px rgba(0,0,0,.35), 0 5px 14px rgba(0,0,0,.4); }
+    .seal b { position: relative; z-index: 1; font-size: 20px; }
+    .seal.locked { filter: grayscale(1) brightness(.5); opacity: .6; }
+    .certrow { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+    .certrow:last-of-type { border-bottom: 0; }
+    .certrow .seal { width: 46px; flex: 0 0 46px; }
+    .certrow .ct { flex: 1; min-width: 0; }
+    .certrow .ct b { display: block; font-size: 14px; }
+    .certrow .ct small { color: var(--muted); font-size: 12px; line-height: 1.45; }
 
     /* --- Holographic badge ---------------------------------------------
        Built from CSS, not bitmaps: it has to look right at 44px on a shelf
@@ -1362,6 +1381,54 @@
         </div>
         <div class="bgholo"></div>
       </div>`;
+    }
+
+    /**
+     * Certificates tile. Locked is the normal state and the copy says so
+     * plainly, with what to DO about it — a shelf of greyed seals with no path
+     * is just a reminder that you are not in the club.
+     */
+    function certTileHtml(list) {
+      const all = list || [];
+      const got = all.filter((c) => c.earned).length;
+      return `<button class="achtile" id="certTile">
+        <div class="seal${got ? "" : " locked"}"><i></i><b>🎓</b></div>
+        <small>${got} из ${all.length || 2}<br>сертификатов</small>
+      </button>`;
+    }
+
+    /**
+     * The certificates sheet doubles as the course storefront — that is the
+     * point of the section. Each row states the honest state: not bought /
+     * bought but not defended / issued. The certificate is never implied by
+     * payment, and the copy says what earns it, so nobody buys expecting a PDF.
+     */
+    function viewCertificates() {
+      const all = (ME && ME.certificates) || [];
+      const rows = all.map((c) => {
+        const status = c.earned
+          ? `Выдан ${c.issuedAt ? new Date(c.issuedAt).toLocaleDateString("ru-RU") : ""}`
+          : c.owned
+            ? "Курс у вас есть. Сертификат — после защиты работ в чате когорты."
+            : "Чтобы получить: пройдите курс и защитите работы в чате когорты.";
+        return `<div class="certrow">
+          <div class="seal${c.earned ? "" : " locked"}"><i></i><b>🎓</b></div>
+          <div class="ct"><b>${esc(c.title)}</b><small>${esc(status)}</small></div>
+        </div>`;
+      }).join("");
+      sheetBody.innerHTML = `<h3>Сертификаты</h3>
+        <div class="sub">Сертификат выдаётся за работы, а не за оплату — поэтому он что-то значит.</div>
+        <div class="fincard" style="margin-top:12px">${rows}</div>
+        <p class="finnote">Курсы идут в приватном канале с разбором домашних заданий. Открыть программу и цены — в боте, команда <b>/course</b>.</p>
+        <button class="btn primary" id="certBuy" style="margin-top:12px">🎓 Смотреть курсы</button>`;
+      const buy = document.getElementById("certBuy");
+      if (buy) buy.onclick = () => {
+        // The course ladder lives in the bot (cohort invites are a Telegram
+        // thing), so send them there rather than half-rebuilding it here.
+        if (tg && tg.openTelegramLink) tg.openTelegramLink(`https://t.me/${BOT}?start=course`);
+        else toast("Откройте бота и отправьте /course");
+      };
+      openSheet();
     }
 
     /** The 30% tile: the newest earned badge, and how far the set has gone. */
@@ -2858,6 +2925,12 @@
         const t = document.getElementById("achTile");
         if (t) t.onclick = viewAchievements;
       }
+      const ct = document.getElementById("certTileHost");
+      if (ct) {
+        ct.innerHTML = certTileHtml(data.certificates);
+        const t2 = document.getElementById("certTile");
+        if (t2) t2.onclick = viewCertificates;
+      }
       renderRoadmap(data);
     }
     function statsHtml(dash) {
@@ -3110,9 +3183,10 @@
 
           <section class="reveal">
             <div class="sec-h"><h2>Уровень и достижения</h2></div>
+            <div id="lvlCardHost">${levelCardHtml(d.progress)}</div>
             <div class="lvlrow">
-              <div id="lvlCardHost">${levelCardHtml(d.progress)}</div>
               <div id="achTileHost">${achTileHtml(d.achievements)}</div>
+              <div id="certTileHost">${certTileHtml(d.certificates)}</div>
             </div>
           </section>
 
@@ -3278,6 +3352,8 @@
       if (lvlPill0) lvlPill0.onclick = () => showPage("profile");
       const achTile0 = document.getElementById("achTile");
       if (achTile0) achTile0.onclick = viewAchievements;
+      const certTile0 = document.getElementById("certTile");
+      if (certTile0) certTile0.onclick = viewCertificates;
       document.querySelectorAll("[data-buy]").forEach((b) => (b.onclick = () => buyPack(b.dataset.buy, false)));
       document.querySelectorAll("[data-studio]").forEach((a) => (a.onclick = () => studio(a.dataset.studio)));
       document.querySelectorAll("[data-camp-open]").forEach((a) => (a.onclick = () => { st.tab = "scenes"; openSheet(); viewCampaign(a.dataset.campOpen); }));

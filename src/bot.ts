@@ -30,6 +30,7 @@ import {
   myWithdrawals,
   partnerAccount,
   abandonedPaidOrders,
+  issueCertificate,
   getLevel,
   getOrder,
   grantedOrders,
@@ -1364,6 +1365,35 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
         `• Kaspi сейчас говорит: <b>${label[verdict]}</b>`,
       { parse_mode: "HTML" },
     );
+  });
+
+  // Admin: issue a course certificate. Deliberately a command and not an
+  // automatic consequence of payment — a certificate handed out for buying is
+  // worth nothing, and the work it certifies is defended in the cohort chat,
+  // which the product cannot observe. /cert <tg_id> fast|flagship
+  bot.command("cert", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const [idS, course] = (ctx.match ?? "").trim().split(/\s+/);
+    const targetId = Number(idS);
+    if (!Number.isInteger(targetId) || targetId <= 0 || (course !== "fast" && course !== "flagship")) {
+      await ctx.reply("Формат: /cert <tg_id> fast|flagship");
+      return;
+    }
+    const fresh = await issueCertificate(targetId, course);
+    await ctx.reply(
+      fresh
+        ? `🎓 Сертификат выдан пользователю ${targetId} (${course}).`
+        : `Сертификат у ${targetId} (${course}) уже был.`,
+    );
+    if (fresh) {
+      await ctx.api
+        .sendMessage(
+          targetId,
+          "🎓 <b>Ваш сертификат выдан!</b>\n\nОн появился в профиле — раздел «Достижения и сертификаты». Поздравляем: это за работы, а не за оплату.",
+          { parse_mode: "HTML" },
+        )
+        .catch(() => {});
+    }
   });
 
   // Admin: did the pushes sell anything? Conversion counts only orders granted

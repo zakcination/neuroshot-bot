@@ -39,7 +39,7 @@ process.env.RATE_LIMIT_ENHANCE_PER_MIN = "100000";
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, awardPurchaseXp, staleGrantedOrders, abandonedPaidOrders, claimPush, releasePush, usersForPaywallPush, offerBonusFor, claimOfferRedemption, pushReport, achievements, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
+const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, awardPurchaseXp, staleGrantedOrders, abandonedPaidOrders, claimPush, releasePush, usersForPaywallPush, offerBonusFor, claimOfferRedemption, pushReport, achievements, certificates, issueCertificate, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
@@ -2967,6 +2967,36 @@ await step("prompt library: Кино-портрет asks for a SCENE, not a colo
   assert.ok(/CHILD/.test(p), "no child register — noir is wrong for a kid");
   // And restaging must never quietly drop people from a group photo.
   assert.ok(p.includes("ALL the people"), "group photos must keep everyone");
+});
+
+await step("certificates: payment buys the course, a human issues the certificate", async () => {
+  await query("DELETE FROM certificates");
+  await query("DELETE FROM orders");
+  const u = 991100;
+  await getOrCreateUser(u, "student", null, 0);
+
+  const before = await certificates(u);
+  assert.equal(before.length, 2, "both course certificates must be listed even when unearned");
+  assert.equal(before.every((c) => !c.owned && !c.earned), true);
+
+  // Buying the course marks it OWNED and nothing else. A certificate handed
+  // out for paying is worth nothing, and that is the whole point of the wall.
+  const order = await createOrder(u, "course_fast", 4500);
+  await resolveOrder(order, true, "admin");
+  await grantOrderCredits(order, u, 60, 4500);
+  const owned = await certificates(u);
+  const fast = () => owned.find((c) => c.course === "fast")!;
+  assert.equal(fast().owned, true, "a granted course order must show as owned");
+  assert.equal(fast().earned, false, "payment must NEVER earn the certificate");
+
+  // Issuance is a deliberate act, and idempotent.
+  assert.equal(await issueCertificate(u, "fast"), true);
+  assert.equal(await issueCertificate(u, "fast"), false, "re-issuing must be a no-op");
+  const after = (await certificates(u)).find((c) => c.course === "fast")!;
+  assert.equal(after.earned, true);
+  assert.ok(after.issuedAt, "an issued certificate must carry its date");
+  // The other course is untouched by either action.
+  assert.equal((await certificates(u)).find((c) => c.course === "flagship")!.earned, false);
 });
 
 await new Promise<void>((r) => server.close(() => r()));
