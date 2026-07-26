@@ -2819,5 +2819,24 @@ await step("granted_at backfill: stamps orders the ledger proves were credited, 
   assert.equal((await getOrder(credited))!.granted_at, before);
 });
 
+await step("registered bot commands: every advertised command actually has a handler", async () => {
+  // The command menu and the handlers are two separate lists in two files, so
+  // they drift silently — an advertised command with no handler just does
+  // nothing when tapped, which reads as a broken bot rather than a missing
+  // feature. Cheap to check, and it catches the drift at the only moment it is
+  // still free to fix.
+  const fs = await import("node:fs/promises");
+  const index = await fs.readFile(new URL("../src/index.ts", import.meta.url), "utf8");
+  const bot = await fs.readFile(new URL("../src/bot.ts", import.meta.url), "utf8");
+  const payments = await fs.readFile(new URL("../src/payments.ts", import.meta.url), "utf8");
+  const advertised = [...index.matchAll(/\{\s*command:\s*"([a-z_]+)"/g)].map((m) => m[1]);
+  assert.ok(advertised.includes("whoami"), "whoami must be in the public command menu");
+  const handled = new Set(
+    [...(bot + payments).matchAll(/bot\.command\(\s*"([a-z_]+)"/g)].map((m) => m[1]),
+  );
+  const missing = advertised.filter((c) => !handled.has(c));
+  assert.deepEqual(missing, [], `advertised with no handler: ${missing.join(", ")}`);
+});
+
 await new Promise<void>((r) => server.close(() => r()));
 console.log(`\nAll ${passed} web-app checks passed. ✨`);

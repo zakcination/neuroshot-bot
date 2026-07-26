@@ -30,6 +30,7 @@ import {
   myWithdrawals,
   partnerAccount,
   abandonedPaidOrders,
+  getLevel,
   getOrder,
   grantedOrders,
   pendingOrders,
@@ -75,6 +76,11 @@ import {
 } from "./models.js";
 import { grantPurchase, registerPayments, sendBalance } from "./payments.js";
 import { nUnits, UNIT_EMOJI, withPhotoTip } from "./text.js";
+
+/** Telegram-supplied names go into an HTML body — escape before they do. */
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
+}
 
 async function user(
   ctx: { from?: { id: number; username?: string } },
@@ -771,6 +777,44 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   bot.command("balance", async (ctx) => sendBalance(ctx, (await user(ctx)).credits));
   bot.command("buy", async (ctx) => sendBalance(ctx, (await user(ctx)).credits));
+
+  // Who am I — the @userinfobot answer, plus what THIS product knows about the
+  // account. Exists for a practical reason: every support conversation starts
+  // with "what's your id?", and Telegram gives people no way to see their own.
+  // Same reason ADMIN_IDS needs an id the owner has no obvious way to look up.
+  //
+  // Strictly self-service: it reports the caller's own account and nothing
+  // else. The only way it ever describes someone else is a forwarded message,
+  // and then only what Telegram itself chose to attach — a sender who hides
+  // their account stays hidden, and we say so rather than appearing to fail.
+  const whoami = async (ctx: Context): Promise<void> => {
+    if (!ctx.from) return;
+    const f = ctx.from;
+    const u = await user(ctx);
+    const level = await getLevel(f.id);
+    const code = await ensureRefCode(f.id);
+    const lines = [
+      "🪪 <b>Ваши данные</b>",
+      "",
+      `• ID: <code>${f.id}</code>`,
+      `• Имя: ${escapeHtml(f.first_name ?? "—")}${f.last_name ? " " + escapeHtml(f.last_name) : ""}`,
+      `• Username: ${f.username ? "@" + escapeHtml(f.username) : "не задан"}`,
+      `• Язык: ${f.language_code ?? "—"}`,
+    ];
+    if (f.is_premium) lines.push("• Telegram Premium: да");
+    lines.push(
+      "",
+      "🎯 <b>Аккаунт в NeuroShot</b>",
+      `• Баланс: ${nUnits(u.credits)}`,
+      `• Уровень: ${level > 0 ? level : "пока не открыт"}`,
+      `• Реферальная ссылка: <code>https://t.me/${ctx.me.username}?start=${code}</code>`,
+      "",
+      "<i>ID можно скопировать нажатием. Он нужен, если пишете в поддержку.</i>",
+    );
+    await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
+  };
+  bot.command("whoami", whoami);
+  bot.command("id", whoami);
 
   bot.command("ref", async (ctx) => sendRefLink(ctx));
 
@@ -2024,6 +2068,53 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   });
 
   // ---- Text in → prompt for a pending action, or plain text-to-image ----
+
+  // A FORWARDED message answers "who sent this?" — the other half of what
+  // @userinfobot does. Reports only what Telegram itself attached: a sender who
+  // hides their account in forwards is simply absent from the payload, and we
+  // say that plainly instead of looking broken. Runs before the prompt handler
+  // because a forward is never a generation prompt.
+  bot.on("message:forward_origin", async (ctx, next) => {
+    const origin = ctx.message.forward_origin;
+    // A forwarded PHOTO is almost always someone sending us a picture to work
+    // with — the core flow of the whole product. Answering it with sender
+    // metadata instead of a render would be a regression dressed as a feature,
+    // so media forwards fall straight through to the normal handlers.
+    if (ctx.message.photo || ctx.message.video || ctx.message.document) return next();
+    if (origin.type === "user") {
+      const u = origin.sender_user;
+      await ctx.reply(
+        `↩️ <b>Автор пересланного сообщения</b>\n\n` +
+          `• ID: <code>${u.id}</code>\n` +
+          `• Имя: ${escapeHtml(u.first_name ?? "—")}${u.last_name ? " " + escapeHtml(u.last_name) : ""}\n` +
+          `• Username: ${u.username ? "@" + escapeHtml(u.username) : "не задан"}` +
+          (u.is_bot ? "\n• Это бот" : ""),
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+    if (origin.type === "channel") {
+      await ctx.reply(
+        `↩️ <b>Пересланное из канала</b>\n\n` +
+          `• ID канала: <code>${origin.chat.id}</code>\n` +
+          `• Название: ${escapeHtml(origin.chat.title ?? "—")}` +
+          (origin.chat.username ? `\n• @${escapeHtml(origin.chat.username)}` : ""),
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+    if (origin.type === "hidden_user") {
+      await ctx.reply(
+        `↩️ Автор скрыл свой аккаунт в пересылках — Telegram не передаёт его ID. ` +
+          `Видно только подпись: ${escapeHtml(origin.sender_user_name)}`,
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+    // Anything else (e.g. a forward from a group) isn't a person — let the
+    // normal handlers deal with the message content.
+    await next();
+  });
 
   bot.on("message:text", async (ctx) => {
     const u = await user(ctx);

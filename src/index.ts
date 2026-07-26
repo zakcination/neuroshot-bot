@@ -48,6 +48,7 @@ void bot.api.setMyCommands([
   { command: "balance", description: "Мой баланс" },
   { command: "ref", description: "🎁 Реферальная ссылка (10%)" },
   { command: "partner", description: "🤝 Партнёрам и авторам" },
+  { command: "whoami", description: "🪪 Мои данные и ID" },
   { command: "delete_me", description: "🗑 Удалить мои данные" },
   { command: "start", description: "Перезапустить бота" },
 ]).catch((e) => console.error("setMyCommands failed:", e));
