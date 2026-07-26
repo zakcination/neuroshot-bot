@@ -165,7 +165,7 @@ function courseText(): string {
       ? `🚀 <b>«Быстрый старт» — ${fast.kzt} ₸</b> — 5 уроков + ${nUnits(fast.credits)} внутри (с запасом на весь курс).\n`
       : "") +
     (flagship
-      ? `🎓 <b>«AI-контент под ключ» — ${flagship.kzt} ₸</b> — 3 модуля + когорта + ${nUnits(flagship.credits)} + сертификат.\n\n`
+      ? `🎓 <b>«AI-контент под ключ» — ${flagship.kzt} ₸</b> — 3 модуля + когорта + ${nUnits(flagship.credits)}.\n\n`
       : "\n") +
     `Обучение — в приватном Telegram-канале вашей когорты; доступ к каналу открывается ` +
     `автоматически сразу после оплаты.`
@@ -503,6 +503,18 @@ function presetsKeyboard(category: Preset["category"]): InlineKeyboard {
   const prices = PRESETS.map((p) => presetModel(p).credits);
   kb.text(`🎲 Удиви меня (${Math.min(...prices)}–${Math.max(...prices)} ${UNIT_EMOJI})`, "preset:surprise").row();
   kb.text(`✍️ Свой промпт (${MODELS.premium_edit.credits} ${UNIT_EMOJI})`, "act:premium_edit").row();
+  // Cross-link between the two preset families, offered only from the other
+  // side so it never duplicates what is already on screen. The product looks
+  // were previously reachable ONLY by uploading a photo with no pending mode
+  // and noticing the option in the "what to do with this photo" prompt —
+  // anyone who came in through the photoshoot anchor never saw them, and that
+  // is the one outcome with an identified paying buyer. The main menu was
+  // deliberately trimmed to two anchors (locked by an e2e assertion), so the
+  // switch belongs here, at the moment the user is looking at the wrong list.
+  kb.text(
+    category === "photo" ? "🛍 Это фото товара →" : "📸 Это фото человека →",
+    category === "photo" ? "switch:product" : "switch:photo",
+  ).row();
   kb.text("📋 Меню", "menu:main");
   return kb;
 }
@@ -827,6 +839,57 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   };
   bot.command("whoami", whoami);
   bot.command("id", whoami);
+
+  // Seller identity, terms and refund rights — reachable FROM THE BOT.
+  // They were served only from the Mini App's «Ещё» tab, so a buyer who never
+  // opens the app (and, while WEBAPP_URL is unset, everybody) had no way to see
+  // who they are paying, what they get, or how to get their money back. For a
+  // paid product sold in-chat that is not a nice-to-have.
+  const LEGAL_LINKS = () => {
+    const base = config.webappUrl.replace(/\/+$/, "");
+    return base
+      ? `\n\n📄 Полные документы: ${base}/legal/terms · ${base}/legal/privacy · ${base}/legal/refund`
+      : "";
+  };
+  const sellerBlock = () =>
+    "🏢 <b>Продавец</b>\n" +
+    "ИП «Z8 Capital», БИН 030722500509\n" +
+    "Поддержка: komekforyou@gmail.com" +
+    LEGAL_LINKS();
+
+  bot.command("terms", async (ctx) => {
+    await ctx.reply(
+      "📄 <b>Условия использования</b>\n\n" +
+        `Вы покупаете ${UNIT_EMOJI} патроны — внутреннюю единицу сервиса, которая тратится на генерацию ` +
+        "изображений и видео. Патроны не сгорают по времени и не обмениваются обратно на деньги.\n" +
+        "Результаты создаёт ИИ; каждый из них помечается как сгенерированный ИИ.\n" +
+        "Загруженные фото используются только для вашей генерации.\n\n" +
+        sellerBlock(),
+      { parse_mode: "HTML" },
+    );
+  });
+
+  bot.command("privacy", async (ctx) => {
+    await ctx.reply(
+      "🔒 <b>Данные</b>\n\n" +
+        "Храним: ваш Telegram ID и имя пользователя, баланс, историю операций и ссылки на созданные работы.\n" +
+        "Загруженные фото передаются подрядчику по обработке только чтобы сделать вам результат.\n" +
+        "Удалить всё — команда /delete_me (действие необратимо).\n\n" +
+        sellerBlock(),
+      { parse_mode: "HTML" },
+    );
+  });
+
+  bot.command("refund", async (ctx) => {
+    await ctx.reply(
+      "↩️ <b>Возврат</b>\n\n" +
+        "Пакет патронов: возврат в течение 14 дней, если патроны из него не потрачены — напишите на почту " +
+        "поддержки с номером заявки.\n" +
+        "Если генерация не удалась, патроны возвращаются на баланс автоматически — платить за неудачу не нужно.\n\n" +
+        sellerBlock(),
+      { parse_mode: "HTML" },
+    );
+  });
 
   bot.command("ref", async (ctx) => sendRefLink(ctx));
 
@@ -1716,6 +1779,29 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     );
   });
 
+  // Switch preset family without asking for the photo again — the upload is
+  // already parked in pending_file_id, so re-requesting it would be a pointless
+  // round trip through Telegram recompression.
+  bot.callbackQuery(/^switch:(photo|product)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const to = ctx.match[1] as Preset["category"];
+    const u = await user(ctx);
+    if (!u.pending_file_id) {
+      await setPending(u.id, to === "product" ? "mode_product" : "mode_photo", null);
+      await ctx.reply(
+        to === "product"
+          ? "Пришлите фото товара 🛍 — можно прямо со стола, фон заменим."
+          : "Пришлите фото человека 📸 — портрет анфас работает лучше всего.",
+      );
+      return;
+    }
+    await showPresets(
+      ctx,
+      to,
+      to === "product" ? "Выберите подачу товара:" : "Выберите стиль — один тап, без промптов:",
+    );
+  });
+
   bot.callbackQuery("menu:product", async (ctx) => {
     await ctx.answerCallbackQuery();
     const u = await user(ctx);
@@ -1869,6 +1955,27 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       styleRef: preset.styleRef,
       animate: c.id,
     });
+  });
+
+  // Animate ANY image result (not just a campaign's) — referenced by generation
+  // id, same as camv. Without this the "оживить" upsell existed only on campaign
+  // renders: a preset portrait or a product card came back with no way forward
+  // except re-uploading the delivered image through Telegram recompression.
+  bot.callbackQuery(/^genv:(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await user(ctx);
+    const gen = await getGeneration(Number(ctx.match[1]), u.id);
+    if (!gen || !gen.output_url) {
+      await ctx.reply("Не нашли эту работу — создайте новую картинку 🙂");
+      return;
+    }
+    // Park the result as the video source and show the engine ladder, so the
+    // user picks the price they want instead of us choosing it for them.
+    await setPending(u.id, "mode_animate", gen.output_url);
+    await ctx.reply(
+      "🎬 Оживляем эту работу. Выберите движок — от эконом до кино:",
+      { reply_markup: videoModelsKeyboard() },
+    );
   });
 
   // Animate a specific campaign RESULT (referenced by generation id, resolved

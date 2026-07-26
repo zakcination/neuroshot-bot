@@ -364,7 +364,11 @@ await step("text→image: prompt charges 2 🔫, calls Seedream, delivers photo 
   const kb = resultPhotos().at(-1)!.payload.reply_markup as {
     inline_keyboard: Array<Array<{ callback_data: string }>>;
   };
-  assert.deepEqual(kb.inline_keyboard.flat().map((b) => b.callback_data), ["menu:main"]);
+  // A text→image result has no uploaded photo, so no "Ещё стиль" — but it IS
+  // an image, and animating it is the obvious next step, so it carries the
+  // same genv upsell every other still result does. Before, that button
+  // existed only on campaign renders and every other image was a dead end.
+  assert.deepEqual(kb.inline_keyboard.flat().map((b) => b.callback_data), ["genv:1", "menu:main"]);
 });
 
 await step("photo→edit: action keyboard, prompt, Nano Banana edit charges 3 🔫", async () => {
@@ -646,7 +650,11 @@ await step("photoshoot preset: photo → menu:photoshoot → one tap renders via
     inline_keyboard: Array<Array<{ callback_data: string }>>;
   };
   const after = delivered.inline_keyboard.flat().map((b) => b.callback_data);
-  assert.deepEqual(after, ["menu:styles", "menu:main"]);
+  // "Оживить" leads: a finished portrait is the single most likely thing a user
+  // wants to turn into video, and until now the button appeared only on
+  // campaign results — a preset result was a dead end that forced a re-upload
+  // through Telegram recompression.
+  assert.deepEqual(after, ["genv:6", "menu:styles", "menu:main"]);
 });
 
 await step("«Удиви меня»: random preset renders and reveals which style was picked", async () => {
