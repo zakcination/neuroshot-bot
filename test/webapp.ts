@@ -39,7 +39,7 @@ process.env.RATE_LIMIT_ENHANCE_PER_MIN = "100000";
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, logEvent, logGeneration, query, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
+const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
@@ -2475,6 +2475,94 @@ await step("rate limiting: cost-sensitive routes 429 past their limit; polling a
   // Read-only polling is never subject to any limit, even for the blocked user.
   const me = await fetch(`${base}/api/me`, { headers: { Authorization: `tma ${signInitData(limited)}` } });
   assert.equal(me.status, 200);
+});
+
+await step("payment audit: every granted order names the path that confirmed it", async () => {
+  // The bug this closes: the daily digest counts LEDGER rows, so "N оплат" can
+  // appear with nothing on the order saying who believed the payment. Approval
+  // provenance must be written in the SAME statement as the pending→paid flip.
+  await query("DELETE FROM orders");
+  await query("DELETE FROM ledger WHERE reason = 'purchase'");
+
+  const buyer = 990300;
+  await getOrCreateUser(buyer, "audit_buyer", null, 0);
+
+  // 1) The webhook path stamps itself, and the stamp survives to the audit view.
+  const viaHook = await createOrder(buyer, "start", 3700);
+  const rawHook = Buffer.from(JSON.stringify({ orderId: viaHook, status: "paid", amount: 3700 }));
+  const sigHook = createHmac("sha256", "test-kaspi-secret").update(rawHook).digest("hex");
+  await kaspiCallbackResponse(rawHook, sigHook, async (uid, pack, oid) => {
+    await grantOrderCredits(oid, uid, pack.credits, pack.kzt);
+  });
+  assert.equal((await getOrder(viaHook))?.approved_via, "webhook");
+
+  // 2) The admin path stamps a DIFFERENT value — the two are distinguishable,
+  //    which is the whole point: "was this a human or a machine?"
+  const viaAdmin = await createOrder(buyer, "start", 3700);
+  await resolveOrder(viaAdmin, true, "admin");
+  assert.equal((await getOrder(viaAdmin))?.approved_via, "admin");
+
+  // 3) A REJECTED order is stamped too, and never shows up as a payment.
+  const rejected = await createOrder(buyer, "start", 3700);
+  await resolveOrder(rejected, false, "admin");
+  assert.equal((await getOrder(rejected))?.status, "rejected");
+
+  // Only orders that actually MOVED CREDITS (granted_at set) are audited; the
+  // admin-approved one above was resolved without grantPurchase, so it is
+  // deliberately absent — resolving is not the same as crediting.
+  const audited = await grantedOrders(24);
+  assert.equal(audited.length, 1, "audit must list exactly the orders that moved credits");
+  assert.equal(audited[0]?.order_id, viaHook);
+  assert.equal(audited[0]?.approved_via, "webhook");
+  assert.equal(audited[0]?.kzt, 3700);
+
+  // And the independent ledger read (what the digest counts) agrees here. A
+  // DISAGREEMENT is the phantom-payment signal, so it must be a real second
+  // read of a different table, not a derived copy of the same number.
+  const ledger = await purchaseLedgerCount(24);
+  assert.equal(ledger.rows, 1);
+  assert.equal(ledger.kzt, 3700);
+});
+
+await step("Kaspi verify: a paid-looking status with no amount is NOT auto-granted", async () => {
+  // A misconfigured KASPI_API_BASE pointed at any REST service that answers
+  // {"status":"success"} would otherwise turn every «Я оплатил» tap — a button
+  // the BUYER controls — into free patrons. A settled amount that matches the
+  // order is required before we grant with no human in the loop.
+  const buyer = 990301;
+  await getOrCreateUser(buyer, "kaspi_envelope", null, 0);
+  const id = await createOrder(buyer, "start", 3700);
+  const order = await getOrder(id);
+  assert.ok(order);
+
+  const realFetch = globalThis.fetch;
+  const reply = (body: unknown) => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
+  };
+  process.env.KASPI_API_BASE = "https://merchant.test";
+  process.env.KASPI_API_TOKEN = "t";
+  const { config: liveConfig } = await import("../src/config.js");
+  const prevBase = liveConfig.kaspiApiBase;
+  const prevToken = liveConfig.kaspiApiToken;
+  (liveConfig as { kaspiApiBase: string }).kaspiApiBase = "https://merchant.test";
+  (liveConfig as { kaspiApiToken: string }).kaspiApiToken = "t";
+  try {
+    reply({ status: "success" }); // generic envelope — says nothing about money
+    assert.equal(await kaspiVerifyOrder(order!), "pending");
+
+    reply({ status: "paid", amount: 1 }); // real answer, wrong sum
+    assert.equal(await kaspiVerifyOrder(order!), "failed");
+
+    reply({ status: "paid", amount: 3700 }); // real answer, right sum
+    assert.equal(await kaspiVerifyOrder(order!), "paid");
+  } finally {
+    globalThis.fetch = realFetch;
+    (liveConfig as { kaspiApiBase: string }).kaspiApiBase = prevBase;
+    (liveConfig as { kaspiApiToken: string }).kaspiApiToken = prevToken;
+    delete process.env.KASPI_API_BASE;
+    delete process.env.KASPI_API_TOKEN;
+  }
 });
 
 await new Promise<void>((r) => server.close(() => r()));

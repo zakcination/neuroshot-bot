@@ -294,6 +294,13 @@ const SCHEMA: string[] = [
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
   `CREATE INDEX IF NOT EXISTS idx_seasons_active ON seasons(starts_at, ends_at)`,
+  // WHICH path confirmed the payment: 'admin' (a human checked Kaspi and ran
+  // /order N ok), 'webhook' (signed merchant callback), 'kaspi_api' (server-side
+  // status query), 'reconciler'. Without this a granted order is anonymous —
+  // and a purchase that the owner knows never happened is undiagnosable, because
+  // nothing on the row says who believed it. Every pending→paid transition
+  // stamps it; NULL only on rows predating this column.
+  `ALTER TABLE orders ADD COLUMN IF NOT EXISTS approved_via TEXT`,
 ];
 
 let schemaReady: Promise<void> | null = null;
@@ -1047,7 +1054,14 @@ export interface OrderRow {
   amount_kzt: number;
   status: string;
   created_at: string;
+  /** Which path confirmed the payment — null on rows predating the column. */
+  approved_via: string | null;
+  /** When credits actually landed (grantOrderCredits' claim), null if never. */
+  granted_at: string | null;
 }
+
+/** The paths that can flip an order pending→paid. Recorded on the order. */
+export type ApprovalPath = "admin" | "webhook" | "kaspi_api" | "reconciler";
 
 function mapOrder(r: Row): OrderRow {
   return {
@@ -1057,10 +1071,12 @@ function mapOrder(r: Row): OrderRow {
     amount_kzt: Number(r.amount_kzt),
     status: String(r.status),
     created_at: String(r.created_at),
+    approved_via: r.approved_via == null ? null : String(r.approved_via),
+    granted_at: r.granted_at == null ? null : String(r.granted_at),
   };
 }
 
-const ORDER_COLS = "id, user_id, pack_id, amount_kzt, status, created_at";
+const ORDER_COLS = "id, user_id, pack_id, amount_kzt, status, created_at, approved_via, granted_at";
 
 /** Record a pending Kaspi purchase; returns the new order id. */
 export async function createOrder(userId: number, packId: string, amountKzt: number): Promise<number> {
@@ -1087,14 +1103,75 @@ export async function getOrder(id: number): Promise<OrderRow | undefined> {
  * one call that won the transition (so credits are granted exactly once), or null
  * if it was already resolved. Approval does NOT grant credits itself; the caller
  * runs grantPurchase so the referral/partner payouts fire too.
+ *
+ * `via` is stamped on the row in the SAME statement as the transition, so an
+ * approval can never exist without its provenance — the row that says "paid"
+ * always says who decided that. This is what makes a disputed purchase
+ * answerable ("who confirmed order 41?") instead of a guess.
  */
-export async function resolveOrder(id: number, approve: boolean): Promise<OrderRow | null> {
+export async function resolveOrder(
+  id: number,
+  approve: boolean,
+  via: ApprovalPath = "admin",
+): Promise<OrderRow | null> {
   const rows = await q(
-    `UPDATE orders SET status = $2, processed_at = now()
+    `UPDATE orders SET status = $2, processed_at = now(), approved_via = $3
      WHERE id = $1 AND status = 'pending' RETURNING ${ORDER_COLS}`,
-    [id, approve ? "paid" : "rejected"],
+    [id, approve ? "paid" : "rejected", via],
   );
   return rows[0] ? mapOrder(rows[0]) : null;
+}
+
+/**
+ * Audit view behind the `/payments` command: every order that actually MOVED
+ * CREDITS in the window (granted_at set), with the path that confirmed it.
+ *
+ * Reported alongside `purchaseLedgerCount` for the same window — deliberately
+ * two independent reads, because the daily digest counts LEDGER rows while this
+ * lists ORDERS. When those two numbers disagree, that disagreement IS the
+ * finding: a digest payment with no order behind it means credits were journaled
+ * as 'purchase' by something other than the order flow, which is precisely the
+ * shape of a phantom payment. Correlating them with a fuzzy time-join instead
+ * would hide exactly that.
+ */
+export interface PaidOrderRow {
+  order_id: number;
+  user_id: number;
+  pack_id: string;
+  kzt: number;
+  approved_via: string | null;
+  granted_at: string;
+}
+
+export async function grantedOrders(hours: number, limit = 40): Promise<PaidOrderRow[]> {
+  const rows = await q(
+    `SELECT ${ORDER_COLS} FROM orders
+     WHERE granted_at IS NOT NULL AND granted_at > now() - ($1 || ' hours')::interval
+     ORDER BY granted_at DESC LIMIT ${Math.max(1, Math.floor(limit))}`,
+    [String(Math.max(1, Math.floor(hours)))],
+  );
+  return rows.map((r) => {
+    const o = mapOrder(r);
+    return {
+      order_id: o.id,
+      user_id: o.user_id,
+      pack_id: o.pack_id,
+      kzt: o.amount_kzt,
+      approved_via: o.approved_via,
+      granted_at: String(o.granted_at),
+    };
+  });
+}
+
+/** How many 'purchase' rows the ledger holds in the window — what the digest counts. */
+export async function purchaseLedgerCount(hours: number): Promise<{ rows: number; kzt: number }> {
+  const r = await q(
+    `SELECT COUNT(*)::int AS c,
+            COALESCE(SUM(CASE WHEN meta ~ '^[0-9]+$' THEN meta::int ELSE 0 END), 0)::int AS kzt
+     FROM ledger WHERE reason = 'purchase' AND created_at > now() - ($1 || ' hours')::interval`,
+    [String(Math.max(1, Math.floor(hours)))],
+  );
+  return { rows: Number(r[0]?.c ?? 0), kzt: Number(r[0]?.kzt ?? 0) };
 }
 
 /**

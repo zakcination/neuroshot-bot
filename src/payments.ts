@@ -7,6 +7,7 @@ import {
   grantOrderCredits,
   logEvent,
   resolveOrder,
+  type ApprovalPath,
   rewardPartnerOnPurchase,
   rewardReferralOnPurchase,
   type UserRow,
@@ -216,8 +217,16 @@ function paidKeyboard(orderId: number): InlineKeyboard {
  * «Я оплатил» verification. resolveOrder flips pending→paid atomically (exactly
  * one winner), so a double-confirm can never double-credit. Returns the granted
  * pack, or null if the order was already resolved / unknown.
+ *
+ * `via` records WHICH of those callers believed the payment — stamped on the
+ * order in the same statement as the transition (see resolveOrder), so a
+ * granted order is never anonymous.
  */
-export async function settleApprovedOrder(api: Api, orderId: number): Promise<Pack | null> {
+export async function settleApprovedOrder(
+  api: Api,
+  orderId: number,
+  via: ApprovalPath = "admin",
+): Promise<Pack | null> {
   // Resolve the pack BEFORE the atomic paid-transition: if a pack id was removed
   // or renamed while the order was pending, we must NOT mark it paid (that would
   // strand the order "paid but ungranted"). Leaving it pending keeps it
@@ -226,7 +235,7 @@ export async function settleApprovedOrder(api: Api, orderId: number): Promise<Pa
   if (!order || order.status !== "pending") return null;
   const pack = packById(order.pack_id);
   if (!pack) return null;
-  const won = await resolveOrder(orderId, true);
+  const won = await resolveOrder(orderId, true, via);
   if (!won) return null; // lost the race — already resolved by another path
   await grantPurchase(api, won.user_id, pack, orderId);
   return pack;
@@ -253,10 +262,14 @@ export async function claimOrderPaid(api: Api, orderId: number, who: string): Pr
   if (order.status === "paid") return { kind: "already" };
   const status = await kaspiVerifyOrder(order);
   if (status === "paid") {
-    const pack = await settleApprovedOrder(api, orderId);
+    const pack = await settleApprovedOrder(api, orderId, "kaspi_api");
     return { kind: "granted", credits: pack ? pack.credits : null };
   }
-  if (config.kaspiApiBase) return { kind: "pending", failed: status === "failed" };
+  // Only trust a verdict the merchant API actually produced. "unknown" means we
+  // never got an answer (token missing, endpoint wrong, Kaspi down) — falling
+  // through to the admin ping there is the difference between a buyer waiting a
+  // few minutes and a buyer who paid being told forever that we see no payment.
+  if (status === "pending" || status === "failed") return { kind: "pending", failed: status === "failed" };
   for (const adminId of config.adminIds)
     await api
       .sendMessage(adminId, `💸 Заявка №${orderId}: ${who} отметил оплату. Проверьте Kaspi → /order ${orderId} ok|no`)

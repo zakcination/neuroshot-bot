@@ -1098,7 +1098,7 @@ export async function kaspiCallbackResponse(
   const amount = payload.amount != null ? Number(payload.amount) : order.amount_kzt;
   if (!Number.isFinite(amount) || amount !== order.amount_kzt) return { status: 400, body: { error: "amount_mismatch" } };
 
-  const won = await resolveOrder(orderId, true);
+  const won = await resolveOrder(orderId, true, "webhook");
   if (!won) return { status: 200, body: { ok: true, already: "resolved" } };
   await grant(order.user_id, pack, orderId);
   return { status: 200, body: { ok: true, granted: pack.credits } };

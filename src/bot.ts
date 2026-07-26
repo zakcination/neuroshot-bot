@@ -29,8 +29,10 @@ import {
   myPartnerCodes,
   myWithdrawals,
   partnerAccount,
+  grantedOrders,
   pendingOrders,
   presetUsageCounts,
+  purchaseLedgerCount,
   resolveOrder,
   partnerStats,
   pendingWithdrawals,
@@ -1096,7 +1098,47 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     await ctx.reply(
       "🧾 <b>Заявки на оплату (Kaspi)</b>\n" +
         rows.map((r) => `№${r.id} · пользователь ${r.user_id} · ${r.pack_id} · ${r.amount_kzt} ₸`).join("\n") +
-        "\n\nПодтвердить: /order <id> ok  или  /order <id> no",
+        "\n\nПодтвердить: /order <id> ok  или  /order <id> no" +
+        "\nУже начисленные оплаты: /payments 24",
+      { parse_mode: "HTML" },
+    );
+  });
+
+  // Admin: audit what the digest's «💳 Оплат» line is actually counting.
+  // /payments [часов] — every order that MOVED CREDITS in the window, with the
+  // path that confirmed it, plus the raw ledger count for the same window. The
+  // two numbers are read independently on purpose: the digest counts ledger
+  // rows, this lists orders, and a gap between them means credits were journaled
+  // as a purchase by something outside the order flow — the only shape a
+  // "payment that never happened" can actually take.
+  bot.command("payments", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const arg = Number((ctx.match ?? "").trim());
+    const hours = Number.isFinite(arg) && arg > 0 ? Math.min(720, Math.floor(arg)) : 24;
+    const [orders, ledger] = await Promise.all([grantedOrders(hours), purchaseLedgerCount(hours)]);
+    const via = (v: string | null) =>
+      v === "admin"
+        ? "вручную (/order)"
+        : v === "webhook"
+          ? "вебхук Kaspi"
+          : v === "kaspi_api"
+            ? "авто-проверка Kaspi"
+            : v === "reconciler"
+              ? "довыдача (сверка)"
+              : "неизвестно (до включения аудита)";
+    const lines = orders.map(
+      (o) => `№${o.order_id} · ${o.user_id} · ${o.pack_id} · ${o.kzt} ₸ · ${via(o.approved_via)}`,
+    );
+    const mismatch =
+      ledger.rows !== orders.length
+        ? `\n\n⚠️ Расхождение: в журнале ${ledger.rows} записей «purchase», а заявок с начислением — ${orders.length}. ` +
+          `Сводка считает журнал, поэтому именно эта разница и выглядит как «оплата, которой не было».`
+        : "";
+    await ctx.reply(
+      `💳 <b>Начисленные оплаты за ${hours} ч</b>\n` +
+        `Журнал: <b>${ledger.rows}</b> на <b>${ledger.kzt} ₸</b> (эту цифру показывает сводка)\n\n` +
+        (lines.length ? lines.join("\n") : "Заявок с начислением нет.") +
+        mismatch,
       { parse_mode: "HTML" },
     );
   });
@@ -1109,7 +1151,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       await ctx.reply("Формат: /order <id> ok|no");
       return;
     }
-    const order = await resolveOrder(id, verdict === "ok");
+    const order = await resolveOrder(id, verdict === "ok", "admin");
     if (!order) {
       await ctx.reply(`Заявка №${id} не найдена или уже обработана.`);
       return;
