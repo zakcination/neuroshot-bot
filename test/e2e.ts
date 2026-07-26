@@ -401,11 +401,11 @@ await step("insufficient 🔫: animate (25) with 7 shows the sales-page paywall,
   const wall = calls("sendMessage").at(-1)!;
   assert.match(wall.payload.text as string, /Ещё один шаг до результата/);
   assert.match(wall.payload.text as string, /Kling 2\.5 Turbo/); // the model's REAL name reaches the paywall copy
-  assert.match(wall.payload.text as string, /Комбо/); // combo offer anchored as the entry
+  assert.match(wall.payload.text as string, /Фото-сет/); // the live offer is anchored as the entry
   assert.match(wall.payload.text as string, /Осталось/); // live countdown snapshot in the paywall
   const kb = wall.payload.reply_markup as { inline_keyboard: Array<Array<{ callback_data: string }>> };
   const buttons = kb.inline_keyboard.flat().map((b) => b.callback_data);
-  assert.ok(buttons.includes("buy:combo"), "entry-pack CTA missing"); // one dominant CTA
+  assert.ok(buttons.includes("buy:photo_set"), "entry-pack CTA missing"); // one dominant CTA
   assert.ok(buttons.includes("show_packs"), "all-packs fallback missing");
   assert.equal(await credits(alice.id), 7);
 });
@@ -417,7 +417,7 @@ await step("curated prompts reach the provider whole — no silent decapitation"
   // identity lock lives. fashion shipped with 51% of its prompt missing. Nothing
   // failed, nothing logged; the model simply stopped being told to keep the face.
   const { PRESETS, CAMPAIGNS, FREE_SCENARIOS } = await import("../src/models.js");
-  const { craftPrompt, CURATED_PROMPT_MAX } = await import("../src/promptcraft.js");
+  const { craftPrompt } = await import("../src/promptcraft.js");
   type Curated = { id: string; kind: "image_edit" | "text_to_image" | "image_to_video"; prompt: string };
   const all: Curated[] = [];
   for (const p of PRESETS) all.push({ id: `preset:${p.id}`, kind: "image_edit", prompt: p.prompt });
@@ -443,16 +443,53 @@ await step("curated prompts reach the provider whole — no silent decapitation"
   for (const c of all) {
     const flat = c.prompt.replace(/\s+/g, " ").trim();
     const sent = craftPrompt(c.kind, c.prompt, true);
-    assert.ok(
-      flat.length <= CURATED_PROMPT_MAX,
-      `${c.id} is ${flat.length} chars — over the ${CURATED_PROMPT_MAX} curated budget; shorten it rather than let it be cut`,
-    );
+    // No ceiling is asserted on purpose: a curated prompt is as long as the
+    // context it must carry. What IS asserted is that none of it is dropped.
     assert.equal(sent.length, flat.length, `${c.id}: ${flat.length - sent.length} characters silently dropped`);
     for (const clause of INVARIANTS) {
       if (!flat.includes(clause)) continue;
       assert.ok(sent.includes(clause), `${c.id}: "${clause}" never reaches the provider`);
     }
   }
+});
+
+await step("the video set really covers 3–5 finished videos, and the ladder stays monotonic", async () => {
+  const { PACKS, MODELS, priceFor, packById } = await import("../src/models.js");
+
+  // "One good video" = two strong frames + ten seconds of motion. These are the
+  // four tiers a buyer can realistically work at; the set is sized so that the
+  // promise on the title holds at EVERY one of them, not just the cheapest.
+  const recipes = [
+    { frame: MODELS.nb2_edit, video: MODELS.seedance_fast },
+    { frame: MODELS.nbpro_edit, video: MODELS.seedance_fast },
+    { frame: MODELS.nbpro_edit, video: MODELS.seedance },
+    { frame: MODELS.premium_edit, video: MODELS.seedance },
+  ].map((r) => 2 * priceFor(r.frame) + priceFor(r.video, { duration: 10 }));
+
+  const videoSet = packById("video_set")!;
+  const counts = recipes.map((cost) => Math.floor(videoSet.credits / cost));
+  assert.ok(
+    Math.min(...counts) >= 3 && Math.max(...counts) <= 5,
+    `video_set (${videoSet.credits} 🔫) yields ${counts.join("/")} videos — the title promises 3–5`,
+  );
+
+  // Bigger pack ⇒ better ₸ per patron, across the whole ladder. The purpose-built
+  // sets are declared out of size order, so this is a real invariant to hold.
+  const ladder = PACKS.filter((p) => !p.offer && !p.course && !p.retired).sort((a, b) => a.credits - b.credits);
+  for (let i = 1; i < ladder.length; i++) {
+    const prev = ladder[i - 1].kzt / ladder[i - 1].credits;
+    const here = ladder[i].kzt / ladder[i].credits;
+    assert.ok(here < prev, `${ladder[i].id} (${here.toFixed(1)} ₸/🔫) is not better than ${ladder[i - 1].id} (${prev.toFixed(1)})`);
+  }
+
+  // The offer is a tripwire: it must undercut the cheapest ladder rate, or it is
+  // just a pack with a countdown glued on.
+  const photoSet = packById("photo_set")!;
+  assert.ok(photoSet.offer, "the photo set is the tripwire and must be flagged as an offer");
+  assert.ok(
+    photoSet.kzt / photoSet.credits < ladder[0].kzt / ladder[0].credits,
+    "the offer must be priced below the ladder floor",
+  );
 });
 
 await step("paywall never anchors a pack that cannot cover the result it promises", async () => {
@@ -500,8 +537,11 @@ await step("purchase: /buy → Kaspi order → admin confirm credits the pack", 
     inline_keyboard: Array<Array<{ callback_data: string }>>;
   };
   const packButtons = kb.inline_keyboard.flat().map((b) => b.callback_data);
-  // The limited-time combo offer leads, then the KZT ladder.
-  assert.deepEqual(packButtons, ["buy:combo", "buy:start", "buy:popular", "buy:pro", "buy:studio"]);
+  // The limited-time offer leads, then the KZT ladder. `combo` is retired — it
+  // stays in PACKS so orders already placed against it still resolve, and must
+  // never appear for sale again.
+  assert.deepEqual(packButtons, ["buy:photo_set", "buy:start", "buy:popular", "buy:pro", "buy:studio", "buy:video_set"]);
+  assert.ok(!packButtons.includes("buy:combo"), "a retired pack must never be listed for sale");
 
   await pressButton(alice, "buy:popular"); // creates a pending Kaspi order
   assert.match(lastText(), /11000 ₸/); // KZT price shown

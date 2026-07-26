@@ -398,7 +398,7 @@ export async function runReengagement(send: SendFn): Promise<number> {
  * they cannot do; a countdown on top of that is how a bot gets blocked.
  */
 export function paywallPushText(bonus: number): string {
-  const pack = PACKS.find((p) => !p.offer && !p.course) ?? PACKS[0];
+  const pack = PACKS.find((p) => !p.offer && !p.course && !p.retired) ?? PACKS[0];
   const model = cheapestModel("image_edit");
   const per = Math.max(1, Math.floor(pack.credits / model.credits));
   const gift =

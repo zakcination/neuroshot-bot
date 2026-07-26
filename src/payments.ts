@@ -34,7 +34,7 @@ export function packsKeyboard(): InlineKeyboard {
   // patrons, and would confuse a plain credit top-up buyer. They're surfaced
   // only via the dedicated /course command (bot.ts), reusing this same buy:<id>
   // callback under the hood.
-  const visible = PACKS.filter((p) => (!p.offer || active) && !p.course);
+  const visible = PACKS.filter((p) => (!p.offer || active) && !p.course && !p.retired);
   const ordered = [...visible].sort((a, b) => Number(b.offer ?? false) - Number(a.offer ?? false));
   for (const pack of ordered) {
     const left = pack.offer && active ? ` · ⏳ ${comboLeftText()}` : "";
@@ -61,12 +61,16 @@ function entryPack(model?: ModelSpec, credits = 0): Pack {
   const shortfall = model ? Math.max(0, model.credits - credits) : 0;
   const covers = (p: Pack): boolean => p.credits >= shortfall;
   if (comboActive()) {
-    const offer = PACKS.find((p) => p.offer && covers(p));
+    const offer = PACKS.find((p) => p.offer && !p.retired && covers(p));
     if (offer) return offer;
   }
-  // Ladder packs only, in ascending price (course tiers are sold via /course and
-  // must never be anchored on a generation paywall).
-  const ladder = PACKS.filter((p) => !p.offer && !p.course);
+  // Ladder packs only — course tiers are sold via /course and must never anchor
+  // a generation paywall, and retired packs exist solely to resolve old orders.
+  // Sorted by size rather than trusting declaration order: PACKS groups packs by
+  // PURPOSE (ladder, then the purpose-built sets), so `video_set` at 650 🔫 is
+  // declared after `studio` at 900 🔫. `find` on the raw array would hand a
+  // 700 🔫 shortfall the 42 000 ₸ pack when the 31 000 ₸ one covers it.
+  const ladder = PACKS.filter((p) => !p.offer && !p.course && !p.retired).sort((a, b) => a.credits - b.credits);
   return ladder.find(covers) ?? ladder[ladder.length - 1] ?? PACKS[0];
 }
 

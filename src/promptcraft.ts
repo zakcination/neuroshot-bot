@@ -21,30 +21,30 @@ import type { ModelKind } from "./models.js";
 export const USER_PROMPT_MAX = 1500;
 
 /**
- * Length budget for CURATED prompts (presets, campaign scenes, free scenarios)
- * and whatever quiz fragments or user text get appended to them.
+ * Curated prompts (presets, campaign scenes, free scenarios) are NOT length
+ * capped. They are our own reviewed text, and a prompt is exactly as long as the
+ * context it has to carry — clipping it does not save anything, it deletes
+ * craft.
  *
- * These used to be one number, and applying the untrusted-input bound to our own
- * reviewed prompts silently decapitated the longest five. Prompts are written
- * transformation-first with the invariants LAST (§13 above), so what got cut was
- * exactly the load-bearing tail: "Keep the face and identity of EVERY person in
- * the photo exactly as they are. Keep the SAME NUMBER of people…" never reached
- * the provider for fashion, cinematic, bento_birthday, retro90s or
- * photobooth_bw. An identity-preserving photo edit was shipping with no identity
- * lock at all, and the truncation was silent. bento_birthday also lost "not a
- * real child and not a second guest at the party" — the clause written to cure
- * a known defect, so that cure was never actually in force.
+ * This used to share the untrusted bound above, which silently decapitated the
+ * five longest. Prompts are authored transformation-first with the invariants
+ * LAST (§13), so what got cut was the load-bearing tail: "Keep the face and
+ * identity of EVERY person in the photo exactly as they are. Keep the SAME
+ * NUMBER of people…" never reached the provider for fashion, cinematic,
+ * bento_birthday, retro90s or photobooth_bw. An identity-preserving photo edit
+ * shipped with no identity lock. bento_birthday also lost "not a real child and
+ * not a second guest at the party" — the clause written to cure a known defect,
+ * so that cure was never in force.
  *
- * 1500 was ours, not the provider's: the endpoints behind these presets declare
- * either a 50 000-character maximum or no maximum at all. 8000 sits an order of
- * magnitude below that ceiling while clearing the longest curated prompt (3074)
- * with room for appended fragments. The e2e suite fails CI if a curated prompt
- * ever grows into this bound, so the failure cannot return silently.
+ * The cap was ours, never the provider's: the endpoints behind these presets
+ * declare either a 50 000-character maximum or none at all. The e2e suite
+ * asserts curated prompts survive sanitation byte-for-byte, so a truncating
+ * change cannot land silently again.
  */
-export const CURATED_PROMPT_MAX = 8000;
+const NO_LIMIT = Number.POSITIVE_INFINITY;
 
 /** Hard filter applied to every prompt: control chars out, whitespace
- *  collapsed, length capped. Pass `max` to spend the curated budget. */
+ *  collapsed, length capped. Pass `max` (NO_LIMIT for curated text). */
 export function sanitizePrompt(raw: string, max: number = USER_PROMPT_MAX): string {
   return raw
     .replace(/[\u0000-\u001f\u007f]/g, " ")
@@ -74,7 +74,7 @@ const CRAFT: Record<ModelKind, string> = {
 export function craftPrompt(kind: ModelKind, raw: string, crafted = false): string {
   // A curated prompt spends the curated budget: it is our own reviewed text, and
   // cutting its tail removes the invariants rather than some trailing flourish.
-  const clean = sanitizePrompt(raw, crafted ? CURATED_PROMPT_MAX : USER_PROMPT_MAX);
+  const clean = sanitizePrompt(raw, crafted ? NO_LIMIT : USER_PROMPT_MAX);
   if (crafted || !clean) return clean;
   // Don't double-punctuate: append a bare space when the text already ends in a
   // sentence terminator (".", "!", "?", "…"), a full stop otherwise.

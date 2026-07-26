@@ -2015,6 +2015,15 @@ export interface Pack {
    * the dedicated /course command.
    */
   course?: "fast" | "flagship";
+  /**
+   * Withdrawn from sale, kept ONLY so historical orders still resolve. An order
+   * stores its pack id and re-reads PACKS at grant time (see grantPurchase and
+   * the reconciler, which logs "pack X no longer exists — cannot grant" and
+   * parks the order for manual review). Deleting a pack outright would strand
+   * anything still pending against it, so retired packs stay in the array and
+   * are filtered out of every listing, keyboard and paywall anchor instead.
+   */
+  retired?: boolean;
 }
 
 export const PACKS: Pack[] = [
@@ -2022,11 +2031,36 @@ export const PACKS: Pack[] = [
   { id: "popular", kzt: 11000, credits: 200, title: `Популярный — 200 ${UNIT_EMOJI}` }, // 55 ₸/🔫
   { id: "pro", kzt: 25000, credits: 500, title: `Про — 500 ${UNIT_EMOJI}` }, // 50 ₸/🔫
   { id: "studio", kzt: 42000, credits: 900, title: `Студия — 900 ${UNIT_EMOJI}` }, // 47 ₸/🔫
-  // Launch special — the acquisition hook: 3 scenario-videos (Seedream + Hailuo,
-  // 12 🔫 each) for 1000 ₸ = 36 🔫. Deliberately BELOW the ladder (28 ₸/🔫), so it
-  // is flagged `offer` and shown only with a countdown — a limited-time tripwire,
-  // not a permanent tier (which would break the ladder).
-  { id: "combo", kzt: 1000, credits: 36, title: "🔥 Комбо-сет: 3 видео", offer: true },
+  // --- Purpose-built sets ---------------------------------------------------
+  // One generic "combo" used to serve both intents at 36 🔫, which is enough for
+  // three of the CHEAPEST videos and not one of the good ones. Split in two, each
+  // sized from the real recipe it is named after.
+
+  // Photo set — the tripwire. 100 🔫 buys 50 preset looks (Seedream edit, 2 🔫),
+  // 25 Nano Banana 2 frames (4 🔫) or 12 Nano Banana Pro frames (8 🔫): enough to
+  // play through a whole gallery rather than peek at it. Deliberately BELOW the
+  // ladder at 29 ₸/🔫, so it is flagged `offer` and shown only with a countdown —
+  // a limited-time hook, not a permanent tier (which would break the ladder).
+  { id: "photo_set", kzt: 2900, credits: 100, title: `🎨 Фото-сет — 100 ${UNIT_EMOJI}`, offer: true },
+
+  // Video set — sized from what one GOOD video actually costs. The recipe is two
+  // strong frames (the still is what carries likeness and composition) and then
+  // ten seconds of motion:
+  //   2× Nano Banana 2   +  Seedance 2.0 Fast 10s  =   8 + 121 = 129 🔫
+  //   2× Nano Banana Pro +  Seedance 2.0 Fast 10s  =  16 + 121 = 137 🔫
+  //   2× Nano Banana Pro +  Seedance 2.0 10s+звук  =  16 + 152 = 168 🔫
+  //   2× GPT Image 2     +  Seedance 2.0 10s+звук  =  22 + 152 = 174 🔫
+  // 650 🔫 covers 5 / 4 / 3 / 3 of those — "three to five finished videos"
+  // whichever tier the buyer works at, which is the promise the title makes.
+  // NOT an `offer`: at this size a countdown would be pressure, not a launch
+  // hook. Priced at 47.7 ₸/🔫 — between Про (50) and Студия (46.7), so the
+  // "bigger pack, better rate" ladder still holds end to end.
+  { id: "video_set", kzt: 31000, credits: 650, title: `🎬 Видео-сет — 650 ${UNIT_EMOJI}` },
+
+  // Retired: the old one-size combo. Kept ONLY so orders already placed against
+  // it can still be granted (see Pack.retired) — never listed, never anchored.
+  { id: "combo", kzt: 1000, credits: 36, title: "🔥 Комбо-сет: 3 видео", offer: true, retired: true },
+
   // --- GenAI course tiers (docs/course-funnel.md, docs/course/README.md) ---
   // Priced identically to `start`/`pro` on purpose — the course-funnel pricing
   // is the same ladder anchor, just packaged with a cohort invite on top, so the

@@ -293,7 +293,7 @@ function studioModelsOf(mode: "image" | "video", eta: Record<string, number>): A
 }
 
 function packsPayload(): Array<Record<string, unknown>> {
-  return PACKS.filter((p) => !p.course).map((p) => ({
+  return PACKS.filter((p) => !p.course && !p.retired).map((p) => ({
     id: p.id,
     title: p.title,
     credits: p.credits,

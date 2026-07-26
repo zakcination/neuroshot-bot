@@ -22,7 +22,7 @@ process.env.MEDIA_HOST_SUFFIXES = "fal.test";
 process.env.WEBAPP_URL = "https://app.test"; // enable app-config paths
 process.env.BOT_USERNAME = "neuroshot_test_bot";
 process.env.KASPI_PAY_URL = "https://pay.test/neuroshot"; // enable the Kaspi order flow
-process.env.KASPI_PAY_URL_COMBO = "https://pay.test/combo"; // per-pack fixed-amount link
+process.env.KASPI_PAY_URL_PHOTO_SET = "https://pay.test/photoset"; // per-pack fixed-amount link
 process.env.KASPI_API_SECRET = "test-kaspi-secret"; // enable the auto-approval callback
 // Rate limiting (src/ratelimit.ts): the shared "maker" user below makes FAR
 // more than the production default (30/min) worth of /api/generate calls
@@ -239,9 +239,10 @@ await step("GET /api/me onboards a new user with a CLAIMABLE welcome bonus (shar
   assert.equal(body.bot_username, "neuroshot_test_bot"); // from BOT_USERNAME env
   assert.deepEqual(body.generations, []);
   // Pack catalog rides along — one source of truth with the bot's /buy.
-  assert.equal(body.packs.length, 5); // 4 ladder + the combo offer
+  assert.equal(body.packs.length, 6); // 5 ladder (incl. the video set) + the photo-set offer
   assert.ok(body.packs.every((p) => p.kzt > 0 && p.credits > 0 && p.id));
-  assert.ok(body.packs.some((p) => p.id === "combo" && p.offer), "combo offer missing");
+  assert.ok(body.packs.some((p) => p.id === "photo_set" && p.offer), "photo-set offer missing");
+  assert.ok(!body.packs.some((p) => p.id === "combo"), "the retired combo must not be offered for sale");
 });
 
 await step("POST /api/claim-welcome moves the parked bonus into credits, once", async () => {
@@ -1015,7 +1016,7 @@ await step("insufficient 🔫 → 402 with the pack catalog (in-app paywall)", a
   assert.equal(d.error, "insufficient");
   assert.equal(d.need, 10); // Hailuo 2.3 Fast default (6s)
   assert.equal(d.balance, 3);
-  assert.equal(d.packs.length, 5); // 4 ladder + combo offer
+  assert.equal(d.packs.length, 6); // 5 ladder (incl. the video set) + the photo-set offer
 });
 
 await step("generate validation: unknown ids, missing photo, unknown model keys, empty prompt → 400", async () => {
@@ -1071,12 +1072,12 @@ await step("POST /api/order: a per-pack fixed-amount link overrides the fallback
   const r = await fetch(`${base}/api/order`, {
     method: "POST",
     headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ pack: "combo" }),
+    body: JSON.stringify({ pack: "photo_set" }),
   });
   assert.equal(r.status, 200);
   const d = (await r.json()) as { available: boolean; link: string; amount: number };
-  assert.equal(d.link, "https://pay.test/combo"); // KASPI_PAY_URL_COMBO, not the fallback
-  assert.equal(d.amount, 1000); // combo = 1000 ₸
+  assert.equal(d.link, "https://pay.test/photoset"); // KASPI_PAY_URL_PHOTO_SET, not the fallback
+  assert.equal(d.amount, 2900); // photo set = 2900 ₸
 });
 
 await step("POST /api/order/paid: in-app 'I paid' mirrors the bot; ownership enforced", async () => {
@@ -1169,7 +1170,7 @@ await step("kaspiLinkFor: a blank/whitespace per-pack override falls back to KAS
   assert.equal(kaspiLinkFor("pro"), "https://pay.test/neuroshot"); // must fall back, not disable
   process.env.KASPI_PAY_URL_PRO = "   ";
   assert.equal(kaspiLinkFor("pro"), "https://pay.test/neuroshot");
-  assert.equal(kaspiLinkFor("combo"), "https://pay.test/combo"); // a non-blank override still wins
+  assert.equal(kaspiLinkFor("photo_set"), "https://pay.test/photoset"); // a non-blank override still wins
   delete process.env.KASPI_PAY_URL_PRO;
 });
 
