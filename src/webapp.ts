@@ -15,8 +15,8 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { allPresetGating, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, presetUsageCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
-import { enhancePrompt } from "./enhance.js";
+import { allPresetGating, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { enhancePrompt, ENHANCE_COST, ENHANCE_STACK } from "./enhance.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
 import { hit } from "./ratelimit.js";
@@ -221,7 +221,7 @@ export async function enhanceResponse(
       }
       return { status: 400, body: { error: r.error } };
     }
-    return { status: 200, body: { prompt: r.prompt, charged: r.charged, free: r.free, balance: r.balance } };
+    return { status: 200, body: { prompt: r.prompt, charged: r.charged, free: r.free, balance: r.balance, left: r.left } };
   } catch (err) {
     console.error("enhance failed:", err);
     return { status: 502, body: { error: "enhance_failed" } };
@@ -454,7 +454,7 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress, finance] =
+  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress, finance, enhanceLeft] =
     await Promise.all([
       userDashboard(user.id),
       recentGenerations(user.id, 30),
@@ -468,6 +468,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
       modelEtaSeconds(),
       getLevelProgress(user.id),
       referralFinance(user.id),
+      enhanceChargesLeft(user.id, ENHANCE_STACK),
     ]);
   const gates = Object.fromEntries(gateRows.map((g) => [g.preset_id, g.min_level]));
   return {
@@ -512,6 +513,10 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     // against what we credited and still owe them. Sent to the referrer because
     // an invite program nobody can audit is one nobody trusts enough to promote.
     referralFinance: finance,
+    // Prompt Enhancer stack state, so the button can say what is actually true.
+    // It used to be labelled "1-е бесплатно" from a hardcoded string — which
+    // kept promising a free attempt to people who had already spent theirs.
+    enhance: { left: enhanceLeft, stack: ENHANCE_STACK, cost: ENHANCE_COST },
     // "Ваш путь в NeuroShot" roadmap — real completion signals, see roadmapProgress.
     roadmap,
     // The completion gift for finishing all 5 roadmap steps — claim-gated the

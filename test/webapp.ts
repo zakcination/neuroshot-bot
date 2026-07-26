@@ -754,51 +754,61 @@ await step("Studio preset: personalization is sanitized+appended; model override
   assert.equal(bad.status, 400);
 });
 
-await step("Prompt Enhancer: first free → 1 🔫 → 402; provider failure refunds; a render re-arms the free one", async () => {
+await step("Prompt Enhancer: a stack of 2, refilled by a render or by 1 🔫; the count is always reported", async () => {
   // A FRESH user so the enhance/gen_start event history is fully controlled.
   const enh = { id: 990077, username: "enhancer", first_name: "Enh" };
   await getOrCreateUser(enh.id, enh.username, null, 0);
   const H = { Authorization: `tma ${signInitData(enh)}`, "Content-Type": "application/json" };
   const call = (prompt: string) => fetch(`${base}/api/enhance`, { method: "POST", headers: H, body: JSON.stringify({ prompt }) });
+  const meLeft = async () =>
+    ((await (await fetch(`${base}/api/me`, { headers: H })).json()) as { enhance: { left: number } }).enhance.left;
 
-  // Empty prompt → 400, nothing charged.
+  // Empty prompt → 400, nothing charged and nothing consumed.
   assert.equal((await call("   ")).status, 400);
-  // 1st enhance ever → FREE, upgraded prompt back, balance untouched (0).
-  const r1 = await call("кот в очках");
-  assert.equal(r1.status, 200);
-  const d1 = (await r1.json()) as { prompt: string; charged: number; free: boolean; balance: number };
+  assert.equal(await meLeft(), 2, "a rejected prompt must not eat a charge");
+
+  // One rewrite is rarely the one you keep, so the SECOND tap is still free.
+  const d1 = (await (await call("кот в очках")).json()) as { charged: number; free: boolean; balance: number; left: number; prompt: string };
   assert.equal(d1.free, true);
   assert.equal(d1.charged, 0);
-  assert.equal(d1.balance, 0);
+  assert.equal(d1.left, 1, "the response must report what is left, not just free/paid");
   assert.match(d1.prompt, /Cinematic.*кот в очках/);
-  // 2nd enhance with 0 🔫 → 402 paywall (the free one is spent).
-  assert.equal((await call("кот в очках, неон")).status, 402);
-  // With 1 🔫 the 2nd enhance charges exactly 1.
+  const d2 = (await (await call("кот в очках, неон")).json()) as { free: boolean; left: number };
+  assert.equal(d2.free, true, "the second tap of a fresh stack is still free");
+  assert.equal(d2.left, 0);
+  assert.equal(await meLeft(), 0, "/api/me must agree with the enhance response");
+
+  // Empty stack + no patrons → paywall, not a silent failure.
+  assert.equal((await call("и ещё раз")).status, 402);
+
+  // 1 🔫 buys a WHOLE new stack, not a single tap — the patron pays for a round
+  // of iteration, which is how the feature is actually used.
   await addCredits(enh.id, 1, "admin_grant", "test");
-  const r2 = await call("кот в очках, неон");
-  assert.equal(r2.status, 200);
-  const d2 = (await r2.json()) as { charged: number; free: boolean; balance: number };
-  assert.equal(d2.free, false);
-  assert.equal(d2.charged, 1);
-  assert.equal(d2.balance, 0);
-  // Provider failure on a PAID enhance → 502 and the patron comes back.
+  const d3 = (await (await call("кот в очках, неон")).json()) as { charged: number; free: boolean; balance: number; left: number };
+  assert.equal(d3.free, false);
+  assert.equal(d3.charged, 1);
+  assert.equal(d3.balance, 0);
+  assert.equal(d3.left, 1, "a paid refill must leave the rest of the stack available");
+  assert.equal(((await (await call("ещё вариант")).json()) as { free: boolean }).free, true);
+
+  // Provider failure on a PAID tap → 502, the patron comes back, and the stack
+  // is exactly as it was — a failed tap must cost neither money nor a charge.
   await addCredits(enh.id, 1, "admin_grant", "test");
   anyLlmFail = true;
-  const rf = await call("ещё раз");
+  assert.equal((await call("ещё раз")).status, 502);
   anyLlmFail = false;
-  assert.equal(rf.status, 502);
-  const balAfterFail = (await query("SELECT credits FROM users WHERE id = $1", [enh.id]))[0];
-  assert.equal(Number(balAfterFail.credits), 1); // refunded — net zero for the failed tap
-  // A generation start RE-ARMS the free enhance (D2: per-generation).
+  assert.equal(Number((await query("SELECT credits FROM users WHERE id = $1", [enh.id]))[0].credits), 1);
+  assert.equal(await meLeft(), 0, "a failed tap must not consume a charge");
+
+  // A render refills the stack in full — a new idea deserves a fresh one.
   await addCredits(enh.id, 2, "admin_grant", "test"); // 1 + 2 = 3; t2i costs 2 → 1 left
   const gen = await fetch(`${base}/api/generate`, {
     method: "POST", headers: H,
     body: JSON.stringify({ source: "model", model: "text_to_image", prompt: "домик у моря" }),
   });
   assert.equal(gen.status, 200);
-  const r3 = await call("домик у моря, но зимой");
-  assert.equal(r3.status, 200);
-  assert.equal(((await r3.json()) as { free: boolean }).free, true);
+  assert.equal(await meLeft(), 2, "a render must refill the whole stack");
+  assert.equal(((await (await call("домик у моря, но зимой")).json()) as { free: boolean }).free, true);
 });
 
 await step("/api/me exposes PENDING generations — the reload-safe resume contract", async () => {

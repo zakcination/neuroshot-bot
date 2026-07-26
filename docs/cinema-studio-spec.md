@@ -15,7 +15,7 @@ We replace it with **one page — the Studio** — a single, prefilled, top-to-b
 ```
   ┌─────────────────────────────────────────┐
   │  ① Prompt block   (preset, editable/swap) │
-  │  ② ✨ Улучшить промпт  1-е бесплатно/1🔫  │
+  │  ② ✨ Улучшить промпт  осталось N из 2   │
   │  ③ Inputs         (device / my gallery)   │
   │  ④ [ 🖼 Фото  |  🎬 Видео ]  ← mode chips  │
   │  ⑤ Model picker   (ALL models · price ea) │
@@ -82,7 +82,13 @@ The Studio is one view (`viewStudio(ctx)`) rendered into the existing sheet. It 
 - Button **"✨ Улучшить промпт"** under the prompt block. On tap: send the current effective prompt (free-text and/or personalization) to a small LLM that rewrites it into a richer, more directable prompt; show **before → after** with **Применить / Вернуть**; **loopable** (each press is another enhance).
 - **Charge: the first enhance of each generation is FREE; every further enhance costs 1 🔫**, server-authoritative, logged as its own event. This needs no fractional-ledger change — just a per-generation "free enhance used?" flag + normal `spendCredits(1)` thereafter. (Supersedes the earlier "0.5 🔫" framing throughout this doc.)
 - Provider for the rewrite → **Decision D3** (still open).
-- Copy: "Первое улучшение — бесплатно, дальше 1 🔫 · делает промпт детальнее, результат — лучше".
+- Copy: the button always states the REAL remaining count — «осталось N из 2»,
+  and «1 🔫 за 2 попытки» once the stack is empty. A fixed "первое бесплатно"
+  label kept promising a free attempt to people who had already spent theirs,
+  so the feature looked broken exactly when it started charging.
+- Stack of 2, not a single free shot: one rewrite is rarely the one you keep,
+  and charging on the second tap taxes the moment the feature starts working.
+  Refilled in full by a render (a new idea deserves a fresh stack) or by 1 🔫.
 
 ### ③ Inputs — device or gallery
 - Reuse `viewPhoto()` wholesale: **📷 С устройства** (file → `downscale` → data-URL → `/api/upload`) and **🖼 Из моих работ** (`myImages()` → `generation_id`).

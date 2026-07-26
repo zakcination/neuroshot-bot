@@ -1648,6 +1648,18 @@
       clampStudioOpts();
       openSheet(); viewStudio();
     }
+    /**
+     * The enhancer button label, always derived from the real remaining stack.
+     * It used to be the fixed string "1-е бесплатно", which kept promising a
+     * free attempt to people who had already spent theirs — the feature looked
+     * broken at exactly the moment it started charging.
+     */
+    function enhLabel() {
+      const e = (ME && ME.enhance) || { left: 0, stack: 2, cost: 1 };
+      if (e.left > 0) return `✨ Улучшить промпт · осталось ${e.left} из ${e.stack}`;
+      return `✨ Улучшить промпт · ${e.cost} ${PATRON} за ${e.stack} попытки`;
+    }
+
     function studioList() { return (ME.catalog.studio && ME.catalog.studio[stu.mode]) || []; }
     function studioModel() { return studioList().find((m) => m.key === stu.modelKey) || studioList()[0]; }
     function stuHasSource() { return !!(stu.photo || stu.generationId); }
@@ -1836,7 +1848,7 @@
           ${!isVideo && !stuHasSource() ? `<div class="sub">Фото не нужно — опишите картинку словами, ИИ нарисует её с нуля.</div>` : ""}
           <textarea class="prompt" id="stuPrompt" placeholder="${isVideo ? "камера медленно приближается, ветер в волосах…" : "флакон духов на мокром чёрном мраморе…"}">${esc(stu.prompt)}</textarea>
           <div class="row" style="margin-top:6px">
-            <button class="btn ghost" id="stuEnh">✨ Улучшить промпт · 1-е бесплатно</button>
+            <button class="btn ghost" id="stuEnh">${enhLabel()}</button>
             ${stu.prevPrompt != null ? `<button class="btn ghost" id="stuUndo">↩ Вернуть</button>` : ""}
           </div>` : ""}
         ${qLabel(`Фото ${!isVideo && !m.needsImage ? "(не используется этой моделью)" : ""}`, "photo")}
@@ -1923,8 +1935,13 @@
         if (status !== 200) { toast("Не получилось улучшить — попробуйте ещё раз"); viewStudio(); return; }
         stu.prevPrompt = raw; stu.prompt = data.prompt;
         ME.dashboard.credits = data.balance; setBalance(data.balance);
+        // Server-authoritative remaining count — the label must never be a
+        // client-side guess about what the user is entitled to.
+        if (ME.enhance) ME.enhance.left = data.left;
         haptic("success");
-        toast(data.free ? "✨ Улучшено — бесплатно" : `✨ Улучшено · −1 ${PATRON}`);
+        toast(data.free
+          ? `✨ Улучшено · осталось ${data.left}`
+          : `✨ Улучшено · −${ME.enhance ? ME.enhance.cost : 1} ${PATRON}, ещё ${data.left} в запасе`);
         viewStudio();
       }));
       bind("#stuUndo", (el) => (el.onclick = () => { stu.prompt = stu.prevPrompt; stu.prevPrompt = null; viewStudio(); }));

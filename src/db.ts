@@ -1789,19 +1789,31 @@ export async function galleryPage(
 }
 
 /**
- * Prompt Enhancer free-rule (Cinema Studio ②, decision D2): the FIRST enhance
- * after each generation start is free. Derived from the events log — free iff
- * the user's most recent 'enhance'/'gen_start' event is a gen_start (every
- * render re-arms one free enhance), or neither exists yet (a brand-new user's
- * very first enhance is free). No schema change, no extra counter to drift.
+ * How many enhances the user can still run without paying — a small stack
+ * rather than a single free shot, because one rewrite is rarely the one you
+ * keep: you try, read it, and want to nudge it again. Charging on the second
+ * tap taxes exactly the moment the feature starts working.
+ *
+ * Derived from the events log, so there is still no schema change and no
+ * counter that can drift out of sync with what actually happened. The stack
+ * refills to full on two events, and NOTHING else touches it:
+ *   • 'gen_start'      — a new render is a new idea, so a fresh stack;
+ *   • 'enhance_refill' — the user paid a patron for another stack.
+ * Everything logged after the most recent of those, of type 'enhance', has
+ * consumed one charge.
  */
-export async function enhanceIsFree(userId: number): Promise<boolean> {
+export async function enhanceChargesLeft(userId: number, capacity: number): Promise<number> {
+  const cap = Math.max(1, Math.floor(capacity));
   const rows = await q(
-    `SELECT type FROM events WHERE user_id = $1 AND type IN ('enhance','gen_start')
-     ORDER BY id DESC LIMIT 1`,
+    `SELECT COUNT(*)::int AS used FROM events
+     WHERE user_id = $1 AND type = 'enhance'
+       AND id > COALESCE((
+         SELECT MAX(id) FROM events
+         WHERE user_id = $1 AND type IN ('gen_start', 'enhance_refill')
+       ), 0)`,
     [userId],
   );
-  return rows.length === 0 || rows[0].type === "gen_start";
+  return Math.max(0, cap - Number(rows[0]?.used ?? 0));
 }
 
 /**
