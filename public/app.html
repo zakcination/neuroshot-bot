@@ -321,7 +321,11 @@
        two shelves of the same kind, one earned by using the product, one by
        finishing a course. */
     .lvlrow { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: stretch; margin-top: 10px; }
-    .lvlrow > * { min-width: 0; }
+    /* min-width:0 lets a column actually shrink to its share instead of being
+       held open by its content; the wrappers stretch so the buttons inside can
+       fill them. */
+    .lvlrow > * { min-width: 0; display: flex; }
+    .lvlrow > * > * { flex: 1; }
     @media (max-width: 340px) { .lvlrow { grid-template-columns: 1fr; } }
     /* Certificate: a seal, not a shield — a different object class from the
        achievement badges, so the two shelves never read as one set. */
@@ -409,12 +413,21 @@
     .grp-community   { --grp: #3e8ef7; }
     .grp-progress    { --grp: #d8a73d; }
 
-    /* Shelf tile beside the level card */
-    .achtile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+    /* Shelf tiles under the level card, one per grid column.
+       width/height 100% are load-bearing: <button> is a form control, so it
+       sizes to its CONTENT even as a grid item with display:flex — without
+       these the two tiles shrink to whatever their badge and caption need,
+       land at different widths, and stop lining up with the level card above.
+       box-sizing keeps the border and padding inside that 100%. */
+    .achtile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+      width: 100%; height: 100%; box-sizing: border-box; min-height: 148px;
       background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-      padding: 12px 8px; cursor: pointer; font: inherit; color: inherit; }
-    .achtile .badge { width: 54px; }
-    .achtile small { font-size: 10px; color: var(--muted); text-align: center; line-height: 1.3; }
+      padding: 16px 10px; cursor: pointer; font: inherit; color: inherit; }
+    /* Sized as a share of the tile, not a fixed 54px, so the two shelves stay
+       visually equal whatever the column width works out to. */
+    .achtile .badge { width: 62%; max-width: 78px; }
+    .achtile .seal { width: 62%; max-width: 78px; }
+    .achtile small { font-size: 11px; color: var(--muted); text-align: center; line-height: 1.35; }
 
     /* Wall + detail */
     .achgroup + .achgroup { margin-top: 22px; }
