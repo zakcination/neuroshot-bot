@@ -15,8 +15,9 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { achievements, allPresetGating, certificates, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { achievements, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { enhancePrompt, ENHANCE_COST, ENHANCE_STACK } from "./enhance.js";
+import { latestReleaseId, unseenReleases } from "./changelog.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
 import { hit } from "./ratelimit.js";
@@ -454,7 +455,7 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress, finance, enhanceLeft, awards, certs, partner] =
+  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress, finance, enhanceLeft, awards, certs, partner, seenRelease] =
     await Promise.all([
       userDashboard(user.id),
       recentGenerations(user.id, 30),
@@ -472,6 +473,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
       achievements(user.id),
       certificates(user.id),
       partnerAccount(user.id),
+      releaseState(user.id),
     ]);
   const gates = Object.fromEntries(gateRows.map((g) => [g.preset_id, g.min_level]));
   return {
@@ -528,6 +530,15 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     // `owned` and `earned` stay separate on purpose — payment buys the course,
     // not the certificate.
     certificates: certs,
+    // Release notes the user hasn't read. Delivered IN the app, never pushed:
+    // the people who care are the ones already opening it, and a note is not
+    // worth a slot in the weekly message budget.
+    //
+    // A brand-new account (created after the newest note) is treated as caught
+    // up — greeting a first-time user with a history of changes they never
+    // lived through is noise, not a welcome.
+    whatsNew:
+      seenRelease.seen == null && isNewAccount(seenRelease.createdAt) ? [] : unseenReleases(seenRelease.seen),
     // Partner account. Codes and payout history are NOT loaded here — they are
     // only meaningful to an enrolled partner (a tiny minority), and putting two
     // extra queries on every /api/me for everyone else is a cost with no reader.
@@ -1040,6 +1051,24 @@ export async function deleteAccountResponse(
   return { status: 200, body: { deleted: true, forfeitedCredits: result.forfeitedCredits } };
 }
 
+/** True for an account created after the newest release note was written. */
+function isNewAccount(createdAt: string | null): boolean {
+  const newest = latestReleaseId();
+  if (!newest || !createdAt) return true;
+  // Note ids are YYYY-MM-DD; comparing the account's creation DATE against it
+  // keeps this a string compare with no timezone arithmetic to get wrong.
+  return String(createdAt).slice(0, 10) >= newest;
+}
+
+/**
+ * POST /api/release/seen — mark the caller caught up with the newest note.
+ */
+export async function releaseSeenResponse(userId: number): Promise<{ status: number; body: Record<string, unknown> }> {
+  const id = latestReleaseId();
+  if (id) await markReleaseSeen(userId, id);
+  return { status: 200, body: { seen: id } };
+}
+
 /**
  * GET /api/partner — the enrolled partner's codes and payout history.
  * Split out of /api/me deliberately: only an enrolled partner has anything to
@@ -1333,6 +1362,15 @@ export function createWebApp(): Server {
           model: g.model,
           credits: g.credits,
         });
+      }
+
+      // POST /api/release/seen — the user has read the release notes.
+      if (url.pathname === "/api/release/seen") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const { status, body } = await releaseSeenResponse(user.id);
+        return json(res, status, body);
       }
 
       // GET /api/partner — the enrolled partner's codes + payout history.

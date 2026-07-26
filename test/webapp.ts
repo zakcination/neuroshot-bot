@@ -39,7 +39,7 @@ process.env.RATE_LIMIT_ENHANCE_PER_MIN = "100000";
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, awardPurchaseXp, staleGrantedOrders, abandonedPaidOrders, claimPush, releasePush, usersForPaywallPush, offerBonusFor, claimOfferRedemption, pushReport, achievements, certificates, issueCertificate, joinPartnerProgram, createPartnerCode, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
+const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, awardPurchaseXp, staleGrantedOrders, abandonedPaidOrders, claimPush, releasePush, usersForPaywallPush, offerBonusFor, claimOfferRedemption, pushReport, achievements, certificates, issueCertificate, joinPartnerProgram, createPartnerCode, markReleaseSeen, releaseState, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
@@ -3051,6 +3051,49 @@ await step("partner cabinet in the app: same guards as the bot, and the server n
   assert.equal(hist.withdrawals.length, 1);
   assert.equal(hist.withdrawals[0].amount, 900);
   assert.equal(hist.withdrawals[0].status, "pending");
+});
+
+await step("release notes: shown once, never to a newcomer, and only ever moving forward", async () => {
+  const { RELEASES, unseenReleases, latestReleaseId } = await import("../src/changelog.js");
+  assert.ok(RELEASES.length > 0, "at least one release note must exist");
+  // Ids are what "seen" is stored against, so they must sort and be unique —
+  // renumbering would re-show old notes to everybody.
+  const ids = RELEASES.map((r) => r.id);
+  assert.equal(new Set(ids).size, ids.length, "duplicate release id");
+  assert.deepEqual([...ids].sort(), ids.slice().sort(), "ids must be sortable strings");
+
+  const newest = latestReleaseId()!;
+  assert.equal(unseenReleases(null).length, RELEASES.length, "an unread user sees everything");
+  assert.equal(unseenReleases(newest).length, 0, "a caught-up user sees nothing");
+
+  // An EXISTING user gets the note; a user created after it does not — being
+  // greeted by a history you were not present for is noise, not a welcome.
+  const old = 991300;
+  const fresh = 991301;
+  await getOrCreateUser(old, "old_user", null, 0);
+  await getOrCreateUser(fresh, "new_user", null, 0);
+  await query("UPDATE users SET created_at = TIMESTAMPTZ '2026-01-01' WHERE id = $1", [old]);
+
+  const oldMe = (await (await fetch(`${base}/api/me`, {
+    headers: { Authorization: `tma ${signInitData({ id: old, username: "old_user", first_name: "O" })}` },
+  })).json()) as { whatsNew: unknown[] };
+  assert.ok(oldMe.whatsNew.length > 0, "an account older than the note must see it");
+
+  const freshMe = (await (await fetch(`${base}/api/me`, {
+    headers: { Authorization: `tma ${signInitData({ id: fresh, username: "new_user", first_name: "N" })}` },
+  })).json()) as { whatsNew: unknown[] };
+  assert.deepEqual(freshMe.whatsNew, [], "a brand-new account must not be shown the backlog");
+
+  // Marking seen sticks, and never moves backwards.
+  await markReleaseSeen(old, newest);
+  assert.equal((await releaseState(old)).seen, newest);
+  await markReleaseSeen(old, "2000-01-01");
+  assert.equal((await releaseState(old)).seen, newest, "an out-of-order call must not un-see a newer note");
+
+  const after = (await (await fetch(`${base}/api/me`, {
+    headers: { Authorization: `tma ${signInitData({ id: old, username: "old_user", first_name: "O" })}` },
+  })).json()) as { whatsNew: unknown[] };
+  assert.deepEqual(after.whatsNew, [], "a read note must not come back");
 });
 
 await new Promise<void>((r) => server.close(() => r()));

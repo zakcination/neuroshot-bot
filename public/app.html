@@ -291,6 +291,12 @@
        when the number changes, so progress is felt and not merely displayed. */
     @keyframes lvlpop { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
     .lvlmini.levelup .lvlnum { animation: lvlpop .6s ease; }
+    /* Release notes sheet — plain list, no product-launch theatre. */
+    .wnlist { margin: 12px 0 0; padding: 0; list-style: none; }
+    .wnlist li { padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13px; line-height: 1.5; }
+    .wnlist li:last-child { border-bottom: 0; }
+    .wndate { color: var(--muted); font-size: 11px; }
+
     /* XP in flight. Fixed-positioned so it can cross any scroll container on
        its way to the header, and pointer-events:none so it can never intercept
        a tap it happens to fly over. */
@@ -1535,6 +1541,33 @@
       };
       stage.addEventListener("pointerup", release);
       stage.addEventListener("pointercancel", release);
+    }
+
+    /**
+     * "What changed" — shown once, in the app, on the first open after a
+     * release. Never pushed: a release note is not worth a slot in the weekly
+     * message budget, and the people who care are the ones already here.
+     *
+     * Marked seen when the sheet is DISMISSED rather than when it is rendered,
+     * so a note that flashed past during a reload isn't silently consumed.
+     */
+    function maybeShowWhatsNew(d) {
+      const notes = (d && d.whatsNew) || [];
+      if (!notes.length) return;
+      const body = notes.map((n) => `
+        <div style="margin-bottom:16px">
+          <b>${esc(n.title)}</b> <span class="wndate">${esc(n.id)}</span>
+          <ul class="wnlist">${n.lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>
+        </div>`).join("");
+      sheetBody.innerHTML = `<h3>Что нового</h3>${body}
+        <button class="btn primary" id="wnOk" style="margin-top:8px">Понятно</button>`;
+      const ok = document.getElementById("wnOk");
+      if (ok) ok.onclick = async () => {
+        await api("/api/release/seen", { method: "POST" });
+        if (ME) ME.whatsNew = [];
+        closeSheet();
+      };
+      openSheet();
     }
 
     function levelCardHtml(p) {
@@ -3443,6 +3476,13 @@
       if (achTile0) achTile0.onclick = viewAchievements;
       const certTile0 = document.getElementById("certTile");
       if (certTile0) certTile0.onclick = viewCertificates;
+      // Release notes come after the page is built, and never on a run where
+      // the onboarding slideshow is about to play: a first-time user should
+      // meet the product, not a list of what changed before they arrived.
+      // (The server already withholds notes from accounts created after the
+      // newest one; this covers the older account opening the app for the
+      // first time since onboarding shipped.)
+      if (d.onboardingSeen) maybeShowWhatsNew(d);
       // Partner block loads its own data — see loadPartner for why it is not
       // part of /api/me.
       void loadPartner();
