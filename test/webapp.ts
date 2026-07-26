@@ -43,7 +43,7 @@ const { addCredits, awardXp, completeGeneration, createOrder, createPendingGener
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
-const { settleApprovedOrder } = await import("../src/payments.js");
+const { claimOrderPaid, settleApprovedOrder } = await import("../src/payments.js");
 const { hit } = await import("../src/ratelimit.js");
 const { config } = await import("../src/config.js");
 const { Api } = await import("grammy");
@@ -2663,6 +2663,47 @@ await step("purchase XP: scales with money spent, pays the inviter, and never tw
   assert.equal(await awardPurchaseXp(loner, o5, 10), 0);
 
   await query("DELETE FROM economy_config WHERE key LIKE 'xp.%'");
+});
+
+await step("auto-grant is OFF by default: «Я оплатил» always reaches a human", async () => {
+  // The failure this prevents: «Я оплатил» is pressed by the BUYER, so granting
+  // on the merchant API's word alone trusts one external endpoint completely.
+  // Even when it says "paid", an unconfigured auto-grant must ping an admin
+  // instead of moving credits.
+  const buyer = 990600;
+  await getOrCreateUser(buyer, "autogrant", null, 0);
+  const id = await createOrder(buyer, "start", 3700);
+
+  const realFetch = globalThis.fetch;
+  const { config: live } = await import("../src/config.js");
+  const prev = { base: live.kaspiApiBase, token: live.kaspiApiToken, auto: live.kaspiAutoGrant };
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ status: "paid", amount: 3700 }), {
+      status: 200, headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+  (live as { kaspiApiBase: string }).kaspiApiBase = "https://merchant.test";
+  (live as { kaspiApiToken: string }).kaspiApiToken = "t";
+  const pinged: number[] = [];
+  const api = { sendMessage: async (chatId: number) => { pinged.push(chatId); return {}; } } as unknown as InstanceType<typeof Api>;
+  try {
+    (live as { kaspiAutoGrant: boolean }).kaspiAutoGrant = false;
+    const off = await claimOrderPaid(api, id, "tester");
+    assert.equal(off.kind, "admin", "a paid verdict must still go to a human while auto-grant is off");
+    assert.ok(pinged.length > 0, "admins were not pinged");
+    assert.equal((await getOrder(id))?.status, "pending", "credits moved with no human in the loop");
+
+    // Explicitly switched on, the same verdict grants — the switch is real, not
+    // a permanent disable dressed up as a flag.
+    (live as { kaspiAutoGrant: boolean }).kaspiAutoGrant = true;
+    const on = await claimOrderPaid(api, id, "tester");
+    assert.equal(on.kind, "granted");
+    assert.equal((await getOrder(id))?.approved_via, "kaspi_api");
+  } finally {
+    globalThis.fetch = realFetch;
+    (live as { kaspiApiBase: string }).kaspiApiBase = prev.base;
+    (live as { kaspiApiToken: string }).kaspiApiToken = prev.token;
+    (live as { kaspiAutoGrant: boolean }).kaspiAutoGrant = prev.auto;
+  }
 });
 
 await new Promise<void>((r) => server.close(() => r()));

@@ -269,7 +269,7 @@ export async function claimOrderPaid(api: Api, orderId: number, who: string): Pr
   if (!order) return { kind: "not_found" };
   if (order.status === "paid") return { kind: "already" };
   const status = await kaspiVerifyOrder(order);
-  if (status === "paid") {
+  if (status === "paid" && config.kaspiAutoGrant) {
     const pack = await settleApprovedOrder(api, orderId, "kaspi_api");
     return { kind: "granted", credits: pack ? pack.credits : null };
   }
@@ -278,9 +278,16 @@ export async function claimOrderPaid(api: Api, orderId: number, who: string): Pr
   // through to the admin ping there is the difference between a buyer waiting a
   // few minutes and a buyer who paid being told forever that we see no payment.
   if (status === "pending" || status === "failed") return { kind: "pending", failed: status === "failed" };
+  // Everything else — including "Kaspi says paid but auto-grant is off" — goes
+  // to a human. The verifier's own verdict rides along so the decision is one
+  // informed tap rather than a fresh investigation.
+  const hint = status === "paid" ? "\n✅ Kaspi подтверждает оплату (авто-начисление выключено)." : "";
   for (const adminId of config.adminIds)
     await api
-      .sendMessage(adminId, `💸 Заявка №${orderId}: ${who} отметил оплату. Проверьте Kaspi → /order ${orderId} ok|no`)
+      .sendMessage(
+        adminId,
+        `💸 Заявка №${orderId}: ${who} отметил оплату.${hint}\nПроверьте Kaspi → /order ${orderId} ok|no`,
+      )
       .catch(() => {});
   return { kind: "admin" };
 }

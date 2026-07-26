@@ -65,6 +65,15 @@ export const config = {
   // endpoint + response shape against Kaspi's merchant docs — see docs/kaspi.md.
   kaspiApiBase: (process.env.KASPI_API_BASE ?? "").replace(/\/+$/, ""),
   kaspiApiToken: process.env.KASPI_API_TOKEN ?? "",
+  // Master switch for granting patrons with NO human in the loop. Default OFF,
+  // even when the merchant API above is configured. «Я оплатил» is a button the
+  // BUYER presses, so auto-grant trusts one external endpoint completely — a
+  // wrong base URL, a changed response shape, or a staging endpoint that
+  // answers optimistically all turn into free patrons, and nobody is asked.
+  // Off, that same tap pings an admin instead, carrying whatever Kaspi said —
+  // which costs one tap and cannot leak money. Turn on only after watching the
+  // verifier agree with reality on real payments (docs/kaspi.md).
+  kaspiAutoGrant: /^(1|true|yes)$/i.test(process.env.KASPI_AUTOGRANT ?? ""),
   // ₸ per USD — used ONLY for the digest's gross-margin estimate, never pricing.
   kztPerUsd: Number(process.env.KZT_PER_USD ?? 480),
   // Launch combo offer window: the "🔥 Комбо-сет" sale ends this many days after

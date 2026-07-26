@@ -1168,6 +1168,8 @@ export interface OrderRow {
   approved_via: string | null;
   /** When credits actually landed (grantOrderCredits' claim), null if never. */
   granted_at: string | null;
+  /** When the order was resolved paid/rejected, null while pending. */
+  processed_at: string | null;
 }
 
 /** The paths that can flip an order pending→paid. Recorded on the order. */
@@ -1183,10 +1185,12 @@ function mapOrder(r: Row): OrderRow {
     created_at: String(r.created_at),
     approved_via: r.approved_via == null ? null : String(r.approved_via),
     granted_at: r.granted_at == null ? null : String(r.granted_at),
+    processed_at: r.processed_at == null ? null : String(r.processed_at),
   };
 }
 
-const ORDER_COLS = "id, user_id, pack_id, amount_kzt, status, created_at, approved_via, granted_at";
+const ORDER_COLS =
+  "id, user_id, pack_id, amount_kzt, status, created_at, approved_via, granted_at, processed_at";
 
 /** Record a pending Kaspi purchase; returns the new order id. */
 export async function createOrder(userId: number, packId: string, amountKzt: number): Promise<number> {
@@ -1251,6 +1255,9 @@ export interface PaidOrderRow {
   kzt: number;
   approved_via: string | null;
   granted_at: string;
+  /** When it was CONFIRMED paid. Far earlier than granted_at ⇒ a back-fill. */
+  processed_at: string | null;
+  created_at: string;
 }
 
 export async function grantedOrders(hours: number, limit = 40): Promise<PaidOrderRow[]> {
@@ -1269,6 +1276,8 @@ export async function grantedOrders(hours: number, limit = 40): Promise<PaidOrde
       kzt: o.amount_kzt,
       approved_via: o.approved_via,
       granted_at: String(o.granted_at),
+      processed_at: o.processed_at,
+      created_at: o.created_at,
     };
   });
 }

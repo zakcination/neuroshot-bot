@@ -29,6 +29,7 @@ import {
   myPartnerCodes,
   myWithdrawals,
   partnerAccount,
+  getOrder,
   grantedOrders,
   pendingOrders,
   presetUsageCounts,
@@ -51,6 +52,7 @@ import {
   type UserRow,
 } from "./db.js";
 import { isUploadedSource as isReusableUpload, modelByKey, runFreeScenario, runGeneration } from "./generate.js";
+import { kaspiVerifyOrder } from "./kaspi.js";
 import { buildDigest, formatDigest } from "./monitor.js";
 import {
   CAMPAIGNS,
@@ -1127,9 +1129,26 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
             : v === "reconciler"
               ? "довыдача (сверка)"
               : "неизвестно (до включения аудита)";
-    const lines = orders.map(
-      (o) => `№${o.order_id} · ${o.user_id} · ${o.pack_id} · ${o.kzt} ₸ · ${via(o.approved_via)}`,
-    );
+    // The gap between "confirmed paid" and "credits landed" is the tell. A
+    // grant that lands hours or days after the confirmation is a BACK-FILL by
+    // the reconciler sweep, not a new payment — and it shows up in the digest
+    // as fresh revenue on the day it was back-filled, which is exactly how a
+    // day can report money that nobody paid that day.
+    const ageH = (o: (typeof orders)[number]) =>
+      o.processed_at ? (Date.parse(o.granted_at) - Date.parse(o.processed_at)) / 3_600_000 : null;
+    const lines = orders.map((o) => {
+      const gap = ageH(o);
+      const late =
+        gap != null && gap > 1
+          ? `\n   ⚠️ подтверждена ${new Date(o.processed_at!).toLocaleString("ru-RU")}, начислена на ${Math.round(gap)} ч позже — довыдача, не новая оплата`
+          : "";
+      return `№${o.order_id} · ${o.user_id} · ${o.pack_id} · ${o.kzt} ₸ · ${via(o.approved_via)}${late}`;
+    });
+    const backfilled = orders.filter((o) => (ageH(o) ?? 0) > 1).length;
+    const backfillNote = backfilled
+      ? `\n\n↩️ Из них ${backfilled} — довыдача по старым заявкам (сверка добирает подтверждённые, но не начисленные). ` +
+        `Это НЕ деньги, поступившие за эти сутки; в сводке они всё равно считаются днём начисления.`
+      : "";
     const mismatch =
       ledger.rows !== orders.length
         ? `\n\n⚠️ Расхождение: в журнале ${ledger.rows} записей «purchase», а заявок с начислением — ${orders.length}. ` +
@@ -1139,7 +1158,9 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       `💳 <b>Начисленные оплаты за ${hours} ч</b>\n` +
         `Журнал: <b>${ledger.rows}</b> на <b>${ledger.kzt} ₸</b> (эту цифру показывает сводка)\n\n` +
         (lines.length ? lines.join("\n") : "Заявок с начислением нет.") +
-        mismatch,
+        backfillNote +
+        mismatch +
+        `\n\nДиагностика приёма оплат: /kaspi_check &lt;id заявки&gt;`,
       { parse_mode: "HTML" },
     );
   });
@@ -1168,6 +1189,51 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     } else {
       await ctx.reply(`↩️ Заявка №${id} отклонена.`);
     }
+  });
+
+  // Admin: which payment-acceptance paths are live, and what the merchant API
+  // says about ONE order right now. Reports booleans and a verdict, never a
+  // secret. This exists because "why was this granted without asking me?" has
+  // exactly three possible answers and no way to tell them apart from the
+  // outside. /kaspi_check <id заявки>
+  bot.command("kaspi_check", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    const id = Number((ctx.match ?? "").trim());
+    const on = (v: boolean) => (v ? "включено" : "выключено");
+    const paths =
+      `🔐 <b>Пути начисления</b>\n` +
+      `• Вебхук Kaspi (подписанный): <b>${on(Boolean(config.kaspiApiSecret))}</b>\n` +
+      `• Авто-проверка «Я оплатил»: <b>${on(Boolean(config.kaspiApiBase && config.kaspiApiToken))}</b>\n` +
+      `• Авто-начисление без человека: <b>${on(config.kaspiAutoGrant)}</b>\n` +
+      `• Ручное подтверждение <code>/order id ok</code>: включено всегда\n` +
+      `• Довыдача по сверке (старые подтверждённые заявки): включена всегда`;
+    if (!Number.isInteger(id) || id <= 0) {
+      await ctx.reply(paths + `\n\nПроверить конкретную заявку: /kaspi_check &lt;id&gt;`, { parse_mode: "HTML" });
+      return;
+    }
+    const order = await getOrder(id);
+    if (!order) {
+      await ctx.reply(paths + `\n\nЗаявка №${id} не найдена.`, { parse_mode: "HTML" });
+      return;
+    }
+    const verdict = await kaspiVerifyOrder(order);
+    const label: Record<string, string> = {
+      paid: "оплачена",
+      pending: "ещё не оплачена",
+      failed: "не прошла / отклонена",
+      unknown: "нет ответа (API не настроен или недоступен)",
+    };
+    await ctx.reply(
+      paths +
+        `\n\n🧾 <b>Заявка №${order.id}</b> · ${order.pack_id} · ${order.amount_kzt} ₸\n` +
+        `• создана: ${new Date(order.created_at).toLocaleString("ru-RU")}\n` +
+        `• статус: <b>${order.status}</b>` +
+        (order.processed_at ? ` (подтверждена ${new Date(order.processed_at).toLocaleString("ru-RU")})` : "") +
+        `\n• начислено: ${order.granted_at ? new Date(order.granted_at).toLocaleString("ru-RU") : "нет"}\n` +
+        `• кем подтверждена: ${order.approved_via ?? "неизвестно (до включения аудита)"}\n` +
+        `• Kaspi сейчас говорит: <b>${label[verdict]}</b>`,
+      { parse_mode: "HTML" },
+    );
   });
 
   // Admin: the referral P&L — who brought how much, and what we still owe them.
