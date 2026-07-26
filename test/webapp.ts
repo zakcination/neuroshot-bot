@@ -2946,5 +2946,28 @@ await step("achievements: derived from real history, so they are correct retroac
   assert.equal((await achievements(u)).find((a) => a.id === "ten_renders")!.at, 1);
 });
 
+await step("prompt library: Кино-портрет asks for a SCENE, not a colour grade", async () => {
+  // The defect this locks out: the preset used to specify only a lens and a
+  // grade, giving the model no film to be a still from — so it recoloured the
+  // input and changed nothing else, on every subject type.
+  const { PRESETS } = await import("../src/models.js");
+  const cine = PRESETS.find((p) => p.id === "cinematic");
+  assert.ok(cine, "cinematic preset missing");
+  const p = cine!.prompt;
+  // The four things that actually make a frame read as cinema.
+  for (const required of ["DEPTH", "MOMENT", "BLOCKING", "MOTIVATED"]) {
+    assert.ok(p.includes(required), `Кино-портрет lost its ${required} instruction`);
+  }
+  // A named place is the minimum: no location, no film.
+  assert.ok(/street|kitchen|lobby|corridor|field/i.test(p), "no concrete location — this is a grade again");
+  // One genre chosen and committed to, as with the other restaging looks: a
+  // stacked list averages into the same murky frame every time.
+  assert.match(p, /choose ONE and commit/);
+  // A child must not be staged into neo-noir.
+  assert.ok(/CHILD/.test(p), "no child register — noir is wrong for a kid");
+  // And restaging must never quietly drop people from a group photo.
+  assert.ok(p.includes("ALL the people"), "group photos must keep everyone");
+});
+
 await new Promise<void>((r) => server.close(() => r()));
 console.log(`\nAll ${passed} web-app checks passed. ✨`);
