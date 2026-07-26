@@ -39,7 +39,7 @@ process.env.RATE_LIMIT_ENHANCE_PER_MIN = "100000";
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, awardPurchaseXp, staleGrantedOrders, abandonedPaidOrders, claimPush, releasePush, usersForPaywallPush, offerBonusFor, claimOfferRedemption, pushReport, achievements, certificates, issueCertificate, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
+const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, awardPurchaseXp, staleGrantedOrders, abandonedPaidOrders, claimPush, releasePush, usersForPaywallPush, offerBonusFor, claimOfferRedemption, pushReport, achievements, certificates, issueCertificate, joinPartnerProgram, createPartnerCode, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
@@ -2997,6 +2997,60 @@ await step("certificates: payment buys the course, a human issues the certificat
   assert.ok(after.issuedAt, "an issued certificate must carry its date");
   // The other course is untouched by either action.
   assert.equal((await certificates(u)).find((c) => c.course === "flagship")!.earned, false);
+});
+
+await step("partner cabinet in the app: same guards as the bot, and the server names the amount", async () => {
+  const u = 991200;
+  await getOrCreateUser(u, "partner_app", null, 0);
+  const H = { Authorization: `tma ${signInitData({ id: u, username: "partner_app", first_name: "P" })}` };
+  const post = (p: string) => fetch(`${base}${p}`, { method: "POST", headers: H });
+
+  // Not enrolled: the app must not offer a self-serve door the programme does
+  // not have — it is invitation-only, and the bot says so.
+  const before = (await (await fetch(`${base}/api/partner`, { headers: H })).json()) as { joined: boolean; codes: unknown[] };
+  assert.equal(before.joined, false);
+  assert.deepEqual(before.codes, []);
+  assert.equal((await post("/api/partner/withdraw")).status, 403, "a non-partner must not be able to request a payout");
+
+  await joinPartnerProgram(u, 0);
+  await createPartnerCode(u, 0.15, 5, 10);
+  const acct = (await (await fetch(`${base}/api/partner`, { headers: H })).json()) as {
+    joined: boolean; codes: Array<{ code: string; percent: number }>;
+  };
+  assert.equal(acct.joined, true);
+  assert.equal(acct.codes.length, 1);
+  assert.equal(acct.codes[0].percent, 15);
+
+  // Below the minimum → refused, and the response says what is missing rather
+  // than failing blankly.
+  const small = await post("/api/partner/withdraw");
+  assert.equal(small.status, 400);
+  const sd = (await small.json()) as { error: string; min: number; withdrawable: number };
+  assert.equal(sd.error, "too_small");
+  assert.equal(sd.withdrawable, 0);
+  assert.ok(sd.min > 0);
+
+  // With a real cashback balance the payout is created — and the AMOUNT comes
+  // from the server, never from the request, so a client cannot name a figure
+  // the guarded statement would disagree with.
+  await query("UPDATE users SET partner_withdrawable = 900, credits = 900 WHERE id = $1", [u]);
+  const ok = await post("/api/partner/withdraw");
+  assert.equal(ok.status, 200);
+  const od = (await ok.json()) as { id: number; amount: number };
+  assert.equal(od.amount, 900);
+  assert.equal(Number((await query("SELECT partner_withdrawable FROM users WHERE id = $1", [u]))[0].partner_withdrawable), 0);
+
+  // One pending request at a time — the same DB-level guard the bot relies on.
+  await query("UPDATE users SET partner_withdrawable = 900, credits = 900 WHERE id = $1", [u]);
+  assert.equal((await post("/api/partner/withdraw")).status, 409, "a second pending payout must be refused");
+
+  // History is visible to the partner.
+  const hist = (await (await fetch(`${base}/api/partner`, { headers: H })).json()) as {
+    withdrawals: Array<{ id: number; amount: number; status: string }>;
+  };
+  assert.equal(hist.withdrawals.length, 1);
+  assert.equal(hist.withdrawals[0].amount, 900);
+  assert.equal(hist.withdrawals[0].status, "pending");
 });
 
 await new Promise<void>((r) => server.close(() => r()));

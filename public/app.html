@@ -451,6 +451,21 @@
     .setrow input[type=checkbox]:checked { background: var(--amber); }
     .setrow input[type=checkbox]::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; transition: transform .2s; }
     .setrow input[type=checkbox]:checked::after { transform: translateX(18px); }
+    /* Partner block: same card language as the referral finance card above it,
+       because it IS the same thing one tier up — inviting people and being paid
+       for it. What differs is what a partner additionally has: several codes,
+       and money that leaves the system. */
+    .pcode { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+    .pcode:last-child { border-bottom: 0; }
+    .pcode .pc { flex: 1; min-width: 0; }
+    .pcode .pc code { display: block; font-size: 11px; color: var(--muted);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pcode .pc b { font-size: 13px; }
+    .pcode .cp { flex: 0 0 auto; background: none; border: 1px solid var(--line);
+      border-radius: 9px; color: inherit; font: inherit; font-size: 11px; padding: 5px 9px; cursor: pointer; }
+    .wrow { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; padding: 7px 0; color: var(--muted); }
+    .wrow b { color: var(--text); }
+
     /* Referral finance card: the two numbers a promoter actually asks for —
        what their invitees paid us, and what we owe them for it. */
     .fincard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 15px; margin-top: 12px; }
@@ -2960,6 +2975,77 @@
      * Cash-out rows appear only once there IS payout activity, so an ordinary
      * inviter isn't shown a withdrawal UI that doesn't apply to them.
      */
+    /**
+     * The partner block, rendered under the referral card on the Друзья page.
+     *
+     * Enrolment is by invitation (the bot says so and the app must not imply
+     * otherwise), so a non-partner sees a short honest note rather than a
+     * teaser for something they cannot self-serve. Codes and history are
+     * fetched on demand — they mean nothing to the ~99% who are not partners,
+     * and loading them on every app open would be a cost with no reader.
+     */
+    let PARTNER = null;
+    async function loadPartner() {
+      const host = document.getElementById("partnerHost");
+      if (!host || !ME || !ME.partner) return;
+      const p = ME.partner;
+      if (!p.joined) {
+        host.innerHTML = `<div class="fincard"><div class="finrow"><span>Партнёрская программа</span><b>${p.percent}%</b></div></div>
+          <p class="finnote">Партнёрам мы платим ${p.percent}% с каждой оплаты приглашённых, и этот кэшбэк можно вывести деньгами. Программа по приглашению — напишите нам, если хотите участвовать.</p>`;
+        return;
+      }
+      const { status, data } = await api("/api/partner");
+      if (status !== 200) return;
+      PARTNER = data;
+      const codes = (data.codes || []).map((c) => {
+        const link = `https://t.me/${BOT}?start=p_${c.code}`;
+        return `<div class="pcode">
+          <div class="pc"><b>${c.joined} чел · ${c.paying} покупают · ${c.earned} ${PATRON}</b><code>${esc(link)}</code></div>
+          <button class="cp" data-copy="${esc(link)}">Копировать</button>
+        </div>`;
+      }).join("") || `<div class="sub" style="padding:10px 0">Ссылок пока нет — создайте первую в боте: /partner</div>`;
+
+      const canWithdraw = p.withdrawable >= p.withdrawMin;
+      const hist = (data.withdrawals || []).map((w) => {
+        const label = w.status === "paid" ? "выплачено" : w.status === "pending" ? "в обработке" : "отклонено";
+        return `<div class="wrow"><span>№${w.id} · ${new Date(w.at).toLocaleDateString("ru-RU")}</span><b>${w.amount} ${PATRON} · ${label}</b></div>`;
+      }).join("");
+
+      host.innerHTML = `<div class="sec-h" style="margin-top:18px"><h2>Партнёрский кабинет</h2></div>
+        <div class="fincard">
+          <div class="finrow"><span>Приглашено · покупают</span><b>${p.invited} · ${p.paying}</b></div>
+          <div class="finrow"><span>Всего заработано</span><b>${p.earned} ${PATRON}</b></div>
+          <div class="finrow owed"><span>Доступно к выводу</span><b>${p.withdrawable} ${PATRON}</b></div>
+        </div>
+        <p class="finnote">${p.percent}% с каждой оплаты приглашённых. Вывод от ${p.withdrawMin} ${PATRON}, выплаты раз в 2 недели.</p>
+        <button class="btn primary" id="wdBtn" ${canWithdraw ? "" : "disabled"} style="margin-top:8px">
+          ${canWithdraw ? `💸 Вывести ${p.withdrawable} ${PATRON}` : `До вывода не хватает ${Math.max(0, p.withdrawMin - p.withdrawable)} ${PATRON}`}
+        </button>
+        <div class="sec-h" style="margin-top:16px"><h2>Ваши ссылки (${p.activeCodes}/${p.maxCodes})</h2></div>
+        <div class="fincard">${codes}</div>
+        ${hist ? `<div class="sec-h" style="margin-top:16px"><h2>Выплаты</h2></div><div class="fincard">${hist}</div>` : ""}`;
+
+      host.querySelectorAll("[data-copy]").forEach((b) => (b.onclick = () => {
+        navigator.clipboard.writeText(b.dataset.copy).catch(() => {});
+        toast("Ссылка скопирована");
+      }));
+      const wd = document.getElementById("wdBtn");
+      if (wd && canWithdraw) wd.onclick = async () => {
+        wd.disabled = true;
+        // No amount is sent: the server drains the withdrawable balance in one
+        // guarded statement, so a client-named figure could only disagree with it.
+        const { status, data: r } = await api("/api/partner/withdraw", { method: "POST" });
+        if (status === 200) {
+          toast(`💸 Заявка №${r.id} создана — выплата в течение 2 недель`);
+          await refreshMe();
+          await loadPartner();
+        } else {
+          toast(status === 409 ? "Заявка уже в обработке" : "Не удалось создать заявку");
+          wd.disabled = false;
+        }
+      };
+    }
+
     function refFinanceHtml(f) {
       if (!f) return "";
       const hasPayout = (f.withdrawable + f.pendingPayout + f.paidOut) > 0;
@@ -3228,6 +3314,8 @@
             <div class="sec-h"><h2>Ваши друзья</h2></div>
             <div id="refList">${referralListHtml(d.referrals)}</div>
           </section>
+
+          <section class="reveal" id="partnerHost"></section>
         </div>
 
         <!-- ===== ПАТРОНЫ (buy) ===== -->
@@ -3354,6 +3442,9 @@
       if (achTile0) achTile0.onclick = viewAchievements;
       const certTile0 = document.getElementById("certTile");
       if (certTile0) certTile0.onclick = viewCertificates;
+      // Partner block loads its own data — see loadPartner for why it is not
+      // part of /api/me.
+      void loadPartner();
       document.querySelectorAll("[data-buy]").forEach((b) => (b.onclick = () => buyPack(b.dataset.buy, false)));
       document.querySelectorAll("[data-studio]").forEach((a) => (a.onclick = () => studio(a.dataset.studio)));
       document.querySelectorAll("[data-camp-open]").forEach((a) => (a.onclick = () => { st.tab = "scenes"; openSheet(); viewCampaign(a.dataset.campOpen); }));
