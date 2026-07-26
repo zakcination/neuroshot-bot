@@ -77,9 +77,20 @@ import {
 import { grantPurchase, registerPayments, sendBalance } from "./payments.js";
 import { nUnits, UNIT_EMOJI, withPhotoTip } from "./text.js";
 
-/** Telegram-supplied names go into an HTML body — escape before they do. */
+/**
+ * Telegram-supplied names go into a parse_mode:HTML body — escape before they
+ * do. Written without a regex literal on purpose: the patron-emoji CI guard
+ * (scripts/check-patron-emoji.mjs) lexes sources by hand and has no
+ * regex-literal state, so a `/[&<>"]/` here puts it inside a phantom string
+ * for the rest of the file and it misreports a comment far below. Chained
+ * replaceAll costs nothing at this size and keeps that guard honest.
+ */
 function escapeHtml(s: string): string {
-  return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
+  return s
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
 
 async function user(
