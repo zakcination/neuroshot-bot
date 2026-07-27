@@ -248,8 +248,8 @@
     @media (min-width: 560px) { .packs { grid-template-columns: 1fr 1fr; } }
     /* Card, not a single row: name+price on top, the patron amount + its rate
        below, and a yield line at the bottom translating the credits into what
-       they actually buy — see packTileHtml. A flat "🔫 60 · 3 700 ₸" row read
-       as three unrelated numbers with no unit of meaning between them. */
+       they actually buy — see packTileHtml. A flat "60 patrons · 3 700 ₸" row
+       read as three unrelated numbers with no unit of meaning between them. */
     .pack {
       position: relative; display: flex; flex-direction: column; gap: 10px;
       background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s);
@@ -1810,7 +1810,7 @@
 
     /**
      * What a pack's credits actually buy, in things instead of an abstract
-     * number — the translation a raw "🔫 650" can't give on its own. Uses the
+     * number — the translation a raw patron count can't give on its own. Uses the
      * SAME real minimum prices the onboarding slides already show
      * (presetCredits, the cheapest video model), never an invented figure, so
      * it reads as "up to" rather than a promise: mixing photos and videos in
