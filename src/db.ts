@@ -2524,6 +2524,52 @@ export async function getEconomyConfig(key: string): Promise<number | null> {
   return rows[0] ? Number(rows[0].value) : null;
 }
 
+/**
+ * Every action the server can award XP for — the ONE list.
+ *
+ * Amounts live in economy_config and are private tuning, but WHICH actions pay
+ * anything at all is something a user discovers the moment they try, so the Mini
+ * App is allowed to know it (see activeXpActions). The "how to earn" sheet is
+ * filtered against this, and a test asserts the sheet and this list agree, so a
+ * new award cannot ship without copy and copy cannot describe an award that does
+ * not exist.
+ *
+ * Each id is the `action` passed to awardXp/awardXpOnce/awardXpCapped — i.e.
+ * the `xp.<id>` config key, and the `reason` written to xp_ledger.
+ */
+export const XP_AWARD_ACTIONS = [
+  "generate",
+  "model",
+  "video",
+  "image",
+  "text",
+  "preset",
+  "scenario",
+  "upload",
+  "save",
+  "share",
+  "referral",
+  "purchase",
+  "refpurchase",
+] as const;
+
+/**
+ * The subset that is actually turned on right now — a configured, positive
+ * amount. The Mini App shows only these, because listing an action that pays
+ * nothing is a promise the product does not keep: the user does the thing,
+ * watches the bar not move, and concludes the whole system is decorative.
+ *
+ * Returns ids, never amounts. The numbers stay private.
+ */
+export async function activeXpActions(): Promise<string[]> {
+  const keys = XP_AWARD_ACTIONS.map((a) => `xp.${a}`);
+  const rows = await q(
+    "SELECT key FROM economy_config WHERE key = ANY($1::text[]) AND value > 0",
+    [keys],
+  );
+  return rows.map((r) => String(r.key).slice("xp.".length));
+}
+
 /** Admin-only write path (bot.ts /econ_set) — upserts a single tuned value. */
 export async function setEconomyConfig(key: string, value: number): Promise<void> {
   await q(

@@ -1435,27 +1435,42 @@
     };
 
     /**
-     * The ways to earn XP, in the order the Rewards sheet explains them. The
-     * exact amounts are private server tuning (`xp.<action>` in
-     * economy_config — see `/econ_levels`, admin-only), so this states the
-     * ACTION only, never a number that might not match what's actually
-     * configured. One row per xp.<action> call site — mirrors
-     * awardGenerationXp / awardXpOnce / awardXpCapped / awardPurchaseXp in
-     * `src/db.ts` and the upload/share claims in `src/webapp.ts` one-for-one;
-     * add a row here whenever a new one ships there.
+     * The ways to earn XP, in the order the Rewards sheet explains them.
+     *
+     * `action` is the SERVER's award id (`xp.<action>` in economy_config, and the
+     * reason written to xp_ledger). Two things hang off it:
+     *
+     *  - the sheet renders only the actions the server says are switched on
+     *    (`ME.xpActions`). Listing an action that pays nothing today is a promise
+     *    we do not keep: the user does it, watches the bar not move, and decides
+     *    the whole system is decorative;
+     *  - a test asserts these ids and `XP_AWARD_ACTIONS` in `src/db.ts` agree
+     *    both ways, so a new award cannot ship without copy and copy cannot
+     *    describe an award that does not exist.
+     *
+     * Amounts are never stated — those are private tuning. Neither is frequency
+     * promised: `generate` and `save` carry optional rolling-24h caps
+     * (`xp.<action>.dailycap`), so "каждый раз" would go quiet the day a cap is
+     * configured, which is exactly what config-without-deploy is for.
      */
     const XP_ACTIONS = [
-      { icon: "🖼", title: "Создайте работу", hint: "Каждый готовый рендер приносит опыт" },
-      { icon: "🧭", title: "Попробуйте новую модель", hint: "Один раз за каждую модель, при первой попытке" },
-      { icon: "🎬", title: "Снимите видео", hint: "Один раз, при первом видео" },
-      { icon: "✍️", title: "Сгенерируйте по тексту", hint: "Один раз, при первом текстовом запросе" },
-      { icon: "🎨", title: "Попробуйте новый стиль", hint: "Один раз за каждый пресет, при первой попытке" },
-      { icon: "📖", title: "Откройте сценарий", hint: "Один раз, за первый сценарий" },
-      { icon: "📤", title: "Загрузите своё фото", hint: "Один раз, за первую загрузку" },
-      { icon: "💾", title: "Сохраните результат", hint: "За каждую сохранённую работу" },
-      { icon: "📣", title: "Поделитесь результатом", hint: "За каждую работу, которой поделились" },
-      { icon: "🤝", title: "Пригласите друга", hint: "Когда он совершит первую покупку" },
-      { icon: "💳", title: "Пополняйте баланс", hint: "Оплата тоже приносит опыт" },
+      { action: "generate", icon: "🖼", title: "Создавайте работы", hint: "Готовый рендер приносит опыт" },
+      { action: "model", icon: "🧭", title: "Попробуйте новую модель", hint: "Один раз за каждую модель, при первой попытке" },
+      { action: "video", icon: "🎬", title: "Снимите видео", hint: "Один раз, при первом видео" },
+      { action: "image", icon: "🖌", title: "Сделайте первую картинку", hint: "Один раз, за первую работу с фото" },
+      { action: "text", icon: "✍️", title: "Сгенерируйте по тексту", hint: "Один раз, при первом текстовом запросе" },
+      { action: "preset", icon: "🎨", title: "Попробуйте новый стиль", hint: "Один раз за каждый пресет, при первой попытке" },
+      { action: "scenario", icon: "📖", title: "Откройте сценарий", hint: "Один раз, за первый сценарий" },
+      { action: "upload", icon: "📤", title: "Загрузите своё фото", hint: "Один раз, за первую загрузку" },
+      { action: "save", icon: "💾", title: "Сохраняйте результаты", hint: "За сохранённую работу" },
+      { action: "share", icon: "📣", title: "Делитесь результатом", hint: "За работу, которой поделились" },
+      // The trigger here is the friend CLAIMING their welcome gift, not buying:
+      // db.ts awards it inside claimWelcomeBonus, deliberately — "a bonus claimed
+      // is a real human who arrived, whereas a click is free to manufacture".
+      // The friend's PURCHASE is a separate award (refpurchase) with its own row.
+      { action: "referral", icon: "🤝", title: "Пригласите друга", hint: "Когда друг заберёт свой стартовый подарок" },
+      { action: "refpurchase", icon: "🌟", title: "Друг совершил покупку", hint: "Доля опыта с покупок приглашённых" },
+      { action: "purchase", icon: "💳", title: "Пополняйте баланс", hint: "Оплата тоже приносит опыт" },
     ];
 
     /**
@@ -1575,7 +1590,11 @@
       const presets = (ME && ME.catalog && ME.catalog.presets) || [];
       const level = (ME && ME.dashboard && ME.dashboard.level) || 0;
       const gated = presets.filter((p) => p.minLevel > 0).sort((a, b) => a.minLevel - b.minLevel);
-      const earnRows = XP_ACTIONS.map((a) => `<div class="certrow">
+      // Only what is actually switched on server-side. If nothing is, the sheet
+      // says so rather than listing eleven ways to earn nothing.
+      const on = (ME && ME.xpActions) || [];
+      const earning = XP_ACTIONS.filter((a) => on.includes(a.action));
+      const earnRows = earning.map((a) => `<div class="certrow">
           <div class="gem"><i></i><b>${a.icon}</b></div>
           <div class="ct"><b>${esc(a.title)}</b><small>${esc(a.hint)}</small></div>
         </div>`).join("");
@@ -1589,7 +1608,9 @@
       sheetBody.innerHTML = `<h3>Уровень и награды</h3>
         <div class="sub">Опыт копится за всё, что вы делаете в приложении, и никогда не уменьшается.</div>
         <div class="sec-h" style="margin-top:18px"><h2>Как заработать опыт</h2></div>
-        <div class="fincard">${earnRows}</div>
+        ${earning.length
+          ? `<div class="fincard">${earnRows}</div>`
+          : `<p class="finnote">Начисление опыта пока не включено — как только заработает, здесь появится список.</p>`}
         <div class="sec-h" style="margin-top:16px"><h2>Что открывает уровень</h2></div>
         ${tierRows
           ? `<div class="fincard">${tierRows}</div>`
