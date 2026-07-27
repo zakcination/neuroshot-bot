@@ -3302,8 +3302,8 @@
       if (!host || !ME || !ME.partner) return;
       const p = ME.partner;
       if (!p.joined) {
-        host.innerHTML = `<div class="fincard"><div class="finrow"><span>Партнёрская программа</span><b>${p.percent}%</b></div></div>
-          <p class="finnote">Партнёрам мы платим ${p.percent}% с каждой оплаты приглашённых, и этот кэшбэк можно вывести деньгами. Программа по приглашению — напишите нам, если хотите участвовать.</p>`;
+        host.innerHTML = `<div class="fincard"><div class="finrow"><span>Партнёрская программа</span><b>${p.percent}–${p.topPercent}%</b></div></div>
+          <p class="finnote">Партнёрам мы платим от ${p.percent}% с каждой оплаты приглашённых, и ставка растёт с оборотом — до ${p.topPercent}%. Кэшбэк можно вывести деньгами. Программа по приглашению — напишите нам, если хотите участвовать.</p>`;
         return;
       }
       const { status, data } = await api("/api/partner");
@@ -3327,9 +3327,11 @@
         <div class="fincard">
           <div class="finrow"><span>Приглашено · покупают</span><b>${p.invited} · ${p.paying}</b></div>
           <div class="finrow"><span>Всего заработано</span><b>${p.earned} ${PATRON}</b></div>
+          <div class="finrow"><span>Ваша ставка</span><b>${p.percent}%</b></div>
+          <div class="finrow"><span>Оборот по ссылкам</span><b>${p.volumeKzt.toLocaleString("ru-RU")} ₸</b></div>
           <div class="finrow owed"><span>Доступно к выводу</span><b>${p.withdrawable} ${PATRON}</b></div>
         </div>
-        <p class="finnote">${p.percent}% с каждой оплаты приглашённых. Вывод от ${p.withdrawMin} ${PATRON}, выплаты раз в 2 недели.</p>
+        <p class="finnote">${p.nextAt ? `До ставки ${p.nextPercent}% осталось ${Math.max(0, p.nextAt - p.volumeKzt).toLocaleString("ru-RU")} ₸ оборота. ` : "Вы на максимальной ставке. "}Вывод от ${p.withdrawMin} ${PATRON}, выплаты раз в 2 недели.</p>
         <button class="btn primary" id="wdBtn" ${canWithdraw ? "" : "disabled"} style="margin-top:8px">
           ${canWithdraw ? `💸 Вывести ${p.withdrawable} ${PATRON}` : `До вывода не хватает ${Math.max(0, p.withdrawMin - p.withdrawable)} ${PATRON}`}
         </button>
@@ -3608,7 +3610,7 @@
             <div class="sec-h"><h2>Приглашай друзей</h2></div>
             <div class="refcard">
               <h3>🎁 Приглашай — зарабатывай</h3>
-              <p>Друг получает бонусные ${PATRON} при входе, вы — награду за его первую покупку и 10% со всех его пакетов. Навсегда.</p>
+              <p>Друг получает ${d.referral.joinBonus} ${PATRON} при входе, вы — награду за его первую покупку и ${d.referral.percent}% со всех его пакетов. Навсегда.</p>
               <div class="linkrow">
                 <div class="linkbox" id="refL">${esc(refLink)}</div>
                 <button class="btn primary copy" id="refC">Копировать</button>

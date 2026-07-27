@@ -18,7 +18,7 @@ import {
   type UserRow,
 } from "./db.js";
 import { kaspiVerifyOrder } from "./kaspi.js";
-import { MODELS, PACKS, packById, REFERRAL_MILESTONES, type ModelSpec, type Pack } from "./models.js";
+import { MODELS, PACKS, packById, PARTNER_TIERS, REFERRAL_MILESTONES, type ModelSpec, type Pack } from "./models.js";
 import { comboActive, comboLeftText } from "./offer.js";
 import { nResults, nUnits, UNIT_EMOJI } from "./text.js";
 
@@ -210,12 +210,15 @@ export async function grantPurchase(api: Api, userId: number, pack: Pack, orderI
   );
 
   // Attribution is exclusive: a buyer came via a creator code OR a friend link.
-  const partnerPayout = await rewardPartnerOnPurchase(userId, pack.credits);
+  const partnerPayout = await rewardPartnerOnPurchase(userId, pack.credits, {
+    basePercent: config.partnerPercent,
+    tiers: PARTNER_TIERS,
+  });
   if (partnerPayout && partnerPayout.amount > 0) {
     const prefix = partnerPayout.kind === "partner" ? "p_" : "c_";
     const note =
       partnerPayout.kind === "partner"
-        ? `🤝 +${nUnits(partnerPayout.amount)} кэшбэка — покупка по вашей ссылке ${prefix}${partnerPayout.code}! Доступно к выводу.`
+        ? `🤝 +${nUnits(partnerPayout.amount)} кэшбэка (${Math.round(partnerPayout.percent * 100)}%) — покупка по вашей ссылке ${prefix}${partnerPayout.code}! Доступно к выводу.`
         : `🤝 +${nUnits(partnerPayout.amount)} — покупка по вашему коду ${prefix}${partnerPayout.code}!`;
     await api.sendMessage(partnerPayout.ownerId, note).catch(() => {});
   }

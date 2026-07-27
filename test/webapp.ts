@@ -39,7 +39,7 @@ process.env.RATE_LIMIT_ENHANCE_PER_MIN = "100000";
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
 const { issueSession, verifySession } = await import("../src/auth.js");
-const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, awardPurchaseXp, staleGrantedOrders, abandonedPaidOrders, claimPush, releasePush, usersForPaywallPush, offerBonusFor, claimOfferRedemption, pushReport, achievements, certificates, issueCertificate, joinPartnerProgram, createPartnerCode, markReleaseSeen, releaseState, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
+const { addCredits, awardXp, completeGeneration, createOrder, createPendingGeneration, createSeason, getOrCreateUser, getOrder, getLevel, getUserXp, grantedOrders, grantOrderCredits, awardPurchaseXp, awardGenerationXp, staleGrantedOrders, abandonedPaidOrders, claimPush, releasePush, usersForPaywallPush, offerBonusFor, claimOfferRedemption, pushReport, achievements, certificates, issueCertificate, joinPartnerProgram, createPartnerCode, markReleaseSeen, releaseState, referralFinance, referrerLedger, logEvent, logGeneration, purchaseLedgerCount, query, resolveOrder, setEconomyConfig, setPresetGating, spendCredits } = await import("../src/db.js");
 const { afterKeyboard, whatsappShareUrl } = await import("../src/generate.js");
 const { kaspiVerifyOrder } = await import("../src/kaspi.js");
 const { kaspiLinkFor } = await import("../src/config.js");
@@ -3009,6 +3009,47 @@ await step("purchase XP: scales with money spent, pays the inviter, and never tw
   assert.equal(await getUserXp(loner), 1480);
   const o5 = await createOrder(loner, "start", 10);
   assert.equal(await awardPurchaseXp(loner, o5, 10), 0);
+
+  await query("DELETE FROM economy_config WHERE key LIKE 'xp.%'");
+});
+
+await step("generation XP: tracks what the render cost, so the cheapest model is not the fastest ladder", async () => {
+  // The defect this pins: a flat per-render award prices a 2 🔫 edit and a
+  // 76 🔫 video identically, which makes repeating the cheapest model in the
+  // catalogue the most efficient way to level — the opposite of what Levels are
+  // meant to encourage, and the reason the whole line goes unused.
+  await query("DELETE FROM economy_config WHERE key LIKE 'xp.%'");
+  await query("DELETE FROM xp_claims");
+  const u = 990700;
+  await getOrCreateUser(u, "xp_percredit", null, 0);
+  await query("UPDATE users SET xp = 0 WHERE id = $1", [u]);
+
+  const render = async (model: string, credits: number): Promise<number> => {
+    const id = await createPendingGeneration(u, model, "p", credits);
+    await completeGeneration(id, "ok", `https://fal.test/out/${model}.png`);
+    return awardGenerationXp(id);
+  };
+
+  // Unconfigured stays inert — no XP at all, percredit or not.
+  await setEconomyConfig("xp.generate.percredit", 1);
+  assert.equal(await render("photo_edit", 3), 0, "percredit alone must not switch the award on");
+
+  // Flat only: a cheap edit and an expensive video are worth the same.
+  await query("DELETE FROM xp_claims");
+  await query("DELETE FROM economy_config WHERE key LIKE 'xp.%'");
+  await setEconomyConfig("xp.generate", 10);
+  assert.equal(await render("nb2_edit", 4), 10);
+  assert.equal(await render("seedance", 76), 10, "flat award prices a video like an edit");
+
+  // With percredit the award follows the spend: 10 + 1×credits.
+  await setEconomyConfig("xp.generate.percredit", 1);
+  assert.equal(await render("nb2_edit", 4), 14);
+  assert.equal(await render("seedance", 76), 86);
+
+  // The daily cap still counts RENDERS, not XP — otherwise one expensive video
+  // would exhaust a cap meant to bound how often the award can fire.
+  await setEconomyConfig("xp.generate.dailycap", 4); // exactly the four awards above
+  assert.equal(await render("nb2_edit", 4), 0, "cap must count awards, not the XP they carried");
 
   await query("DELETE FROM economy_config WHERE key LIKE 'xp.%'");
 });

@@ -2139,3 +2139,37 @@ export const REFERRAL_MILESTONES: Milestone[] = [
   { friends: 10, bonus: 75 },
   { friends: 25, bonus: 250 },
 ];
+
+/**
+ * Partner cashback ladder — a LOWER base with a HIGHER ceiling than the flat
+ * rate it replaces.
+ *
+ * A flat rate pays the same share to a partner who brought one buyer and to one
+ * who brought a hundred, so it is simultaneously too expensive at the bottom
+ * (where most codes never convert twice) and not competitive at the top (where
+ * the people who actually move volume can get better terms elsewhere). The
+ * ladder moves that money from the bottom to the top: the base is
+ * `PARTNER_PERCENT` (config), and each rung below raises it once a partner's
+ * codes have actually brought that much PAID revenue in.
+ *
+ * Volume is lifetime ₸ of *granted* orders attributed to the partner's own
+ * codes — money that already arrived, never invites or clicks, so a rung cannot
+ * be reached by farming signups.
+ *
+ * Percent is a per-code column, so a partner enrolled on older terms keeps
+ * whatever they were promised: the effective rate is the MAX of their stored
+ * rate and the rung their volume has earned. Nobody's terms get worse.
+ *
+ * Thresholds are commercial terms we state to partners out loud (unlike the XP
+ * table, which is private tuning) — they belong in the repo so the bot, the
+ * Mini App and docs/partner-program.md cannot drift apart.
+ */
+export interface PartnerTier {
+  kzt: number; // lifetime attributed PAID revenue that unlocks this rung
+  percent: number; // cashback share of the pack, in 🔫
+}
+export const PARTNER_TIERS: PartnerTier[] = [
+  { kzt: 100_000, percent: 0.12 },
+  { kzt: 300_000, percent: 0.15 },
+  { kzt: 1_000_000, percent: 0.2 },
+];

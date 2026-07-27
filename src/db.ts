@@ -930,20 +930,105 @@ export async function listPartnerCodes(ownerId: number): Promise<PartnerCodeRow[
 }
 
 /**
- * Pay a creator for a purchase by a user acquired through their code. Like the
- * friend referral this is purchase-gated (payouts only on real Stars spend);
- * unlike it there is no first-purchase bonus or milestones — the creator's
- * entire deal is the (negotiated) lifetime percent. Returns the payout or null.
+ * Lifetime ₸ that a partner's own codes have actually brought in.
+ *
+ * Counts GRANTED orders only (`granted_at IS NOT NULL`) — money that arrived and
+ * was credited, not orders someone opened. Restricted to `kind='partner'`, so an
+ * admin-negotiated creator deal can never quietly promote someone up the
+ * self-serve ladder, and vice versa.
+ */
+export async function partnerVolumeKzt(ownerId: number): Promise<number> {
+  const rows = await q(
+    `SELECT COALESCE(SUM(o.amount_kzt), 0)::int AS kzt
+     FROM orders o
+     JOIN users u ON u.id = o.user_id
+     JOIN partner_codes pc ON pc.code = u.partner_code
+     WHERE o.granted_at IS NOT NULL AND pc.user_id = $1 AND pc.kind = 'partner'`,
+    [ownerId],
+  );
+  return Number(rows[0]?.kzt ?? 0);
+}
+
+export interface PartnerRate {
+  percent: number; // what this partner is paid right now
+  volumeKzt: number; // lifetime attributed paid revenue
+  nextAt: number | null; // ₸ that unlocks the next rung, null at the top
+  nextPercent: number | null; // what that rung pays
+}
+
+/**
+ * The cashback rate a self-serve partner is actually on, and what the next rung
+ * would pay.
+ *
+ * Three inputs, and the answer is the highest of them:
+ *  - `basePercent` — today's floor for a brand-new partner (config);
+ *  - the rung their lifetime volume has earned (models.ts PARTNER_TIERS);
+ *  - the rate stored on their own codes — the terms they were enrolled on.
+ *
+ * That last one is the whole reason this is computed at PAYOUT time rather than
+ * frozen into the code row at mint time. Lowering the base must not reach back
+ * and cut anyone who was already promised more, and a partner who mints a fresh
+ * link must not silently move onto worse terms than their older links. Resolving
+ * per owner, per payout, makes both of those impossible to get wrong.
+ */
+export async function partnerRateFor(
+  ownerId: number,
+  basePercent: number,
+  tiers: Array<{ kzt: number; percent: number }>,
+): Promise<PartnerRate> {
+  const volumeKzt = await partnerVolumeKzt(ownerId);
+  const stored = await q(
+    "SELECT COALESCE(MAX(percent), 0) AS p FROM partner_codes WHERE user_id = $1 AND kind = 'partner'",
+    [ownerId],
+  );
+  const ladder = [...tiers].sort((a, b) => a.kzt - b.kzt);
+  let percent = Math.max(basePercent, Number(stored[0]?.p ?? 0));
+  let nextAt: number | null = null;
+  let nextPercent: number | null = null;
+  for (const t of ladder) {
+    if (volumeKzt >= t.kzt) {
+      percent = Math.max(percent, t.percent);
+    } else if (t.percent > percent) {
+      // The first rung that is both unreached AND actually better than the rate
+      // they already hold — a grandfathered partner should be shown the next
+      // RAISE, not a rung they have already outgrown.
+      nextAt = t.kzt;
+      nextPercent = t.percent;
+      break;
+    }
+  }
+  return { percent, volumeKzt, nextAt, nextPercent };
+}
+
+/**
+ * Pay a partner for a purchase by a user acquired through their code. Like the
+ * friend referral this is purchase-gated (payouts only on real money spent).
+ *
+ * Self-serve (`kind='partner'`) codes are paid at the owner's LADDER rate —
+ * base, volume rung, or their grandfathered terms, whichever is highest (see
+ * partnerRateFor). The current order is already granted by the time this runs,
+ * so it counts toward the rung: the purchase that crosses a threshold is paid at
+ * the new rate, which is the direction to be generous in.
+ *
+ * Creator (`kind='creator'`) deals are admin-negotiated and paid at exactly the
+ * percent on the code — no ladder, in either direction.
+ *
+ * Returns the payout or null.
  */
 export async function rewardPartnerOnPurchase(
   buyerId: number,
   packCredits: number,
-): Promise<{ code: string; ownerId: number; amount: number; kind: "creator" | "partner" } | null> {
+  opts?: { basePercent: number; tiers: Array<{ kzt: number; percent: number }> },
+): Promise<{ code: string; ownerId: number; amount: number; kind: "creator" | "partner"; percent: number } | null> {
   const buyer = await getUser(buyerId);
   if (!buyer?.partner_code) return null;
   const pc = await getPartnerCode(buyer.partner_code);
   if (!pc || pc.user_id === buyerId) return null;
-  const amount = Math.floor(packCredits * pc.percent);
+  const percent =
+    pc.kind === "partner" && opts
+      ? (await partnerRateFor(pc.user_id, opts.basePercent, opts.tiers)).percent
+      : pc.percent;
+  const amount = Math.floor(packCredits * percent);
   if (amount > 0) {
     await addCredits(pc.user_id, amount, "partner", `${pc.code}:${buyerId}`);
     // Self-serve partner cashback is WITHDRAWABLE (funded by real Stars spend);
@@ -959,7 +1044,7 @@ export async function rewardPartnerOnPurchase(
   await q("UPDATE users SET ref_first_purchase_at = now() WHERE id = $1 AND ref_first_purchase_at IS NULL", [
     buyerId,
   ]);
-  return { code: pc.code, ownerId: pc.user_id, amount, kind: pc.kind };
+  return { code: pc.code, ownerId: pc.user_id, amount, kind: pc.kind, percent };
 }
 
 /** Per-code funnel for the creator dashboard: joined → paying → patrons earned. */
@@ -1073,13 +1158,21 @@ export async function myPartnerCodes(
 }
 
 /** Partner dashboard totals across all of a user's codes. */
-export async function partnerAccount(userId: number): Promise<{
+export async function partnerAccount(
+  userId: number,
+  // Pass the ladder to have the CURRENT rate resolved alongside the funnel. The
+  // dashboards need it (a partner must be able to see what they are on and what
+  // the next rung pays); callers that only want counts can omit it and skip two
+  // queries.
+  rateOpts?: { basePercent: number; tiers: Array<{ kzt: number; percent: number }> },
+): Promise<{
   joined: boolean;
   invited: number;
   paying: number;
   earned: number; // lifetime cashback + welcome journaled
   withdrawable: number; // 🔫 eligible for cash-out
   activeCodes: number;
+  rate: PartnerRate | null; // null when rateOpts was not passed
 }> {
   const u = await q(
     "SELECT partner_joined_at IS NOT NULL AS joined, partner_withdrawable FROM users WHERE id = $1",
@@ -1099,6 +1192,7 @@ export async function partnerAccount(userId: number): Promise<{
     "SELECT COUNT(*)::int AS c FROM partner_codes WHERE user_id = $1 AND kind = 'partner' AND active = true",
     [userId],
   );
+  const rate = rateOpts ? await partnerRateFor(userId, rateOpts.basePercent, rateOpts.tiers) : null;
   return {
     joined: Boolean(u[0]?.joined),
     invited: Number(funnel[0].invited),
@@ -1106,6 +1200,7 @@ export async function partnerAccount(userId: number): Promise<{
     earned: Number(earned[0].e),
     withdrawable: u[0] ? Number(u[0].partner_withdrawable) : 0,
     activeCodes: Number(active[0].c),
+    rate,
   };
 }
 
@@ -2926,11 +3021,26 @@ export async function awardXpOnce(
 
 /**
  * Award XP for a REPEATABLE action, bounded by an optional rolling-24h cap
- * (`xp.<action>.dailycap`). Used where the action is genuinely repeatable and
- * already costs the user something real — a paid render — so the cap is a
- * backstop rather than the main defence.
+ * (`xp.<action>.dailycap`, counted in AWARDS, not XP). Used where the action is
+ * genuinely repeatable and already costs the user something real — a paid
+ * render — so the cap is a backstop rather than the main defence.
+ *
+ * `credits` scales the award by what the action actually cost the user, at
+ * `xp.<action>.percredit` XP per 🔫, on top of the flat `xp.<action>`. Without
+ * it a flat per-render award prices a 2 🔫 edit and a 76 🔫 video the same, so
+ * the fastest route up the ladder is to repeat the cheapest model in the
+ * catalogue — the exact opposite of what levels are for. Unset (or 0) keeps the
+ * old flat behaviour, so this is inert until someone tunes it.
+ *
+ * The whole award lands as ONE ledger row under `action`, so the daily cap keeps
+ * counting renders rather than becoming a function of what they cost.
  */
-export async function awardXpCapped(userId: number, action: string, meta?: string): Promise<number> {
+export async function awardXpCapped(
+  userId: number,
+  action: string,
+  meta?: string,
+  credits = 0,
+): Promise<number> {
   const amount = await getEconomyConfig(`xp.${action}`);
   if (!amount) return 0;
   const cap = await getEconomyConfig(`xp.${action}.dailycap`);
@@ -2941,7 +3051,9 @@ export async function awardXpCapped(userId: number, action: string, meta?: strin
     );
     if (Number(today[0].c) >= cap) return 0;
   }
-  return awardXp(userId, action, meta);
+  const perCredit = (await getEconomyConfig(`xp.${action}.percredit`)) ?? 0;
+  const scaled = perCredit > 0 ? Math.max(0, credits) * perCredit : 0;
+  return addXp(userId, amount + scaled, action, meta);
 }
 
 /**
@@ -2958,19 +3070,20 @@ export async function awardXpCapped(userId: number, action: string, meta?: strin
  */
 export async function awardGenerationXp(generationId: number): Promise<number> {
   const rows = await q(
-    "SELECT user_id, model, source_id FROM generations WHERE id = $1 AND status = 'ok'",
+    "SELECT user_id, model, source_id, credits FROM generations WHERE id = $1 AND status = 'ok'",
     [generationId],
   );
   if (!rows.length) return 0;
   const userId = Number(rows[0].user_id);
   const model = String(rows[0].model);
   const sourceId = rows[0].source_id == null ? null : String(rows[0].source_id);
+  const spent = Number(rows[0].credits ?? 0);
   const spec = MODELS[model as keyof typeof MODELS] as { kind?: string } | undefined;
   const isVideo = spec?.kind === "image_to_video" || /^dub_/.test(model);
 
   let total = 0;
   // Repeatable: the render itself. Paid, so money already rate-limits it.
-  total += await awardXpCapped(userId, "generate", model);
+  total += await awardXpCapped(userId, "generate", model, spent);
   // One-time per engine and per mode — the "you tried something new" reward.
   total += await awardXpOnce(userId, `model:${model}`, "model", model);
   total += await awardXpOnce(userId, `mode:${isVideo ? "video" : "image"}`, isVideo ? "video" : "image", model);

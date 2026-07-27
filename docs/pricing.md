@@ -146,8 +146,11 @@ Built to be poured into a social-media push, each stage feeding the next:
 4. **Upsell ladder in the composer.** Hailuo Fast (10 🔫) → Kling 3.0 cinematic
    (42 🔫) → Seedance epic scenes with audio/physics (61–76 🔫). Every swap shows
    its price; epic scenes force the Seedance rung.
-5. **Loops — referral + partner.** 10% lifetime referral share and the 15%
-   partner cashback (docs/partner-program.md) turn payers into distributors.
+5. **Loops — referral + partner.** A 5% lifetime referral share and partner
+   cashback that starts at 10% and climbs to 20% with volume
+   (docs/partner-program.md) turn payers into distributors. Both bases were cut
+   in 2026-07 so the budget sits where it compounds: catalogue breadth and the
+   Level ladder, which is what makes a second purchase worth making.
 
 Track it with `/dash` (docs/monitoring.md): new-by-source, activation, and the
 per-source payer split tell you which creative to pour tomorrow's budget into.
@@ -162,7 +165,7 @@ friend spends real Stars.
 |---|---|---|---|
 | Join bonus | invited friend | joins via link | +3 🔫 |
 | First-purchase bonus | inviter | friend's **1st** purchase | +10 🔫 |
-| Lifetime share | inviter | **every** purchase | 10% of the pack |
+| Lifetime share | inviter | **every** purchase | 5% of the pack |
 | Milestones | inviter | 3 / 10 / 25 **paying** friends | +20 / +75 / +250 🔫 |
 
 - The **join bonus** is the only farmable surface, and it lands on a throwaway
@@ -170,8 +173,10 @@ friend spends real Stars.
 - **First-purchase** and **milestones** fire once, guarded by an atomic set-once
   flag (`users.ref_first_purchase_at`) and a paid-tier counter
   (`users.ref_milestones`). Milestones count **distinct paying** friends.
-- The 10% lifetime share is baked into the margin: base ~4.5× → **≥3.5× after
-  the payout**.
+- The lifetime share is baked into the margin, and it is paid in 🔫 rather than
+  ₸ — on the friend track those patrons are spend-only, so what it actually
+  costs is provider COGS, not revenue. Halving it in 2026-07 mattered less for
+  the margin than for what a standing claim on all future revenue crowds out.
 
 All amounts are env-tunable — see `.env.example` (`REFERRAL_*`) and
 `REFERRAL_MILESTONES` in `src/models.ts`.

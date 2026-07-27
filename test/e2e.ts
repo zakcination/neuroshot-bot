@@ -37,7 +37,7 @@ const { funnel, query, getUser, getOrCreateUser, addCredits, logGeneration, part
 const { startDubbing, dubCredits, availableDubTargets } = await import("../src/dubbing.js");
 const { buildDigest, checkAlerts, nudgeText, runReengagement, runReaper, runOrderReconciler } = await import("../src/monitor.js");
 const { nUnits, nResults } = await import("../src/text.js");
-const { PRESETS, presetModel } = await import("../src/models.js");
+const { PRESETS, presetModel, PARTNER_TIERS } = await import("../src/models.js");
 
 // ---------- Telegram API stub (transformer: intercepts every outgoing call) ----------
 
@@ -183,6 +183,12 @@ interface From {
   username?: string;
 }
 const alice: From = { id: 1001, is_bot: false, first_name: "Alice", username: "alice" };
+// Alice's balance is shared running state across the steps below. From the
+// referral payout onward it depends on tunable commercial dials (the referral
+// share), so the steps that follow track it as a running total instead of
+// restating a literal each time — a retuned dial must not fail an unrelated
+// step about, say, which endpoint a preset calls.
+let aliceBal = 0;
 const bob: From = { id: 1002, is_bot: false, first_name: "Bob", username: "bob" };
 const admin: From = { id: 9999, is_bot: false, first_name: "Admin", username: "admin" };
 const carol: From = { id: 1003, is_bot: false, first_name: "Carol", username: "carol" };
@@ -756,7 +762,7 @@ await step("error completion persists provider cost + request id (provider bille
   await query("DELETE FROM generations WHERE id = $1", [id]);
 });
 
-await step("referral: link gives friend a join bonus; first purchase pays inviter bonus + 10%", async () => {
+await step("referral: link gives friend a join bonus; first purchase pays inviter bonus + the lifetime share", async () => {
   await sendText(bob, `/start ${alice.id}`);
   assert.equal(await credits(bob.id), 0); // still parked — claim-gated same as any signup
   assert.equal(await ledgerCount("referral_join"), 0);
@@ -767,8 +773,14 @@ await step("referral: link gives friend a join bonus; first purchase pays invite
 
   await payForPack(bob, "popular", 2200);
   assert.equal(await credits(bob.id), 215); // 15 + 200
-  // alice: 182 + first-purchase bonus (10) + lifetime floor(200 * 0.10) = 20
-  assert.equal(await credits(alice.id), 212);
+  // alice: 182 + first-purchase bonus (10) + the lifetime share of the pack.
+  // Derived from config, not spelled out: the share is a commercial dial that
+  // gets retuned, and a hard-coded expectation here would only ever catch the
+  // retune itself — never a bug in how the share is paid.
+  const { config } = await import("../src/config.js");
+  const share = Math.floor(200 * config.referralPercent);
+  aliceBal = 182 + config.referralFirstPurchaseBonus + share;
+  assert.equal(await credits(alice.id), aliceBal);
   assert.equal(await ledgerCount("referral"), 1); // lifetime share
   assert.equal(await ledgerCount("referral_bonus"), 1); // one-time first purchase
 
@@ -776,7 +788,7 @@ await step("referral: link gives friend a join bonus; first purchase pays invite
     .filter((c) => c.payload.chat_id === alice.id)
     .at(-1)!;
   assert.match(notify.payload.text as string, /первую покупку/);
-  assert.match(notify.payload.text as string, /\+20 патронов/);
+  assert.match(notify.payload.text as string, new RegExp(`\\+${share} патрон`));
 });
 
 await step("/ref: dashboard shows stats + an opaque invite link (never the raw tg id)", async () => {
@@ -810,7 +822,10 @@ await step("/stats: admin sees totals, non-admin gets silence", async () => {
 
 await step("balance: /balance reflects the ledger", async () => {
   await sendText(alice, "/balance");
-  assert.match(lastText(), /Баланс: 🔫 212 патронов/);
+  // Read the ledger for the expected figure rather than pinning a literal: the
+  // number here is the running total of every earlier step, so a literal turns
+  // any upstream economy change into a failure in an unrelated test.
+  assert.match(lastText(), new RegExp(`Баланс: 🔫 ${await credits(alice.id)} патрон`));
 });
 
 await step("photoshoot preset: photo → menu:photoshoot → one tap renders via Seedream 4.5 edit (2 🔫)", async () => {
@@ -830,7 +845,7 @@ await step("photoshoot preset: photo → menu:photoshoot → one tap renders via
   assert.equal(call.endpoint, "fal-ai/bytedance/seedream/v4.5/edit"); // cheap, strong-identity preset engine
   assert.match(call.input.prompt as string, /corporate headshot/);
   assert.ok(Array.isArray(call.input.image_urls));
-  assert.equal(await credits(alice.id), 210); // 212 - 2
+  assert.equal(await credits(alice.id), (aliceBal -= 2)); // Seedream edit
 
   // Every delivered result carries the next-step keyboard.
   const delivered = resultPhotos().at(-1)!.payload.reply_markup as {
@@ -894,14 +909,14 @@ await step("«ещё стиль»: the photo is remembered after a generation", 
 await step("/premium: premium text-to-image charges 11 🔫 via GPT Image 2", async () => {
   await sendText(alice, "/premium");
   assert.match(lastText(), /напишите запрос сразу после команды/);
-  assert.equal(await credits(alice.id), 210); // bare command charges nothing
+  assert.equal(await credits(alice.id), aliceBal); // bare command charges nothing
 
   await sendText(alice, "/premium a perfume bottle on wet black marble");
   const call = falCalls.at(-1)!;
   assert.equal(call.endpoint, "fal-ai/gpt-image-2");
   assert.equal(call.input.quality, "high");
   assert.ok((call.input.prompt as string).startsWith("a perfume bottle on wet black marble. "));
-  assert.equal(await credits(alice.id), 199); // 210 - 11
+  assert.equal(await credits(alice.id), (aliceBal -= 11)); // premium edit
 });
 
 await step("product flow: menu:product → photo → product preset renders (2 🔫)", async () => {
@@ -918,7 +933,7 @@ await step("product flow: menu:product → photo → product preset renders (2 �
   const call = falCalls.at(-1)!;
   assert.equal(call.endpoint, "fal-ai/bytedance/seedream/v4.5/edit");
   assert.match(call.input.prompt as string, /white studio background/);
-  assert.equal(await credits(alice.id), 197); // 199 - 2
+  assert.equal(await credits(alice.id), (aliceBal -= 2));
 });
 
 await step("mode escape: menu:main clears a photo mode so text→image works again", async () => {
@@ -1031,9 +1046,12 @@ await step("referral milestone: 3 PAYING friends trigger the tier bonus, awarded
     await sendText(f, `/start ${patron.id}`); // joins via patron's link (friend gets join bonus)
     await payForPack(f, "start", 720); // buys → becomes a paying friend
   }
-  // Per paying friend patron earns first-purchase(10) + lifetime floor(60*0.10)=6 = 16.
-  // On the 3rd, the 3-friends milestone (+20) fires. 12 + 3*16 + 20 = 80.
-  assert.equal(await credits(patron.id), 80);
+  // Per paying friend: first-purchase bonus + the lifetime share of a 60 🔫 pack.
+  // On the 3rd, the 3-friends milestone (+20) fires on top. Both the share and
+  // the bonus are commercial dials, so the expectation is built from them.
+  const { config: cfg } = await import("../src/config.js");
+  const perFriend = cfg.referralFirstPurchaseBonus + Math.floor(60 * cfg.referralPercent);
+  assert.equal(await credits(patron.id), 12 + 3 * perFriend + 20);
   assert.equal(await ledgerCount("referral_milestone"), 1);
   const row = await query("SELECT ref_milestones FROM users WHERE id = $1", [patron.id]);
   assert.equal(Number(row[0].ref_milestones), 1);
@@ -1512,7 +1530,8 @@ await step("reward-architecture P4a: /season_new + /season_list are admin-only; 
   assert.equal(seasons.length, 1, "non-admin must not be able to create a season");
 });
 
-await step("partner v2: join → welcome (spend-only) + code; invitee pays → 15% withdrawable cashback", async () => {
+await step("partner v2: join → welcome (spend-only) + code; invitee pays → base-rate withdrawable cashback", async () => {
+  const { config: cfg } = await import("../src/config.js");
   const prt: From = { id: 8001, is_bot: false, first_name: "Prt", username: "prt" };
   await sendText(prt, "/start"); // 12 free
   await pressButton(prt, "claim:welcome"); // claim-gated
@@ -1520,12 +1539,13 @@ await step("partner v2: join → welcome (spend-only) + code; invitee pays → 1
   const acct0 = await partnerAccount(prt.id);
   assert.equal(acct0.joined, true);
   assert.equal(acct0.activeCodes, 1); // first code minted on join
-  assert.equal(await credits(prt.id), 12 + 180); // free + welcome bonus
+  const joined = 12 + cfg.partnerWelcome; // free + welcome bonus
+  assert.equal(await credits(prt.id), joined);
   assert.equal(acct0.withdrawable, 0); // welcome is NOT withdrawable
 
   // a second admin grant must NOT double-grant
   await sendText(admin, `/partner_grant ${prt.id}`);
-  assert.equal(await credits(prt.id), 192);
+  assert.equal(await credits(prt.id), joined);
   assert.equal((await partnerAccount(prt.id)).activeCodes, 1);
 
   const code = String(
@@ -1537,17 +1557,71 @@ await step("partner v2: join → welcome (spend-only) + code; invitee pays → 1
   const inv: From = { id: 8101, is_bot: false, first_name: "Inv", username: "inv" };
   await sendText(inv, `/start p_${code}`);
   await pressButton(inv, "claim:welcome"); // claim-gated
-  assert.equal(await credits(inv.id), 12 + 5); // free + partnerInviteeBonus
+  assert.equal(await credits(inv.id), 12 + cfg.partnerInviteeBonus);
   assert.equal(String((await getUser(inv.id))!.partner_code), code);
 
-  // invitee pays → partner earns 15% cashback, added to BOTH balances
-  await payForPack(inv, "popular", 2200); // 200 🔫 → floor(200*0.15)=30
-  const acct1 = await partnerAccount(prt.id);
+  // invitee pays → partner earns cashback at the BASE rung (11 000 ₸ of volume
+  // is nowhere near the first threshold), added to BOTH balances.
+  await payForPack(inv, "popular", 2200);
+  const cashback = Math.floor(200 * cfg.partnerPercent);
+  const acct1 = await partnerAccount(prt.id, { basePercent: cfg.partnerPercent, tiers: PARTNER_TIERS });
   assert.equal(acct1.paying, 1);
-  assert.equal(acct1.withdrawable, 30); // withdrawable cashback
-  assert.equal(await credits(prt.id), 192 + 30); // also spendable
+  assert.equal(acct1.withdrawable, cashback); // withdrawable cashback
+  assert.equal(await credits(prt.id), joined + cashback); // also spendable
+  assert.equal(acct1.rate!.percent, cfg.partnerPercent); // still on the base rung
+  assert.equal(acct1.rate!.volumeKzt, 11000); // one granted order, at its ₸
+  assert.equal(acct1.rate!.nextAt, PARTNER_TIERS[0].kzt);
   const notify = calls("sendMessage").filter((c) => c.payload.chat_id === prt.id).at(-1)!;
   assert.match(notify.payload.text as string, new RegExp(`кэшбэка.*p_${code}`));
+});
+
+await step("partner ladder: volume raises the rate; a grandfathered rate is never cut", async () => {
+  const { config: cfg } = await import("../src/config.js");
+  const { partnerRateFor } = await import("../src/db.js");
+  const top = PARTNER_TIERS[PARTNER_TIERS.length - 1];
+
+  // A partner whose invitees have paid past the first threshold moves up. The
+  // volume is faked at the ORDERS level (not the ledger), because that is what
+  // the rate reads — anything else would be testing the test.
+  const climb: From = { id: 8201, is_bot: false, first_name: "Climb", username: "climb" };
+  await sendText(climb, "/start");
+  await sendText(admin, `/partner_grant ${climb.id}`);
+  const code = String(
+    (await query("SELECT code FROM partner_codes WHERE user_id=$1 AND kind='partner' LIMIT 1", [climb.id]))[0].code,
+  );
+  const buyer: From = { id: 8301, is_bot: false, first_name: "Buyer", username: "buyer" };
+  await sendText(buyer, `/start p_${code}`);
+
+  const base = await partnerRateFor(climb.id, cfg.partnerPercent, PARTNER_TIERS);
+  assert.equal(base.percent, cfg.partnerPercent, "a partner with no volume starts on the base rung");
+  assert.equal(base.nextAt, PARTNER_TIERS[0].kzt);
+
+  await query(
+    "INSERT INTO orders (user_id, pack_id, amount_kzt, status, granted_at) VALUES ($1, 'pro', $2, 'paid', now())",
+    [buyer.id, PARTNER_TIERS[0].kzt],
+  );
+  const climbed = await partnerRateFor(climb.id, cfg.partnerPercent, PARTNER_TIERS);
+  assert.equal(climbed.percent, PARTNER_TIERS[0].percent, "reaching a threshold must raise the rate");
+  assert.equal(climbed.volumeKzt, PARTNER_TIERS[0].kzt);
+  assert.equal(climbed.nextPercent, PARTNER_TIERS[1].percent, "the next raise is the next BETTER rung");
+
+  // An order that was never granted is not volume — a partner cannot climb on
+  // top-ups that failed or are still waiting for payment.
+  await query(
+    "INSERT INTO orders (user_id, pack_id, amount_kzt, status) VALUES ($1, 'pro', $2, 'pending')",
+    [buyer.id, top.kzt],
+  );
+  assert.equal((await partnerRateFor(climb.id, cfg.partnerPercent, PARTNER_TIERS)).percent, PARTNER_TIERS[0].percent);
+
+  // Grandfathering: a partner enrolled on richer terms than today's base keeps
+  // them at zero volume. Lowering PARTNER_PERCENT must never reach backwards.
+  const legacy: From = { id: 8202, is_bot: false, first_name: "Legacy", username: "legacy" };
+  await sendText(legacy, "/start");
+  await sendText(admin, `/partner_grant ${legacy.id}`);
+  await query("UPDATE partner_codes SET percent = 0.15 WHERE user_id = $1", [legacy.id]);
+  const kept = await partnerRateFor(legacy.id, cfg.partnerPercent, PARTNER_TIERS);
+  assert.equal(kept.percent, 0.15, "an existing partner must keep the rate they were promised");
+  assert.equal(kept.nextPercent, top.percent, "and is shown the next rung that actually beats it");
 });
 
 await step("partner: self-serve join is disabled — only admin /partner_grant enrolls", async () => {
@@ -1567,11 +1641,15 @@ await step("partner: self-serve join is disabled — only admin /partner_grant e
 });
 
 await step("partner v2: withdrawal drains only withdrawable+credits; admin resolves; reject refunds", async () => {
+  const { config: cfg } = await import("../src/config.js");
   const prt = { id: 8001 };
-  await pressButton({ id: 8001, is_bot: false, first_name: "Prt" }, "partner:withdraw"); // withdrawable 30 ≥ 20
+  const owed = (await partnerAccount(prt.id)).withdrawable;
+  const spendable = await credits(prt.id);
+  await pressButton({ id: 8001, is_bot: false, first_name: "Prt" }, "partner:withdraw");
   const acct = await partnerAccount(prt.id);
+  assert.ok(owed >= cfg.withdrawMin, "fixture must have accrued enough to withdraw");
   assert.equal(acct.withdrawable, 0); // moved into the request
-  assert.equal(await credits(prt.id), 192); // 222 − 30 drained from spendable too
+  assert.equal(await credits(prt.id), spendable - owed); // drained from spendable too
 
   const wid = Number(
     (await query("SELECT id FROM withdrawals WHERE user_id=$1 ORDER BY id DESC LIMIT 1", [prt.id]))[0].id,
@@ -1583,8 +1661,8 @@ await step("partner v2: withdrawal drains only withdrawable+credits; admin resol
   // reject → 🔫 refunded to both balances
   await sendText(admin, `/payout ${wid} no`);
   assert.match(lastText(), /отклонена/);
-  assert.equal((await partnerAccount(prt.id)).withdrawable, 30);
-  assert.equal(await credits(prt.id), 222);
+  assert.equal((await partnerAccount(prt.id)).withdrawable, owed); // back where it was
+  assert.equal(await credits(prt.id), spendable);
   const st = await query("SELECT status FROM withdrawals WHERE id=$1", [wid]);
   assert.equal(st[0].status, "rejected");
 

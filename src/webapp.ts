@@ -46,6 +46,7 @@ import {
   normalizeOpts,
   packById,
   PACKS,
+  PARTNER_TIERS,
   PRESET_MODEL,
   presetModel,
   PRESETS,
@@ -486,7 +487,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
       enhanceChargesLeft(user.id, ENHANCE_STACK),
       achievements(user.id),
       certificates(user.id),
-      partnerAccount(user.id),
+      partnerAccount(user.id, { basePercent: config.partnerPercent, tiers: PARTNER_TIERS }),
       releaseState(user.id),
       latestPendingOrder(user.id),
       activeXpActions(),
@@ -579,8 +580,24 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
       withdrawable: partner.withdrawable,
       activeCodes: partner.activeCodes,
       maxCodes: config.partnerMaxCodes,
-      percent: Math.round(config.partnerPercent * 100),
+      // The rate THIS partner is on, not the base — a grandfathered or
+      // volume-promoted partner reading the base number would be told they earn
+      // less than they actually do. `topPercent` is what the ladder tops out at,
+      // so the pitch shown to a non-partner can quote the range honestly.
+      percent: Math.round((partner.rate?.percent ?? config.partnerPercent) * 100),
+      topPercent: Math.round(Math.max(...PARTNER_TIERS.map((t) => t.percent)) * 100),
+      volumeKzt: partner.rate?.volumeKzt ?? 0,
+      nextAt: partner.rate?.nextAt ?? null,
+      nextPercent: partner.rate?.nextPercent == null ? null : Math.round(partner.rate.nextPercent * 100),
       withdrawMin: config.withdrawMin,
+    },
+    // Friend-track terms. Sent rather than written into the page, because the
+    // share is env-tunable: a number hard-coded in app.html silently becomes a
+    // lie the first time it is retuned.
+    referral: {
+      percent: Math.round(config.referralPercent * 100),
+      joinBonus: config.referralJoinBonus,
+      firstPurchaseBonus: config.referralFirstPurchaseBonus,
     },
     // "Ваш путь в NeuroShot" roadmap — real completion signals, see roadmapProgress.
     roadmap,
