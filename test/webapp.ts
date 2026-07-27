@@ -675,10 +675,17 @@ await step("Studio catalog: FULL registry by mode, patron-only prices; every mod
     };
   };
   const s = cat.studio;
-  // Full registry: 9 image (edit + t2i) and 5 video models — the display pickers
-  // hide some of these; the Studio never does (spec G5 "ALL models").
-  assert.equal(s.image.length, 9);
-  assert.equal(s.video.length, 5);
+  // Full registry — the display pickers hide some models; the Studio never does
+  // (spec G5 "ALL models"). Counted against MODELS rather than written down, so
+  // adding a model cannot quietly leave the Studio showing a subset.
+  const { MODELS: ALL } = await import("../src/models.js");
+  const registry = Object.values(ALL);
+  assert.equal(s.image.length, registry.filter((m) => m.kind !== "image_to_video").length);
+  assert.equal(s.video.length, registry.filter((m) => m.kind === "image_to_video").length);
+  for (const m of registry) {
+    const shown = [...s.image, ...s.video].some((x) => x.key === m.key);
+    assert.ok(shown, `${m.key} is in the registry but missing from the Studio catalog`);
+  }
   for (const m of [...s.image, ...s.video]) {
     assert.ok(m.credits >= 1, `${m.key} zero price`);
     assert.equal(m.needsImage, m.kind !== "text_to_image", `${m.key} needsImage wrong`);

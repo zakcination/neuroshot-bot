@@ -422,6 +422,47 @@ export const MODELS = {
       resolutions: SEEDANCE_RES,
     },
   },
+  // Seedance 2.0 Mini (ByteDance) — the cheap Seedance. Same input contract as
+  // its siblings (minus bitrate_mode), caps at 720p, 4–15s.
+  //
+  // Added because independent side-by-side testing (July 2026) found it matched
+  // the flagship on talking-head and product shots — the two things most of our
+  // catalogue actually is — while costing half. Its documented weakness is
+  // MOTION: subjects move less than asked and framing comes out wider. That is
+  // exactly the line the "какую модель взять" quiz draws (src/seedance.ts).
+  //
+  // ⚠️ COST IS DERIVED, NOT MEASURED. fal prices this family per 1000 TOKENS
+  // ($0.007 mini / $0.0112 fast / $0.014 base), and our whole video pricing is a
+  // per-second proxy. The RATIOS agree (mini is half of base in both), so this
+  // is 0.5× the flagship's rate — but published per-clip figures suggest our
+  // absolute basis may be ~2× conservative for the whole family. No Seedance
+  // render has yet been observed with its real billed cost. Re-derive all three
+  // from one measured run before trusting any of these numbers (task: verify
+  // Seedance end to end).
+  seedance_mini: {
+    key: "seedance_mini",
+    kind: "image_to_video",
+    falEndpoint: "bytedance/seedance-2.0/mini/image-to-video",
+    credits: 38,
+    approxCostUsd: 0.76,
+    label: "Seedance 2.0 Mini",
+    note: "дешёвое видео со звуком",
+    input: (prompt, imageUrl, opts) => ({
+      prompt,
+      image_url: imageUrl,
+      resolution: opts?.resolution ?? "720p",
+      duration: String(opts?.duration ?? 5),
+      ...arParam(opts),
+      ...endParam(opts),
+    }),
+    video: {
+      perSecondUsd: 0.1517,
+      durations: [5, 10],
+      aspectRatios: ["auto", "9:16", "16:9", "1:1", "4:3", "3:4"],
+      endFrame: true,
+      resolutions: SEEDANCE_RES,
+    },
+  },
   // MiniMax Hailuo 2.3 Fast [Standard] — the DEFAULT scenario video engine:
   // fast, cheap, great for simple one-action motion. $0.19/6s → 10 🔫, $0.32/10s.
   // 768p, keeps the source frame's ratio (no aspect_ratio param). Durations 6/10.
@@ -453,7 +494,7 @@ export const MODELS = {
 export const IMAGE_MODEL_PICKER = ["text_to_image", "nb2_image", "nbpro_image", "premium_image"] as const;
 // The cheap "эконом" default leads: users keep it until they swap up to a
 // cinematic or physics/audio tier in the composer.
-export const VIDEO_MODEL_PICKER = ["hailuo_fast", "kling3", "animate", "seedance_fast", "seedance"] as const;
+export const VIDEO_MODEL_PICKER = ["hailuo_fast", "kling3", "animate", "seedance_mini", "seedance_fast", "seedance"] as const;
 
 /** Default image→video model for campaign upsells and one-tap animate flows. */
 export const DEFAULT_VIDEO: ModelSpec = MODELS.hailuo_fast;

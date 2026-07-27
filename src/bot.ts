@@ -77,6 +77,7 @@ import {
   type Preset,
 } from "./models.js";
 import { grantPurchase, registerPayments, sendBalance } from "./payments.js";
+import { nextSeedanceQuestion, recommendSeedance } from "./seedance.js";
 import {
   answerFor,
   classifySupport,
@@ -505,7 +506,42 @@ function videoModelsKeyboard(): InlineKeyboard {
     const m = MODELS[key];
     kb.text(`${m.label} (${m.credits} ${UNIT_EMOJI})`, `act:${key}`).row();
   }
+  // The Seedance tiers are named Mini / Fast / 2.0, which tells a buyer nothing.
+  // Left to guess, people pick by price and lose either way — the cheapest and
+  // blame us for the motion, or the dearest for a shot Mini renders identically.
+  kb.text("🤔 Не знаю, какую выбрать", "sdq:start").row();
   return kb.text("📋 Меню", "menu:main");
+}
+
+/** Ask the next quiz question, or deliver the verdict. `a` = answers so far. */
+function seedanceQuizKeyboard(answers: Record<string, boolean>): { text: string; kb: InlineKeyboard } {
+  const q = nextSeedanceQuestion(answers);
+  // "draft.-motion" reads as "draft yes, motion no". Longest possible state is
+  // every question answered no — 34 characters — so this stays far inside
+  // Telegram's 64-byte callback_data limit.
+  const encode = (extra: Record<string, boolean>): string =>
+    Object.entries({ ...answers, ...extra })
+      .map(([k, v]) => (v ? k : `-${k}`))
+      .join(".");
+  if (q) {
+    return {
+      text: `🎬 <b>Подберём модель</b>\n\n${q.question}`,
+      kb: new InlineKeyboard()
+        .text("Да", `sdq:${encode({ [q.id]: true })}`)
+        .text("Нет", `sdq:${encode({ [q.id]: false })}`)
+        .row()
+        .text("↩︎ Показать все модели", "menu:videopick"),
+    };
+  }
+  const v = recommendSeedance(answers)!;
+  const saved = v.savedVsFlagship > 0 ? `\n\n💡 Экономия против флагмана: ${nUnits(v.savedVsFlagship)} на 10-секундном ролике.` : "";
+  return {
+    text: `✅ <b>Вам подойдёт «${v.model.label}»</b> — ${v.model.credits} ${UNIT_EMOJI}\n\n${v.because}${saved}`,
+    kb: new InlineKeyboard()
+      .text(`🎬 Снять на «${v.model.label}»`, `act:${v.model.key}`)
+      .row()
+      .text("↩︎ Показать все модели", "menu:videopick"),
+  };
 }
 
 function presetsKeyboard(category: Preset["category"]): InlineKeyboard {
@@ -2073,6 +2109,23 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     // just-uploaded photo for the in-flow "pick a video model" step).
     await setPending(u.id, "mode_animate", null);
     await ctx.reply("Вот пример 👆 Пришлите фото 🎬 — и выберите модель (Kling / Seedance).");
+  });
+
+  // Seedance chooser. The answers live in the callback data rather than in the
+  // DB: the quiz is four taps long, throwing it away on a restart costs nothing,
+  // and a purchase decision should not need a write per tap. "sdq:a.b.-c" reads
+  // as "a yes, b yes, c no"; the ids are short by construction (see SEEDANCE_QUIZ)
+  // so the whole state stays far inside Telegram's 64-byte callback limit.
+  bot.callbackQuery(/^sdq:(.*)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const raw = ctx.match[1] ?? "";
+    const answers: Record<string, boolean> = {};
+    for (const part of raw.split(".").filter((x) => x && x !== "start")) {
+      if (part.startsWith("-")) answers[part.slice(1)] = false;
+      else answers[part] = true;
+    }
+    const { text, kb } = seedanceQuizKeyboard(answers);
+    await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
   });
 
   bot.callbackQuery("menu:videopick", async (ctx) => {

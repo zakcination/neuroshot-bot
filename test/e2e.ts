@@ -470,6 +470,52 @@ await step("curated prompts reach the provider whole — no silent decapitation"
   }
 });
 
+await step("the Seedance chooser lands on one model, cheapest-first, and never on Fast", async () => {
+  const { SEEDANCE_QUIZ, recommendSeedance, nextSeedanceQuestion } = await import("../src/seedance.js");
+
+  // Undecided until answered — the caller must keep asking rather than guess.
+  assert.equal(recommendSeedance({}), null);
+  assert.equal(nextSeedanceQuestion({})?.id, SEEDANCE_QUIZ[0].id);
+
+  // Any YES short-circuits on that question's verdict, ignoring later questions.
+  for (const q of SEEDANCE_QUIZ) {
+    const answers: Record<string, boolean> = {};
+    for (const earlier of SEEDANCE_QUIZ) {
+      if (earlier.id === q.id) break;
+      answers[earlier.id] = false;
+    }
+    answers[q.id] = true;
+    const v = recommendSeedance(answers);
+    assert.ok(v, `${q.id}=да left the quiz undecided`);
+    assert.equal(v.model.key, q.verdict, `${q.id}=да must land on ${q.verdict}`);
+    assert.equal(nextSeedanceQuestion(answers), null, `${q.id}=да must end the quiz`);
+    assert.ok(v.because.length > 40, `${q.id} verdict must explain itself`);
+  }
+
+  // All NO → the cheap default. This is the whole point: someone with no hard
+  // requirement should not be paying flagship rates.
+  const allNo = Object.fromEntries(SEEDANCE_QUIZ.map((q) => [q.id, false]));
+  const cheap = recommendSeedance(allNo)!;
+  assert.equal(cheap.model.key, "seedance_mini");
+  assert.ok(cheap.savedVsFlagship > 0, "the cheap verdict must actually save patrons");
+
+  // Fast is a coin flip at a ~60% premium over Mini in independent testing, so
+  // no path may recommend it. It stays in the picker (campaign scenes pin to it)
+  // but advice never sends anyone there.
+  const reachable = new Set(SEEDANCE_QUIZ.map((q) => q.verdict as string));
+  reachable.add(cheap.model.key);
+  assert.ok(!reachable.has("seedance_fast"), "the quiz must never recommend the Fast tier");
+
+  // Every verdict must be a real, generable model priced above zero.
+  const { MODELS } = await import("../src/models.js");
+  for (const key of reachable) {
+    const m = MODELS[key as keyof typeof MODELS];
+    assert.ok(m, `verdict ${key} is not a registry model`);
+    assert.equal(m.kind, "image_to_video");
+    assert.ok(m.credits >= 1);
+  }
+});
+
 await step("the video set really covers 3–5 finished videos, and the ladder stays monotonic", async () => {
   const { PACKS, MODELS, priceFor, packById } = await import("../src/models.js");
 
@@ -2068,6 +2114,45 @@ await step("the router stays out of the way of real prompts, and misroutes cost 
   const falBefore = falCalls.length;
   await pressButton(artist, "support:generate");
   assert.equal(falCalls.length, falBefore + 1, "the escape hatch must run the original text");
+});
+
+await step("the Seedance chooser walks in the chat and ends on a button that renders", async () => {
+  // Near the END of the suite on purpose: this step renders, and earlier steps
+  // assert on CUMULATIVE counts like calls("sendVideo").length.
+  const lost: From = { id: 7601, is_bot: false, first_name: "Lost", username: "lost" };
+  await getOrCreateUser(lost.id, lost.first_name, null, 0);
+  await addCredits(lost.id, 200, "admin_grant", "test");
+  await sendPhoto(lost, "lost-1"); // videopick needs a photo on file
+  await pressButton(lost, "menu:videopick");
+  assert.match(lastText(), /Выберите видео-модель/);
+
+  await pressButton(lost, "sdq:start");
+  assert.match(lastText(), /первая проба/i); // question 1
+
+  // Answer "нет" all the way down. Each tap carries the whole state in its own
+  // callback data, so this also proves the encoding round-trips.
+  const noTo = (id: string): string => {
+    const kb = calls("sendMessage").at(-1)!.payload.reply_markup as { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> };
+    const no = kb.inline_keyboard.flat().find((b) => b.text === "Нет");
+    assert.ok(no, `no "Нет" button on the ${id} question`);
+    assert.ok(no.callback_data.includes(`-${id}`), `the "Нет" button must record ${id} as answered`);
+    return no.callback_data;
+  };
+  await pressButton(lost, noTo("draft"));
+  await pressButton(lost, noTo("resolution"));
+  await pressButton(lost, noTo("motion"));
+  await pressButton(lost, noTo("speech"));
+
+  // Verdict: the cheap tier, with a reason and a button that actually renders.
+  assert.match(lastText(), /Seedance 2\.0 Mini/);
+  const kb = calls("sendMessage").at(-1)!.payload.reply_markup as { inline_keyboard: Array<Array<{ callback_data: string }>> };
+  assert.ok(kb.inline_keyboard.flat().some((b) => b.callback_data === "act:seedance_mini"), "verdict must offer the render button");
+
+  const falBefore = falCalls.length;
+  await pressButton(lost, "act:seedance_mini");
+  await sendText(lost, "медленный наезд, герой оборачивается");
+  assert.equal(falCalls.length, falBefore + 1, "the recommended model must be generable");
+  assert.equal(falCalls.at(-1)!.endpoint, "bytedance/seedance-2.0/mini/image-to-video");
 });
 
 await step("content moderation: a flagged photo is blocked BEFORE generation, refunded, distinct message", async () => {
