@@ -401,13 +401,197 @@ await step("insufficient 🔫: animate (25) with 7 shows the sales-page paywall,
   const wall = calls("sendMessage").at(-1)!;
   assert.match(wall.payload.text as string, /Ещё один шаг до результата/);
   assert.match(wall.payload.text as string, /Kling 2\.5 Turbo/); // the model's REAL name reaches the paywall copy
-  assert.match(wall.payload.text as string, /Комбо/); // combo offer anchored as the entry
+  assert.match(wall.payload.text as string, /Фото-сет/); // the live offer is anchored as the entry
   assert.match(wall.payload.text as string, /Осталось/); // live countdown snapshot in the paywall
   const kb = wall.payload.reply_markup as { inline_keyboard: Array<Array<{ callback_data: string }>> };
   const buttons = kb.inline_keyboard.flat().map((b) => b.callback_data);
-  assert.ok(buttons.includes("buy:combo"), "entry-pack CTA missing"); // one dominant CTA
+  assert.ok(buttons.includes("buy:photo_set"), "entry-pack CTA missing"); // one dominant CTA
   assert.ok(buttons.includes("show_packs"), "all-packs fallback missing");
   assert.equal(await credits(alice.id), 7);
+});
+
+await step("curated prompts reach the provider whole — no silent decapitation", async () => {
+  // Regression: sanitizePrompt applied the UNTRUSTED-input cap (1500) to our own
+  // curated prompts. Because prompts are written transformation-first with the
+  // invariants LAST, the five longest lost their tail — and the tail is where the
+  // identity lock lives. fashion shipped with 51% of its prompt missing. Nothing
+  // failed, nothing logged; the model simply stopped being told to keep the face.
+  const { PRESETS, CAMPAIGNS, FREE_SCENARIOS } = await import("../src/models.js");
+  const { craftPrompt } = await import("../src/promptcraft.js");
+  type Curated = { id: string; kind: "image_edit" | "text_to_image" | "image_to_video"; prompt: string };
+  const all: Curated[] = [];
+  for (const p of PRESETS) all.push({ id: `preset:${p.id}`, kind: "image_edit", prompt: p.prompt });
+  type Scene = { id: string; prompt?: string };
+  type Camp = { id: string; scenes?: Scene[]; videoScenes?: Scene[] };
+  for (const c of CAMPAIGNS as unknown as Camp[]) {
+    for (const s of c.scenes ?? []) if (s.prompt) all.push({ id: `camp:${c.id}/${s.id}`, kind: "image_edit", prompt: s.prompt });
+    for (const v of c.videoScenes ?? []) if (v.prompt) all.push({ id: `vid:${c.id}/${v.id}`, kind: "image_to_video", prompt: v.prompt });
+  }
+  for (const f of FREE_SCENARIOS) {
+    all.push({ id: `free:${f.id}/img`, kind: "image_edit", prompt: f.imagePrompt });
+    all.push({ id: `free:${f.id}/vid`, kind: "image_to_video", prompt: f.videoPrompt });
+  }
+  assert.ok(all.length > 40, `expected the whole curated catalogue, saw ${all.length}`);
+  // The clauses that carry the product's promise. If a prompt states one, the
+  // text actually sent must still state it — that is the assertion the old
+  // truncation would have failed on five presets.
+  const INVARIANTS = [
+    "Keep the face and identity of EVERY person",
+    "Keep the SAME NUMBER of people",
+    "not a real child and not a second guest",
+  ];
+
+  // A look that shows the subject more than once by design must NOT also carry
+  // the headcount rule — the brief asks for repeats and the guard forbids them,
+  // and a prompt that argues with itself gets resolved by the model, not by us.
+  // photobooth_bw is 1800 chars, so it never actually received the rule while
+  // curated prompts were truncated: un-cutting the tail is what made this live.
+  const MULTIPLIES_SUBJECT = ["pixar_me", "mini_squad", "photobooth_bw"];
+  for (const id of MULTIPLIES_SUBJECT) {
+    const preset = PRESETS.find((p) => p.id === id);
+    assert.ok(preset, `${id} is gone — update this list or the look it guards`);
+    assert.doesNotMatch(
+      preset.prompt,
+      /Keep the SAME NUMBER of people/,
+      `${id} repeats the subject on purpose and must not also demand the source headcount`,
+    );
+    assert.match(preset.prompt, /Keep the face and identity of EVERY person/, `${id} lost its identity lock`);
+  }
+  for (const c of all) {
+    const flat = c.prompt.replace(/\s+/g, " ").trim();
+    const sent = craftPrompt(c.kind, c.prompt, true);
+    // No ceiling is asserted on purpose: a curated prompt is as long as the
+    // context it must carry. What IS asserted is that none of it is dropped.
+    assert.equal(sent.length, flat.length, `${c.id}: ${flat.length - sent.length} characters silently dropped`);
+    for (const clause of INVARIANTS) {
+      if (!flat.includes(clause)) continue;
+      assert.ok(sent.includes(clause), `${c.id}: "${clause}" never reaches the provider`);
+    }
+  }
+});
+
+await step("the Seedance chooser lands on one model, cheapest-first, and never on Fast", async () => {
+  const { SEEDANCE_QUIZ, recommendSeedance, nextSeedanceQuestion } = await import("../src/seedance.js");
+
+  // Undecided until answered — the caller must keep asking rather than guess.
+  assert.equal(recommendSeedance({}), null);
+  assert.equal(nextSeedanceQuestion({})?.id, SEEDANCE_QUIZ[0].id);
+
+  // Any YES short-circuits on that question's verdict, ignoring later questions.
+  for (const q of SEEDANCE_QUIZ) {
+    const answers: Record<string, boolean> = {};
+    for (const earlier of SEEDANCE_QUIZ) {
+      if (earlier.id === q.id) break;
+      answers[earlier.id] = false;
+    }
+    answers[q.id] = true;
+    const v = recommendSeedance(answers);
+    assert.ok(v, `${q.id}=да left the quiz undecided`);
+    assert.equal(v.model.key, q.verdict, `${q.id}=да must land on ${q.verdict}`);
+    assert.equal(nextSeedanceQuestion(answers), null, `${q.id}=да must end the quiz`);
+    assert.ok(v.because.length > 40, `${q.id} verdict must explain itself`);
+  }
+
+  // All NO → the cheap default. This is the whole point: someone with no hard
+  // requirement should not be paying flagship rates.
+  const allNo = Object.fromEntries(SEEDANCE_QUIZ.map((q) => [q.id, false]));
+  const cheap = recommendSeedance(allNo)!;
+  assert.equal(cheap.model.key, "seedance_mini");
+  assert.ok(cheap.savedVsFlagship > 0, "the cheap verdict must actually save patrons");
+
+  // Fast is a coin flip at a ~60% premium over Mini in independent testing, so
+  // no path may recommend it. It stays in the picker (campaign scenes pin to it)
+  // but advice never sends anyone there.
+  const reachable = new Set(SEEDANCE_QUIZ.map((q) => q.verdict as string));
+  reachable.add(cheap.model.key);
+  assert.ok(!reachable.has("seedance_fast"), "the quiz must never recommend the Fast tier");
+
+  // Every verdict must be a real, generable model priced above zero.
+  const { MODELS } = await import("../src/models.js");
+  for (const key of reachable) {
+    const m = MODELS[key as keyof typeof MODELS];
+    assert.ok(m, `verdict ${key} is not a registry model`);
+    assert.equal(m.kind, "image_to_video");
+    assert.ok(m.credits >= 1);
+  }
+});
+
+await step("the video set really covers 3–5 finished videos, and the ladder stays monotonic", async () => {
+  const { PACKS, MODELS, priceFor, packById } = await import("../src/models.js");
+
+  // "One good video" = two strong frames + ten seconds of motion. These are the
+  // four tiers a buyer can realistically work at; the set is sized so that the
+  // promise on the title holds at EVERY one of them, not just the cheapest.
+  const recipes = [
+    { frame: MODELS.nb2_edit, video: MODELS.seedance_fast },
+    { frame: MODELS.nbpro_edit, video: MODELS.seedance_fast },
+    { frame: MODELS.nbpro_edit, video: MODELS.seedance },
+    { frame: MODELS.premium_edit, video: MODELS.seedance },
+  ].map((r) => 2 * priceFor(r.frame) + priceFor(r.video, { duration: 10 }));
+
+  const videoSet = packById("video_set")!;
+  const counts = recipes.map((cost) => Math.floor(videoSet.credits / cost));
+  assert.ok(
+    Math.min(...counts) >= 3 && Math.max(...counts) <= 5,
+    `video_set (${videoSet.credits} 🔫) yields ${counts.join("/")} videos — the title promises 3–5`,
+  );
+
+  // Bigger pack ⇒ better ₸ per patron, across the whole ladder. The purpose-built
+  // sets are declared out of size order, so this is a real invariant to hold.
+  const ladder = PACKS.filter((p) => !p.offer && !p.course && !p.retired).sort((a, b) => a.credits - b.credits);
+  for (let i = 1; i < ladder.length; i++) {
+    const prev = ladder[i - 1].kzt / ladder[i - 1].credits;
+    const here = ladder[i].kzt / ladder[i].credits;
+    assert.ok(here < prev, `${ladder[i].id} (${here.toFixed(1)} ₸/🔫) is not better than ${ladder[i - 1].id} (${prev.toFixed(1)})`);
+  }
+
+  // The offer is a tripwire: it must undercut the cheapest ladder rate, or it is
+  // just a pack with a countdown glued on.
+  const photoSet = packById("photo_set")!;
+  assert.ok(photoSet.offer, "the photo set is the tripwire and must be flagged as an offer");
+  assert.ok(
+    photoSet.kzt / photoSet.credits < ladder[0].kzt / ladder[0].credits,
+    "the offer must be priced below the ladder floor",
+  );
+});
+
+await step("paywall never anchors a pack that cannot cover the result it promises", async () => {
+  // Regression: the anchor used to be the combo unconditionally, and the result
+  // count was clamped with Math.max(1, …). The combo is 36 🔫 while the video
+  // models cost 42 / 61 / 76 🔫 — so the paywall said "≈1 такой результат" for a
+  // pack that buys zero of them. The buyer paid, landed back on the same paywall
+  // and asked for a refund. Every campaign video scene routed through this.
+  const { paywallText, paywallKeyboard } = await import("../src/payments.js");
+  const { MODELS, PACKS } = await import("../src/models.js");
+  const packByKzt = new Map(PACKS.map((p) => [p.kzt, p]));
+  for (const model of Object.values(MODELS)) {
+    for (const held of [0, 1, model.credits - 1]) {
+      const text = paywallText(model, held);
+      // The anchored pack is the one the dominant CTA buys.
+      const kb = paywallKeyboard(model) as { inline_keyboard: Array<Array<{ callback_data?: string }>> };
+      const buy = kb.inline_keyboard.flat().find((b) => b.callback_data?.startsWith("buy:"));
+      const pack = PACKS.find((p) => `buy:${p.id}` === buy?.callback_data);
+      assert.ok(pack, `no entry-pack CTA for ${model.key}`);
+      // A course tier must never be anchored on a generation paywall.
+      assert.ok(!pack.course, `${model.key} anchored the course pack ${pack.id}`);
+      // THE INVARIANT: balance + pack must actually buy at least one of it.
+      assert.ok(
+        pack.credits >= model.credits,
+        `${model.key} (${model.credits} 🔫) anchored ${pack.id} (${pack.credits} 🔫) — cannot cover one result`,
+      );
+      // …and the number printed in the copy has to be the true one.
+      const price = Number(/за (\d+) ₸/.exec(text)?.[1]);
+      const shown = Number(/<b>≈?\s*(\d+)/.exec(text)?.[1] ?? /(\d+)\s*результат/.exec(text)?.[1]);
+      const anchored = packByKzt.get(price);
+      assert.ok(anchored, `paywall price ${price} ₸ matches no pack for ${model.key}`);
+      assert.equal(
+        shown,
+        Math.floor((held + anchored.credits) / model.credits),
+        `${model.key} with ${held} 🔫: copy overstates what ${anchored.id} buys`,
+      );
+      assert.ok(shown >= 1, `${model.key} with ${held} 🔫: paywall promises ${shown} results`);
+    }
+  }
 });
 
 await step("purchase: /buy → Kaspi order → admin confirm credits the pack", async () => {
@@ -416,8 +600,11 @@ await step("purchase: /buy → Kaspi order → admin confirm credits the pack", 
     inline_keyboard: Array<Array<{ callback_data: string }>>;
   };
   const packButtons = kb.inline_keyboard.flat().map((b) => b.callback_data);
-  // The limited-time combo offer leads, then the KZT ladder.
-  assert.deepEqual(packButtons, ["buy:combo", "buy:start", "buy:popular", "buy:pro", "buy:studio"]);
+  // The limited-time offer leads, then the KZT ladder. `combo` is retired — it
+  // stays in PACKS so orders already placed against it still resolve, and must
+  // never appear for sale again.
+  assert.deepEqual(packButtons, ["buy:photo_set", "buy:start", "buy:popular", "buy:pro", "buy:studio", "buy:video_set"]);
+  assert.ok(!packButtons.includes("buy:combo"), "a retired pack must never be listed for sale");
 
   await pressButton(alice, "buy:popular"); // creates a pending Kaspi order
   assert.match(lastText(), /11000 ₸/); // KZT price shown
@@ -920,7 +1107,7 @@ await step("campaigns: one-tap fairy-tale image → one-tap «Оживить» a
     inline_keyboard: Array<Array<{ callback_data: string }>>;
   };
   const camps = kb.inline_keyboard.flat().map((b) => b.callback_data);
-  for (const c of ["camp:skazka", "camp:cartoon", "camp:worldcup", "camp:oldphoto", "camp:poster", "camp:minifilm"]) {
+  for (const c of ["camp:skazka", "camp:oldphoto", "camp:poster", "camp:minifilm", "camp:odyssey"]) {
     assert.ok(camps.includes(c), `campaign menu misses ${c}`);
   }
 
@@ -1143,6 +1330,29 @@ await step("free scenario: princess renders the WHOLE chain free (Seedream → H
   const falAfter = falCalls.length;
   await pressButton(zoe, "free:football");
   assert.equal(falCalls.length, falAfter);
+});
+
+await step("campaign-tagged slugs route like their base link and keep the full tag for attribution", async () => {
+  const { entryLinkFor, ENTRY_LINKS } = await import("../src/models.js");
+  // A media plan needs one link per CREATIVE to answer "which creative brought
+  // the money", so the slug carries channel/wave/creative after the route. Exact
+  // lookup dropped every one of those into the generic welcome.
+  for (const base of Object.keys(ENTRY_LINKS)) {
+    assert.deepEqual(entryLinkFor(`${base}_tg1_cr07`), ENTRY_LINKS[base], `${base} + tag lost its route`);
+  }
+  // The delimiter is load-bearing: a longer slug that merely STARTS with a route
+  // name is a different slug, not that route.
+  assert.equal(entryLinkFor("src_productx"), null);
+  assert.equal(entryLinkFor("src_"), null);
+  assert.equal(entryLinkFor("tiktok_jan"), null);
+
+  // Routing on a tag must not rewrite what gets stored: first-touch attribution
+  // needs the FULL slug, otherwise every creative collapses into its base route.
+  const tagged: From = { id: 6201, is_bot: false, first_name: "Tagged", username: "tagged" };
+  await sendText(tagged, "/start src_revive_tg1_cr07");
+  assert.match(lastText(), /старое фото/i);
+  const row = await query("SELECT source FROM users WHERE id = $1", [tagged.id]);
+  assert.equal(row[0].source, "src_revive_tg1_cr07");
 });
 
 await step("persona entry link: /start src_football routes straight to the football free scenario", async () => {
@@ -1453,6 +1663,37 @@ await step("alerts: >5% model error rate trips the fal-drift interrupt; healthy 
   assert.match(drift!.text, /fal\.ai/);
 });
 
+await step("alerts: a buyer who said they paid and got nothing pulls an admin in", async () => {
+  const { stalePaidClaims } = await import("../src/db.js");
+  const waiting = 7401;
+  await getOrCreateUser(waiting, "waiting", null, 0);
+  const orderId = await createOrder(waiting, "photo_set", 2900);
+
+  // Fresh claim: inside the grace window, so nothing fires yet — a buyer still
+  // finishing in the Kaspi app is not an incident.
+  await query("UPDATE orders SET paid_claimed_at = now() WHERE id = $1", [orderId]);
+  assert.equal((await stalePaidClaims(15)).length, 0, "a fresh claim is not stuck");
+  assert.ok(!(await checkAlerts()).some((a) => a.key.startsWith("order_waiting:")), "quiet inside the grace window");
+
+  // Aged past the window: the money is sitting somewhere and nobody has been told.
+  await query("UPDATE orders SET paid_claimed_at = now() - interval '40 minutes' WHERE id = $1", [orderId]);
+  const alert = (await checkAlerts()).find((a) => a.key.startsWith(`order_waiting:${orderId}:`));
+  assert.ok(alert, "a stuck paid claim must alert");
+  assert.match(alert!.text, new RegExp(`/order ${orderId} ok`)); // the exact command to run
+  assert.match(alert!.text, /2900 ₸/);
+
+  // Age-bounded at the far end too: an ancient claim is history, not work. This
+  // is the shape that produced the phantom-payment incident.
+  await query("UPDATE orders SET paid_claimed_at = now() - interval '30 days' WHERE id = $1", [orderId]);
+  assert.equal((await stalePaidClaims(15)).length, 0, "an ancient claim must not resurface as work");
+
+  // Granting it clears the alert, because the row leaves 'pending'.
+  await query("UPDATE orders SET paid_claimed_at = now() - interval '40 minutes' WHERE id = $1", [orderId]);
+  assert.equal((await stalePaidClaims(15)).length, 1);
+  await query("UPDATE orders SET status = 'paid' WHERE id = $1", [orderId]);
+  assert.equal((await stalePaidClaims(15)).length, 0, "a granted order must stop nagging");
+});
+
 await step("re-engagement nudge: sweeps dormant-but-recent users once, with a tailored hook", async () => {
   // Backdated synthetic users (every other test user is 'active now' → ineligible).
   await query(
@@ -1515,9 +1756,9 @@ await step("fresh photo: a generated output is never left in pending_file_id; a 
   const ben: From = { id: 5602, is_bot: false, first_name: "Ben", username: "ben" };
   await sendText(ben, "/start");
   await payForPack(ben, "start", 720);
-  await pressButton(ben, "camp:worldcup");
+  await pressButton(ben, "camp:skazka");
   await sendPhoto(ben, "ben-1");
-  await pressButton(ben, "cpre:worldcup:kit"); // renders the campaign image
+  await pressButton(ben, "cpre:skazka:royal"); // renders the campaign image
   // Invariant: pending_file_id is the UPLOAD (ben-1), never the generated URL.
   const pend = (await query("SELECT pending_file_id FROM users WHERE id = $1", [ben.id]))[0].pending_file_id as string;
   assert.ok(pend && !/^https?:\/\//.test(pend), `pending_file_id holds a generated URL: ${pend}`);
@@ -1823,6 +2064,95 @@ await step("dubbing engine: charge → dub job → deliver; failure refunds exac
   await addCredits(poor.id, 5, "admin_grant", "test");
   assert.deepEqual(await startDubbing(poor.id, "x", "en", 60), { ok: false, error: "insufficient" });
   assert.equal(await credits(poor.id), 5); // not charged
+});
+
+await step("a payment complaint reaches a human and costs nothing", async () => {
+  // The message most likely to arrive from an unhappy buyer used to be answered
+  // by charging 2 🔫 and returning a picture of their own complaint, with nobody
+  // notified. This is the single most expensive text a bot can mishandle.
+  const upset: From = { id: 7301, is_bot: false, first_name: "Upset", username: "upset" };
+  await getOrCreateUser(upset.id, upset.first_name, null, 0);
+  await addCredits(upset.id, 10, "admin_grant", "test");
+  const falBefore = falCalls.length;
+  const adminBefore = calls("sendMessage").filter((c) => c.payload.chat_id === 9999).length;
+
+  await sendText(upset, "оплатил, а патроны не пришли");
+
+  assert.equal(falCalls.length, falBefore, "a support message must never reach the provider");
+  assert.equal(await credits(upset.id), 10, "a support message must never be charged");
+  assert.match(lastText(), /номер заявки/i);
+  const relayed = calls("sendMessage").filter((c) => c.payload.chat_id === 9999).length;
+  assert.ok(relayed > adminBefore, "a payment complaint must reach an admin");
+  const evt = await query("SELECT type, meta FROM events WHERE user_id = $1 ORDER BY id DESC LIMIT 1", [upset.id]);
+  assert.equal(evt[0].type, "support");
+  assert.equal(evt[0].meta, "payment");
+});
+
+await step("the router stays out of the way of real prompts, and misroutes cost one tap", async () => {
+  const { classifySupport } = await import("../src/support.js");
+  // Scene descriptions must pass straight through, including ones that happen to
+  // contain a cue word. A false positive steals a paid request.
+  for (const prompt of [
+    "мужчина у которого не работает телефон, ночная улица",
+    "сколько стоит этот товар — надпись на витрине магазина в стиле неон",
+    "портрет девушки в красном платье",
+  ]) {
+    assert.equal(classifySupport(prompt), null, `intercepted a real prompt: ${prompt}`);
+  }
+  // Long text is a brief, not a complaint, whatever words are in it.
+  assert.equal(classifySupport("не работает ".repeat(20)), null);
+  // Money cues stand alone; softer intents need question shape.
+  assert.equal(classifySupport("оплатил, где патроны"), "payment");
+  assert.equal(classifySupport("как это работает?"), "howto");
+  assert.equal(classifySupport("как это работает"), null);
+
+  // And when it IS wrong, the held text runs on one tap rather than being lost.
+  const artist: From = { id: 7302, is_bot: false, first_name: "Artist", username: "artist" };
+  await getOrCreateUser(artist.id, artist.first_name, null, 0);
+  await addCredits(artist.id, 10, "admin_grant", "test");
+  await sendText(artist, "верните деньги"); // intercepted, held
+  const falBefore = falCalls.length;
+  await pressButton(artist, "support:generate");
+  assert.equal(falCalls.length, falBefore + 1, "the escape hatch must run the original text");
+});
+
+await step("the Seedance chooser walks in the chat and ends on a button that renders", async () => {
+  // Near the END of the suite on purpose: this step renders, and earlier steps
+  // assert on CUMULATIVE counts like calls("sendVideo").length.
+  const lost: From = { id: 7601, is_bot: false, first_name: "Lost", username: "lost" };
+  await getOrCreateUser(lost.id, lost.first_name, null, 0);
+  await addCredits(lost.id, 200, "admin_grant", "test");
+  await sendPhoto(lost, "lost-1"); // videopick needs a photo on file
+  await pressButton(lost, "menu:videopick");
+  assert.match(lastText(), /Выберите видео-модель/);
+
+  await pressButton(lost, "sdq:start");
+  assert.match(lastText(), /первая проба/i); // question 1
+
+  // Answer "нет" all the way down. Each tap carries the whole state in its own
+  // callback data, so this also proves the encoding round-trips.
+  const noTo = (id: string): string => {
+    const kb = calls("sendMessage").at(-1)!.payload.reply_markup as { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> };
+    const no = kb.inline_keyboard.flat().find((b) => b.text === "Нет");
+    assert.ok(no, `no "Нет" button on the ${id} question`);
+    assert.ok(no.callback_data.includes(`-${id}`), `the "Нет" button must record ${id} as answered`);
+    return no.callback_data;
+  };
+  await pressButton(lost, noTo("draft"));
+  await pressButton(lost, noTo("resolution"));
+  await pressButton(lost, noTo("motion"));
+  await pressButton(lost, noTo("speech"));
+
+  // Verdict: the cheap tier, with a reason and a button that actually renders.
+  assert.match(lastText(), /Seedance 2\.0 Mini/);
+  const kb = calls("sendMessage").at(-1)!.payload.reply_markup as { inline_keyboard: Array<Array<{ callback_data: string }>> };
+  assert.ok(kb.inline_keyboard.flat().some((b) => b.callback_data === "act:seedance_mini"), "verdict must offer the render button");
+
+  const falBefore = falCalls.length;
+  await pressButton(lost, "act:seedance_mini");
+  await sendText(lost, "медленный наезд, герой оборачивается");
+  assert.equal(falCalls.length, falBefore + 1, "the recommended model must be generable");
+  assert.equal(falCalls.at(-1)!.endpoint, "bytedance/seedance-2.0/mini/image-to-video");
 });
 
 await step("content moderation: a flagged photo is blocked BEFORE generation, refunded, distinct message", async () => {

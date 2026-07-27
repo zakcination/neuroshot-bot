@@ -40,6 +40,18 @@ export interface GenOpts {
    * it after validating every entry against the media-host allow-list.
    */
   extraImageUrls?: string[];
+  /**
+   * Audio and video REFERENCES for Seedance reference mode. SERVER-SET ONLY,
+   * exactly like extraImageUrls — normalizeOpts does not copy them, so a client
+   * cannot name arbitrary URLs for us to fetch and hand to a provider.
+   *
+   * These are the one attachment kind our image classifier cannot screen (video
+   * is screened by an extracted frame; audio is not screened at all). The
+   * product's answer is a rights notice the uploader accepts, recorded per
+   * upload — see src/media.ts for exactly what that does and does not cover.
+   */
+  audioUrls?: string[];
+  videoUrls?: string[];
 }
 
 /** A quality/resolution tier the composer can offer; `mult` scales credits AND cost. */
@@ -97,6 +109,12 @@ export interface ModelSpec {
   image?: ImageParams;
   /** Present on image_to_video models the composer can fine-tune. */
   video?: VideoParams;
+  /**
+   * This model takes AUDIO and VIDEO references alongside its photos (Seedance
+   * reference mode). Declared rather than inferred from the endpoint id so the
+   * server has one thing to check before accepting attachments it cannot screen.
+   */
+  reference?: boolean;
 }
 
 /** Aspect ratios offered for images ("auto" = model decides / keep source). */
@@ -210,6 +228,43 @@ const SEEDANCE_RES: ResTier[] = [
   { id: "720p", label: "720p", mult: 1 },
   { id: "480p", label: "480p ⚡", mult: 1 },
 ];
+
+/**
+ * Reference-mode framing. Seedance's reference endpoint binds attachments by
+ * NAME — its own docs say to address them in the prompt as @Image1, @Image2 —
+ * and our users write plain Russian, so nothing would ever be addressed. This
+ * appends the binding, and says what the images are FOR: several photographs of
+ * one subject, not several subjects, and not a collage. Same failure this
+ * codebase already fixed for multi-image edits (see refPrompt).
+ */
+function referencePrompt(prompt: string, images: number, audio = 0, video = 0): string {
+  if (images + audio + video < 1) return prompt;
+  const list = (name: string, n: number): string =>
+    Array.from({ length: n }, (_, i) => `@${name}${i + 1}`).join(", ");
+  const parts: string[] = [];
+  if (images) {
+    parts.push(
+      `${list("Image", images)} are reference photographs of the SAME subject or subjects, shot from ` +
+        `different angles and in different lighting — read them together to get the faces right. They ` +
+        `show the same people repeated, NOT additional people: the video must contain exactly the ` +
+        `people who appear in them, no one added and no one dropped. Never render a collage, a split ` +
+        `screen or a contact sheet — this is one continuous shot.`,
+    );
+  }
+  if (video) {
+    parts.push(
+      `${list("Video", video)} are reference clips: follow their MOTION, camera movement and pacing. ` +
+        `Take the people and the setting from the photographs, not from these clips.`,
+    );
+  }
+  if (audio) {
+    parts.push(
+      `${list("Audio", audio)} is the reference sound: match the speech, timing and delivery to it, ` +
+        `and keep the subject's lips in sync with it.`,
+    );
+  }
+  return `${prompt}\n\n${parts.join(" ")}`;
+}
 
 export const MODELS = {
   photo_edit: {
@@ -422,6 +477,102 @@ export const MODELS = {
       resolutions: SEEDANCE_RES,
     },
   },
+  // Seedance 2.0 Mini (ByteDance) — the cheap Seedance. Same input contract as
+  // its siblings (minus bitrate_mode), caps at 720p, 4–15s.
+  //
+  // Added because independent side-by-side testing (July 2026) found it matched
+  // the flagship on talking-head and product shots — the two things most of our
+  // catalogue actually is — while costing half. Its documented weakness is
+  // MOTION: subjects move less than asked and framing comes out wider. That is
+  // exactly the line the "какую модель взять" quiz draws (src/seedance.ts).
+  //
+  // ⚠️ COST IS DERIVED, NOT MEASURED. fal prices this family per 1000 TOKENS
+  // ($0.007 mini / $0.0112 fast / $0.014 base), and our whole video pricing is a
+  // per-second proxy. The RATIOS agree (mini is half of base in both), so this
+  // is 0.5× the flagship's rate — but published per-clip figures suggest our
+  // absolute basis may be ~2× conservative for the whole family. No Seedance
+  // render has yet been observed with its real billed cost. Re-derive all three
+  // from one measured run before trusting any of these numbers (task: verify
+  // Seedance end to end).
+  seedance_mini: {
+    key: "seedance_mini",
+    kind: "image_to_video",
+    falEndpoint: "bytedance/seedance-2.0/mini/image-to-video",
+    credits: 38,
+    approxCostUsd: 0.76,
+    label: "Seedance 2.0 Mini",
+    note: "дешёвое видео со звуком",
+    input: (prompt, imageUrl, opts) => ({
+      prompt,
+      image_url: imageUrl,
+      resolution: opts?.resolution ?? "720p",
+      duration: String(opts?.duration ?? 5),
+      ...arParam(opts),
+      ...endParam(opts),
+    }),
+    video: {
+      perSecondUsd: 0.1517,
+      durations: [5, 10],
+      aspectRatios: ["auto", "9:16", "16:9", "1:1", "4:3", "3:4"],
+      endFrame: true,
+      resolutions: SEEDANCE_RES,
+    },
+  },
+  // Seedance 2.0 Mini, REFERENCE mode — video built from several photographs
+  // rather than one frame. The endpoint takes image_urls (up to 9) and binds
+  // them by name in the prompt, which referencePrompt writes for the user.
+  //
+  // This is the "two strong frames, then motion" recipe the Видео-сет pack is
+  // named after, done in a single call: more angles of a face is the cheapest
+  // way to hold a likeness through motion, and the extra references cost nothing
+  // — the model composites them into one output.
+  //
+  // Mini tier on purpose: reference work is iterative, and the tier comparison
+  // found Mini equal to the flagship on exactly the shots this serves (portraits
+  // and products). Price carries the same "derived, not measured" caveat as the
+  // rest of the family — see docs/seedance-tiers.md.
+  //
+  // The endpoint ALSO accepts audio_urls and video_urls. Those are deliberately
+  // not wired: our only content gate is an image classifier, so an audio or
+  // video attachment would enter the pipeline unscreened, and audio here exists
+  // to drive a person's speech — precisely the likeness problem that cost us two
+  // campaigns. See the open task before adding them.
+  seedance_ref: {
+    key: "seedance_ref",
+    kind: "image_to_video",
+    falEndpoint: "bytedance/seedance-2.0/mini/reference-to-video",
+    credits: 38,
+    approxCostUsd: 0.76,
+    label: "Seedance 2.0 Mini · по фото",
+    note: "видео по нескольким фото — до 9",
+    input: (prompt, imageUrl, opts) => {
+      const urls = refUrls(imageUrl, opts);
+      const audio = opts?.audioUrls ?? [];
+      const video = opts?.videoUrls ?? [];
+      return {
+        prompt: referencePrompt(prompt, urls.length, audio.length, video.length),
+        image_urls: urls,
+        // Omitted entirely when empty: the endpoint treats an empty array and an
+        // absent field the same, and sending [] would put a meaningless key in
+        // every request body and in every logged payload.
+        ...(audio.length ? { audio_urls: audio } : {}),
+        ...(video.length ? { video_urls: video } : {}),
+        resolution: opts?.resolution ?? "720p",
+        duration: String(opts?.duration ?? 5),
+        ...arParam(opts),
+      };
+    },
+    reference: true,
+    // maxCount is meaningless for a video model; maxInputs is what gates the
+    // reference list, and 9 is the endpoint's own documented ceiling.
+    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 1, maxInputs: 9 },
+    video: {
+      perSecondUsd: 0.1517,
+      durations: [5, 10],
+      aspectRatios: ["auto", "9:16", "16:9", "1:1", "4:3", "3:4"],
+      resolutions: SEEDANCE_RES,
+    },
+  },
   // MiniMax Hailuo 2.3 Fast [Standard] — the DEFAULT scenario video engine:
   // fast, cheap, great for simple one-action motion. $0.19/6s → 10 🔫, $0.32/10s.
   // 768p, keeps the source frame's ratio (no aspect_ratio param). Durations 6/10.
@@ -453,7 +604,7 @@ export const MODELS = {
 export const IMAGE_MODEL_PICKER = ["text_to_image", "nb2_image", "nbpro_image", "premium_image"] as const;
 // The cheap "эконом" default leads: users keep it until they swap up to a
 // cinematic or physics/audio tier in the composer.
-export const VIDEO_MODEL_PICKER = ["hailuo_fast", "kling3", "animate", "seedance_fast", "seedance"] as const;
+export const VIDEO_MODEL_PICKER = ["hailuo_fast", "kling3", "animate", "seedance_mini", "seedance_fast", "seedance"] as const;
 
 /** Default image→video model for campaign upsells and one-tap animate flows. */
 export const DEFAULT_VIDEO: ModelSpec = MODELS.hailuo_fast;
@@ -706,17 +857,31 @@ const KEEP_ID =
   "Keep the SAME NUMBER of people as the source photo: if it shows two or more people, " +
   "all of them appear together in the result, each with their own real face. " +
   "Everyone in the photo stays in the shot.";
-const KEEP_KID = "Keep the child's face and identity exactly as in the photo.";
 /**
- * Composition guard for kid+character scenes: models love to push the real
- * child into the background and to duplicate the famous character. Bake the
- * fix into every curated prompt (curated prompts skip the craft mapping).
+ * Identity lock for looks that show the subject MORE THAN ONCE by design —
+ * a photobooth strip, a squad of chibi mini-selves, a Pixar figure standing next
+ * to its real counterpart.
+ *
+ * KEEP_ID's "SAME NUMBER of people" is a headcount rule aimed at the common
+ * failure of quietly dropping someone from a group shot. On these looks it is a
+ * flat contradiction of the brief — the brief asks for repeats, the guard
+ * forbids them — and a prompt that argues with itself is resolved by the model,
+ * not by us. So the identity half is kept verbatim and the headcount half is
+ * replaced by what actually needs protecting here: nobody may be dropped, and
+ * every repeat must be the SAME person rather than an invented stranger.
+ *
+ * This mattered the moment curated prompts stopped being truncated: photobooth_bw
+ * is 1800 characters, so it had never actually received KEEP_ID in production —
+ * un-cutting the tail would have handed a three-frame strip a one-frame rule.
+ * mini_squad and pixar_me are short enough that they have been carrying the
+ * contradiction all along.
  */
-const KID_FOCUS =
-  "Keep the real child as the clear hero — foreground, centered, face sharp and well lit. " +
-  "Include one single instance of the character, just beside and slightly behind the child.";
-/** De-dup guard for scenes with a real-world star (two Messis = ruined shot). */
-const NO_CLONES = "Show each person exactly once in the frame.";
+const KEEP_ID_MULTI =
+  "Keep the face and identity of EVERY person in the photo exactly as they are. " +
+  "Nobody from the source photo may be dropped: if it shows two or more people, all of them " +
+  "appear in the result. Where this scene repeats a person, every repeat is that SAME person " +
+  "with their own real face — never a different or invented one.";
+const KEEP_KID = "Keep the child's face and identity exactly as in the photo.";
 
 export const PRESETS: Preset[] = [
   {
@@ -933,7 +1098,7 @@ export const PRESETS: Preset[] = [
       "Create a Pixar-style 3D mini-version of the person standing next to their realistic self on a minimalist " +
       "light-gray studio background with soft shadows. One figure stays a realistic human, the other is a cute Pixar " +
       "mini-character with a large head and small body, standing in front and closer to the camera; the realistic " +
-      `person rests a hand on the mini-character's head, both looking at the camera, playful modern aesthetic. ${KEEP_ID}`,
+      `person rests a hand on the mini-character's head, both looking at the camera, playful modern aesthetic. ${KEEP_ID_MULTI}`,
   },
   // Original, identity-locked looks written in NeuroShot's own voice, filling the
   // two highest-recurrence gaps the VeoSee research flagged (collectible figurine,
@@ -1036,7 +1201,7 @@ export const PRESETS: Preset[] = [
       "background are all pure greyscale. Only the table and lamplight AROUND the printed strip carry warm " +
       "colour. The finished paper strip lies at a gentle diagonal TILT on a warm " +
       "wooden table beside a coffee cup, soft lamplight and a shallow depth of field around it — a cosy, " +
-      `lived-in keepsake photographed from above. Tack-sharp face in every frame. ${KEEP_ID}`,
+      `lived-in keepsake photographed from above. Tack-sharp face in every frame. ${KEEP_ID_MULTI}`,
   },
   {
     id: "paper_doll",
@@ -1106,7 +1271,7 @@ export const PRESETS: Preset[] = [
       "Surround the person with several small chibi-style mini versions of themselves — big heads, expressive faces " +
       "— each doing a different playful activity: one sitting on their head, one cheering with arms raised, one " +
       "lifting a dumbbell, one drinking from a shaker bottle, one lying down on a phone, one climbing up their leg, " +
-      `a clean playful background, tack-sharp face. ${KEEP_ID}`,
+      `a clean playful background, tack-sharp face. ${KEEP_ID_MULTI}`,
   },
   {
     id: "sketch_journal",
@@ -1236,9 +1401,16 @@ export const PRESETS: Preset[] = [
  * optional one-tap «Оживить» upsell that animates the GENERATED image (kling).
  * Zero prompting for the user — presets carry curated prompts.
  *
- * ⚠️ The cartoon campaign references well-known characters at the user's
- * request (personal, non-commercial family images). Providers may filter some
- * names; if a render is refused it fails-and-refunds automatically.
+ * NOTHING here may name a real person or a third party's character. The two
+ * campaigns that did — «Матч мечты» (Месси / Роналду / Ямаль) and «Ребёнок и
+ * любимый герой» (Губка Боб, Гамбол, Три кота, D Billions, Baby Shark) — were
+ * removed on 2026-07-27. Art. 145 of the Civil Code of Kazakhstan allows a
+ * person's likeness to be used only with their consent or where they posed for
+ * payment: it carries no public-figure exception, so a footballer's fame creates
+ * no permission. The same names in an ad creative are a harder problem again —
+ * the ad platforms match celebrity likeness automatically and suspend the
+ * account, not the ad. Adding such a scenario back is a legal decision, not a
+ * product one.
  */
 export interface CampaignPreset {
   id: string;
@@ -1395,154 +1567,6 @@ export const CAMPAIGNS: Campaign[] = [
           { id: "mystic", label: "🌙 Таинственный", fragment: "Mysterious twilight with fireflies and soft mist." },
           { id: "epic", label: "⚡ Эпичный", fragment: "Epic dramatic skies with god rays — a heroic climax." },
         ],
-      },
-    ],
-  },
-  {
-    id: "cartoon",
-    label: "🦸 Ребёнок и любимый герой",
-    header: "С кем встречаемся? Один тап:",
-    ask: "Пришлите фото ребёнка 👶 — и он встретится с любимым героем мультика.",
-    presets: [
-      {
-        id: "sponge",
-        label: "🧽 Губка Боб",
-        prompt:
-          "Place the child laughing beside SpongeBob SquarePants in colorful underwater Bikini Bottom, the cartoon " +
-          `world blended photorealistically around them, bright joyful scene. ${KID_FOCUS} ${KEEP_KID}`,
-      },
-      {
-        id: "gumball",
-        label: "😺 Гамбол",
-        prompt:
-          "Place the child beside Gumball Watterson in the town of Elmore, playful mixed cartoon-and-photo style, " +
-          `bright cheerful colors, both laughing together. ${KID_FOCUS} ${KEEP_KID}`,
-      },
-      {
-        id: "trikota",
-        label: "🐱 Три кота",
-        prompt:
-          "Place the child with the three cheerful kittens of «Три кота» (Kid-E-Cats) in their cozy cartoon town, " +
-          "warm family atmosphere, bright friendly colors. Keep the real child as the clear hero — foreground, " +
-          `centered, face sharp and well lit — with each kitten shown once beside and behind them. ${KEEP_KID}`,
-      },
-      {
-        id: "dbillions",
-        label: "🎵 D Billions",
-        prompt:
-          "Place the child dancing with the colorful D Billions characters on a bright festive stage, confetti, " +
-          "joyful kids-show energy, vivid colors. Keep the real child as the clear hero — foreground, centered, " +
-          `face sharp and well lit — with each character shown once around and behind them. ${KEEP_KID}`,
-      },
-      {
-        id: "shark",
-        label: "🦈 Baby Shark",
-        prompt:
-          "Place the child in a cheerful underwater scene swimming beside Baby Shark, bubbles and sunbeams through " +
-          `the water, bright preschool-cartoon joy blended around the real child. ${KID_FOCUS} ${KEEP_KID}`,
-      },
-    ],
-    animateLabel: "🎬 Оживить встречу",
-    animatePrompt:
-      "The cartoon character waves and bounces playfully while the child laughs and claps; confetti or bubbles " +
-      "drift through the frame, gentle camera push-in — one lively, joyful kids-show beat.",
-    animateModel: MODELS.hailuo_fast,
-    videoScenes: [
-      {
-        id: "dance",
-        label: "💃 Танцуют вместе",
-        prompt:
-          "The child and the cartoon character dance together in sync, both laughing, bright confetti bursting " +
-          "around them — one bouncy, joyful viral kids-dance beat, lively motion.",
-      },
-      {
-        id: "adventure",
-        label: "🚀 Весёлое приключение",
-        prompt:
-          "The camera tracks alongside as the child and the cartoon character dash off on an adventure, laughing " +
-          "and high-fiving, the bright cartoon world rushing past — one energetic, playful beat.",
-      },
-      {
-        id: "fly",
-        label: "🦸 Полёт супергероев",
-        tier: "epic",
-        prompt:
-          "The camera rises with them as the child and the cartoon character soar through a bright sky as little " +
-          "superheroes, capes fluttering, huge happy smiles — one heroic, joyful flight.",
-      },
-    ],
-  },
-  {
-    id: "worldcup",
-    label: "⚽️ Матч мечты",
-    header: "С кем выходим на поле? Один тап:",
-    ask: "Пришлите своё фото ⚽️ — и окажитесь на поле финала с кумиром.",
-    presets: [
-      {
-        id: "messi",
-        label: "🇦🇷 С Месси",
-        prompt:
-          "Put the person on the pitch of a floodlit World Cup final at night, shoulder to shoulder with Lionel " +
-          `Messi, both in football kits, confetti falling, a roaring crowd behind, sports-photography realism. ${NO_CLONES} ${KEEP_ID}`,
-      },
-      {
-        id: "ronaldo",
-        label: "🇵🇹 С Роналду",
-        prompt:
-          "Put the person on the pitch of a floodlit World Cup final at night, celebrating side by side with " +
-          `Cristiano Ronaldo, both in football kits, dramatic stadium light, sports-photography realism. ${NO_CLONES} ${KEEP_ID}`,
-      },
-      {
-        id: "yamal",
-        label: "🇪🇸 С Ямалем",
-        prompt:
-          "Put the person on the pitch of a packed World Cup final celebrating beside Lamine Yamal, both in " +
-          `football kits, golden confetti falling, electric atmosphere, sports-photography realism. ${NO_CLONES} ${KEEP_ID}`,
-      },
-      {
-        id: "kit",
-        label: "🏟 Я в форме сборной",
-        prompt:
-          "Turn the person into a professional footballer celebrating a goal in a packed World Cup stadium: " +
-          `national-team kit, roaring crowd, floodlights, confetti, epic sports-photography shot. ${KEEP_ID}`,
-      },
-    ],
-    animateLabel: "🎬 Оживить момент",
-    animatePrompt:
-      "Slow heroic camera orbit around the pair as the floodlit crowd roars and waves flags, confetti drifting " +
-      "down, lens flares catching the light — one triumphant stadium beat.",
-    animateModel: MODELS.hailuo_fast,
-    videoScenes: [
-      {
-        id: "score",
-        label: "⚽️ Легендарный гол",
-        tier: "epic",
-        prompt:
-          "In one continuous broadcast shot the person latches onto a through-ball and fires it into the net — the " +
-          "net ripples, the packed stadium erupts, teammates rush in to celebrate — cinematic slow-motion.",
-      },
-      {
-        id: "fan",
-        label: "📣 Фанат на трибуне",
-        prompt:
-          "The person leaps and chants in the packed stands, team scarf raised high, flares and confetti smoking " +
-          "around them, a roaring sea of supporters behind — one electric fan-cam beat.",
-      },
-      {
-        id: "trophy",
-        label: "🏆 Победа с командой",
-        tier: "epic",
-        prompt:
-          "The person lifts the championship trophy overhead beside the superstar as golden confetti rains down and " +
-          "teammates leap in to celebrate — one triumphant slow-motion beat.",
-      },
-      {
-        id: "freekick",
-        label: "🎯 Гол со штрафного",
-        tier: "epic",
-        prompt:
-          "The person strikes a dramatic free kick that curls over the wall into the top corner; the keeper dives " +
-          "too late, the crowd explodes, arms flying up in triumph — one epic slow-motion beat.",
       },
     ],
   },
@@ -1965,7 +1989,22 @@ export const ENTRY_LINKS: Record<string, EntryRoute> = {
 /** Resolve an acquisition-source slug to its pre-selected first action, if any. */
 export function entryLinkFor(source: string | null | undefined): EntryRoute | null {
   if (!source) return null;
-  return ENTRY_LINKS[source] ?? null;
+  const exact = ENTRY_LINKS[source];
+  if (exact) return exact;
+  // Campaign-tagged slugs: a media plan needs one link PER CREATIVE to answer
+  // "which creative brought the money", so the slug carries channel/wave/creative
+  // after the route — src_revive_tg1_cr07. Exact-match lookup dropped every one of
+  // those into the generic welcome, which looks like the route is broken and
+  // quietly destroys per-creative attribution. Match on a "_"-delimited prefix so
+  // the tag rides along in `source` (still recorded for first-touch) without
+  // changing where the click lands.
+  //
+  // Longest key first: if one route key is ever a prefix of another, the more
+  // specific one must win. The delimiter check means src_products could never be
+  // captured by a src_product route.
+  const keys = Object.keys(ENTRY_LINKS).sort((a, b) => b.length - a.length);
+  const hit = keys.find((k) => source.startsWith(`${k}_`));
+  return hit ? ENTRY_LINKS[hit] : null;
 }
 
 /**
@@ -2015,6 +2054,15 @@ export interface Pack {
    * the dedicated /course command.
    */
   course?: "fast" | "flagship";
+  /**
+   * Withdrawn from sale, kept ONLY so historical orders still resolve. An order
+   * stores its pack id and re-reads PACKS at grant time (see grantPurchase and
+   * the reconciler, which logs "pack X no longer exists — cannot grant" and
+   * parks the order for manual review). Deleting a pack outright would strand
+   * anything still pending against it, so retired packs stay in the array and
+   * are filtered out of every listing, keyboard and paywall anchor instead.
+   */
+  retired?: boolean;
 }
 
 export const PACKS: Pack[] = [
@@ -2022,11 +2070,36 @@ export const PACKS: Pack[] = [
   { id: "popular", kzt: 11000, credits: 200, title: `Популярный — 200 ${UNIT_EMOJI}` }, // 55 ₸/🔫
   { id: "pro", kzt: 25000, credits: 500, title: `Про — 500 ${UNIT_EMOJI}` }, // 50 ₸/🔫
   { id: "studio", kzt: 42000, credits: 900, title: `Студия — 900 ${UNIT_EMOJI}` }, // 47 ₸/🔫
-  // Launch special — the acquisition hook: 3 scenario-videos (Seedream + Hailuo,
-  // 12 🔫 each) for 1000 ₸ = 36 🔫. Deliberately BELOW the ladder (28 ₸/🔫), so it
-  // is flagged `offer` and shown only with a countdown — a limited-time tripwire,
-  // not a permanent tier (which would break the ladder).
-  { id: "combo", kzt: 1000, credits: 36, title: "🔥 Комбо-сет: 3 видео", offer: true },
+  // --- Purpose-built sets ---------------------------------------------------
+  // One generic "combo" used to serve both intents at 36 🔫, which is enough for
+  // three of the CHEAPEST videos and not one of the good ones. Split in two, each
+  // sized from the real recipe it is named after.
+
+  // Photo set — the tripwire. 100 🔫 buys 50 preset looks (Seedream edit, 2 🔫),
+  // 25 Nano Banana 2 frames (4 🔫) or 12 Nano Banana Pro frames (8 🔫): enough to
+  // play through a whole gallery rather than peek at it. Deliberately BELOW the
+  // ladder at 29 ₸/🔫, so it is flagged `offer` and shown only with a countdown —
+  // a limited-time hook, not a permanent tier (which would break the ladder).
+  { id: "photo_set", kzt: 2900, credits: 100, title: `🎨 Фото-сет — 100 ${UNIT_EMOJI}`, offer: true },
+
+  // Video set — sized from what one GOOD video actually costs. The recipe is two
+  // strong frames (the still is what carries likeness and composition) and then
+  // ten seconds of motion:
+  //   2× Nano Banana 2   +  Seedance 2.0 Fast 10s  =   8 + 121 = 129 🔫
+  //   2× Nano Banana Pro +  Seedance 2.0 Fast 10s  =  16 + 121 = 137 🔫
+  //   2× Nano Banana Pro +  Seedance 2.0 10s+звук  =  16 + 152 = 168 🔫
+  //   2× GPT Image 2     +  Seedance 2.0 10s+звук  =  22 + 152 = 174 🔫
+  // 650 🔫 covers 5 / 4 / 3 / 3 of those — "three to five finished videos"
+  // whichever tier the buyer works at, which is the promise the title makes.
+  // NOT an `offer`: at this size a countdown would be pressure, not a launch
+  // hook. Priced at 47.7 ₸/🔫 — between Про (50) and Студия (46.7), so the
+  // "bigger pack, better rate" ladder still holds end to end.
+  { id: "video_set", kzt: 31000, credits: 650, title: `🎬 Видео-сет — 650 ${UNIT_EMOJI}` },
+
+  // Retired: the old one-size combo. Kept ONLY so orders already placed against
+  // it can still be granted (see Pack.retired) — never listed, never anchored.
+  { id: "combo", kzt: 1000, credits: 36, title: "🔥 Комбо-сет: 3 видео", offer: true, retired: true },
+
   // --- GenAI course tiers (docs/course-funnel.md, docs/course/README.md) ---
   // Priced identically to `start`/`pro` on purpose — the course-funnel pricing
   // is the same ladder anchor, just packaged with a cohort invite on top, so the

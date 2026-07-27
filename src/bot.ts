@@ -77,6 +77,19 @@ import {
   type Preset,
 } from "./models.js";
 import { grantPurchase, registerPayments, sendBalance } from "./payments.js";
+import { nextSeedanceQuestion, recommendSeedance } from "./seedance.js";
+import {
+  answerFor,
+  classifySupport,
+  escapeKeyboard,
+  helpKeyboard,
+  helpText,
+  holdPrompt,
+  logSupport,
+  relayToAdmins,
+  shouldRelay,
+  takeHeldPrompt,
+} from "./support.js";
 import { nUnits, UNIT_EMOJI, withPhotoTip } from "./text.js";
 
 /**
@@ -493,7 +506,42 @@ function videoModelsKeyboard(): InlineKeyboard {
     const m = MODELS[key];
     kb.text(`${m.label} (${m.credits} ${UNIT_EMOJI})`, `act:${key}`).row();
   }
+  // The Seedance tiers are named Mini / Fast / 2.0, which tells a buyer nothing.
+  // Left to guess, people pick by price and lose either way — the cheapest and
+  // blame us for the motion, or the dearest for a shot Mini renders identically.
+  kb.text("🤔 Не знаю, какую выбрать", "sdq:start").row();
   return kb.text("📋 Меню", "menu:main");
+}
+
+/** Ask the next quiz question, or deliver the verdict. `a` = answers so far. */
+function seedanceQuizKeyboard(answers: Record<string, boolean>): { text: string; kb: InlineKeyboard } {
+  const q = nextSeedanceQuestion(answers);
+  // "draft.-motion" reads as "draft yes, motion no". Longest possible state is
+  // every question answered no — 34 characters — so this stays far inside
+  // Telegram's 64-byte callback_data limit.
+  const encode = (extra: Record<string, boolean>): string =>
+    Object.entries({ ...answers, ...extra })
+      .map(([k, v]) => (v ? k : `-${k}`))
+      .join(".");
+  if (q) {
+    return {
+      text: `🎬 <b>Подберём модель</b>\n\n${q.question}`,
+      kb: new InlineKeyboard()
+        .text("Да", `sdq:${encode({ [q.id]: true })}`)
+        .text("Нет", `sdq:${encode({ [q.id]: false })}`)
+        .row()
+        .text("↩︎ Показать все модели", "menu:videopick"),
+    };
+  }
+  const v = recommendSeedance(answers)!;
+  const saved = v.savedVsFlagship > 0 ? `\n\n💡 Экономия против флагмана: ${nUnits(v.savedVsFlagship)} на 10-секундном ролике.` : "";
+  return {
+    text: `✅ <b>Вам подойдёт «${v.model.label}»</b> — ${v.model.credits} ${UNIT_EMOJI}\n\n${v.because}${saved}`,
+    kb: new InlineKeyboard()
+      .text(`🎬 Снять на «${v.model.label}»`, `act:${v.model.key}`)
+      .row()
+      .text("↩︎ Показать все модели", "menu:videopick"),
+  };
 }
 
 function presetsKeyboard(category: Preset["category"]): InlineKeyboard {
@@ -857,6 +905,37 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     "ИП «Z8 Capital», БИН 030722500509\n" +
     "Поддержка: komekforyou@gmail.com" +
     LEGAL_LINKS();
+
+  // Support entry. Registered BEFORE the free-text handler matters not at all
+  // (commands never reach it), but being in setMyCommands does: /help has to be
+  // findable in the command menu by someone who is already frustrated.
+  const sendHelp = async (ctx: Context): Promise<void> => {
+    await ctx.reply(helpText(), { parse_mode: "HTML", reply_markup: helpKeyboard() });
+  };
+  bot.command("help", sendHelp);
+  bot.command("support", sendHelp);
+
+  // "Написать в поддержку" — the next free-text message is treated as a support
+  // message whatever it says, so someone whose wording the router would not have
+  // caught still reaches a human instead of paying for a picture of their complaint.
+  bot.callbackQuery("support:write", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await user(ctx);
+    await setPending(u.id, "support_write", u.pending_file_id);
+    await ctx.reply("Напишите сообщение — оно придёт человеку. Если это про оплату, укажите номер заявки.");
+  });
+
+  // The escape hatch: the router was wrong, run the original text as a prompt.
+  bot.callbackQuery("support:generate", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await user(ctx);
+    const held = takeHeldPrompt(u.id);
+    if (!held) {
+      await ctx.reply("Не сохранил текст — пришлите запрос ещё раз, сгенерирую.");
+      return;
+    }
+    await runGeneration(ctx, u, MODELS.text_to_image, held);
+  });
 
   bot.command("terms", async (ctx) => {
     await ctx.reply(
@@ -2032,6 +2111,23 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     await ctx.reply("Вот пример 👆 Пришлите фото 🎬 — и выберите модель (Kling / Seedance).");
   });
 
+  // Seedance chooser. The answers live in the callback data rather than in the
+  // DB: the quiz is four taps long, throwing it away on a restart costs nothing,
+  // and a purchase decision should not need a write per tap. "sdq:a.b.-c" reads
+  // as "a yes, b yes, c no"; the ids are short by construction (see SEEDANCE_QUIZ)
+  // so the whole state stays far inside Telegram's 64-byte callback limit.
+  bot.callbackQuery(/^sdq:(.*)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const raw = ctx.match[1] ?? "";
+    const answers: Record<string, boolean> = {};
+    for (const part of raw.split(".").filter((x) => x && x !== "start")) {
+      if (part.startsWith("-")) answers[part.slice(1)] = false;
+      else answers[part] = true;
+    }
+    const { text, kb } = seedanceQuizKeyboard(answers);
+    await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
+  });
+
   bot.callbackQuery("menu:videopick", async (ctx) => {
     await ctx.answerCallbackQuery();
     const u = await user(ctx);
@@ -2298,6 +2394,27 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     const u = await user(ctx);
     const text = ctx.message.text.trim();
     if (text.startsWith("/")) return;
+
+    // Support BEFORE generation. Everything below this point spends patrons, and
+    // the message most likely to arrive from an unhappy buyer — "оплатил, где
+    // патроны?" — used to be answered by charging them 2 🔫 and returning a
+    // picture of their own complaint, with nobody notified.
+    if (u.pending_action === "support_write") {
+      await setPending(u.id, null, u.pending_file_id);
+      await logSupport(u.id, "howto");
+      if (ctx.from) await relayToAdmins(ctx.api, ctx.from, "howto", text);
+      await ctx.reply("Спасибо, передали человеку — ответим в этом чате. 🙌");
+      return;
+    }
+    const intent = classifySupport(text);
+    if (intent) {
+      await logSupport(u.id, intent);
+      if (shouldRelay(intent) && ctx.from) await relayToAdmins(ctx.api, ctx.from, intent, text);
+      // Hold the text so a misrouted prompt costs one tap, not the request.
+      holdPrompt(u.id, text);
+      await ctx.reply(answerFor(intent), { parse_mode: "HTML", reply_markup: escapeKeyboard() });
+      return;
+    }
 
     if (u.pending_action?.startsWith("mode_")) {
       // They picked a photo-based use case but typed text — gently re-route.
