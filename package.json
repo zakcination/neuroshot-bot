@@ -12,7 +12,8 @@
     "check:patron": "node scripts/check-patron-emoji.mjs",
     "test:e2e": "tsx test/e2e.ts",
     "test:webapp": "tsx test/webapp.ts",
-    "test": "npm run test:e2e && npm run test:webapp"
+    "test": "npm run test:e2e && npm run test:webapp",
+    "cost-line": "tsx scripts/cost-line.mts"
   },
   "engines": {
     "node": ">=19"
