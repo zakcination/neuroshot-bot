@@ -9,6 +9,7 @@ import {
   getOrder,
   grantOrderCredits,
   logEvent,
+  markPaidClaimed,
   offerBonusFor,
   resolveOrder,
   type ApprovalPath,
@@ -17,7 +18,7 @@ import {
   type UserRow,
 } from "./db.js";
 import { kaspiVerifyOrder } from "./kaspi.js";
-import { PACKS, packById, REFERRAL_MILESTONES, type ModelSpec, type Pack } from "./models.js";
+import { MODELS, PACKS, packById, REFERRAL_MILESTONES, type ModelSpec, type Pack } from "./models.js";
 import { comboActive, comboLeftText } from "./offer.js";
 import { nResults, nUnits, UNIT_EMOJI } from "./text.js";
 
@@ -34,7 +35,7 @@ export function packsKeyboard(): InlineKeyboard {
   // patrons, and would confuse a plain credit top-up buyer. They're surfaced
   // only via the dedicated /course command (bot.ts), reusing this same buy:<id>
   // callback under the hood.
-  const visible = PACKS.filter((p) => (!p.offer || active) && !p.course);
+  const visible = PACKS.filter((p) => (!p.offer || active) && !p.course && !p.retired);
   const ordered = [...visible].sort((a, b) => Number(b.offer ?? false) - Number(a.offer ?? false));
   for (const pack of ordered) {
     const left = pack.offer && active ? ` · ⏳ ${comboLeftText()}` : "";
@@ -47,18 +48,42 @@ export function packsKeyboard(): InlineKeyboard {
  * The pack anchored on the paywall: the combo offer while it's live (the tripwire),
  * else the cheapest ladder pack once the sale ends — so an expired offer never
  * anchors the paywall.
+ *
+ * The anchor must actually CLOSE THE GAP the user is standing in front of. The
+ * combo is 36 🔫 while the video models cost 42 / 61 / 76 🔫, so anchoring it
+ * unconditionally promised a result the pack cannot buy: the buyer pays 1000 ₸,
+ * lands back on the same paywall, and asks for a refund — with an ad click burnt
+ * on the way in. So we size against the SHORTFALL (`model.credits` minus what
+ * they already hold), not against the sticker price, and step up the ladder only
+ * as far as we have to. Every campaign video scene is affected, which is exactly
+ * what paid traffic would be pointed at.
  */
-function entryPack(): Pack {
+function entryPack(model?: ModelSpec, credits = 0): Pack {
+  const shortfall = model ? Math.max(0, model.credits - credits) : 0;
+  const covers = (p: Pack): boolean => p.credits >= shortfall;
   if (comboActive()) {
-    const offer = PACKS.find((p) => p.offer);
+    const offer = PACKS.find((p) => p.offer && !p.retired && covers(p));
     if (offer) return offer;
   }
-  return PACKS.find((p) => !p.offer) ?? PACKS[0];
+  // Ladder packs only — course tiers are sold via /course and must never anchor
+  // a generation paywall, and retired packs exist solely to resolve old orders.
+  // Sorted by size rather than trusting declaration order: PACKS groups packs by
+  // PURPOSE (ladder, then the purpose-built sets), so `video_set` at 650 🔫 is
+  // declared after `studio` at 900 🔫. `find` on the raw array would hand a
+  // 700 🔫 shortfall the 42 000 ₸ pack when the 31 000 ₸ one covers it.
+  const ladder = PACKS.filter((p) => !p.offer && !p.course && !p.retired).sort((a, b) => a.credits - b.credits);
+  return ladder.find(covers) ?? ladder[ladder.length - 1] ?? PACKS[0];
 }
 
-/** How many of `model`'s results a pack buys (≥1, for the "N результатов" framing). */
-function resultsPerPack(pack: Pack, model: ModelSpec): number {
-  return Math.max(1, Math.floor(pack.credits / model.credits));
+/**
+ * How many of `model`'s results the buyer can run ONCE THIS PACK LANDS — their
+ * remaining balance counts too, which is the number they actually experience.
+ * No clamp: a floor of 1 is what made the old copy lie. `entryPack` already
+ * guarantees ≥1 by construction (the top ladder pack is an order of magnitude
+ * above the priciest model), so an honest count is also always a positive one.
+ */
+function resultsAfterPack(pack: Pack, model: ModelSpec, credits: number): number {
+  return Math.floor((credits + pack.credits) / model.credits);
 }
 
 /** Short pack name for the CTA (strip the 🔥 and the ": …" tail). */
@@ -74,8 +99,8 @@ function packShort(pack: Pack): string {
  * countdown the Mini App shows, so urgency lands at the paywall moment.
  */
 export function paywallText(model: ModelSpec, credits: number): string {
-  const pack = entryPack();
-  const n = resultsPerPack(pack, model);
+  const pack = entryPack(model, credits);
+  const n = resultsAfterPack(pack, model, credits);
   const left = pack.offer && comboActive() ? `\n⏳ <b>Осталось: ${comboLeftText()}</b> — успейте по акции!` : "";
   return (
     `✨ <b>Ещё один шаг до результата!</b>\n\n` +
@@ -91,8 +116,9 @@ export function paywallText(model: ModelSpec, credits: number): string {
  * for someone who hasn't even collected their free patrons yet.
  */
 export function paywallKeyboard(model: ModelSpec, user?: UserRow): InlineKeyboard {
-  const pack = entryPack();
-  const n = resultsPerPack(pack, model);
+  const credits = user?.credits ?? 0;
+  const pack = entryPack(model, credits);
+  const n = resultsAfterPack(pack, model, credits);
   const kb = new InlineKeyboard();
   const pending = user ? user.pendingSignupCredits + user.pendingJoinBonus : 0;
   if (user && !user.welcomeBonusClaimed && pending > 0) {
@@ -240,6 +266,36 @@ function paidKeyboard(orderId: number): InlineKeyboard {
 }
 
 /**
+ * Put the "✅ Я оплатил" button in the CHAT for an order started in the Mini App.
+ *
+ * Paying leaves the app: the Kaspi link opens in an external browser, and coming
+ * back re-mounts the Mini App from scratch. Everything the app was holding —
+ * including the confirm screen and the order id it was holding — is gone, so the
+ * buyer returns to a fresh home screen and is never asked whether they paid.
+ * They have paid and nobody knows.
+ *
+ * The chat does not have that problem: a message sits there until it is tapped.
+ * So every Mini App order also gets a chat message with the same button, wired
+ * to the same claimOrderPaid path. Transactional, one per order — this is a
+ * receipt, not a campaign, so it is unrelated to the weekly proactive budget.
+ *
+ * Never throws into the caller: a buyer who has blocked the bot must still get
+ * their pay link back from POST /api/order.
+ */
+export async function sendPendingOrderPrompt(api: Api, userId: number, orderId: number, pack: Pack): Promise<void> {
+  await api
+    .sendMessage(
+      userId,
+      `🧾 <b>${pack.title}</b> — <b>${pack.kzt} ₸</b>\n\n` +
+        `Заявка <b>№${orderId}</b> создана. Оплатите в Kaspi, затем нажмите «✅ Я оплатил» — ` +
+        `начислим ${UNIT_EMOJI} патроны за 2–3 минуты.\n\n` +
+        `<i>Кнопка ждёт здесь, даже если приложение закрылось.</i>`,
+      { parse_mode: "HTML", reply_markup: paidKeyboard(orderId) },
+    )
+    .catch(() => {});
+}
+
+/**
  * Approve a pending order and grant the pack — the single settle path shared by
  * the admin `/order N ok` command, the signed Kaspi webhook, and the server-side
  * «Я оплатил» verification. resolveOrder flips pending→paid atomically (exactly
@@ -288,6 +344,10 @@ export async function claimOrderPaid(api: Api, orderId: number, who: string): Pr
   const order = await getOrder(orderId);
   if (!order) return { kind: "not_found" };
   if (order.status === "paid") return { kind: "already" };
+  // Start the clock on "someone is out of pocket and waiting" BEFORE we go and
+  // ask Kaspi: if the verifier hangs or throws, the buyer has still told us they
+  // paid, and that is precisely the case the stuck-payment alert exists to catch.
+  await markPaidClaimed(orderId);
   const status = await kaspiVerifyOrder(order);
   if (status === "paid" && config.kaspiAutoGrant) {
     const pack = await settleApprovedOrder(api, orderId, "kaspi_api");
@@ -372,15 +432,43 @@ export function registerPayments(bot: Bot): void {
       );
     } else {
       // No merchant API configured → interim admin approval (admins were pinged).
-      await ctx.reply("Спасибо! Проверяем оплату — начислим патроны в ближайшее время ⏳");
+      // Name the order and a real deadline. "В ближайшее время" is what a buyer
+      // reads right before deciding they have been scammed: it carries no number
+      // to quote, no time to wait for, and no way to ask again. The number is
+      // also what the owner needs typed back at them to run `/order N ok`.
+      await ctx.reply(
+        `✅ Спасибо! Заявка <b>№${orderId}</b> принята — проверяем оплату вручную.\n\n` +
+          `Обычно это занимает <b>2–3 минуты</b>. Если ${UNIT_EMOJI} патроны не пришли за это время — ` +
+          `напишите /help и укажите номер заявки, разберёмся.`,
+        { parse_mode: "HTML" },
+      );
     }
   });
 }
 
+/**
+ * The price crib on the balance screen, DERIVED from the registry rather than
+ * typed out. The hand-written version had drifted to "Видео 25–76" while the
+ * cheapest video actually costs 10 🔫 — quoting a floor 2.5× too high on the
+ * one screen where people decide whether video is worth paying for. Reading the
+ * numbers from MODELS means a re-priced or newly added model can never leave a
+ * stale figure in front of a buyer.
+ */
+function priceCrib(): string {
+  const of = (kinds: ModelSpec["kind"][]): number[] =>
+    Object.values(MODELS)
+      .filter((m) => kinds.includes(m.kind))
+      .map((m) => m.credits);
+  const range = (xs: number[]): string => {
+    const lo = Math.min(...xs);
+    const hi = Math.max(...xs);
+    return lo === hi ? `${lo}` : `${lo}–${hi}`;
+  };
+  return `Картинка ${range(of(["text_to_image", "image_edit"]))} · Видео ${range(of(["image_to_video"]))} ${UNIT_EMOJI}`;
+}
+
 export async function sendBalance(ctx: Context, credits: number): Promise<void> {
-  await ctx.reply(
-    `💰 Баланс: ${UNIT_EMOJI} ${nUnits(credits)}\n\n` +
-      `Картинка от 2 · Премиум-фото 11 · Видео 25–76 ${UNIT_EMOJI}`,
-    { reply_markup: packsKeyboard() },
-  );
+  await ctx.reply(`💰 Баланс: ${UNIT_EMOJI} ${nUnits(credits)}\n\n` + priceCrib(), {
+    reply_markup: packsKeyboard(),
+  });
 }

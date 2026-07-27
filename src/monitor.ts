@@ -19,6 +19,7 @@ import {
   reapStalePending,
   releasePush,
   staleGrantedOrders,
+  stalePaidClaims,
   usersForPaywallPush,
   usersToNudge,
   type NudgeTarget,
@@ -292,8 +293,40 @@ export async function checkAlerts(): Promise<Alert[]> {
     });
   }
 
+  // 4) Somebody paid and is still waiting. While the merchant API is off, the
+  //    ONLY thing that turns their money into patrons is a human typing
+  //    `/order N ok` — and until now nothing told that human to look. A buyer
+  //    who paid and got nothing does not open a support ticket, they tell a
+  //    group chat we were a scam, and that travels faster than our ads.
+  //
+  //    Escalating buckets rather than one key: the dispatcher dedupes a key for
+  //    24h, so a single per-order key would ping once and then go quiet for a
+  //    day on the one condition that must never go quiet. Keying by (order, age)
+  //    re-pings as the wait grows and then stops — a nag with an end.
+  for (const o of await stalePaidClaims(PAID_CLAIM_ESCALATIONS[0])) {
+    const waited = Math.floor((Date.now() - Date.parse(o.created_at)) / 60_000);
+    const bucket = [...PAID_CLAIM_ESCALATIONS].reverse().find((m) => waited >= m) ?? PAID_CLAIM_ESCALATIONS[0];
+    out.push({
+      key: `order_waiting:${o.id}:${bucket}`,
+      text:
+        `💸 <b>Заявка №${o.id} ждёт ${waited} мин.</b> Человек нажал «Я оплатил», ` +
+        `${UNIT_EMOJI} патроны не выданы.\n` +
+        `Пакет: ${o.pack_id} · ${o.amount_kzt} ₸ · пользователь <code>${o.user_id}</code>\n\n` +
+        `Проверьте Kaspi → <code>/order ${o.id} ok</code> или <code>/order ${o.id} no</code>.\n` +
+        `<i>Если чек есть, а платежа в системе не видно — начисляйте и разбирайтесь потом: ` +
+        `ошибочный пакет стоит нам меньше, чем потерянный покупатель.</i>`,
+    });
+  }
+
   return out;
 }
+
+/**
+ * How long a claimed-but-ungranted payment may sit before each ping, in minutes.
+ * 15 is past the point where the buyer starts refreshing; the later two are for
+ * a wait that has become an incident. Read by checkAlerts and by nothing else.
+ */
+const PAID_CLAIM_ESCALATIONS = [15, 60, 180] as const;
 
 type SendFn = (chatId: number, text: string) => Promise<unknown>;
 
@@ -398,7 +431,7 @@ export async function runReengagement(send: SendFn): Promise<number> {
  * they cannot do; a countdown on top of that is how a bot gets blocked.
  */
 export function paywallPushText(bonus: number): string {
-  const pack = PACKS.find((p) => !p.offer && !p.course) ?? PACKS[0];
+  const pack = PACKS.find((p) => !p.offer && !p.course && !p.retired) ?? PACKS[0];
   const model = cheapestModel("image_edit");
   const per = Math.max(1, Math.floor(pack.credits / model.credits));
   const gift =

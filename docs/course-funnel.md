@@ -44,8 +44,6 @@ teaching/homework review inside the channel is still manual.
 | Campaign | Hook | Pipeline | Revenue per full flow |
 |---|---|---|---|
 | 📖 Сказка с ребёнком | parents' hearts | photo → fairy-tale image (4 🔫, NB2) → «Оживить сказку» (42 🔫, Kling 3.0) | 46 🔫 |
-| 🦸 Ребёнок и герой | SpongeBob/Гамбол/Три кота/D Billions/Baby Shark | same | 46 🔫 |
-| ⚽️ Матч мечты | World Cup NOW — с Месси/Роналду/Ямалем | same | 46 🔫 |
 | 🕰 Оживить старое фото | the strongest emotional hook in CIS | restore/colorize (4) → «как живые» (42) | 46 🔫 |
 | 🎬 Постер с тобой | self-expression, shareable | poster (4) → living poster (42) | 46 🔫 |
 | 🎞 Мини-фильм с вами | «стань героем кино со звуком» | film still (4) → multi-shot clip with audio (61 🔫, Seedance 2.0 Fast) | 65 🔫 |

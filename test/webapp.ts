@@ -22,7 +22,7 @@ process.env.MEDIA_HOST_SUFFIXES = "fal.test";
 process.env.WEBAPP_URL = "https://app.test"; // enable app-config paths
 process.env.BOT_USERNAME = "neuroshot_test_bot";
 process.env.KASPI_PAY_URL = "https://pay.test/neuroshot"; // enable the Kaspi order flow
-process.env.KASPI_PAY_URL_COMBO = "https://pay.test/combo"; // per-pack fixed-amount link
+process.env.KASPI_PAY_URL_PHOTO_SET = "https://pay.test/photoset"; // per-pack fixed-amount link
 process.env.KASPI_API_SECRET = "test-kaspi-secret"; // enable the auto-approval callback
 // Rate limiting (src/ratelimit.ts): the shared "maker" user below makes FAR
 // more than the production default (30/min) worth of /api/generate calls
@@ -177,6 +177,7 @@ interface MeResponse {
   generations: Array<{ output_url: string | null; status: string }>;
   bot_username: string;
   welcomeBonus: { pending: number; claimed: boolean };
+  pendingOrder: { orderId: number; amount: number; title: string; link: string } | null;
   xpActions: string[];
   onboardingSeen: boolean;
   roadmap: { firstPhoto: boolean; ownIdea: boolean; revivePhoto: boolean; scenario: boolean; invitedFriend: boolean };
@@ -240,9 +241,10 @@ await step("GET /api/me onboards a new user with a CLAIMABLE welcome bonus (shar
   assert.equal(body.bot_username, "neuroshot_test_bot"); // from BOT_USERNAME env
   assert.deepEqual(body.generations, []);
   // Pack catalog rides along — one source of truth with the bot's /buy.
-  assert.equal(body.packs.length, 5); // 4 ladder + the combo offer
+  assert.equal(body.packs.length, 6); // 5 ladder (incl. the video set) + the photo-set offer
   assert.ok(body.packs.every((p) => p.kzt > 0 && p.credits > 0 && p.id));
-  assert.ok(body.packs.some((p) => p.id === "combo" && p.offer), "combo offer missing");
+  assert.ok(body.packs.some((p) => p.id === "photo_set" && p.offer), "photo-set offer missing");
+  assert.ok(!body.packs.some((p) => p.id === "combo"), "the retired combo must not be offered for sale");
 });
 
 await step("POST /api/claim-welcome moves the parked bonus into credits, once", async () => {
@@ -666,6 +668,181 @@ await step("POST /api/send: a multi-output generation ships as one sendMediaGrou
   await new Promise<void>((r2) => tgStub.close(() => r2()));
 });
 
+await step("reference video: several photos of one subject build one clip", async () => {
+  // Seedance's reference endpoint binds attachments by NAME in the prompt, and
+  // reads up to 9. This is the "two strong frames, then motion" recipe — more
+  // angles is the cheapest way to hold a likeness through movement, and the
+  // extra references cost nothing.
+  const { MODELS } = await import("../src/models.js");
+  assert.equal(MODELS.seedance_ref.image?.maxInputs, 9);
+  assert.equal(MODELS.seedance_ref.kind, "image_to_video");
+
+  // The Studio must OFFER the extra-photo affordance here: it is a video model,
+  // and the client used to hide extras for every video model.
+  const cat = (await apiMe(signInitData(maker))).body.catalog as unknown as {
+    studio: { video: Array<{ key: string; image: { maxInputs: number } | null }> };
+  };
+  const entry = cat.studio.video.find((m) => m.key === "seedance_ref");
+  assert.ok(entry, "seedance_ref missing from the studio video list");
+  assert.equal(entry.image?.maxInputs, 9, "the client cannot show the affordance without this cap");
+
+  await addCredits(maker.id, 38, "admin_grant", "test");
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model",
+      model: "seedance_ref",
+      image_url: "https://fal.test/storage/u-1.jpg",
+      image_urls: ["https://fal.test/storage/u-2.jpg", "https://fal.test/storage/u-3.jpg"],
+      prompt: "медленный наезд, герой оборачивается",
+    }),
+  });
+  assert.equal(r.status, 200);
+  const d = (await r.json()) as { id: number; credits: number };
+  assert.equal(d.credits, 38, "extra references must not change the price");
+  await pollGen(d.id);
+
+  const call = falCalls.at(-1)!;
+  assert.equal(call.endpoint, "bytedance/seedance-2.0/mini/reference-to-video");
+  assert.deepEqual(call.input.image_urls, [
+    "https://fal.test/storage/u-1.jpg",
+    "https://fal.test/storage/u-2.jpg",
+    "https://fal.test/storage/u-3.jpg",
+  ]);
+  // Every attachment is addressed by name, or the endpoint ignores it.
+  const prompt = call.input.prompt as string;
+  for (const name of ["@Image1", "@Image2", "@Image3"]) assert.match(prompt, new RegExp(name));
+  assert.doesNotMatch(prompt, /@Image4/, "must not address attachments that were not sent");
+  // …and told they are one subject, not three guests, and not a collage.
+  assert.match(prompt, /SAME subject/);
+  assert.match(prompt, /NOT additional people/);
+  assert.match(prompt, /collage/);
+  assert.match(prompt, /медленный наезд/, "the user's own words must survive");
+
+  // The endpoint's own ceiling is enforced server-side.
+  const tooMany = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref", image_url: "https://fal.test/storage/u-1.jpg",
+      image_urls: Array.from({ length: 10 }, (_, i) => `https://fal.test/storage/x-${i}.jpg`),
+      prompt: "тест",
+    }),
+  });
+  assert.equal(tooMany.status, 400);
+  assert.equal(((await tooMany.json()) as { error: string }).error, "too_many_inputs");
+});
+
+await step("audio and video references: gated on rights, screened where we can, capped where the endpoint caps", async () => {
+  const { REF_LIMITS, REFERENCE_RIGHTS_NOTICE } = await import("../src/media.js");
+
+  // Nothing is accepted without the acknowledgement, and the refusal carries
+  // the notice itself so the client cannot show different words than we record.
+  const noRights = await fetch(`${base}/api/upload/media`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "audio", data: "data:audio/mpeg;base64,QUJD" }),
+  });
+  assert.equal(noRights.status, 400);
+  const nr = (await noRights.json()) as { error: string; notice: string };
+  assert.equal(nr.error, "rights_required");
+  assert.equal(nr.notice, REFERENCE_RIGHTS_NOTICE);
+  assert.match(nr.notice, /Ответственность за загруженные файлы несёт загрузивший/);
+
+  // Format is checked against the endpoint's list, not ours to widen.
+  const wrongType = await fetch(`${base}/api/upload/media`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "audio", data: "data:audio/ogg;base64,QUJD", rights: true }),
+  });
+  assert.equal(((await wrongType.json()) as { error: string }).error, "bad_format");
+
+  // The generate path only accepts references on a model that declares it reads
+  // them, and only URLs from our own hosts.
+  const wrongModel = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_mini", image_url: "https://fal.test/storage/u-1.jpg",
+      audio_urls: ["https://fal.test/storage/a-1.mp3"], prompt: "тест",
+    }),
+  });
+  assert.equal(wrongModel.status, 400);
+  assert.equal(((await wrongModel.json()) as { error: string }).error, "no_reference_support");
+
+  const foreign = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref", image_url: "https://fal.test/storage/u-1.jpg",
+      audio_urls: ["https://evil.example.com/a.mp3"], prompt: "тест",
+    }),
+  });
+  assert.equal(((await foreign.json()) as { error: string }).error, "bad_source");
+
+  // The endpoint's own rule — audio drives a subject, so it needs one — is
+  // enforced, though for this model the generic "an image_to_video model needs a
+  // source image" check (webapp.ts, source === "model") fires first. Either way
+  // the outcome is what matters: an audio-only request never reaches a paid
+  // render. The explicit guard stays as defence for any future reference model
+  // that does not require a primary image.
+  const orphanAudio = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref",
+      audio_urls: ["https://fal.test/storage/a-1.mp3"], prompt: "тест",
+    }),
+  });
+  assert.equal(orphanAudio.status, 400, "audio with no subject must never render");
+
+  const tooMuchAudio = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref", image_url: "https://fal.test/storage/u-1.jpg",
+      audio_urls: Array.from({ length: REF_LIMITS.audio.max + 1 }, (_, i) => `https://fal.test/storage/a-${i}.mp3`),
+      prompt: "тест",
+    }),
+  });
+  assert.equal(((await tooMuchAudio.json()) as { error: string }).error, "too_many_refs");
+
+  // A good request: both kinds reach the endpoint, each addressed by name, and
+  // the price does not move.
+  await addCredits(maker.id, 38, "admin_grant", "test");
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref", image_url: "https://fal.test/storage/u-1.jpg",
+      audio_urls: ["https://fal.test/storage/a-1.mp3"],
+      video_urls: ["https://fal.test/storage/v-1.mp4", "https://fal.test/storage/v-2.mp4"],
+      prompt: "поздравление на камеру",
+    }),
+  });
+  assert.equal(r.status, 200);
+  const d = (await r.json()) as { id: number; credits: number };
+  assert.equal(d.credits, 38, "references must not change the price");
+  await pollGen(d.id);
+  const call = falCalls.at(-1)!;
+  assert.deepEqual(call.input.audio_urls, ["https://fal.test/storage/a-1.mp3"]);
+  assert.deepEqual(call.input.video_urls, ["https://fal.test/storage/v-1.mp4", "https://fal.test/storage/v-2.mp4"]);
+  const prompt = call.input.prompt as string;
+  assert.match(prompt, /@Audio1/);
+  assert.match(prompt, /@Video1, @Video2/);
+  assert.doesNotMatch(prompt, /@Video3/);
+  assert.match(prompt, /lips in sync/);
+  assert.match(prompt, /follow their MOTION/);
+
+  // With no attachments the keys are absent entirely, not empty arrays.
+  await addCredits(maker.id, 38, "admin_grant", "test");
+  const plain = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref", image_url: "https://fal.test/storage/u-1.jpg", prompt: "просто",
+    }),
+  });
+  await pollGen(((await plain.json()) as { id: number }).id);
+  assert.ok(!("audio_urls" in falCalls.at(-1)!.input), "empty audio_urls must not be sent");
+  assert.ok(!("video_urls" in falCalls.at(-1)!.input), "empty video_urls must not be sent");
+});
+
 await step("the Rewards sheet describes exactly the awards the server has, and only the live ones", async () => {
   const { XP_AWARD_ACTIONS, activeXpActions, setEconomyConfig } = await import("../src/db.js");
   const { readFileSync } = await import("node:fs");
@@ -713,10 +890,17 @@ await step("Studio catalog: FULL registry by mode, patron-only prices; every mod
     };
   };
   const s = cat.studio;
-  // Full registry: 9 image (edit + t2i) and 5 video models — the display pickers
-  // hide some of these; the Studio never does (spec G5 "ALL models").
-  assert.equal(s.image.length, 9);
-  assert.equal(s.video.length, 5);
+  // Full registry — the display pickers hide some models; the Studio never does
+  // (spec G5 "ALL models"). Counted against MODELS rather than written down, so
+  // adding a model cannot quietly leave the Studio showing a subset.
+  const { MODELS: ALL } = await import("../src/models.js");
+  const registry = Object.values(ALL);
+  assert.equal(s.image.length, registry.filter((m) => m.kind !== "image_to_video").length);
+  assert.equal(s.video.length, registry.filter((m) => m.kind === "image_to_video").length);
+  for (const m of registry) {
+    const shown = [...s.image, ...s.video].some((x) => x.key === m.key);
+    assert.ok(shown, `${m.key} is in the registry but missing from the Studio catalog`);
+  }
   for (const m of [...s.image, ...s.video]) {
     assert.ok(m.credits >= 1, `${m.key} zero price`);
     assert.equal(m.needsImage, m.kind !== "text_to_image", `${m.key} needsImage wrong`);
@@ -1048,14 +1232,14 @@ await step("insufficient 🔫 → 402 with the pack catalog (in-app paywall)", a
   const r = await fetch(`${base}/api/generate`, {
     method: "POST",
     headers: { Authorization: `tma ${signInitData(broke)}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://fal.test/storage/u-1.jpg" }),
+    body: JSON.stringify({ source: "campaign_video", id: "skazka", image_url: "https://fal.test/storage/u-1.jpg" }),
   });
   assert.equal(r.status, 402);
   const d = (await r.json()) as { error: string; need: number; balance: number; packs: unknown[] };
   assert.equal(d.error, "insufficient");
   assert.equal(d.need, 10); // Hailuo 2.3 Fast default (6s)
   assert.equal(d.balance, 3);
-  assert.equal(d.packs.length, 5); // 4 ladder + combo offer
+  assert.equal(d.packs.length, 6); // 5 ladder (incl. the video set) + the photo-set offer
 });
 
 await step("generate validation: unknown ids, missing photo, unknown model keys, empty prompt → 400", async () => {
@@ -1111,12 +1295,65 @@ await step("POST /api/order: a per-pack fixed-amount link overrides the fallback
   const r = await fetch(`${base}/api/order`, {
     method: "POST",
     headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ pack: "combo" }),
+    body: JSON.stringify({ pack: "photo_set" }),
   });
   assert.equal(r.status, 200);
   const d = (await r.json()) as { available: boolean; link: string; amount: number };
-  assert.equal(d.link, "https://pay.test/combo"); // KASPI_PAY_URL_COMBO, not the fallback
-  assert.equal(d.amount, 1000); // combo = 1000 ₸
+  assert.equal(d.link, "https://pay.test/photoset"); // KASPI_PAY_URL_PHOTO_SET, not the fallback
+  assert.equal(d.amount, 2900); // photo set = 2900 ₸
+});
+
+await step("a purchase started in the app survives leaving the app", async () => {
+  // Paying opens Kaspi in an external browser and coming back re-mounts the Mini
+  // App: the confirm screen and the order id it held are gone. Two independent
+  // ways back, because the buyer has already parted with money and "we forgot"
+  // is not an acceptable outcome — the chat keeps a button, and /api/me hands
+  // the order back so the app can re-raise the confirm screen on open.
+  const buyer = { id: 7501, username: "buyer" };
+  await getOrCreateUser(buyer.id, buyer.username, null, 0);
+
+  const o = await fetch(`${base}/api/order`, {
+    method: "POST",
+    headers: { Authorization: `tma ${signInitData(buyer)}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ pack: "photo_set" }),
+  });
+  const { orderId } = (await o.json()) as { orderId: number };
+
+  // 1. The chat message carries the confirm button for THIS order. Asserted on
+  //    the sender rather than through the endpoint: grammY holds its own `fetch`
+  //    reference, so the transport cannot be intercepted from here — the wiring
+  //    (orderResponse awaits sendPendingOrderPrompt) is a one-line read above.
+  const { sendPendingOrderPrompt } = await import("../src/payments.js");
+  const { packById } = await import("../src/models.js");
+  const sent: Array<{ chatId: number; text: string; opts: Record<string, unknown> }> = [];
+  const fakeApi = {
+    sendMessage: async (chatId: number, text: string, opts: Record<string, unknown>) => {
+      sent.push({ chatId, text, opts });
+      return {};
+    },
+  } as unknown as InstanceType<typeof Api>;
+  await sendPendingOrderPrompt(fakeApi, buyer.id, orderId, packById("photo_set")!);
+  assert.equal(sent.length, 1, "the buyer must get exactly one order message");
+  assert.equal(sent[0].chatId, buyer.id);
+  assert.match(sent[0].text, new RegExp(`№${orderId}`));
+  const kb = sent[0].opts.reply_markup as { inline_keyboard: Array<Array<{ callback_data?: string }>> };
+  assert.ok(
+    kb.inline_keyboard.flat().some((b) => b.callback_data === `paid:${orderId}`),
+    "the chat message must carry the «Я оплатил» button for this order",
+  );
+
+  // 2. And /api/me hands the order back, so a re-mounted app can re-raise it.
+  const { body } = await apiMe(signInitData(buyer));
+  const pend = body.pendingOrder as { orderId: number; amount: number; link: string } | null;
+  assert.ok(pend, "an unfinished order must come back on /api/me");
+  assert.equal(pend.orderId, orderId);
+  assert.equal(pend.amount, 2900);
+  assert.ok(pend.link, "the pay link must ride along so «открыть снова» needs no second order");
+
+  // Once it is resolved it stops following the buyer around.
+  await query("UPDATE orders SET status = 'paid' WHERE id = $1", [orderId]);
+  const after = await apiMe(signInitData(buyer));
+  assert.equal(after.body.pendingOrder, null, "a settled order must not keep asking");
 });
 
 await step("POST /api/order/paid: in-app 'I paid' mirrors the bot; ownership enforced", async () => {
@@ -1209,7 +1446,7 @@ await step("kaspiLinkFor: a blank/whitespace per-pack override falls back to KAS
   assert.equal(kaspiLinkFor("pro"), "https://pay.test/neuroshot"); // must fall back, not disable
   process.env.KASPI_PAY_URL_PRO = "   ";
   assert.equal(kaspiLinkFor("pro"), "https://pay.test/neuroshot");
-  assert.equal(kaspiLinkFor("combo"), "https://pay.test/combo"); // a non-blank override still wins
+  assert.equal(kaspiLinkFor("photo_set"), "https://pay.test/photoset"); // a non-blank override still wins
   delete process.env.KASPI_PAY_URL_PRO;
 });
 
@@ -1653,10 +1890,10 @@ await step("end frame is validated as strictly as the source: video url or forei
 
 await step("scenario video scenes: on-theme scene sets the motion; model swap adjusts price", async () => {
   const { body } = await apiMe(signInitData(maker));
-  const wc = body.catalog.campaigns.find((k) => k.id === "worldcup") as unknown as {
+  const wc = body.catalog.campaigns.find((k) => k.id === "skazka") as unknown as {
     videoScenes: Array<{ id: string; label: string }>;
   };
-  assert.ok(wc.videoScenes.some((s) => s.id === "score"), "football scene missing");
+  assert.ok(wc.videoScenes.some((s) => s.id === "flydragon"), "epic scene missing");
   for (const s of wc.videoScenes) assert.ok(!("prompt" in s), "scene prompt leaked to client");
 
   await addCredits(maker.id, 200, "admin_grant", "test");
@@ -1665,8 +1902,8 @@ await step("scenario video scenes: on-theme scene sets the motion; model swap ad
     method: "POST",
     headers: { ...makerHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({
-      source: "campaign_video", id: "worldcup", image_url: "https://fal.test/storage/u-1.jpg",
-      scene: "score", model: "seedance_fast",
+      source: "campaign_video", id: "skazka", image_url: "https://fal.test/storage/u-1.jpg",
+      scene: "flydragon", model: "seedance_fast",
     }),
   });
   assert.equal(r.status, 200);
@@ -1675,31 +1912,31 @@ await step("scenario video scenes: on-theme scene sets the motion; model swap ad
   await pollGen(d.id);
   const call = falCalls.at(-1)!;
   assert.equal(call.endpoint, "bytedance/seedance-2.0/fast/image-to-video");
-  assert.match(call.input.prompt as string, /fires it into the net/); // the scene
+  assert.match(call.input.prompt as string, /soars on the friendly dragon's back/); // the scene
 
   // Unknown scene id / off-picker model → 400 (nothing charged).
   const badScene = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://fal.test/x/a.jpg", scene: "nope" }),
+    body: JSON.stringify({ source: "campaign_video", id: "skazka", image_url: "https://fal.test/x/a.jpg", scene: "nope" }),
   });
   assert.equal(badScene.status, 400);
   assert.equal(((await badScene.json()) as { error: string }).error, "bad_scene");
 
   const badModel = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://fal.test/x/a.jpg", model: "nb2_image" }),
+    body: JSON.stringify({ source: "campaign_video", id: "skazka", image_url: "https://fal.test/x/a.jpg", model: "nb2_image" }),
   });
   assert.equal(badModel.status, 400);
 });
 
 await step("scene tiering: epic scene auto-upgrades to Seedance; simple stays on the Hailuo default", async () => {
   const { body } = await apiMe(signInitData(maker));
-  const wc = body.catalog.campaigns.find((k) => k.id === "worldcup") as unknown as {
+  const wc = body.catalog.campaigns.find((k) => k.id === "skazka") as unknown as {
     videoScenes: Array<{ id: string; tier: string; videoModelKey: string; videoCredits: number }>;
   };
-  const score = wc.videoScenes.find((s) => s.id === "score")!;
-  const fan = wc.videoScenes.find((s) => s.id === "fan")!;
-  assert.equal(score.tier, "epic"); // legendary goal needs physics/multi-actor
+  const score = wc.videoScenes.find((s) => s.id === "flydragon")!;
+  const fan = wc.videoScenes.find((s) => s.id === "castspell")!;
+  assert.equal(score.tier, "epic"); // dragon flight needs physics/multi-actor
   assert.equal(score.videoModelKey, "seedance_fast");
   assert.equal(score.videoCredits, 61);
   assert.equal(fan.tier, "simple");
@@ -1709,7 +1946,7 @@ await step("scene tiering: epic scene auto-upgrades to Seedance; simple stays on
   // Epic scene WITHOUT an explicit model → server upgrades to Seedance (61), not Hailuo (10).
   const epic = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://fal.test/storage/u-1.jpg", scene: "score" }),
+    body: JSON.stringify({ source: "campaign_video", id: "skazka", image_url: "https://fal.test/storage/u-1.jpg", scene: "flydragon" }),
   });
   assert.equal(epic.status, 200);
   assert.equal(((await epic.json()) as { credits: number }).credits, 61);
@@ -1717,7 +1954,7 @@ await step("scene tiering: epic scene auto-upgrades to Seedance; simple stays on
   // Simple scene WITHOUT a model → the cheap Hailuo default (10).
   const simple = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://fal.test/storage/u-1.jpg", scene: "fan" }),
+    body: JSON.stringify({ source: "campaign_video", id: "skazka", image_url: "https://fal.test/storage/u-1.jpg", scene: "castspell" }),
   });
   assert.equal(simple.status, 200);
   assert.equal(((await simple.json()) as { credits: number }).credits, 10);
@@ -1730,16 +1967,48 @@ await step("Seedance 2.0 uses the correct bytedance/ endpoint namespace (fal dri
   assert.ok(!MODELS.seedance.falEndpoint.startsWith("fal-ai/"), "stale fal-ai/ prefix");
 });
 
-await step("prompt quality guards: kid-focus + no-duplicates baked into cartoon and star presets", async () => {
-  const { CAMPAIGNS } = await import("../src/models.js");
-  const cartoon = CAMPAIGNS.find((c) => c.id === "cartoon")!;
-  for (const p of cartoon.presets) {
-    assert.match(p.prompt, /clear hero/i, `${p.id} missing kid-focus`);
-    assert.match(p.prompt, /one single instance|shown once/i, `${p.id} missing de-dup guard`);
+await step("no look names a real person or a third party's character", async () => {
+  // This step replaces the composition guards for «Матч мечты» and «Ребёнок и
+  // любимый герой», removed 2026-07-27 by the owner's decision. Those guards
+  // made the looks render better; the looks themselves were the problem.
+  //
+  // Art. 145 of the Civil Code of Kazakhstan permits use of a person's likeness
+  // only with their consent, or where they posed for payment. There is no
+  // public-figure exception, so a footballer's fame creates no permission — and
+  // the same names in an ad creative are worse again, since the ad platforms
+  // match celebrity likeness automatically and suspend the account rather than
+  // the ad. Re-adding any of these is a legal decision, not a product one, and
+  // this step is here so it cannot happen by accident.
+  const { CAMPAIGNS, PRESETS, FREE_SCENARIOS } = await import("../src/models.js");
+  const BANNED = [
+    "Messi", "Ronaldo", "Yamal",
+    "SpongeBob", "Bikini Bottom", "Gumball", "Elmore",
+    "Три кота", "Kid-E-Cats", "D Billions", "Baby Shark", "Pinkfong",
+    "World Cup",
+  ];
+  const surfaces: Array<[string, string]> = [];
+  for (const p of PRESETS) surfaces.push([`preset:${p.id}`, `${p.label} ${p.prompt}`]);
+  for (const c of CAMPAIGNS) {
+    surfaces.push([`camp:${c.id}`, `${c.label} ${c.header ?? ""}`]);
+    for (const p of c.presets) surfaces.push([`camp:${c.id}/${p.id}`, `${p.label} ${p.prompt}`]);
+    for (const v of c.videoScenes ?? []) surfaces.push([`vid:${c.id}/${v.id}`, `${v.label} ${v.prompt}`]);
+    for (const q of c.quiz ?? []) {
+      for (const o of q.options) surfaces.push([`quiz:${c.id}/${q.id}/${o.id}`, `${o.label} ${o.fragment}`]);
+    }
   }
-  const wc = CAMPAIGNS.find((c) => c.id === "worldcup")!;
-  for (const p of wc.presets.filter((x) => x.id !== "kit")) {
-    assert.match(p.prompt, /exactly once in the frame/, `${p.id} missing NO_CLONES`);
+  for (const f of FREE_SCENARIOS) surfaces.push([`free:${f.id}`, `${f.label} ${f.ask} ${f.imagePrompt} ${f.videoPrompt}`]);
+
+  for (const [where, text] of surfaces) {
+    for (const name of BANNED) {
+      assert.ok(
+        !text.toLowerCase().includes(name.toLowerCase()),
+        `${where} names "${name}" — see Art. 145 GK RK; this is a legal decision, not a product one`,
+      );
+    }
+  }
+  // The removed campaign ids must not come back under the same name either.
+  for (const gone of ["worldcup", "cartoon"]) {
+    assert.ok(!CAMPAIGNS.some((c) => c.id === gone), `campaign "${gone}" was removed and must stay removed`);
   }
 });
 
@@ -2166,7 +2435,17 @@ await step("prompt library: a group photo keeps everyone — no silent crop to o
     // Kid-focused looks are deliberately single-subject (KEEP_KID + KID_FOCUS)
     // and are exempt by design, not by oversight.
     if (!text.includes("Keep the face and identity of EVERY person")) continue;
-    assert.match(text, /SAME NUMBER of people/, `${where} lost the headcount rule`);
+    // The RULE is "nobody gets dropped", and it has two phrasings. Looks that
+    // show the subject once take the headcount form ("SAME NUMBER of people").
+    // Looks that repeat the subject on purpose — a photobooth strip, a squad of
+    // mini-selves — take the no-drop form instead, because demanding the source
+    // headcount there contradicts the brief itself (see KEEP_ID_MULTI). Either
+    // satisfies the rule; neither is optional.
+    assert.match(
+      text,
+      /SAME NUMBER of people|Nobody from the source photo may be dropped/,
+      `${where} lost the no-drop rule`,
+    );
     checked++;
   }
   assert.ok(checked > 20, `expected the group rule on most looks, saw ${checked}`);
@@ -3122,6 +3401,11 @@ await step("release notes: shown once, never to a newcomer, and only ever moving
   await getOrCreateUser(old, "old_user", null, 0);
   await getOrCreateUser(fresh, "new_user", null, 0);
   await query("UPDATE users SET created_at = TIMESTAMPTZ '2026-01-01' WHERE id = $1", [old]);
+  // Pin the newcomer to the newest note's own DATE rather than leaning on "now":
+  // that is the case which actually bites, because a same-day id may carry a
+  // "-2" suffix and "2026-07-26" sorts BELOW "2026-07-26-2". Left as "now" this
+  // assertion only exercises the boundary on the day a note ships.
+  await query("UPDATE users SET created_at = $2::timestamptz WHERE id = $1", [fresh, newest.slice(0, 10)]);
 
   const oldMe = (await (await fetch(`${base}/api/me`, {
     headers: { Authorization: `tma ${signInitData({ id: old, username: "old_user", first_name: "O" })}` },

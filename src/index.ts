@@ -42,6 +42,9 @@ startMonitor((chatId, text) => bot.api.sendMessage(chatId, text, { parse_mode: "
 // Failing to set the command list is cosmetic and must not take the bot down.
 void bot.api.setMyCommands([
   { command: "menu", description: "📋 Меню — что создаём?" },
+  // /help sits second on purpose: the person who opens this list is usually the
+  // person something went wrong for, and support used to be unreachable.
+  { command: "help", description: "🆘 Помощь и поддержка" },
   { command: "app", description: "🌐 Открыть приложение" },
   { command: "premium", description: "💎 Премиум-картинка из текста" },
   { command: "buy", description: `💰 Купить патроны ${UNIT_EMOJI}` },

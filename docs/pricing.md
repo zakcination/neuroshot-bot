@@ -26,15 +26,45 @@ so **cost-per-patron is always ≤ $0.02**. Patrons are then sold at **47–62 �
 each (≈ $0.10–0.13) → comfortably **≥4× margin** on the ladder after the referral
 share.
 
-## The combo offer (acquisition tripwire)
+## The two purpose-built sets
 
-The launch hook is a **limited-time** offer: **3 scenario-videos (Seedream +
-Hailuo, 12 🔫 each) for 1 000 ₸ = 36 🔫** — deliberately **below** the ladder
-(28 ₸/🔫, ~3.1× margin). It's flagged `offer: true` and shown with a "🔥 Акция ·
-1 мес" badge so it reads as a sale, not a permanent tier (which would break the
-ladder). It's ~2.2× cheaper per video than buying patrons — a genuine first-hit
-discount to pull an audience in. Window: `COMBO_OFFER_DAYS` from
-`COMBO_OFFER_START` (defaults to ~1 month from deploy).
+One generic "combo" used to serve both intents at 36 🔫. That is enough for three
+of the *cheapest* videos and not one of the good ones — so the same pack was
+oversized for someone who wanted to play with photo styles and useless to someone
+who wanted a real video. Split in two, each sized from the recipe it is named
+after.
+
+### 🎨 Фото-сет — 100 🔫 for 2 900 ₸ (the tripwire)
+
+29 ₸/🔫, deliberately **below** the ladder, flagged `offer: true` and shown only
+with a countdown so it reads as a sale rather than a permanent tier. It buys 50
+preset looks (2 🔫), 25 fast frames (4 🔫) or 12 top-tier frames (8 🔫) — enough
+to play through a gallery instead of peeking at it. Window: `COMBO_OFFER_DAYS`
+from `COMBO_OFFER_START` (env names are historical; see `.env.example`).
+
+### 🎬 Видео-сет — 650 🔫 for 31 000 ₸
+
+Sized from what one **good** video actually costs. The recipe is two strong
+frames — the still is what carries likeness and composition — and then ten
+seconds of motion:
+
+| tier | frames | 10s of motion | total |
+|---|---|---|---|
+| 2× Nano Banana 2 + Seedance 2.0 Fast | 8 | 121 | **129 🔫** |
+| 2× Nano Banana Pro + Seedance 2.0 Fast | 16 | 121 | **137 🔫** |
+| 2× Nano Banana Pro + Seedance 2.0 (audio) | 16 | 152 | **168 🔫** |
+| 2× GPT Image 2 + Seedance 2.0 (audio) | 22 | 152 | **174 🔫** |
+
+650 🔫 covers **5 / 4 / 3 / 3** of those — three to five finished videos whichever
+tier the buyer works at, which is exactly what the title promises. It is **not**
+an `offer`: at this ticket a countdown is pressure, not a launch hook. Priced at
+47.7 ₸/🔫, between Про (50) and Студия (46.7), so "bigger pack, better rate"
+still holds end to end. An e2e step asserts both the 3–5 promise and the ladder
+monotonicity.
+
+The old `combo` pack stays in `PACKS` flagged `retired` — orders already placed
+against it must still resolve — and is filtered out of every listing, keyboard
+and paywall anchor.
 
 ### Per-model patron prices
 
@@ -87,14 +117,15 @@ Ladder in ₸/patron (bigger pack = better rate). Prices are data in
 
 | Pack | Patrons | Price | ₸/patron | ≈ USD | Margin* |
 |---|---|---|---|---|---|
-| 🔥 Комбо-сет (offer) | 36 | 1 000 ₸ | 28 | $2.08 | ~3.1× |
+| 🎨 Фото-сет (offer) | 100 | 2 900 ₸ | 29 | $5.8 | ~3× |
 | Старт | 60 | 3 700 ₸ | 62 | $7.7 | ~6× |
 | Популярный | 200 | 11 000 ₸ | 55 | $23 | ~5.5× |
 | Про | 500 | 25 000 ₸ | 50 | $52 | ~5× |
+| 🎬 Видео-сет | 650 | 31 000 ₸ | 47.7 | $67 | ~4.8× |
 | Студия | 900 | 42 000 ₸ | 47 | $87 | ~4.7× |
 
 \* vs the ≤$0.02/patron provider cost, at `KZT_PER_USD=480`, before Kaspi fees.
-The combo is intentionally below the ladder — a limited-time tripwire, not a tier.
+The photo set is intentionally below the ladder — a limited-time tripwire, not a tier.
 
 The cheaper scenario stack also *reprices the value story*: a «Старт — 60 🔫»
 pack now buys **~5 whole Hailuo scenarios** (12 🔫 each) instead of ~1 Kling
