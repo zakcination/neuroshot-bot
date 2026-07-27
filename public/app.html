@@ -1076,7 +1076,7 @@
       const c = d.catalog;
       const videoMin = c.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9);
       const packs = [...(d.packs || [])].filter((p) => !p.offer).sort((a, b) => a.kzt - b.kzt);
-      const cheapestId = packs.reduce((best, p) => (!best || p.kzt / p.credits < best.kzt / best.credits) ? p : best, null)?.id;
+      const cheapestId = bestValuePackId(packs);
       const presetSample = c.presets.slice(0, 4);
 
       el.innerHTML = `
@@ -1806,6 +1806,24 @@
     /** One wording for a lock, wherever it surfaces — card tap or a server 403. */
     function lockText(lock) {
       return `🔒 Этот стиль открывается на ${lock.need}-м уровне — у вас ${lock.have}.`;
+    }
+
+    /**
+     * The pack with the best real ₸-per-patron rate — excluding time-limited
+     * offers, which are deliberately priced BELOW the ladder as a tripwire
+     * (see PACKS in src/models.ts), not a permanent "best value" to compare
+     * against. Was previously two different things in two places: the
+     * onboarding ladder slide computed this correctly; the buy page and
+     * paywall instead hardcoded a fixed list slot («Популярный», packs[1])
+     * and called it a recommendation regardless of whether it actually was
+     * the best rate — a pack with a WORSE per-patron price than a bigger one
+     * sitting right next to it, wearing a "best" ribbon. One honest
+     * computation now, shared by every surface that tags a pack as the
+     * value pick.
+     */
+    function bestValuePackId(packs) {
+      return (packs || []).filter((p) => !p.offer)
+        .reduce((best, p) => (!best || p.kzt / p.credits < best.kzt / best.credits) ? p : best, null)?.id;
     }
 
     /**
@@ -3558,7 +3576,7 @@
       const dash = d.dashboard;
       BOT = d.bot_username || "neuroshot_ai_bot";
       const refLink = "https://t.me/" + BOT + "?start=" + d.user.ref_code;
-      const bestPack = (d.packs || [])[1]?.id; // «Популярный»
+      const bestPack = bestValuePackId(d.packs);
       renderWelcome(d);
 
       const avatarUrl = tg?.initDataUnsafe?.user?.photo_url || "";
@@ -3784,12 +3802,13 @@
         .filter((pack) => !(pack.offer && comboEndsAt && comboEndsAt <= Date.now()))
         .sort((a, b) => Number(b.offer) - Number(a.offer));
       for (const pack of packsOrdered) {
-        // "Хит продаж", not the pack's own name — «Популярный» is already the
-        // tile's packname label now (packTileHtml), and a ribbon repeating it
-        // verbatim read as a copy-paste duplicate rather than a recommendation.
+        // "Выгоднее всего" — the same claim, the same computation
+        // (bestValuePackId) and the same wording as the onboarding ladder
+        // slide, so the tag is never fixed to a list slot («Популярный»,
+        // packs[1]) regardless of whether that pack's rate actually earns it.
         const badge = pack.offer
           ? `<span class="hot" data-countdown="${comboEndsAt}">🔥 Акция</span>`
-          : pack.id === bestPack ? '<span class="hot">Хит продаж</span>' : "";
+          : pack.id === bestPack ? '<span class="hot">Выгоднее всего</span>' : "";
         p.appendChild($(`
           <button class="pack ${pack.offer || pack.id === bestPack ? "best" : ""}" data-buy="${pack.id}">
             ${packTileHtml(pack, { badge })}
