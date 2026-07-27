@@ -301,6 +301,14 @@ const SCHEMA: string[] = [
   // nothing on the row says who believed it. Every pending→paid transition
   // stamps it; NULL only on rows predating this column.
   `ALTER TABLE orders ADD COLUMN IF NOT EXISTS approved_via TEXT`,
+  // When the BUYER said they paid. Distinct from created_at (the invoice was
+  // shown) and from processed_at (a human ruled on it). Between those two lies
+  // the only window where someone is out of pocket and waiting on us, which is
+  // what the stuck-payment alert watches. Deliberately NOT backfilled: an old
+  // pending row has no honest value here, and inventing one would resurrect the
+  // phantom-payment failure of treating history as unfinished work.
+  `ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_claimed_at TIMESTAMPTZ`,
+  `CREATE INDEX IF NOT EXISTS idx_orders_paid_claimed ON orders(paid_claimed_at) WHERE status = 'pending'`,
   // The newest release note this user has read. NULL means "has never seen
   // any" — but a brand-new account must not be greeted with a history of
   // changes it never lived through, so the read side stamps newcomers as
@@ -1262,6 +1270,47 @@ export async function createOrder(userId: number, packId: string, amountKzt: num
 export async function pendingOrders(): Promise<OrderRow[]> {
   const rows = await q(`SELECT ${ORDER_COLS} FROM orders WHERE status = 'pending' ORDER BY id`);
   return rows.map(mapOrder);
+}
+
+/**
+ * Buyers who pressed "✅ Я оплатил" and are still waiting. While the merchant
+ * API is off, the ONLY thing that turns their money into patrons is a human
+ * typing `/order N ok` — and nothing anywhere tells that human to look. This is
+ * the read behind that alert.
+ *
+ * `pending` alone is not the signal: an order is created the moment the invoice
+ * is shown, so most pending rows are people who simply never paid. What matters
+ * is that they CLAIMED to have paid — `paid_claimed_at` — because that is the
+ * point at which someone is out of pocket and waiting.
+ *
+ * Age-bounded at both ends on purpose. `minMinutes` gives the buyer time to
+ * finish in the Kaspi app before we call it stuck. `maxAgeHours` stops a sweep
+ * over all history: the phantom-payment incident came from exactly that shape —
+ * an unbounded recovery pass treating the whole backlog as unfinished work.
+ */
+export async function stalePaidClaims(minMinutes: number, maxAgeHours = 72): Promise<OrderRow[]> {
+  const rows = await q(
+    `SELECT ${ORDER_COLS} FROM orders
+      WHERE status = 'pending'
+        AND paid_claimed_at IS NOT NULL
+        AND paid_claimed_at < now() - ($1 || ' minutes')::interval
+        AND paid_claimed_at > now() - ($2 || ' hours')::interval
+      ORDER BY paid_claimed_at`,
+    [String(minMinutes), String(maxAgeHours)],
+  );
+  return rows.map(mapOrder);
+}
+
+/**
+ * Stamp the moment the buyer said they paid. First claim wins — pressing the
+ * button again must not reset the clock, or a worried buyer tapping twice would
+ * push their own order back out of the stuck-payment alert's reach.
+ */
+export async function markPaidClaimed(orderId: number): Promise<void> {
+  await q(
+    "UPDATE orders SET paid_claimed_at = now() WHERE id = $1 AND status = 'pending' AND paid_claimed_at IS NULL",
+    [orderId],
+  );
 }
 
 export async function getOrder(id: number): Promise<OrderRow | undefined> {

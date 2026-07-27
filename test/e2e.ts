@@ -1617,6 +1617,37 @@ await step("alerts: >5% model error rate trips the fal-drift interrupt; healthy 
   assert.match(drift!.text, /fal\.ai/);
 });
 
+await step("alerts: a buyer who said they paid and got nothing pulls an admin in", async () => {
+  const { stalePaidClaims } = await import("../src/db.js");
+  const waiting = 7401;
+  await getOrCreateUser(waiting, "waiting", null, 0);
+  const orderId = await createOrder(waiting, "photo_set", 2900);
+
+  // Fresh claim: inside the grace window, so nothing fires yet — a buyer still
+  // finishing in the Kaspi app is not an incident.
+  await query("UPDATE orders SET paid_claimed_at = now() WHERE id = $1", [orderId]);
+  assert.equal((await stalePaidClaims(15)).length, 0, "a fresh claim is not stuck");
+  assert.ok(!(await checkAlerts()).some((a) => a.key.startsWith("order_waiting:")), "quiet inside the grace window");
+
+  // Aged past the window: the money is sitting somewhere and nobody has been told.
+  await query("UPDATE orders SET paid_claimed_at = now() - interval '40 minutes' WHERE id = $1", [orderId]);
+  const alert = (await checkAlerts()).find((a) => a.key.startsWith(`order_waiting:${orderId}:`));
+  assert.ok(alert, "a stuck paid claim must alert");
+  assert.match(alert!.text, new RegExp(`/order ${orderId} ok`)); // the exact command to run
+  assert.match(alert!.text, /2900 ₸/);
+
+  // Age-bounded at the far end too: an ancient claim is history, not work. This
+  // is the shape that produced the phantom-payment incident.
+  await query("UPDATE orders SET paid_claimed_at = now() - interval '30 days' WHERE id = $1", [orderId]);
+  assert.equal((await stalePaidClaims(15)).length, 0, "an ancient claim must not resurface as work");
+
+  // Granting it clears the alert, because the row leaves 'pending'.
+  await query("UPDATE orders SET paid_claimed_at = now() - interval '40 minutes' WHERE id = $1", [orderId]);
+  assert.equal((await stalePaidClaims(15)).length, 1);
+  await query("UPDATE orders SET status = 'paid' WHERE id = $1", [orderId]);
+  assert.equal((await stalePaidClaims(15)).length, 0, "a granted order must stop nagging");
+});
+
 await step("re-engagement nudge: sweeps dormant-but-recent users once, with a tailored hook", async () => {
   // Backdated synthetic users (every other test user is 'active now' → ineligible).
   await query(
@@ -1987,6 +2018,56 @@ await step("dubbing engine: charge → dub job → deliver; failure refunds exac
   await addCredits(poor.id, 5, "admin_grant", "test");
   assert.deepEqual(await startDubbing(poor.id, "x", "en", 60), { ok: false, error: "insufficient" });
   assert.equal(await credits(poor.id), 5); // not charged
+});
+
+await step("a payment complaint reaches a human and costs nothing", async () => {
+  // The message most likely to arrive from an unhappy buyer used to be answered
+  // by charging 2 🔫 and returning a picture of their own complaint, with nobody
+  // notified. This is the single most expensive text a bot can mishandle.
+  const upset: From = { id: 7301, is_bot: false, first_name: "Upset", username: "upset" };
+  await getOrCreateUser(upset.id, upset.first_name, null, 0);
+  await addCredits(upset.id, 10, "admin_grant", "test");
+  const falBefore = falCalls.length;
+  const adminBefore = calls("sendMessage").filter((c) => c.payload.chat_id === 9999).length;
+
+  await sendText(upset, "оплатил, а патроны не пришли");
+
+  assert.equal(falCalls.length, falBefore, "a support message must never reach the provider");
+  assert.equal(await credits(upset.id), 10, "a support message must never be charged");
+  assert.match(lastText(), /номер заявки/i);
+  const relayed = calls("sendMessage").filter((c) => c.payload.chat_id === 9999).length;
+  assert.ok(relayed > adminBefore, "a payment complaint must reach an admin");
+  const evt = await query("SELECT type, meta FROM events WHERE user_id = $1 ORDER BY id DESC LIMIT 1", [upset.id]);
+  assert.equal(evt[0].type, "support");
+  assert.equal(evt[0].meta, "payment");
+});
+
+await step("the router stays out of the way of real prompts, and misroutes cost one tap", async () => {
+  const { classifySupport } = await import("../src/support.js");
+  // Scene descriptions must pass straight through, including ones that happen to
+  // contain a cue word. A false positive steals a paid request.
+  for (const prompt of [
+    "мужчина у которого не работает телефон, ночная улица",
+    "сколько стоит этот товар — надпись на витрине магазина в стиле неон",
+    "портрет девушки в красном платье",
+  ]) {
+    assert.equal(classifySupport(prompt), null, `intercepted a real prompt: ${prompt}`);
+  }
+  // Long text is a brief, not a complaint, whatever words are in it.
+  assert.equal(classifySupport("не работает ".repeat(20)), null);
+  // Money cues stand alone; softer intents need question shape.
+  assert.equal(classifySupport("оплатил, где патроны"), "payment");
+  assert.equal(classifySupport("как это работает?"), "howto");
+  assert.equal(classifySupport("как это работает"), null);
+
+  // And when it IS wrong, the held text runs on one tap rather than being lost.
+  const artist: From = { id: 7302, is_bot: false, first_name: "Artist", username: "artist" };
+  await getOrCreateUser(artist.id, artist.first_name, null, 0);
+  await addCredits(artist.id, 10, "admin_grant", "test");
+  await sendText(artist, "верните деньги"); // intercepted, held
+  const falBefore = falCalls.length;
+  await pressButton(artist, "support:generate");
+  assert.equal(falCalls.length, falBefore + 1, "the escape hatch must run the original text");
 });
 
 await step("content moderation: a flagged photo is blocked BEFORE generation, refunded, distinct message", async () => {

@@ -77,6 +77,18 @@ import {
   type Preset,
 } from "./models.js";
 import { grantPurchase, registerPayments, sendBalance } from "./payments.js";
+import {
+  answerFor,
+  classifySupport,
+  escapeKeyboard,
+  helpKeyboard,
+  helpText,
+  holdPrompt,
+  logSupport,
+  relayToAdmins,
+  shouldRelay,
+  takeHeldPrompt,
+} from "./support.js";
 import { nUnits, UNIT_EMOJI, withPhotoTip } from "./text.js";
 
 /**
@@ -857,6 +869,37 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     "ИП «Z8 Capital», БИН 030722500509\n" +
     "Поддержка: komekforyou@gmail.com" +
     LEGAL_LINKS();
+
+  // Support entry. Registered BEFORE the free-text handler matters not at all
+  // (commands never reach it), but being in setMyCommands does: /help has to be
+  // findable in the command menu by someone who is already frustrated.
+  const sendHelp = async (ctx: Context): Promise<void> => {
+    await ctx.reply(helpText(), { parse_mode: "HTML", reply_markup: helpKeyboard() });
+  };
+  bot.command("help", sendHelp);
+  bot.command("support", sendHelp);
+
+  // "Написать в поддержку" — the next free-text message is treated as a support
+  // message whatever it says, so someone whose wording the router would not have
+  // caught still reaches a human instead of paying for a picture of their complaint.
+  bot.callbackQuery("support:write", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await user(ctx);
+    await setPending(u.id, "support_write", u.pending_file_id);
+    await ctx.reply("Напишите сообщение — оно придёт человеку. Если это про оплату, укажите номер заявки.");
+  });
+
+  // The escape hatch: the router was wrong, run the original text as a prompt.
+  bot.callbackQuery("support:generate", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await user(ctx);
+    const held = takeHeldPrompt(u.id);
+    if (!held) {
+      await ctx.reply("Не сохранил текст — пришлите запрос ещё раз, сгенерирую.");
+      return;
+    }
+    await runGeneration(ctx, u, MODELS.text_to_image, held);
+  });
 
   bot.command("terms", async (ctx) => {
     await ctx.reply(
@@ -2298,6 +2341,27 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     const u = await user(ctx);
     const text = ctx.message.text.trim();
     if (text.startsWith("/")) return;
+
+    // Support BEFORE generation. Everything below this point spends patrons, and
+    // the message most likely to arrive from an unhappy buyer — "оплатил, где
+    // патроны?" — used to be answered by charging them 2 🔫 and returning a
+    // picture of their own complaint, with nobody notified.
+    if (u.pending_action === "support_write") {
+      await setPending(u.id, null, u.pending_file_id);
+      await logSupport(u.id, "howto");
+      if (ctx.from) await relayToAdmins(ctx.api, ctx.from, "howto", text);
+      await ctx.reply("Спасибо, передали человеку — ответим в этом чате. 🙌");
+      return;
+    }
+    const intent = classifySupport(text);
+    if (intent) {
+      await logSupport(u.id, intent);
+      if (shouldRelay(intent) && ctx.from) await relayToAdmins(ctx.api, ctx.from, intent, text);
+      // Hold the text so a misrouted prompt costs one tap, not the request.
+      holdPrompt(u.id, text);
+      await ctx.reply(answerFor(intent), { parse_mode: "HTML", reply_markup: escapeKeyboard() });
+      return;
+    }
 
     if (u.pending_action?.startsWith("mode_")) {
       // They picked a photo-based use case but typed text — gently re-route.

@@ -9,6 +9,7 @@ import {
   getOrder,
   grantOrderCredits,
   logEvent,
+  markPaidClaimed,
   offerBonusFor,
   resolveOrder,
   type ApprovalPath,
@@ -313,6 +314,10 @@ export async function claimOrderPaid(api: Api, orderId: number, who: string): Pr
   const order = await getOrder(orderId);
   if (!order) return { kind: "not_found" };
   if (order.status === "paid") return { kind: "already" };
+  // Start the clock on "someone is out of pocket and waiting" BEFORE we go and
+  // ask Kaspi: if the verifier hangs or throws, the buyer has still told us they
+  // paid, and that is precisely the case the stuck-payment alert exists to catch.
+  await markPaidClaimed(orderId);
   const status = await kaspiVerifyOrder(order);
   if (status === "paid" && config.kaspiAutoGrant) {
     const pack = await settleApprovedOrder(api, orderId, "kaspi_api");
@@ -397,7 +402,16 @@ export function registerPayments(bot: Bot): void {
       );
     } else {
       // No merchant API configured → interim admin approval (admins were pinged).
-      await ctx.reply("Спасибо! Проверяем оплату — начислим патроны в ближайшее время ⏳");
+      // Name the order and a real deadline. "В ближайшее время" is what a buyer
+      // reads right before deciding they have been scammed: it carries no number
+      // to quote, no time to wait for, and no way to ask again. The number is
+      // also what the owner needs typed back at them to run `/order N ok`.
+      await ctx.reply(
+        `✅ Спасибо! Заявка <b>№${orderId}</b> принята — проверяем оплату вручную.\n\n` +
+          `Обычно это занимает <b>до 30 минут</b>. Если ${UNIT_EMOJI} патроны не пришли за это время — ` +
+          `напишите /help и укажите номер заявки, разберёмся.`,
+        { parse_mode: "HTML" },
+      );
     }
   });
 }
