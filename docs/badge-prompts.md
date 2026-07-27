@@ -105,6 +105,26 @@ text, no letters, no numbers, no logos, no background scenery.
   картинки будет драться с этим вращением;
 - 512×512, PNG.
 
+## Значок раздела «Уровень и награды» (вне набора из 17)
+
+Третья плитка в профиле, рядом с достижениями и сертификатами (`.gem` /
+`rewardsTileHtml` в `public/app.html`) — открывает список способов заработать
+опыт и то, какие стили уже закрыты уровнем. Та же система генерации, что и у
+17 значков (тот же системный блок, `remove_background`, обрезка по альфа-каналу
+до 512×512), но **не тир-материал** — плитка привязана к собственному
+градиенту карточки уровня (violet→magenta), а не к бронзе/серебру/золоту.
+
+Куда класть результат: `public/img/reward-key.png`.
+
+Сюжет: `an ornate skeleton key with a five-pointed star-shaped bow,
+three-quarter relief`
+
+Материал (вместо тира): `Material: deep amethyst crystal fused with dark
+violet metal, faceted violet-to-magenta gem catching the light, dark
+bevelled edges, soft inner glow.`
+
+Сборка промпта та же: `<СЮЖЕТ>. <СИСТЕМНЫЙ БЛОК> <МАТЕРИАЛ>`.
+
 ## Чего не делаем
 
 **Значки не генерируются из пользовательских фотографий.** Фото загружались
