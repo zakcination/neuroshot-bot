@@ -63,14 +63,29 @@ Full endpoint limits: images up to 9 (JPEG/PNG/WebP, ≤30 MB each); audio up to
 video up to 3 (MP4/MOV, combined 2–15 s, <50 MB total, each between ~640×640 and
 ~834×1112). **Total files across all modalities ≤ 12.**
 
-### Audio and video references are NOT wired, on purpose
+### Audio and video references — what is screened, and what is not
 
-Our only content gate is an image classifier. Audio has no gate; video has none
-either, though one is buildable by extracting a frame with the ffmpeg we already
-ship. Beyond that, the schema says audio requires an accompanying image or video
-— it exists to drive a person's **speech**, which is the same likeness problem
-that cost us two campaigns, and a voice sample is biometric data under the KZ
-personal-data law. See the open task before adding them.
+Both are wired (owner's decision, 2026-07-27). Be exact about the difference:
+
+| attachment | screening |
+|---|---|
+| images | the classifier, same as any upload, fail-closed |
+| video | one frame extracted with ffmpeg and put through the same classifier |
+| **audio** | **none — no classifier for it exists here** |
+
+Duration and format are checked locally with `ffprobe` BEFORE upload, because the
+provider would reject an over-length reference anyway and finding out remotely
+costs a paid render. An unprobeable file is rejected rather than waved through:
+if ffprobe were missing, treating "unknown" as "fine" would silently disable
+every limit.
+
+Audio therefore rests on an explicit rights notice the uploader accepts, recorded
+per upload (not once per account — it is a claim about THAT file). §5.1 of the
+Terms states it: responsibility for uploaded material lies with the uploader, and
+that audio is not automatically checked. Note what this does and does not buy —
+it settles responsibility BETWEEN us and the uploader; it does not remove our own
+duties as the operator processing the file, and a voice sample is biometric data
+under the KZ personal-data law.
 
 - `text-to-video` is for concept discovery, before you have a frame worth
   keeping.

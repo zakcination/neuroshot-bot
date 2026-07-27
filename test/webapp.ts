@@ -733,6 +733,115 @@ await step("reference video: several photos of one subject build one clip", asyn
   assert.equal(((await tooMany.json()) as { error: string }).error, "too_many_inputs");
 });
 
+await step("audio and video references: gated on rights, screened where we can, capped where the endpoint caps", async () => {
+  const { REF_LIMITS, REFERENCE_RIGHTS_NOTICE } = await import("../src/media.js");
+
+  // Nothing is accepted without the acknowledgement, and the refusal carries
+  // the notice itself so the client cannot show different words than we record.
+  const noRights = await fetch(`${base}/api/upload/media`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "audio", data: "data:audio/mpeg;base64,QUJD" }),
+  });
+  assert.equal(noRights.status, 400);
+  const nr = (await noRights.json()) as { error: string; notice: string };
+  assert.equal(nr.error, "rights_required");
+  assert.equal(nr.notice, REFERENCE_RIGHTS_NOTICE);
+  assert.match(nr.notice, /Ответственность за загруженные файлы несёт загрузивший/);
+
+  // Format is checked against the endpoint's list, not ours to widen.
+  const wrongType = await fetch(`${base}/api/upload/media`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "audio", data: "data:audio/ogg;base64,QUJD", rights: true }),
+  });
+  assert.equal(((await wrongType.json()) as { error: string }).error, "bad_format");
+
+  // The generate path only accepts references on a model that declares it reads
+  // them, and only URLs from our own hosts.
+  const wrongModel = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_mini", image_url: "https://fal.test/storage/u-1.jpg",
+      audio_urls: ["https://fal.test/storage/a-1.mp3"], prompt: "тест",
+    }),
+  });
+  assert.equal(wrongModel.status, 400);
+  assert.equal(((await wrongModel.json()) as { error: string }).error, "no_reference_support");
+
+  const foreign = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref", image_url: "https://fal.test/storage/u-1.jpg",
+      audio_urls: ["https://evil.example.com/a.mp3"], prompt: "тест",
+    }),
+  });
+  assert.equal(((await foreign.json()) as { error: string }).error, "bad_source");
+
+  // The endpoint's own rule — audio drives a subject, so it needs one — is
+  // enforced, though for this model the generic "an image_to_video model needs a
+  // source image" check (webapp.ts, source === "model") fires first. Either way
+  // the outcome is what matters: an audio-only request never reaches a paid
+  // render. The explicit guard stays as defence for any future reference model
+  // that does not require a primary image.
+  const orphanAudio = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref",
+      audio_urls: ["https://fal.test/storage/a-1.mp3"], prompt: "тест",
+    }),
+  });
+  assert.equal(orphanAudio.status, 400, "audio with no subject must never render");
+
+  const tooMuchAudio = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref", image_url: "https://fal.test/storage/u-1.jpg",
+      audio_urls: Array.from({ length: REF_LIMITS.audio.max + 1 }, (_, i) => `https://fal.test/storage/a-${i}.mp3`),
+      prompt: "тест",
+    }),
+  });
+  assert.equal(((await tooMuchAudio.json()) as { error: string }).error, "too_many_refs");
+
+  // A good request: both kinds reach the endpoint, each addressed by name, and
+  // the price does not move.
+  await addCredits(maker.id, 38, "admin_grant", "test");
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref", image_url: "https://fal.test/storage/u-1.jpg",
+      audio_urls: ["https://fal.test/storage/a-1.mp3"],
+      video_urls: ["https://fal.test/storage/v-1.mp4", "https://fal.test/storage/v-2.mp4"],
+      prompt: "поздравление на камеру",
+    }),
+  });
+  assert.equal(r.status, 200);
+  const d = (await r.json()) as { id: number; credits: number };
+  assert.equal(d.credits, 38, "references must not change the price");
+  await pollGen(d.id);
+  const call = falCalls.at(-1)!;
+  assert.deepEqual(call.input.audio_urls, ["https://fal.test/storage/a-1.mp3"]);
+  assert.deepEqual(call.input.video_urls, ["https://fal.test/storage/v-1.mp4", "https://fal.test/storage/v-2.mp4"]);
+  const prompt = call.input.prompt as string;
+  assert.match(prompt, /@Audio1/);
+  assert.match(prompt, /@Video1, @Video2/);
+  assert.doesNotMatch(prompt, /@Video3/);
+  assert.match(prompt, /lips in sync/);
+  assert.match(prompt, /follow their MOTION/);
+
+  // With no attachments the keys are absent entirely, not empty arrays.
+  await addCredits(maker.id, 38, "admin_grant", "test");
+  const plain = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref", image_url: "https://fal.test/storage/u-1.jpg", prompt: "просто",
+    }),
+  });
+  await pollGen(((await plain.json()) as { id: number }).id);
+  assert.ok(!("audio_urls" in falCalls.at(-1)!.input), "empty audio_urls must not be sent");
+  assert.ok(!("video_urls" in falCalls.at(-1)!.input), "empty video_urls must not be sent");
+});
+
 await step("Studio catalog: FULL registry by mode, patron-only prices; every model generable", async () => {
   const cat = (await apiMe(signInitData(maker))).body.catalog as unknown as {
     studio: {

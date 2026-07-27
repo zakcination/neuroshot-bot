@@ -875,6 +875,11 @@
        scrollable so a narrow phone never wraps it into a ragged second row. */
     .xrow { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; -webkit-overflow-scrolling: touch; }
     .xthumb { position: relative; flex: 0 0 auto; width: 68px; height: 68px; border-radius: var(--radius-s); overflow: hidden; border: 1px solid var(--line); }
+    .xthumb.xfile { display:flex; align-items:center; justify-content:center; padding:0 10px; font-size:12px;
+      background:var(--surface); border:1px solid var(--line); color:var(--text); min-width:66px; }
+    .rights { display:flex; gap:8px; align-items:flex-start; margin-top:8px; font-size:12.5px; line-height:1.35;
+      color:var(--muted); cursor:pointer; }
+    .rights input { margin-top:2px; flex:0 0 auto; width:16px; height:16px; }
     .xthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .xdel { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border: 0; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; font: inherit; font-size: 11px; line-height: 20px; padding: 0; cursor: pointer; }
     .xadd { flex: 0 0 auto; width: 68px; height: 68px; border-radius: var(--radius-s); border: 1px dashed var(--violet); display: grid; place-items: center; color: var(--violet); font-size: 22px; cursor: pointer; }
@@ -2240,6 +2245,10 @@
       // it builds a clip from up to 9 photographs of the same subject.
       const maxInputs = (caps && caps.maxInputs) || 1;
       if (stu.extras.length > maxInputs - 1) stu.extras = stu.extras.slice(0, Math.max(0, maxInputs - 1));
+      // Switching to a model that does not read audio/video drops them: the
+      // server would refuse the request anyway, and carrying them invisibly is
+      // how a user ends up wondering why their sound was ignored.
+      if (!m.reference) { stu.refAudio = []; stu.refVideo = []; stu.refRights = false; }
       if (stu.mode === "video" && m.video) {
         if (!m.video.durations.some((d) => d.seconds === stu.duration)) stu.duration = m.video.durations[0].seconds;
         if (!m.video.endFrame) { stu.endPhoto = null; stu.endGenerationId = null; }
@@ -2318,6 +2327,64 @@
             ${room > 0 ? `<label class="xadd"><input type="file" accept="image/*" id="stuExtraFile" multiple /><span>＋</span></label>` : ""}
           </div>
           <div class="sub" style="margin-top:6px">Те же черты лица с других сторон — до ${maxInputs} фото. Цена не меняется.</div>
+        </div>
+        ${refMediaBlock(m)}`;
+    }
+
+    /**
+     * Audio and video references — only for a model that declares it reads them.
+     *
+     * The rights notice is deliberately ABOVE the pickers and not behind a
+     * "подробнее": a warning nobody reads before choosing a file is decoration.
+     * The checkbox gates the file inputs themselves, and the server refuses an
+     * upload that does not carry the same acknowledgement, so the two cannot
+     * drift apart.
+     */
+    /** Read a file as a data: URL, unchanged — audio and video must not be
+     *  re-encoded client-side the way photos are downscaled. */
+    function readFileData(file) {
+      return new Promise((resolve) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result || "") || null);
+        r.onerror = () => resolve(null);
+        r.readAsDataURL(file);
+      });
+    }
+
+    /** Turn a media-upload rejection into something a person can act on. */
+    function refUploadError(out) {
+      const e = out && out.error;
+      if (e === "too_large") return "Файл слишком большой — до 15 МБ для аудио и 12 МБ для видео";
+      if (e === "too_long") return `Слишком длинный — до ${out.maxSeconds} секунд, у вас ${Math.round(out.seconds)}`;
+      if (e === "too_short") return `Слишком короткий — нужно хотя бы ${out.minSeconds} секунды`;
+      if (e === "bad_format") return "Не тот формат: аудио — MP3 или WAV, видео — MP4 или MOV";
+      if (e === "unsafe_video") return "Это видео не подходит — попробуйте другое";
+      if (e === "unreadable") return "Не удалось прочитать файл — попробуйте другой";
+      if (e === "rights_required") return "Сначала подтвердите права на файл";
+      return "Не удалось загрузить файл";
+    }
+
+    function refMediaBlock(m) {
+      if (!m || !m.reference) return "";
+      const a = stu.refAudio || [];
+      const v = stu.refVideo || [];
+      const ok = !!stu.refRights;
+      const chip = (label, i, sort) =>
+        `<div class="xthumb xfile"><span>${label}</span><button class="xdel" data-rdel="${sort}:${i}" aria-label="Убрать">✕</button></div>`;
+      return `
+        <div class="xtra">
+          <div style="margin-top:12px">${qLabel("Звук и движение — по вашим файлам", "refmedia")}</div>
+          <label class="rights">
+            <input type="checkbox" id="stuRights" ${ok ? "checked" : ""} />
+            <span>Я имею право использовать эти файлы: это моя запись либо есть согласие людей, чьи голос и лицо на ней. Ответственность за загруженное несёт загрузивший.</span>
+          </label>
+          <div class="xrow" style="margin-top:10px">
+            ${a.map((x, i) => chip(`🎵 ${x.seconds}с`, i, "a")).join("")}
+            ${ok && a.length < 3 ? `<label class="xadd"><input type="file" accept="audio/mpeg,audio/wav" id="stuAudioFile" /><span>🎵＋</span></label>` : ""}
+            ${v.map((x, i) => chip(`🎬 ${x.seconds}с`, i, "v")).join("")}
+            ${ok && v.length < 3 ? `<label class="xadd"><input type="file" accept="video/mp4,video/quicktime" id="stuVideoFile" /><span>🎬＋</span></label>` : ""}
+          </div>
+          <div class="sub" style="margin-top:6px">Аудио — MP3 или WAV до 15 секунд, к нему нужно фото. Видео — MP4 или MOV, 2–15 секунд. Цена не меняется.</div>
         </div>`;
     }
 
@@ -2527,6 +2594,36 @@
         stu.photo = null; stu.photoUrl = null; stu.generationId = null; stu.srcPreview = null; stu.extras = [];
         viewStudio();
       }));
+      bind("#stuRights", (el) => (el.onchange = (e) => {
+        stu.refRights = !!e.target.checked;
+        // Unticking withdraws the claim, so the files it covered go with it —
+        // keeping them would leave attachments nobody has vouched for.
+        if (!stu.refRights) { stu.refAudio = []; stu.refVideo = []; }
+        viewStudio();
+      }));
+      const pickRef = (sel, kind) =>
+        bind(sel, (el) => (el.onchange = async (e) => {
+          const file = e.target.files && e.target.files[0];
+          if (!file) return;
+          const data = await readFileData(file);
+          if (!data) { toast("Не удалось прочитать файл"); return; }
+          const { status, data: out } = await api("/api/upload/media", {
+            method: "POST",
+            body: JSON.stringify({ kind, data, rights: true }),
+          });
+          if (status !== 200) { toast(refUploadError(out), { wide: true, ms: 5000 }); return; }
+          const list = kind === "audio" ? (stu.refAudio = stu.refAudio || []) : (stu.refVideo = stu.refVideo || []);
+          list.push({ url: out.url, seconds: out.seconds });
+          viewStudio();
+        }));
+      pickRef("#stuAudioFile", "audio");
+      pickRef("#stuVideoFile", "video");
+      document.querySelectorAll("[data-rdel]").forEach((b) => (b.onclick = () => {
+        const [sort, i] = b.dataset.rdel.split(":");
+        const list = sort === "a" ? stu.refAudio : stu.refVideo;
+        list.splice(Number(i), 1);
+        viewStudio();
+      }));
       bind("#stuExtraFile", (el) => (el.onchange = async (e) => {
         const m = studioModel();
         const room = (((m && m.image && m.image.maxInputs) || 1) - 1) - (stu.extras || []).length;
@@ -2540,7 +2637,10 @@
         if (failed) toast(failed === files.length ? "Не получилось прочитать фото" : "Часть фото не удалось прочитать");
         clampStudioOpts(); viewStudio();
       }));
-      sheetBody.querySelectorAll(".xdel").forEach((b) => (b.onclick = () => {
+      // Scoped to [data-xi]: the audio/video reference chips reuse the same .xdel
+      // styling, and an unscoped selector would splice their index out of the
+      // PHOTO list — deleting a silent third photo when a user removes a sound.
+      sheetBody.querySelectorAll(".xdel[data-xi]").forEach((b) => (b.onclick = () => {
         stu.extras.splice(Number(b.dataset.xi), 1); viewStudio();
       }));
       bind("#stuEndFile", (el) => (el.onchange = async (e) => {
@@ -2586,6 +2686,8 @@
       const opts = {
         image_url: stu.photoUrl || undefined,
         image_urls: extraUrls.length ? extraUrls : undefined,
+        audio_urls: (stu.refAudio || []).length ? stu.refAudio.map((x) => x.url) : undefined,
+        video_urls: (stu.refVideo || []).length ? stu.refVideo.map((x) => x.url) : undefined,
         generation_id: stu.generationId || undefined,
         aspect_ratio: stu.aspect && stu.aspect !== "auto" ? stu.aspect : undefined,
         resolution: stu.resolution || undefined,

@@ -24,6 +24,17 @@ import { hit } from "./ratelimit.js";
 import { claimOrderPaid, grantPurchase, sendPendingOrderPrompt } from "./payments.js";
 import { comboEndsAt } from "./offer.js";
 import { sanitizePrompt } from "./promptcraft.js";
+import {
+  AUDIO_MIME,
+  extensionFor,
+  extractFrame,
+  MEDIA_BYTES,
+  probeMedia,
+  REF_LIMITS,
+  REFERENCE_RIGHTS_NOTICE,
+  VIDEO_MIME,
+  withTempFile,
+} from "./media.js";
 import { brandForDelivery } from "./watermark.js";
 import {
   campaignById,
@@ -276,6 +287,9 @@ function studioModelsOf(mode: "image" | "video", eta: Record<string, number>): A
             maxInputs: m.image.maxInputs ?? 1,
           }
         : null,
+      // Does this model read audio/video references? The client shows the rights
+      // notice and the file pickers off this flag alone.
+      reference: !!m.reference,
       video: m.video
         ? {
             durations: m.video.durations.map((d) => ({ seconds: d, credits: priceFor(m, { duration: d }) })),
@@ -637,6 +651,10 @@ function readRawBody(req: IncomingMessage, limit: number): Promise<Buffer | null
 
 const UPLOAD_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 const UPLOAD_LIMIT = 9 * 1024 * 1024; // ~6.5MB of image as base64 JSON
+// Base64 inflates by ~4/3, so this must clear MEDIA_BYTES.audio (15 MB) with
+// room for the JSON envelope. It is a ceiling on what we will PARSE; the real
+// per-file limits live in media.ts and are enforced after decoding.
+const MEDIA_UPLOAD_LIMIT = 22 * 1024 * 1024;
 
 /**
  * data:image/...;base64,… → public fal storage URL usable as model input.
@@ -667,6 +685,81 @@ export async function uploadResponse(
   // would be an infinite XP farm — the claim key carries no id on purpose.
   await awardXpOnce(userId, "upload", "upload").catch(() => 0);
   return { status: 200, body: { url } };
+}
+
+/**
+ * POST /api/upload/media — an AUDIO or VIDEO reference for Seedance reference
+ * mode. Separate from /api/upload because the screening is different in kind,
+ * not in degree.
+ *
+ * Video is screened: a frame is extracted and put through the same classifier as
+ * any uploaded photo, failing closed exactly as that path does. Audio is NOT
+ * screened — no classifier for it exists here — so the caller must have accepted
+ * the rights notice, which is recorded against their account before the bytes
+ * are accepted. That records responsibility; it does not screen the file, and
+ * the difference is stated in src/media.ts.
+ *
+ * Duration is checked before upload, not after: the provider rejects an
+ * over-length reference anyway, and finding out locally costs nothing while
+ * finding out remotely costs a paid render.
+ */
+export async function mediaUploadResponse(
+  userId: number,
+  body: Record<string, unknown> | null,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const kind = body?.kind === "audio" ? "audio" : body?.kind === "video" ? "video" : null;
+  if (!kind) return { status: 400, body: { error: "bad_kind" } };
+  if (body?.rights !== true) return { status: 400, body: { error: "rights_required", notice: REFERENCE_RIGHTS_NOTICE } };
+
+  const data = typeof body?.data === "string" ? body.data : "";
+  const m = /^data:([a-z/+.-]+);base64,(.+)$/is.exec(data);
+  const mime = m ? m[1].toLowerCase() : "";
+  const allowed = kind === "audio" ? AUDIO_MIME : VIDEO_MIME;
+  if (!m || !allowed.has(mime)) return { status: 400, body: { error: "bad_format" } };
+
+  const buf = Buffer.from(m[2], "base64");
+  if (!buf.length) return { status: 400, body: { error: "bad_format" } };
+  if (buf.length > MEDIA_BYTES[kind]) {
+    return { status: 400, body: { error: "too_large", maxBytes: MEDIA_BYTES[kind] } };
+  }
+
+  // Probe and (for video) screen BEFORE anything leaves this machine.
+  const checked = await withTempFile(buf, extensionFor(mime), async (path) => {
+    const probe = await probeMedia(path);
+    // An unprobeable file is one we cannot vouch for — reject rather than
+    // assume it is fine. ffprobe missing would otherwise disable every limit.
+    if (!probe) return { error: "unreadable" as const };
+    const cap = kind === "audio" ? REF_LIMITS.audio.combinedSeconds : REF_LIMITS.video.maxCombinedSeconds;
+    if (probe.seconds > cap) return { error: "too_long" as const, seconds: probe.seconds, maxSeconds: cap };
+    if (kind === "video" && probe.seconds < REF_LIMITS.video.minCombinedSeconds) {
+      return { error: "too_short" as const, seconds: probe.seconds, minSeconds: REF_LIMITS.video.minCombinedSeconds };
+    }
+    if (kind === "audio") return { probe };
+    const frame = await extractFrame(path, probe.seconds);
+    if (!frame) return { error: "unreadable" as const };
+    return { probe, frame };
+  });
+  if ("error" in checked) {
+    return { status: 400, body: { error: checked.error, ...("seconds" in checked ? checked : {}) } };
+  }
+
+  if (checked.frame) {
+    const frameUrl = await fal.storage.upload(new Blob([new Uint8Array(checked.frame)], { type: "image/png" }));
+    try {
+      await assertImageSafe(frameUrl);
+    } catch (err) {
+      if (!(err instanceof UnsafeImageError)) throw err;
+      await logEvent(userId, "moderation_blocked", "media_upload").catch(() => {});
+      return { status: 400, body: { error: "unsafe_video" } };
+    }
+  }
+
+  const url = await fal.storage.upload(new Blob([new Uint8Array(buf)], { type: mime }));
+  // The acknowledgement is recorded per upload, not once per account: it is the
+  // claim about THIS file, and a single historical tap should not stand in for
+  // every file a person ever attaches afterwards.
+  await logEvent(userId, "reference_rights", kind).catch(() => {});
+  return { status: 200, body: { url, kind, seconds: Math.round(checked.probe.seconds * 10) / 10 } };
 }
 
 /** Only ever feed generated/uploaded HTTPS URLs back into models. */
@@ -756,6 +849,20 @@ export async function generateResponse(
     }
     // Whole request was extras and no primary — promote the first one.
     if (!imageUrl && extraImageUrls.length) imageUrl = extraImageUrls.shift();
+  }
+  // Audio / video references. Accepted ONLY as URLs we issued (the same
+  // allow-list the photos pass), so the sole way in is our own screened upload
+  // endpoint — a client cannot name a URL for us to fetch on its behalf.
+  const audioUrls: string[] = [];
+  const videoUrls: string[] = [];
+  for (const [field, sink] of [["audio_urls", audioUrls], ["video_urls", videoUrls]] as const) {
+    const raw = body?.[field];
+    if (raw == null) continue;
+    if (!Array.isArray(raw) || raw.length > 8) return { status: 400, body: { error: "bad_source" } };
+    for (const u of raw) {
+      if (!isMediaUrl(u)) return { status: 400, body: { error: "bad_source" } };
+      if (!sink.includes(u)) sink.push(u);
+    }
   }
   let model: ModelSpec, prompt: string, crafted;
 
@@ -921,6 +1028,27 @@ export async function generateResponse(
       return { status: 400, body: { error: "too_many_inputs", maxInputs } };
     }
     opts.extraImageUrls = extraImageUrls;
+  }
+
+  // Audio / video references (Seedance reference mode). Same discipline as the
+  // photos: validated here against the media-host allow-list, then assigned —
+  // never carried through the opts bag.
+  if (audioUrls.length || videoUrls.length) {
+    if (!model.reference) return { status: 400, body: { error: "no_reference_support" } };
+    if (audioUrls.length > REF_LIMITS.audio.max || videoUrls.length > REF_LIMITS.video.max) {
+      return { status: 400, body: { error: "too_many_refs", maxAudio: REF_LIMITS.audio.max, maxVideo: REF_LIMITS.video.max } };
+    }
+    // The endpoint's own rule: audio drives a subject, so it needs one to drive.
+    // Rejecting here turns a paid provider error into a free local one.
+    if (audioUrls.length && !imageUrl && !videoUrls.length) {
+      return { status: 400, body: { error: "audio_needs_subject" } };
+    }
+    const total = (imageUrl ? 1 : 0) + extraImageUrls.length + audioUrls.length + videoUrls.length;
+    if (total > REF_LIMITS.totalFiles) {
+      return { status: 400, body: { error: "too_many_files", maxFiles: REF_LIMITS.totalFiles } };
+    }
+    if (audioUrls.length) opts.audioUrls = audioUrls;
+    if (videoUrls.length) opts.videoUrls = videoUrls;
   }
 
   const r = await startWebGeneration(userId, model, prompt, imageUrl, crafted, opts, sourceId);
@@ -1327,6 +1455,19 @@ export function createWebApp(): Server {
         const rl = hit(`upload:${user.id}`, config.rateLimitUploadPerMin, 60_000);
         if (rl.limited) return tooManyRequests(res, rl.retryAfterMs);
         const { status, body } = await uploadResponse(user.id, await readJsonBody(req, UPLOAD_LIMIT));
+        return json(res, status, body);
+      }
+
+      // POST /api/upload/media — an audio/video REFERENCE. Its own body limit:
+      // these files are larger than a photo, and its own rate-limit bucket so a
+      // burst of heavy uploads cannot starve ordinary photo uploads.
+      if (url.pathname === "/api/upload/media") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const rl = hit(`media:${user.id}`, config.rateLimitUploadPerMin, 60_000);
+        if (rl.limited) return tooManyRequests(res, rl.retryAfterMs);
+        const { status, body } = await mediaUploadResponse(user.id, await readJsonBody(req, MEDIA_UPLOAD_LIMIT));
         return json(res, status, body);
       }
 

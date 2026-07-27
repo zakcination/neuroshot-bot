@@ -40,6 +40,18 @@ export interface GenOpts {
    * it after validating every entry against the media-host allow-list.
    */
   extraImageUrls?: string[];
+  /**
+   * Audio and video REFERENCES for Seedance reference mode. SERVER-SET ONLY,
+   * exactly like extraImageUrls — normalizeOpts does not copy them, so a client
+   * cannot name arbitrary URLs for us to fetch and hand to a provider.
+   *
+   * These are the one attachment kind our image classifier cannot screen (video
+   * is screened by an extracted frame; audio is not screened at all). The
+   * product's answer is a rights notice the uploader accepts, recorded per
+   * upload — see src/media.ts for exactly what that does and does not cover.
+   */
+  audioUrls?: string[];
+  videoUrls?: string[];
 }
 
 /** A quality/resolution tier the composer can offer; `mult` scales credits AND cost. */
@@ -97,6 +109,12 @@ export interface ModelSpec {
   image?: ImageParams;
   /** Present on image_to_video models the composer can fine-tune. */
   video?: VideoParams;
+  /**
+   * This model takes AUDIO and VIDEO references alongside its photos (Seedance
+   * reference mode). Declared rather than inferred from the endpoint id so the
+   * server has one thing to check before accepting attachments it cannot screen.
+   */
+  reference?: boolean;
 }
 
 /** Aspect ratios offered for images ("auto" = model decides / keep source). */
@@ -219,17 +237,33 @@ const SEEDANCE_RES: ResTier[] = [
  * one subject, not several subjects, and not a collage. Same failure this
  * codebase already fixed for multi-image edits (see refPrompt).
  */
-function referencePrompt(prompt: string, count: number): string {
-  if (count < 1) return prompt;
-  const names = Array.from({ length: count }, (_, i) => `@Image${i + 1}`).join(", ");
-  return (
-    `${prompt}\n\n` +
-    `${names} are reference photographs of the SAME subject or subjects, shot from different ` +
-    `angles and in different lighting — read them together to get the faces right. They show the ` +
-    `same people repeated, NOT additional people: the video must contain exactly the people who ` +
-    `appear in them, no one added and no one dropped. Never render a collage, a split screen or a ` +
-    `contact sheet — this is one continuous shot.`
-  );
+function referencePrompt(prompt: string, images: number, audio = 0, video = 0): string {
+  if (images + audio + video < 1) return prompt;
+  const list = (name: string, n: number): string =>
+    Array.from({ length: n }, (_, i) => `@${name}${i + 1}`).join(", ");
+  const parts: string[] = [];
+  if (images) {
+    parts.push(
+      `${list("Image", images)} are reference photographs of the SAME subject or subjects, shot from ` +
+        `different angles and in different lighting — read them together to get the faces right. They ` +
+        `show the same people repeated, NOT additional people: the video must contain exactly the ` +
+        `people who appear in them, no one added and no one dropped. Never render a collage, a split ` +
+        `screen or a contact sheet — this is one continuous shot.`,
+    );
+  }
+  if (video) {
+    parts.push(
+      `${list("Video", video)} are reference clips: follow their MOTION, camera movement and pacing. ` +
+        `Take the people and the setting from the photographs, not from these clips.`,
+    );
+  }
+  if (audio) {
+    parts.push(
+      `${list("Audio", audio)} is the reference sound: match the speech, timing and delivery to it, ` +
+        `and keep the subject's lips in sync with it.`,
+    );
+  }
+  return `${prompt}\n\n${parts.join(" ")}`;
 }
 
 export const MODELS = {
@@ -513,14 +547,22 @@ export const MODELS = {
     note: "видео по нескольким фото — до 9",
     input: (prompt, imageUrl, opts) => {
       const urls = refUrls(imageUrl, opts);
+      const audio = opts?.audioUrls ?? [];
+      const video = opts?.videoUrls ?? [];
       return {
-        prompt: referencePrompt(prompt, urls.length),
+        prompt: referencePrompt(prompt, urls.length, audio.length, video.length),
         image_urls: urls,
+        // Omitted entirely when empty: the endpoint treats an empty array and an
+        // absent field the same, and sending [] would put a meaningless key in
+        // every request body and in every logged payload.
+        ...(audio.length ? { audio_urls: audio } : {}),
+        ...(video.length ? { video_urls: video } : {}),
         resolution: opts?.resolution ?? "720p",
         duration: String(opts?.duration ?? 5),
         ...arParam(opts),
       };
     },
+    reference: true,
     // maxCount is meaningless for a video model; maxInputs is what gates the
     // reference list, and 9 is the endpoint's own documented ceiling.
     image: { aspectRatios: IMAGE_ASPECTS, maxCount: 1, maxInputs: 9 },
