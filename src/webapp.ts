@@ -15,13 +15,13 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { achievements, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { achievements, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, latestPendingOrder, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { enhancePrompt, ENHANCE_COST, ENHANCE_STACK } from "./enhance.js";
 import { latestReleaseId, unseenReleases } from "./changelog.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
 import { hit } from "./ratelimit.js";
-import { claimOrderPaid, grantPurchase } from "./payments.js";
+import { claimOrderPaid, grantPurchase, sendPendingOrderPrompt } from "./payments.js";
 import { comboEndsAt } from "./offer.js";
 import { sanitizePrompt } from "./promptcraft.js";
 import { brandForDelivery } from "./watermark.js";
@@ -455,7 +455,7 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress, finance, enhanceLeft, awards, certs, partner, seenRelease] =
+  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress, finance, enhanceLeft, awards, certs, partner, seenRelease, openOrder] =
     await Promise.all([
       userDashboard(user.id),
       recentGenerations(user.id, 30),
@@ -474,6 +474,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
       certificates(user.id),
       partnerAccount(user.id),
       releaseState(user.id),
+      latestPendingOrder(user.id),
     ]);
   const gates = Object.fromEntries(gateRows.map((g) => [g.preset_id, g.min_level]));
   return {
@@ -539,6 +540,13 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     // lived through is noise, not a welcome.
     whatsNew:
       seenRelease.seen == null && isNewAccount(seenRelease.createdAt) ? [] : unseenReleases(seenRelease.seen),
+    // An unfinished purchase, so the app can pick it back up. Paying leaves the
+    // app and returning re-mounts it, so without this the buyer lands on the
+    // home screen and is never asked whether they paid. `link` rides along so
+    // "открыть оплату снова" works without creating a second order.
+    pendingOrder: openOrder
+      ? { orderId: openOrder.id, amount: openOrder.amount_kzt, title: packById(openOrder.pack_id)?.title ?? openOrder.pack_id, link: kaspiLinkFor(openOrder.pack_id) }
+      : null,
     // Partner account. Codes and payout history are NOT loaded here — they are
     // only meaningful to an enrolled partner (a tiny minority), and putting two
     // extra queries on every /api/me for everyone else is a cost with no reader.
@@ -1139,6 +1147,12 @@ export async function orderResponse(
   const link = kaspiLinkFor(pack.id);
   if (!link) return { status: 200, body: { available: false } };
   const orderId = await createOrder(userId, pack.id, pack.kzt);
+  // Also put the confirm button in the CHAT. Paying leaves the app — the Kaspi
+  // link opens in an external browser and returning re-mounts the Mini App from
+  // scratch, taking the confirm screen and the order id with it. The buyer comes
+  // back to a fresh home screen, is never asked whether they paid, and the
+  // manual-approval path is never entered: they have paid and nobody knows.
+  await sendPendingOrderPrompt(new Api(config.botToken), userId, orderId, pack);
   return {
     status: 200,
     body: { available: true, orderId, link, amount: pack.kzt, title: pack.title },

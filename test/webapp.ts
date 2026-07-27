@@ -177,6 +177,7 @@ interface MeResponse {
   generations: Array<{ output_url: string | null; status: string }>;
   bot_username: string;
   welcomeBonus: { pending: number; claimed: boolean };
+  pendingOrder: { orderId: number; amount: number; title: string; link: string } | null;
   onboardingSeen: boolean;
   roadmap: { firstPhoto: boolean; ownIdea: boolean; revivePhoto: boolean; scenario: boolean; invitedFriend: boolean };
   roadmapBonus: { amount: number; claimed: boolean };
@@ -1078,6 +1079,59 @@ await step("POST /api/order: a per-pack fixed-amount link overrides the fallback
   const d = (await r.json()) as { available: boolean; link: string; amount: number };
   assert.equal(d.link, "https://pay.test/photoset"); // KASPI_PAY_URL_PHOTO_SET, not the fallback
   assert.equal(d.amount, 2900); // photo set = 2900 ₸
+});
+
+await step("a purchase started in the app survives leaving the app", async () => {
+  // Paying opens Kaspi in an external browser and coming back re-mounts the Mini
+  // App: the confirm screen and the order id it held are gone. Two independent
+  // ways back, because the buyer has already parted with money and "we forgot"
+  // is not an acceptable outcome — the chat keeps a button, and /api/me hands
+  // the order back so the app can re-raise the confirm screen on open.
+  const buyer = { id: 7501, username: "buyer" };
+  await getOrCreateUser(buyer.id, buyer.username, null, 0);
+
+  const o = await fetch(`${base}/api/order`, {
+    method: "POST",
+    headers: { Authorization: `tma ${signInitData(buyer)}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ pack: "photo_set" }),
+  });
+  const { orderId } = (await o.json()) as { orderId: number };
+
+  // 1. The chat message carries the confirm button for THIS order. Asserted on
+  //    the sender rather than through the endpoint: grammY holds its own `fetch`
+  //    reference, so the transport cannot be intercepted from here — the wiring
+  //    (orderResponse awaits sendPendingOrderPrompt) is a one-line read above.
+  const { sendPendingOrderPrompt } = await import("../src/payments.js");
+  const { packById } = await import("../src/models.js");
+  const sent: Array<{ chatId: number; text: string; opts: Record<string, unknown> }> = [];
+  const fakeApi = {
+    sendMessage: async (chatId: number, text: string, opts: Record<string, unknown>) => {
+      sent.push({ chatId, text, opts });
+      return {};
+    },
+  } as unknown as InstanceType<typeof Api>;
+  await sendPendingOrderPrompt(fakeApi, buyer.id, orderId, packById("photo_set")!);
+  assert.equal(sent.length, 1, "the buyer must get exactly one order message");
+  assert.equal(sent[0].chatId, buyer.id);
+  assert.match(sent[0].text, new RegExp(`№${orderId}`));
+  const kb = sent[0].opts.reply_markup as { inline_keyboard: Array<Array<{ callback_data?: string }>> };
+  assert.ok(
+    kb.inline_keyboard.flat().some((b) => b.callback_data === `paid:${orderId}`),
+    "the chat message must carry the «Я оплатил» button for this order",
+  );
+
+  // 2. And /api/me hands the order back, so a re-mounted app can re-raise it.
+  const { body } = await apiMe(signInitData(buyer));
+  const pend = body.pendingOrder as { orderId: number; amount: number; link: string } | null;
+  assert.ok(pend, "an unfinished order must come back on /api/me");
+  assert.equal(pend.orderId, orderId);
+  assert.equal(pend.amount, 2900);
+  assert.ok(pend.link, "the pay link must ride along so «открыть снова» needs no second order");
+
+  // Once it is resolved it stops following the buyer around.
+  await query("UPDATE orders SET status = 'paid' WHERE id = $1", [orderId]);
+  const after = await apiMe(signInitData(buyer));
+  assert.equal(after.body.pendingOrder, null, "a settled order must not keep asking");
 });
 
 await step("POST /api/order/paid: in-app 'I paid' mirrors the bot; ownership enforced", async () => {

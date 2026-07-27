@@ -266,6 +266,36 @@ function paidKeyboard(orderId: number): InlineKeyboard {
 }
 
 /**
+ * Put the "✅ Я оплатил" button in the CHAT for an order started in the Mini App.
+ *
+ * Paying leaves the app: the Kaspi link opens in an external browser, and coming
+ * back re-mounts the Mini App from scratch. Everything the app was holding —
+ * including the confirm screen and the order id it was holding — is gone, so the
+ * buyer returns to a fresh home screen and is never asked whether they paid.
+ * They have paid and nobody knows.
+ *
+ * The chat does not have that problem: a message sits there until it is tapped.
+ * So every Mini App order also gets a chat message with the same button, wired
+ * to the same claimOrderPaid path. Transactional, one per order — this is a
+ * receipt, not a campaign, so it is unrelated to the weekly proactive budget.
+ *
+ * Never throws into the caller: a buyer who has blocked the bot must still get
+ * their pay link back from POST /api/order.
+ */
+export async function sendPendingOrderPrompt(api: Api, userId: number, orderId: number, pack: Pack): Promise<void> {
+  await api
+    .sendMessage(
+      userId,
+      `🧾 <b>${pack.title}</b> — <b>${pack.kzt} ₸</b>\n\n` +
+        `Заявка <b>№${orderId}</b> создана. Оплатите в Kaspi, затем нажмите «✅ Я оплатил» — ` +
+        `начислим ${UNIT_EMOJI} патроны за 2–3 минуты.\n\n` +
+        `<i>Кнопка ждёт здесь, даже если приложение закрылось.</i>`,
+      { parse_mode: "HTML", reply_markup: paidKeyboard(orderId) },
+    )
+    .catch(() => {});
+}
+
+/**
  * Approve a pending order and grant the pack — the single settle path shared by
  * the admin `/order N ok` command, the signed Kaspi webhook, and the server-side
  * «Я оплатил» verification. resolveOrder flips pending→paid atomically (exactly

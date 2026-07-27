@@ -1302,6 +1302,28 @@ export async function stalePaidClaims(minMinutes: number, maxAgeHours = 72): Pro
 }
 
 /**
+ * The buyer's newest unfinished order, for the Mini App to pick back up.
+ *
+ * Paying leaves the app, and coming back re-mounts it: the confirm screen and
+ * the order id it held are gone. Without this read the app has no way to know
+ * the person standing in front of it just paid, so it greets them with the home
+ * screen and the manual-approval path is never entered.
+ *
+ * Bounded to the last few hours: an order from yesterday that was never
+ * confirmed is not something to greet somebody with today.
+ */
+export async function latestPendingOrder(userId: number, maxAgeHours = 6): Promise<OrderRow | undefined> {
+  const rows = await q(
+    `SELECT ${ORDER_COLS} FROM orders
+      WHERE user_id = $1 AND status = 'pending'
+        AND created_at > now() - ($2 || ' hours')::interval
+      ORDER BY id DESC LIMIT 1`,
+    [userId, String(maxAgeHours)],
+  );
+  return rows[0] ? mapOrder(rows[0]) : undefined;
+}
+
+/**
  * Stamp the moment the buyer said they paid. First claim wins — pressing the
  * button again must not reset the clock, or a worried buyer tapping twice would
  * push their own order back out of the stuck-payment alert's reach.

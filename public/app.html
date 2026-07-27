@@ -2883,7 +2883,12 @@
     }
 
     // Post-order confirm screen: reopen the Kaspi link or confirm payment in-app.
+    // openSheet() is NOT optional here: buyPack is also wired to page-level
+    // [data-buy] buttons, where no sheet is open, so this used to render the
+    // confirm screen into a hidden node — the buyer went to Kaspi and came back
+    // to a screen that never asked whether they paid.
     function viewPaid(order) {
+      openSheet();
       sheetBody.innerHTML = `
         <h3>Оплата заказа №${order.orderId}</h3>
         <div class="sub">Оплатите <b>${order.amount.toLocaleString("ru-RU")} ₸</b> в Kaspi (ссылка открыта), затем нажмите «✅ Я оплатил» — мы проверим платёж и начислим ${PATRON} патроны.</div>
@@ -3562,6 +3567,14 @@
       };
       const moreSupport = document.getElementById("moreSupport");
       if (moreSupport) moreSupport.onclick = () => openBot(BOT);
+
+      // An unfinished purchase outranks everything else on the screen: this is
+      // somebody who has just come back from Kaspi, and whether they paid is the
+      // only question worth asking them. The app cannot remember the order on its
+      // own — paying opens an external browser and returning re-mounts the app —
+      // so the server hands it back on /api/me. Raised LAST, after the page
+      // beneath is fully wired, so dismissing the sheet leaves a working screen.
+      if (d.pendingOrder && d.pendingOrder.link) viewPaid(d.pendingOrder);
       const moreContact = document.getElementById("moreContact");
       if (moreContact) moreContact.onclick = () => openBot(BOT);
       const openExternal = (url) => { if (tg?.openLink) tg.openLink(url); else window.open(url, "_blank"); };
