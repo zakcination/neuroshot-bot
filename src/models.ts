@@ -731,16 +731,6 @@ const KEEP_ID_MULTI =
   "appear in the result. Where this scene repeats a person, every repeat is that SAME person " +
   "with their own real face — never a different or invented one.";
 const KEEP_KID = "Keep the child's face and identity exactly as in the photo.";
-/**
- * Composition guard for kid+character scenes: models love to push the real
- * child into the background and to duplicate the famous character. Bake the
- * fix into every curated prompt (curated prompts skip the craft mapping).
- */
-const KID_FOCUS =
-  "Keep the real child as the clear hero — foreground, centered, face sharp and well lit. " +
-  "Include one single instance of the character, just beside and slightly behind the child.";
-/** De-dup guard for scenes with a real-world star (two Messis = ruined shot). */
-const NO_CLONES = "Show each person exactly once in the frame.";
 
 export const PRESETS: Preset[] = [
   {
@@ -1260,9 +1250,16 @@ export const PRESETS: Preset[] = [
  * optional one-tap «Оживить» upsell that animates the GENERATED image (kling).
  * Zero prompting for the user — presets carry curated prompts.
  *
- * ⚠️ The cartoon campaign references well-known characters at the user's
- * request (personal, non-commercial family images). Providers may filter some
- * names; if a render is refused it fails-and-refunds automatically.
+ * NOTHING here may name a real person or a third party's character. The two
+ * campaigns that did — «Матч мечты» (Месси / Роналду / Ямаль) and «Ребёнок и
+ * любимый герой» (Губка Боб, Гамбол, Три кота, D Billions, Baby Shark) — were
+ * removed on 2026-07-27. Art. 145 of the Civil Code of Kazakhstan allows a
+ * person's likeness to be used only with their consent or where they posed for
+ * payment: it carries no public-figure exception, so a footballer's fame creates
+ * no permission. The same names in an ad creative are a harder problem again —
+ * the ad platforms match celebrity likeness automatically and suspend the
+ * account, not the ad. Adding such a scenario back is a legal decision, not a
+ * product one.
  */
 export interface CampaignPreset {
   id: string;
@@ -1419,154 +1416,6 @@ export const CAMPAIGNS: Campaign[] = [
           { id: "mystic", label: "🌙 Таинственный", fragment: "Mysterious twilight with fireflies and soft mist." },
           { id: "epic", label: "⚡ Эпичный", fragment: "Epic dramatic skies with god rays — a heroic climax." },
         ],
-      },
-    ],
-  },
-  {
-    id: "cartoon",
-    label: "🦸 Ребёнок и любимый герой",
-    header: "С кем встречаемся? Один тап:",
-    ask: "Пришлите фото ребёнка 👶 — и он встретится с любимым героем мультика.",
-    presets: [
-      {
-        id: "sponge",
-        label: "🧽 Губка Боб",
-        prompt:
-          "Place the child laughing beside SpongeBob SquarePants in colorful underwater Bikini Bottom, the cartoon " +
-          `world blended photorealistically around them, bright joyful scene. ${KID_FOCUS} ${KEEP_KID}`,
-      },
-      {
-        id: "gumball",
-        label: "😺 Гамбол",
-        prompt:
-          "Place the child beside Gumball Watterson in the town of Elmore, playful mixed cartoon-and-photo style, " +
-          `bright cheerful colors, both laughing together. ${KID_FOCUS} ${KEEP_KID}`,
-      },
-      {
-        id: "trikota",
-        label: "🐱 Три кота",
-        prompt:
-          "Place the child with the three cheerful kittens of «Три кота» (Kid-E-Cats) in their cozy cartoon town, " +
-          "warm family atmosphere, bright friendly colors. Keep the real child as the clear hero — foreground, " +
-          `centered, face sharp and well lit — with each kitten shown once beside and behind them. ${KEEP_KID}`,
-      },
-      {
-        id: "dbillions",
-        label: "🎵 D Billions",
-        prompt:
-          "Place the child dancing with the colorful D Billions characters on a bright festive stage, confetti, " +
-          "joyful kids-show energy, vivid colors. Keep the real child as the clear hero — foreground, centered, " +
-          `face sharp and well lit — with each character shown once around and behind them. ${KEEP_KID}`,
-      },
-      {
-        id: "shark",
-        label: "🦈 Baby Shark",
-        prompt:
-          "Place the child in a cheerful underwater scene swimming beside Baby Shark, bubbles and sunbeams through " +
-          `the water, bright preschool-cartoon joy blended around the real child. ${KID_FOCUS} ${KEEP_KID}`,
-      },
-    ],
-    animateLabel: "🎬 Оживить встречу",
-    animatePrompt:
-      "The cartoon character waves and bounces playfully while the child laughs and claps; confetti or bubbles " +
-      "drift through the frame, gentle camera push-in — one lively, joyful kids-show beat.",
-    animateModel: MODELS.hailuo_fast,
-    videoScenes: [
-      {
-        id: "dance",
-        label: "💃 Танцуют вместе",
-        prompt:
-          "The child and the cartoon character dance together in sync, both laughing, bright confetti bursting " +
-          "around them — one bouncy, joyful viral kids-dance beat, lively motion.",
-      },
-      {
-        id: "adventure",
-        label: "🚀 Весёлое приключение",
-        prompt:
-          "The camera tracks alongside as the child and the cartoon character dash off on an adventure, laughing " +
-          "and high-fiving, the bright cartoon world rushing past — one energetic, playful beat.",
-      },
-      {
-        id: "fly",
-        label: "🦸 Полёт супергероев",
-        tier: "epic",
-        prompt:
-          "The camera rises with them as the child and the cartoon character soar through a bright sky as little " +
-          "superheroes, capes fluttering, huge happy smiles — one heroic, joyful flight.",
-      },
-    ],
-  },
-  {
-    id: "worldcup",
-    label: "⚽️ Матч мечты",
-    header: "С кем выходим на поле? Один тап:",
-    ask: "Пришлите своё фото ⚽️ — и окажитесь на поле финала с кумиром.",
-    presets: [
-      {
-        id: "messi",
-        label: "🇦🇷 С Месси",
-        prompt:
-          "Put the person on the pitch of a floodlit World Cup final at night, shoulder to shoulder with Lionel " +
-          `Messi, both in football kits, confetti falling, a roaring crowd behind, sports-photography realism. ${NO_CLONES} ${KEEP_ID}`,
-      },
-      {
-        id: "ronaldo",
-        label: "🇵🇹 С Роналду",
-        prompt:
-          "Put the person on the pitch of a floodlit World Cup final at night, celebrating side by side with " +
-          `Cristiano Ronaldo, both in football kits, dramatic stadium light, sports-photography realism. ${NO_CLONES} ${KEEP_ID}`,
-      },
-      {
-        id: "yamal",
-        label: "🇪🇸 С Ямалем",
-        prompt:
-          "Put the person on the pitch of a packed World Cup final celebrating beside Lamine Yamal, both in " +
-          `football kits, golden confetti falling, electric atmosphere, sports-photography realism. ${NO_CLONES} ${KEEP_ID}`,
-      },
-      {
-        id: "kit",
-        label: "🏟 Я в форме сборной",
-        prompt:
-          "Turn the person into a professional footballer celebrating a goal in a packed World Cup stadium: " +
-          `national-team kit, roaring crowd, floodlights, confetti, epic sports-photography shot. ${KEEP_ID}`,
-      },
-    ],
-    animateLabel: "🎬 Оживить момент",
-    animatePrompt:
-      "Slow heroic camera orbit around the pair as the floodlit crowd roars and waves flags, confetti drifting " +
-      "down, lens flares catching the light — one triumphant stadium beat.",
-    animateModel: MODELS.hailuo_fast,
-    videoScenes: [
-      {
-        id: "score",
-        label: "⚽️ Легендарный гол",
-        tier: "epic",
-        prompt:
-          "In one continuous broadcast shot the person latches onto a through-ball and fires it into the net — the " +
-          "net ripples, the packed stadium erupts, teammates rush in to celebrate — cinematic slow-motion.",
-      },
-      {
-        id: "fan",
-        label: "📣 Фанат на трибуне",
-        prompt:
-          "The person leaps and chants in the packed stands, team scarf raised high, flares and confetti smoking " +
-          "around them, a roaring sea of supporters behind — one electric fan-cam beat.",
-      },
-      {
-        id: "trophy",
-        label: "🏆 Победа с командой",
-        tier: "epic",
-        prompt:
-          "The person lifts the championship trophy overhead beside the superstar as golden confetti rains down and " +
-          "teammates leap in to celebrate — one triumphant slow-motion beat.",
-      },
-      {
-        id: "freekick",
-        label: "🎯 Гол со штрафного",
-        tier: "epic",
-        prompt:
-          "The person strikes a dramatic free kick that curls over the wall into the top corner; the keeper dives " +
-          "too late, the crowd explodes, arms flying up in triumph — one epic slow-motion beat.",
       },
     ],
   },

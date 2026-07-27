@@ -1009,7 +1009,7 @@ await step("insufficient 🔫 → 402 with the pack catalog (in-app paywall)", a
   const r = await fetch(`${base}/api/generate`, {
     method: "POST",
     headers: { Authorization: `tma ${signInitData(broke)}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://fal.test/storage/u-1.jpg" }),
+    body: JSON.stringify({ source: "campaign_video", id: "skazka", image_url: "https://fal.test/storage/u-1.jpg" }),
   });
   assert.equal(r.status, 402);
   const d = (await r.json()) as { error: string; need: number; balance: number; packs: unknown[] };
@@ -1614,10 +1614,10 @@ await step("end frame is validated as strictly as the source: video url or forei
 
 await step("scenario video scenes: on-theme scene sets the motion; model swap adjusts price", async () => {
   const { body } = await apiMe(signInitData(maker));
-  const wc = body.catalog.campaigns.find((k) => k.id === "worldcup") as unknown as {
+  const wc = body.catalog.campaigns.find((k) => k.id === "skazka") as unknown as {
     videoScenes: Array<{ id: string; label: string }>;
   };
-  assert.ok(wc.videoScenes.some((s) => s.id === "score"), "football scene missing");
+  assert.ok(wc.videoScenes.some((s) => s.id === "flydragon"), "epic scene missing");
   for (const s of wc.videoScenes) assert.ok(!("prompt" in s), "scene prompt leaked to client");
 
   await addCredits(maker.id, 200, "admin_grant", "test");
@@ -1626,8 +1626,8 @@ await step("scenario video scenes: on-theme scene sets the motion; model swap ad
     method: "POST",
     headers: { ...makerHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({
-      source: "campaign_video", id: "worldcup", image_url: "https://fal.test/storage/u-1.jpg",
-      scene: "score", model: "seedance_fast",
+      source: "campaign_video", id: "skazka", image_url: "https://fal.test/storage/u-1.jpg",
+      scene: "flydragon", model: "seedance_fast",
     }),
   });
   assert.equal(r.status, 200);
@@ -1636,31 +1636,31 @@ await step("scenario video scenes: on-theme scene sets the motion; model swap ad
   await pollGen(d.id);
   const call = falCalls.at(-1)!;
   assert.equal(call.endpoint, "bytedance/seedance-2.0/fast/image-to-video");
-  assert.match(call.input.prompt as string, /fires it into the net/); // the scene
+  assert.match(call.input.prompt as string, /soars on the friendly dragon's back/); // the scene
 
   // Unknown scene id / off-picker model → 400 (nothing charged).
   const badScene = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://fal.test/x/a.jpg", scene: "nope" }),
+    body: JSON.stringify({ source: "campaign_video", id: "skazka", image_url: "https://fal.test/x/a.jpg", scene: "nope" }),
   });
   assert.equal(badScene.status, 400);
   assert.equal(((await badScene.json()) as { error: string }).error, "bad_scene");
 
   const badModel = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://fal.test/x/a.jpg", model: "nb2_image" }),
+    body: JSON.stringify({ source: "campaign_video", id: "skazka", image_url: "https://fal.test/x/a.jpg", model: "nb2_image" }),
   });
   assert.equal(badModel.status, 400);
 });
 
 await step("scene tiering: epic scene auto-upgrades to Seedance; simple stays on the Hailuo default", async () => {
   const { body } = await apiMe(signInitData(maker));
-  const wc = body.catalog.campaigns.find((k) => k.id === "worldcup") as unknown as {
+  const wc = body.catalog.campaigns.find((k) => k.id === "skazka") as unknown as {
     videoScenes: Array<{ id: string; tier: string; videoModelKey: string; videoCredits: number }>;
   };
-  const score = wc.videoScenes.find((s) => s.id === "score")!;
-  const fan = wc.videoScenes.find((s) => s.id === "fan")!;
-  assert.equal(score.tier, "epic"); // legendary goal needs physics/multi-actor
+  const score = wc.videoScenes.find((s) => s.id === "flydragon")!;
+  const fan = wc.videoScenes.find((s) => s.id === "castspell")!;
+  assert.equal(score.tier, "epic"); // dragon flight needs physics/multi-actor
   assert.equal(score.videoModelKey, "seedance_fast");
   assert.equal(score.videoCredits, 61);
   assert.equal(fan.tier, "simple");
@@ -1670,7 +1670,7 @@ await step("scene tiering: epic scene auto-upgrades to Seedance; simple stays on
   // Epic scene WITHOUT an explicit model → server upgrades to Seedance (61), not Hailuo (10).
   const epic = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://fal.test/storage/u-1.jpg", scene: "score" }),
+    body: JSON.stringify({ source: "campaign_video", id: "skazka", image_url: "https://fal.test/storage/u-1.jpg", scene: "flydragon" }),
   });
   assert.equal(epic.status, 200);
   assert.equal(((await epic.json()) as { credits: number }).credits, 61);
@@ -1678,7 +1678,7 @@ await step("scene tiering: epic scene auto-upgrades to Seedance; simple stays on
   // Simple scene WITHOUT a model → the cheap Hailuo default (10).
   const simple = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "campaign_video", id: "worldcup", image_url: "https://fal.test/storage/u-1.jpg", scene: "fan" }),
+    body: JSON.stringify({ source: "campaign_video", id: "skazka", image_url: "https://fal.test/storage/u-1.jpg", scene: "castspell" }),
   });
   assert.equal(simple.status, 200);
   assert.equal(((await simple.json()) as { credits: number }).credits, 10);
@@ -1691,16 +1691,48 @@ await step("Seedance 2.0 uses the correct bytedance/ endpoint namespace (fal dri
   assert.ok(!MODELS.seedance.falEndpoint.startsWith("fal-ai/"), "stale fal-ai/ prefix");
 });
 
-await step("prompt quality guards: kid-focus + no-duplicates baked into cartoon and star presets", async () => {
-  const { CAMPAIGNS } = await import("../src/models.js");
-  const cartoon = CAMPAIGNS.find((c) => c.id === "cartoon")!;
-  for (const p of cartoon.presets) {
-    assert.match(p.prompt, /clear hero/i, `${p.id} missing kid-focus`);
-    assert.match(p.prompt, /one single instance|shown once/i, `${p.id} missing de-dup guard`);
+await step("no look names a real person or a third party's character", async () => {
+  // This step replaces the composition guards for «Матч мечты» and «Ребёнок и
+  // любимый герой», removed 2026-07-27 by the owner's decision. Those guards
+  // made the looks render better; the looks themselves were the problem.
+  //
+  // Art. 145 of the Civil Code of Kazakhstan permits use of a person's likeness
+  // only with their consent, or where they posed for payment. There is no
+  // public-figure exception, so a footballer's fame creates no permission — and
+  // the same names in an ad creative are worse again, since the ad platforms
+  // match celebrity likeness automatically and suspend the account rather than
+  // the ad. Re-adding any of these is a legal decision, not a product one, and
+  // this step is here so it cannot happen by accident.
+  const { CAMPAIGNS, PRESETS, FREE_SCENARIOS } = await import("../src/models.js");
+  const BANNED = [
+    "Messi", "Ronaldo", "Yamal",
+    "SpongeBob", "Bikini Bottom", "Gumball", "Elmore",
+    "Три кота", "Kid-E-Cats", "D Billions", "Baby Shark", "Pinkfong",
+    "World Cup",
+  ];
+  const surfaces: Array<[string, string]> = [];
+  for (const p of PRESETS) surfaces.push([`preset:${p.id}`, `${p.label} ${p.prompt}`]);
+  for (const c of CAMPAIGNS) {
+    surfaces.push([`camp:${c.id}`, `${c.label} ${c.header ?? ""}`]);
+    for (const p of c.presets) surfaces.push([`camp:${c.id}/${p.id}`, `${p.label} ${p.prompt}`]);
+    for (const v of c.videoScenes ?? []) surfaces.push([`vid:${c.id}/${v.id}`, `${v.label} ${v.prompt}`]);
+    for (const q of c.quiz ?? []) {
+      for (const o of q.options) surfaces.push([`quiz:${c.id}/${q.id}/${o.id}`, `${o.label} ${o.fragment}`]);
+    }
   }
-  const wc = CAMPAIGNS.find((c) => c.id === "worldcup")!;
-  for (const p of wc.presets.filter((x) => x.id !== "kit")) {
-    assert.match(p.prompt, /exactly once in the frame/, `${p.id} missing NO_CLONES`);
+  for (const f of FREE_SCENARIOS) surfaces.push([`free:${f.id}`, `${f.label} ${f.ask} ${f.imagePrompt} ${f.videoPrompt}`]);
+
+  for (const [where, text] of surfaces) {
+    for (const name of BANNED) {
+      assert.ok(
+        !text.toLowerCase().includes(name.toLowerCase()),
+        `${where} names "${name}" — see Art. 145 GK RK; this is a legal decision, not a product one`,
+      );
+    }
+  }
+  // The removed campaign ids must not come back under the same name either.
+  for (const gone of ["worldcup", "cartoon"]) {
+    assert.ok(!CAMPAIGNS.some((c) => c.id === gone), `campaign "${gone}" was removed and must stay removed`);
   }
 });
 

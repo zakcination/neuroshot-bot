@@ -1061,7 +1061,7 @@ await step("campaigns: one-tap fairy-tale image → one-tap «Оживить» a
     inline_keyboard: Array<Array<{ callback_data: string }>>;
   };
   const camps = kb.inline_keyboard.flat().map((b) => b.callback_data);
-  for (const c of ["camp:skazka", "camp:cartoon", "camp:worldcup", "camp:oldphoto", "camp:poster", "camp:minifilm"]) {
+  for (const c of ["camp:skazka", "camp:oldphoto", "camp:poster", "camp:minifilm", "camp:odyssey"]) {
     assert.ok(camps.includes(c), `campaign menu misses ${c}`);
   }
 
@@ -1710,9 +1710,9 @@ await step("fresh photo: a generated output is never left in pending_file_id; a 
   const ben: From = { id: 5602, is_bot: false, first_name: "Ben", username: "ben" };
   await sendText(ben, "/start");
   await payForPack(ben, "start", 720);
-  await pressButton(ben, "camp:worldcup");
+  await pressButton(ben, "camp:skazka");
   await sendPhoto(ben, "ben-1");
-  await pressButton(ben, "cpre:worldcup:kit"); // renders the campaign image
+  await pressButton(ben, "cpre:skazka:royal"); // renders the campaign image
   // Invariant: pending_file_id is the UPLOAD (ben-1), never the generated URL.
   const pend = (await query("SELECT pending_file_id FROM users WHERE id = $1", [ben.id]))[0].pending_file_id as string;
   assert.ok(pend && !/^https?:\/\//.test(pend), `pending_file_id holds a generated URL: ${pend}`);

@@ -54,7 +54,7 @@ Under a preset result there is no animate button, so «оживите карто
 
 ### Raised by one role, dropped by the others — and correctly *not* blockers
 
-- **Cartoon/celebrity IP and the ToS deepfake contradiction** (`terms-of-service.md:99` vs the Месси/Роналду/SpongeBob presets at `models.ts:1388-1470`). Legal verified the Fast Start lessons name no third-party character — this blocks the **flagship** (Module 3 teaches reselling output), not Monday's $9 tier. Close `README.md:91-92` as a standing rule, don't hold the launch on it.
+- ~~**Cartoon/celebrity IP and the ToS deepfake contradiction**~~ — RESOLVED 2026-07-27 by removing both offending campaigns («Матч мечты», «Ребёнок и любимый герой»). The product no longer names a real person or a third party's character anywhere, so the contradiction with `terms-of-service.md:99` is gone at the source rather than papered over. A test in `test/webapp.ts` fails CI if any name comes back.
 - **AI-disclosure on course assets.** `/course_post` sends text only (`bot.ts:929-932`), so nothing synthetic is distributed yet. Becomes live the day a lesson carries an example image or a promo banner ships.
 - **Combo offer undercutting the course** (1 000 ₸ / 36 🔫 = 28 ₸/🔫 vs the 62 ₸/🔫 a course buyer just paid, `payments.ts:48-56`). Raised by the funnel auditor, dropped by everyone. Real damage to the price-parity pitch; not a gate.
 - **Free-guide errors** — «$9» at `00-free-guide.md:149`, «3 🔫» instead of 4, and the `?start=c_guide` partner code that may not exist in `partner_codes`. Blockers only if the guide publishes Monday; if it does, they are owner-level and cheap.

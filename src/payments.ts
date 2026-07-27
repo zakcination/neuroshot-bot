@@ -408,7 +408,7 @@ export function registerPayments(bot: Bot): void {
       // also what the owner needs typed back at them to run `/order N ok`.
       await ctx.reply(
         `✅ Спасибо! Заявка <b>№${orderId}</b> принята — проверяем оплату вручную.\n\n` +
-          `Обычно это занимает <b>до 30 минут</b>. Если ${UNIT_EMOJI} патроны не пришли за это время — ` +
+          `Обычно это занимает <b>2–3 минуты</b>. Если ${UNIT_EMOJI} патроны не пришли за это время — ` +
           `напишите /help и укажите номер заявки, разберёмся.`,
         { parse_mode: "HTML" },
       );
