@@ -46,12 +46,32 @@ Four yes/no questions, first YES wins, cheapest answer reachable in one tap:
 4. Важна речь в губы? → **2.0** (sync is the first thing to break)
 5. Всё «нет» → **Mini**
 
-## Modes we do not use yet
+## Reference mode
 
-- `reference-to-video` takes `image_urls` (plural) plus `audio_urls` and
-  `video_urls`. This is the "two strong frames, then motion" recipe the Видео-сет
-  pack is built around — in one call instead of two. Worth evaluating as the
-  pack's real implementation.
+`seedance_ref` (mini endpoint) is wired: up to **9 photographs** of the same
+subject, composited into one clip. Extra references do not change the price —
+the model reads them all in one call. This is the "two strong frames, then
+motion" recipe the Видео-сет pack is named after.
+
+The endpoint binds attachments **by name**: its docs say to address them in the
+prompt as `@Image1`, `@Image2`. Users write plain Russian, so `referencePrompt()`
+writes the binding for them and adds what the list is FOR — the same subject
+repeated, not extra guests, and never a collage.
+
+Full endpoint limits: images up to 9 (JPEG/PNG/WebP, ≤30 MB each); audio up to 3
+(MP3/WAV, combined ≤15 s, ≤15 MB each, and requires at least one image or video);
+video up to 3 (MP4/MOV, combined 2–15 s, <50 MB total, each between ~640×640 and
+~834×1112). **Total files across all modalities ≤ 12.**
+
+### Audio and video references are NOT wired, on purpose
+
+Our only content gate is an image classifier. Audio has no gate; video has none
+either, though one is buildable by extracting a frame with the ffmpeg we already
+ship. Beyond that, the schema says audio requires an accompanying image or video
+— it exists to drive a person's **speech**, which is the same likeness problem
+that cost us two campaigns, and a voice sample is biometric data under the KZ
+personal-data law. See the open task before adding them.
+
 - `text-to-video` is for concept discovery, before you have a frame worth
   keeping.
 

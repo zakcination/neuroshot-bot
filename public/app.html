@@ -2235,7 +2235,10 @@
       // Swapping to a narrower model trims the tail rather than failing at
       // «Создать» — the server rejects an over-cap list outright.
       stu.extras = stu.extras || [];
-      const maxInputs = stu.mode !== "video" && caps ? caps.maxInputs || 1 : 1;
+      // Keyed off the MODEL's capability, not the mode. This used to force 1 for
+      // any video model, which was true until Seedance's reference mode arrived —
+      // it builds a clip from up to 9 photographs of the same subject.
+      const maxInputs = (caps && caps.maxInputs) || 1;
       if (stu.extras.length > maxInputs - 1) stu.extras = stu.extras.slice(0, Math.max(0, maxInputs - 1));
       if (stu.mode === "video" && m.video) {
         if (!m.video.durations.some((d) => d.seconds === stu.duration)) stu.duration = m.video.durations[0].seconds;
@@ -2299,9 +2302,12 @@
      * come back as a blend), and it does NOT cost more.
      */
     function extrasBlock(m, isVideo, hasSource) {
-      const caps = isVideo ? null : m && m.image;
+      // `isVideo` no longer disqualifies: a video model that declares maxInputs
+      // > 1 reads several photographs (Seedance reference mode). The gate is and
+      // always was "does this model actually read more than one".
+      const caps = m && m.image;
       const maxInputs = (caps && caps.maxInputs) || 1;
-      if (isVideo || !hasSource || maxInputs < 2) return "";
+      if (!hasSource || maxInputs < 2) return "";
       const extras = stu.extras || [];
       const room = maxInputs - 1 - extras.length;
       return `
@@ -2579,7 +2585,7 @@
       }
       const opts = {
         image_url: stu.photoUrl || undefined,
-        image_urls: !isVideo && extraUrls.length ? extraUrls : undefined,
+        image_urls: extraUrls.length ? extraUrls : undefined,
         generation_id: stu.generationId || undefined,
         aspect_ratio: stu.aspect && stu.aspect !== "auto" ? stu.aspect : undefined,
         resolution: stu.resolution || undefined,

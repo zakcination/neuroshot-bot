@@ -211,6 +211,27 @@ const SEEDANCE_RES: ResTier[] = [
   { id: "480p", label: "480p ⚡", mult: 1 },
 ];
 
+/**
+ * Reference-mode framing. Seedance's reference endpoint binds attachments by
+ * NAME — its own docs say to address them in the prompt as @Image1, @Image2 —
+ * and our users write plain Russian, so nothing would ever be addressed. This
+ * appends the binding, and says what the images are FOR: several photographs of
+ * one subject, not several subjects, and not a collage. Same failure this
+ * codebase already fixed for multi-image edits (see refPrompt).
+ */
+function referencePrompt(prompt: string, count: number): string {
+  if (count < 1) return prompt;
+  const names = Array.from({ length: count }, (_, i) => `@Image${i + 1}`).join(", ");
+  return (
+    `${prompt}\n\n` +
+    `${names} are reference photographs of the SAME subject or subjects, shot from different ` +
+    `angles and in different lighting — read them together to get the faces right. They show the ` +
+    `same people repeated, NOT additional people: the video must contain exactly the people who ` +
+    `appear in them, no one added and no one dropped. Never render a collage, a split screen or a ` +
+    `contact sheet — this is one continuous shot.`
+  );
+}
+
 export const MODELS = {
   photo_edit: {
     key: "photo_edit",
@@ -460,6 +481,53 @@ export const MODELS = {
       durations: [5, 10],
       aspectRatios: ["auto", "9:16", "16:9", "1:1", "4:3", "3:4"],
       endFrame: true,
+      resolutions: SEEDANCE_RES,
+    },
+  },
+  // Seedance 2.0 Mini, REFERENCE mode — video built from several photographs
+  // rather than one frame. The endpoint takes image_urls (up to 9) and binds
+  // them by name in the prompt, which referencePrompt writes for the user.
+  //
+  // This is the "two strong frames, then motion" recipe the Видео-сет pack is
+  // named after, done in a single call: more angles of a face is the cheapest
+  // way to hold a likeness through motion, and the extra references cost nothing
+  // — the model composites them into one output.
+  //
+  // Mini tier on purpose: reference work is iterative, and the tier comparison
+  // found Mini equal to the flagship on exactly the shots this serves (portraits
+  // and products). Price carries the same "derived, not measured" caveat as the
+  // rest of the family — see docs/seedance-tiers.md.
+  //
+  // The endpoint ALSO accepts audio_urls and video_urls. Those are deliberately
+  // not wired: our only content gate is an image classifier, so an audio or
+  // video attachment would enter the pipeline unscreened, and audio here exists
+  // to drive a person's speech — precisely the likeness problem that cost us two
+  // campaigns. See the open task before adding them.
+  seedance_ref: {
+    key: "seedance_ref",
+    kind: "image_to_video",
+    falEndpoint: "bytedance/seedance-2.0/mini/reference-to-video",
+    credits: 38,
+    approxCostUsd: 0.76,
+    label: "Seedance 2.0 Mini · по фото",
+    note: "видео по нескольким фото — до 9",
+    input: (prompt, imageUrl, opts) => {
+      const urls = refUrls(imageUrl, opts);
+      return {
+        prompt: referencePrompt(prompt, urls.length),
+        image_urls: urls,
+        resolution: opts?.resolution ?? "720p",
+        duration: String(opts?.duration ?? 5),
+        ...arParam(opts),
+      };
+    },
+    // maxCount is meaningless for a video model; maxInputs is what gates the
+    // reference list, and 9 is the endpoint's own documented ceiling.
+    image: { aspectRatios: IMAGE_ASPECTS, maxCount: 1, maxInputs: 9 },
+    video: {
+      perSecondUsd: 0.1517,
+      durations: [5, 10],
+      aspectRatios: ["auto", "9:16", "16:9", "1:1", "4:3", "3:4"],
       resolutions: SEEDANCE_RES,
     },
   },

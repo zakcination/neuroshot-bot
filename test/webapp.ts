@@ -667,6 +667,72 @@ await step("POST /api/send: a multi-output generation ships as one sendMediaGrou
   await new Promise<void>((r2) => tgStub.close(() => r2()));
 });
 
+await step("reference video: several photos of one subject build one clip", async () => {
+  // Seedance's reference endpoint binds attachments by NAME in the prompt, and
+  // reads up to 9. This is the "two strong frames, then motion" recipe — more
+  // angles is the cheapest way to hold a likeness through movement, and the
+  // extra references cost nothing.
+  const { MODELS } = await import("../src/models.js");
+  assert.equal(MODELS.seedance_ref.image?.maxInputs, 9);
+  assert.equal(MODELS.seedance_ref.kind, "image_to_video");
+
+  // The Studio must OFFER the extra-photo affordance here: it is a video model,
+  // and the client used to hide extras for every video model.
+  const cat = (await apiMe(signInitData(maker))).body.catalog as unknown as {
+    studio: { video: Array<{ key: string; image: { maxInputs: number } | null }> };
+  };
+  const entry = cat.studio.video.find((m) => m.key === "seedance_ref");
+  assert.ok(entry, "seedance_ref missing from the studio video list");
+  assert.equal(entry.image?.maxInputs, 9, "the client cannot show the affordance without this cap");
+
+  await addCredits(maker.id, 38, "admin_grant", "test");
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model",
+      model: "seedance_ref",
+      image_url: "https://fal.test/storage/u-1.jpg",
+      image_urls: ["https://fal.test/storage/u-2.jpg", "https://fal.test/storage/u-3.jpg"],
+      prompt: "медленный наезд, герой оборачивается",
+    }),
+  });
+  assert.equal(r.status, 200);
+  const d = (await r.json()) as { id: number; credits: number };
+  assert.equal(d.credits, 38, "extra references must not change the price");
+  await pollGen(d.id);
+
+  const call = falCalls.at(-1)!;
+  assert.equal(call.endpoint, "bytedance/seedance-2.0/mini/reference-to-video");
+  assert.deepEqual(call.input.image_urls, [
+    "https://fal.test/storage/u-1.jpg",
+    "https://fal.test/storage/u-2.jpg",
+    "https://fal.test/storage/u-3.jpg",
+  ]);
+  // Every attachment is addressed by name, or the endpoint ignores it.
+  const prompt = call.input.prompt as string;
+  for (const name of ["@Image1", "@Image2", "@Image3"]) assert.match(prompt, new RegExp(name));
+  assert.doesNotMatch(prompt, /@Image4/, "must not address attachments that were not sent");
+  // …and told they are one subject, not three guests, and not a collage.
+  assert.match(prompt, /SAME subject/);
+  assert.match(prompt, /NOT additional people/);
+  assert.match(prompt, /collage/);
+  assert.match(prompt, /медленный наезд/, "the user's own words must survive");
+
+  // The endpoint's own ceiling is enforced server-side.
+  const tooMany = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref", image_url: "https://fal.test/storage/u-1.jpg",
+      image_urls: Array.from({ length: 10 }, (_, i) => `https://fal.test/storage/x-${i}.jpg`),
+      prompt: "тест",
+    }),
+  });
+  assert.equal(tooMany.status, 400);
+  assert.equal(((await tooMany.json()) as { error: string }).error, "too_many_inputs");
+});
+
 await step("Studio catalog: FULL registry by mode, patron-only prices; every model generable", async () => {
   const cat = (await apiMe(signInitData(maker))).body.catalog as unknown as {
     studio: {
