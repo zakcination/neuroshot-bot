@@ -178,6 +178,7 @@ interface MeResponse {
   bot_username: string;
   welcomeBonus: { pending: number; claimed: boolean };
   pendingOrder: { orderId: number; amount: number; title: string; link: string } | null;
+  xpActions: string[];
   onboardingSeen: boolean;
   roadmap: { firstPhoto: boolean; ownIdea: boolean; revivePhoto: boolean; scenario: boolean; invitedFriend: boolean };
   roadmapBonus: { amount: number; claimed: boolean };
@@ -840,6 +841,45 @@ await step("audio and video references: gated on rights, screened where we can, 
   await pollGen(((await plain.json()) as { id: number }).id);
   assert.ok(!("audio_urls" in falCalls.at(-1)!.input), "empty audio_urls must not be sent");
   assert.ok(!("video_urls" in falCalls.at(-1)!.input), "empty video_urls must not be sent");
+});
+
+await step("the Rewards sheet describes exactly the awards the server has, and only the live ones", async () => {
+  const { XP_AWARD_ACTIONS, activeXpActions, setEconomyConfig } = await import("../src/db.js");
+  const { readFileSync } = await import("node:fs");
+
+  // The sheet's rows are copy in app.html; the awards are ids in db.ts. A
+  // hand-kept mirror decays — the referral row shipped describing the wrong
+  // trigger, and seven rows described awards that paid nothing. So assert the
+  // two agree BOTH ways: no award without copy, no copy without an award.
+  const html = readFileSync(new URL("../public/app.html", import.meta.url), "utf8");
+  const block = /const XP_ACTIONS = \[([\s\S]*?)\n    \];/.exec(html);
+  assert.ok(block, "XP_ACTIONS block not found in app.html");
+  const described = [...block[1].matchAll(/action:\s*"([a-z_]+)"/g)].map((m) => m[1]);
+  assert.ok(described.length > 0, "no actions parsed out of XP_ACTIONS");
+  for (const a of described) {
+    assert.ok((XP_AWARD_ACTIONS as readonly string[]).includes(a), `app.html describes "${a}", which the server never awards`);
+  }
+  for (const a of XP_AWARD_ACTIONS) {
+    assert.ok(described.includes(a), `the server awards "${a}" and the Rewards sheet never mentions it`);
+  }
+  assert.equal(new Set(described).size, described.length, "duplicate action row");
+
+  // Only CONFIGURED, positive awards are advertised — ids, never amounts.
+  const before = await activeXpActions();
+  assert.ok(!before.includes("scenario"), "precondition: scenario is unconfigured in this suite");
+  await setEconomyConfig("xp.scenario", 7);
+  const after = await activeXpActions();
+  assert.ok(after.includes("scenario"), "a configured award must become visible");
+  assert.ok(
+    after.every((a) => (XP_AWARD_ACTIONS as readonly string[]).includes(a)),
+    "activeXpActions must only ever return known award ids",
+  );
+  await setEconomyConfig("xp.scenario", 0);
+  assert.ok(!(await activeXpActions()).includes("scenario"), "a zeroed award must stop being advertised");
+
+  // …and it reaches the client on /api/me.
+  const { body } = await apiMe(signInitData(maker));
+  assert.ok(Array.isArray(body.xpActions), "xpActions missing from /api/me");
 });
 
 await step("Studio catalog: FULL registry by mode, patron-only prices; every model generable", async () => {

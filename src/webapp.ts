@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { achievements, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, latestPendingOrder, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { achievements, activeXpActions, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, latestPendingOrder, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { enhancePrompt, ENHANCE_COST, ENHANCE_STACK } from "./enhance.js";
 import { latestReleaseId, unseenReleases } from "./changelog.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
@@ -469,7 +469,7 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress, finance, enhanceLeft, awards, certs, partner, seenRelease, openOrder] =
+  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress, finance, enhanceLeft, awards, certs, partner, seenRelease, openOrder, xpActions] =
     await Promise.all([
       userDashboard(user.id),
       recentGenerations(user.id, 30),
@@ -489,6 +489,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
       partnerAccount(user.id),
       releaseState(user.id),
       latestPendingOrder(user.id),
+      activeXpActions(),
     ]);
   const gates = Object.fromEntries(gateRows.map((g) => [g.preset_id, g.min_level]));
   return {
@@ -512,6 +513,11 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     // since no threshold is configured — makes the UI say "not on yet" instead
     // of drawing an empty Level 0 bar.
     progress,
+    // WHICH actions currently award XP — ids only, never amounts (those stay
+    // private tuning). The Rewards sheet lists only these: an action that pays
+    // nothing today is a promise we do not keep, and the user finds out by
+    // doing it and watching the bar stay still.
+    xpActions,
     // Welcome bonus (signup + join bonus) is claim-gated — see claimWelcomeBonus
     // in db.ts. The client shows a "🎁 Получить" claim button on the onboarding
     // slideshow's last slide only while claimed=false and pending>0; otherwise

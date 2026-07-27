@@ -313,20 +313,18 @@
       .bgholo { animation: none; }
     }
 
-    /* Level ⇄ Achievements: one row, 70/30. The level bar is the thing you
-       check; the badge shelf is the thing you're drawn to. Giving the shelf a
-       third of the width makes it an invitation rather than a competitor. */
     /* Level gets its own full-width row: it is the number you check, and it
-       reads badly squeezed. Achievements and certificates share the row below —
-       two shelves of the same kind, one earned by using the product, one by
-       finishing a course. */
-    .lvlrow { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: stretch; margin-top: 10px; }
+       reads badly squeezed. Achievements, certificates and rewards share the
+       row below — three shelves of the same kind: one earned by using the
+       product, one by finishing a course, one explaining what the number
+       above actually buys. */
+    .lvlrow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; align-items: stretch; margin-top: 10px; }
     /* min-width:0 lets a column actually shrink to its share instead of being
        held open by its content; the wrappers stretch so the buttons inside can
        fill them. */
     .lvlrow > * { min-width: 0; display: flex; }
     .lvlrow > * > * { flex: 1; }
-    @media (max-width: 340px) { .lvlrow { grid-template-columns: 1fr; } }
+    @media (max-width: 300px) { .lvlrow { grid-template-columns: 1fr; } }
     /* Certificate: a seal, not a shield — a different object class from the
        achievement badges, so the two shelves never read as one set. */
     .seal { position: relative; width: 100%; aspect-ratio: 1; display: grid; place-items: center; }
@@ -336,9 +334,25 @@
       box-shadow: inset 0 -6px 12px rgba(0,0,0,.35), 0 5px 14px rgba(0,0,0,.4); }
     .seal b { position: relative; z-index: 1; font-size: 20px; }
     .seal.locked { filter: grayscale(1) brightness(.5); opacity: .6; }
+    /* Reward tile: a gem, not a badge (achievements) or a seal (certificates)
+       — a third distinct object class, cut as a five-point jewel and tied to
+       the Level card's own violet→magenta gradient rather than tier or group
+       colours, so it reads as "the Level shelf" rather than a fourth
+       achievement family. */
+    .gem { position: relative; width: 100%; aspect-ratio: 1; display: grid; place-items: center; }
+    .gem i { position: absolute; inset: 4%;
+      clip-path: polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%);
+      background: radial-gradient(120% 90% at 32% 20%, rgba(255,255,255,.6) 0%, transparent 45%),
+        conic-gradient(from 210deg, var(--violet), var(--magenta), #4a3a8a, var(--magenta), var(--violet));
+      box-shadow: inset 0 -6px 12px rgba(0,0,0,.35), 0 5px 14px rgba(0,0,0,.4); }
+    .gem b { position: relative; z-index: 1; font-size: 20px; }
+    .gem img { position: relative; z-index: 1; width: 62%; height: 62%; object-fit: contain;
+      filter: drop-shadow(0 2px 3px rgba(0,0,0,.5)); }
+    .gem.locked i { filter: grayscale(1) brightness(.5); opacity: .6; }
     .certrow { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
     .certrow:last-of-type { border-bottom: 0; }
     .certrow .seal { width: 46px; flex: 0 0 46px; }
+    .certrow .gem { width: 46px; flex: 0 0 46px; }
     .certrow .ct { flex: 1; min-width: 0; }
     .certrow .ct b { display: block; font-size: 14px; }
     .certrow .ct small { color: var(--muted); font-size: 12px; line-height: 1.45; }
@@ -461,6 +475,7 @@
        visually equal whatever the column width works out to. */
     .achtile .badge { width: 62%; max-width: 78px; }
     .achtile .seal { width: 62%; max-width: 78px; }
+    .achtile .gem { width: 62%; max-width: 78px; }
     .achtile small { font-size: 11px; color: var(--muted); text-align: center; line-height: 1.35; }
 
     /* Wall + detail */
@@ -1425,6 +1440,45 @@
     };
 
     /**
+     * The ways to earn XP, in the order the Rewards sheet explains them.
+     *
+     * `action` is the SERVER's award id (`xp.<action>` in economy_config, and the
+     * reason written to xp_ledger). Two things hang off it:
+     *
+     *  - the sheet renders only the actions the server says are switched on
+     *    (`ME.xpActions`). Listing an action that pays nothing today is a promise
+     *    we do not keep: the user does it, watches the bar not move, and decides
+     *    the whole system is decorative;
+     *  - a test asserts these ids and `XP_AWARD_ACTIONS` in `src/db.ts` agree
+     *    both ways, so a new award cannot ship without copy and copy cannot
+     *    describe an award that does not exist.
+     *
+     * Amounts are never stated — those are private tuning. Neither is frequency
+     * promised: `generate` and `save` carry optional rolling-24h caps
+     * (`xp.<action>.dailycap`), so "каждый раз" would go quiet the day a cap is
+     * configured, which is exactly what config-without-deploy is for.
+     */
+    const XP_ACTIONS = [
+      { action: "generate", icon: "🖼", title: "Создавайте работы", hint: "Готовый рендер приносит опыт" },
+      { action: "model", icon: "🧭", title: "Попробуйте новую модель", hint: "Один раз за каждую модель, при первой попытке" },
+      { action: "video", icon: "🎬", title: "Снимите видео", hint: "Один раз, при первом видео" },
+      { action: "image", icon: "🖌", title: "Сделайте первую картинку", hint: "Один раз, за первую работу с фото" },
+      { action: "text", icon: "✍️", title: "Сгенерируйте по тексту", hint: "Один раз, при первом текстовом запросе" },
+      { action: "preset", icon: "🎨", title: "Попробуйте новый стиль", hint: "Один раз за каждый пресет, при первой попытке" },
+      { action: "scenario", icon: "📖", title: "Откройте сценарий", hint: "Один раз, за первый сценарий" },
+      { action: "upload", icon: "📤", title: "Загрузите своё фото", hint: "Один раз, за первую загрузку" },
+      { action: "save", icon: "💾", title: "Сохраняйте результаты", hint: "За сохранённую работу" },
+      { action: "share", icon: "📣", title: "Делитесь результатом", hint: "За работу, которой поделились" },
+      // The trigger here is the friend CLAIMING their welcome gift, not buying:
+      // db.ts awards it inside claimWelcomeBonus, deliberately — "a bonus claimed
+      // is a real human who arrived, whereas a click is free to manufacture".
+      // The friend's PURCHASE is a separate award (refpurchase) with its own row.
+      { action: "referral", icon: "🤝", title: "Пригласите друга", hint: "Когда друг заберёт свой стартовый подарок" },
+      { action: "refpurchase", icon: "🌟", title: "Друг совершил покупку", hint: "Доля опыта с покупок приглашённых" },
+      { action: "purchase", icon: "💳", title: "Пополняйте баланс", hint: "Оплата тоже приносит опыт" },
+    ];
+
+    /**
      * Wall sections, Apple Fitness Awards style ("Close Your Rings", "Monthly
      * Challenges"...) — order here is the order they render in. Labels and
      * the group→colour mapping live in docs/achievements.md; this is just the
@@ -1508,6 +1562,64 @@
         <p class="finnote">${anyEarned
           ? "Как только откроются новые курсы — они появятся здесь."
           : "Мы сообщим, когда откроется запись. Пока сертификатов нет ни у кого — их нельзя купить, только заслужить."}</p>`;
+      openSheet();
+    }
+
+    /**
+     * Rewards tile: the third shelf, next to achievements and certificates.
+     * Unlike those two — which count something earned — this one just opens
+     * an explainer, so it never shows a "0 of N" that would read as failure
+     * before the reward system is even configured for anyone.
+     */
+    function rewardsTileHtml() {
+      return `<button class="achtile" id="rewardsTile">
+        <div class="gem"><i></i><b>💎</b>
+          <img src="/img/reward-key.png" alt="" onload="this.previousElementSibling.remove()" onerror="this.remove()" />
+        </div>
+        <small>Уровень<br>и награды</small>
+      </button>`;
+    }
+
+    /**
+     * The Rewards sheet: two honest lists, not one sales pitch. "Как
+     * заработать опыт" is evergreen product copy — it never invents an XP
+     * number, because those are private server tuning (see XP_ACTIONS).
+     * "Что открывает уровень" reads live preset gating (`minLevel` on every
+     * `ME.catalog.presets` row, sent by the server regardless of whether any
+     * preset is actually gated — see `presetLock`) against the account's
+     * current Level, same the empty-by-default honesty as viewCertificates:
+     * preset_gating ships empty, so most accounts will see nothing here yet,
+     * and the copy says so instead of padding the list with fabricated rows.
+     */
+    function viewRewards() {
+      const presets = (ME && ME.catalog && ME.catalog.presets) || [];
+      const level = (ME && ME.dashboard && ME.dashboard.level) || 0;
+      const gated = presets.filter((p) => p.minLevel > 0).sort((a, b) => a.minLevel - b.minLevel);
+      // Only what is actually switched on server-side. If nothing is, the sheet
+      // says so rather than listing eleven ways to earn nothing.
+      const on = (ME && ME.xpActions) || [];
+      const earning = XP_ACTIONS.filter((a) => on.includes(a.action));
+      const earnRows = earning.map((a) => `<div class="certrow">
+          <div class="gem"><i></i><b>${a.icon}</b></div>
+          <div class="ct"><b>${esc(a.title)}</b><small>${esc(a.hint)}</small></div>
+        </div>`).join("");
+      const tierRows = gated.map((p) => {
+        const unlocked = p.minLevel <= level;
+        return `<div class="certrow">
+          <div class="gem${unlocked ? "" : " locked"}"><i></i><b>${unlocked ? "✅" : "🔒"}</b></div>
+          <div class="ct"><b>${esc(p.label)}</b><small>${unlocked ? "Открыто" : `Открывается на ${p.minLevel}-м уровне`}</small></div>
+        </div>`;
+      }).join("");
+      sheetBody.innerHTML = `<h3>Уровень и награды</h3>
+        <div class="sub">Опыт копится за всё, что вы делаете в приложении, и никогда не уменьшается.</div>
+        <div class="sec-h" style="margin-top:18px"><h2>Как заработать опыт</h2></div>
+        ${earning.length
+          ? `<div class="fincard">${earnRows}</div>`
+          : `<p class="finnote">Начисление опыта пока не включено — как только заработает, здесь появится список.</p>`}
+        <div class="sec-h" style="margin-top:16px"><h2>Что открывает уровень</h2></div>
+        ${tierRows
+          ? `<div class="fincard">${tierRows}</div>`
+          : `<p class="finnote">Пока ни один стиль не закрыт уровнем — все открыты всем. Как только появятся уровневые награды, они будут здесь.</p>`}`;
       openSheet();
     }
 
@@ -3471,6 +3583,7 @@
             <div class="lvlrow">
               <div id="achTileHost">${achTileHtml(d.achievements)}</div>
               <div id="certTileHost">${certTileHtml(d.certificates)}</div>
+              <div id="rewardsTileHost">${rewardsTileHtml()}</div>
             </div>
           </section>
 
@@ -3640,6 +3753,8 @@
       if (achTile0) achTile0.onclick = viewAchievements;
       const certTile0 = document.getElementById("certTile");
       if (certTile0) certTile0.onclick = viewCertificates;
+      const rewardsTile0 = document.getElementById("rewardsTile");
+      if (rewardsTile0) rewardsTile0.onclick = viewRewards;
       // Release notes come after the page is built, and never on a run where
       // the onboarding slideshow is about to play: a first-time user should
       // meet the product, not a list of what changed before they arrived.
