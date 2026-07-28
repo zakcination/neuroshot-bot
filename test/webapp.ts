@@ -430,6 +430,21 @@ await step("GET /img/<name>: serves decorative art, long-cached; rejects travers
   assert.notEqual(badExt.status, 200);
 });
 
+await step("GET /fonts/<name>: serves self-hosted webfonts, long-cached; rejects traversal/unknown", async () => {
+  const ok = await fetch(`${base}/fonts/golos-cyrillic.woff2`);
+  assert.equal(ok.status, 200);
+  assert.match(ok.headers.get("content-type") ?? "", /font\/woff2/);
+  assert.match(ok.headers.get("cache-control") ?? "", /immutable/);
+
+  const missing = await fetch(`${base}/fonts/does-not-exist.woff2`);
+  assert.equal(missing.status, 404);
+
+  const traversal = await fetch(`${base}/fonts/..%2F..%2Fpackage.json`);
+  assert.notEqual(traversal.status, 200);
+  const badExt2 = await fetch(`${base}/fonts/app.html`);
+  assert.notEqual(badExt2.status, 200);
+});
+
 await step("method gating: /api/auth is POST-only, /api/me is GET-only (405 otherwise)", async () => {
   const getAuth = await fetch(`${base}/api/auth`); // GET
   assert.equal(getAuth.status, 405);

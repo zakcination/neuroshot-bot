@@ -1495,6 +1495,20 @@ export function createWebApp(): Server {
         }
       }
 
+      // GET /fonts/<name> — self-hosted webfonts (public/fonts/), same
+      // allowlist-and-long-cache treatment as /img/<name>: content-addressed
+      // by deploy, never user-editable, so an immutable cache is safe.
+      const fontMatch = /^\/fonts\/([a-z0-9][a-z0-9._-]{0,63}\.woff2)$/i.exec(url.pathname);
+      if (fontMatch) {
+        try {
+          const buf = readFileSync(join(PUBLIC_DIR, "fonts", fontMatch[1]));
+          res.writeHead(200, { "Content-Type": "font/woff2", "Cache-Control": "public, max-age=604800, immutable" });
+          return res.end(buf);
+        } catch {
+          return json(res, 404, { error: "not_found" });
+        }
+      }
+
       // POST /api/auth — initData → session token (client-agnostic).
       if (url.pathname === "/api/auth") {
         if (!methodIs(res, req.method, "POST")) return;

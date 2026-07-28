@@ -11,9 +11,54 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="NeuroShot" />
+  <!-- Self-hosted (no third-party request, no CSP/latency risk for users on
+       slower KZ mobile connections) — see the cyrillic files, since Russian
+       copy is nearly all visible text. Both are variable fonts (one file
+       covers the whole weight range), so this is 2 requests, not 10. -->
+  <link rel="preload" href="/fonts/golos-cyrillic.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/unbounded-cyrillic.woff2" as="font" type="font/woff2" crossorigin />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     /* ————— NeuroShot design system: dark luxe, aurora accent (violet→magenta) ————— */
+    /* Type: Unbounded (display, headings/big numbers only — geometric and
+       distinctive rather than another Inter/Roboto-alike) paired with Golos
+       Text (body — a humanist sans designed for Cyrillic, reads well small on
+       phones). Both self-hosted as variable woff2 (public/fonts/), Cyrillic +
+       Latin subsets only. font-display: swap so first paint never blocks on
+       the font request — the system-font fallback chain renders immediately
+       and swaps in once the file lands. */
+    @font-face {
+      font-family: "Unbounded";
+      font-style: normal;
+      font-weight: 200 900;
+      font-display: swap;
+      src: url("/fonts/unbounded-cyrillic.woff2") format("woff2");
+      unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+    }
+    @font-face {
+      font-family: "Unbounded";
+      font-style: normal;
+      font-weight: 200 900;
+      font-display: swap;
+      src: url("/fonts/unbounded-latin.woff2") format("woff2");
+      unicode-range: U+0000-00FF, U+2000-206F, U+20AC, U+2122;
+    }
+    @font-face {
+      font-family: "Golos Text";
+      font-style: normal;
+      font-weight: 400 900;
+      font-display: swap;
+      src: url("/fonts/golos-cyrillic.woff2") format("woff2");
+      unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+    }
+    @font-face {
+      font-family: "Golos Text";
+      font-style: normal;
+      font-weight: 400 900;
+      font-display: swap;
+      src: url("/fonts/golos-latin.woff2") format("woff2");
+      unicode-range: U+0000-00FF, U+2000-206F, U+20AC, U+2122;
+    }
     :root {
       --bg: #08070c;
       --bg-2: #0d0b13;
@@ -34,10 +79,18 @@
     html { color-scheme: dark; }
     body {
       margin: 0; background: var(--bg); color: var(--ink);
-      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      font: 15px/1.5 "Golos Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
       min-height: 100dvh; overflow-x: hidden;
     }
     ::selection { background: rgba(124, 92, 255, .4); }
+    /* Display face: real headline moments only (headings + the onboarding
+       gift number) — never body copy, buttons, or dense list text, where
+       Unbounded's wide geometric letterforms would hurt legibility at small
+       mobile sizes. Falls back to the body stack, never to Unbounded-less
+       system-ui, so a slow font load never leaves a heading looking bare. */
+    h1, h2, h3, .wgiftbox .gn {
+      font-family: "Unbounded", "Golos Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    }
 
     .sky { position: fixed; inset: -20% -30%; z-index: 0; pointer-events: none; filter: blur(90px); opacity: .5; }
     .sky i { position: absolute; border-radius: 50%; }
@@ -147,7 +200,7 @@
     section { margin-top: 30px; }
     /* Outcome-led hero at the top of the studio — sells the result, not the tool. */
     .hero { margin: 2px 0 18px; }
-    .heroh { margin: 0; font-size: 25px; line-height: 1.12; font-weight: 800; letter-spacing: -.01em; }
+    .heroh { margin: 0; font-size: 25px; line-height: 1.12; font-weight: 700; }
     .herosub { margin: 6px 0 0; font-size: 13.5px; line-height: 1.45; color: var(--muted); }
     /* The wedge rail is the hero content, so it hugs the headline (no big top gap). */
     .hero + section { margin-top: 14px; }
@@ -658,7 +711,7 @@
       color: var(--ink); background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px;
     }
     .brandtag i { width: 6px; height: 6px; border-radius: 50%; background: var(--violet); box-shadow: 0 0 8px var(--violet); }
-    .aboutcard h2 { margin: 0 0 8px; font-size: 19px; letter-spacing: -.01em; }
+    .aboutcard h2 { margin: 0 0 8px; font-size: 19px; }
     .aboutcard h2 span { color: var(--violet); }
     .aboutcard p { margin: 0 0 16px; color: var(--muted); font-size: 13px; line-height: 1.55; }
     .steps3 { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 4px; margin-bottom: 16px; }
@@ -716,7 +769,7 @@
     }
     .whero .wherotext { position: absolute; left: 16px; right: 16px; bottom: 14px; z-index: 2; }
     .kicker { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: rgba(255,255,255,.75); font-weight: 700; margin-bottom: 4px; }
-    .whero h2 { font-size: 21px; font-weight: 800; letter-spacing: -.01em; color: #fff; margin: 0; text-shadow: 0 2px 10px rgba(0,0,0,.5); }
+    .whero h2 { font-size: 21px; font-weight: 700; color: #fff; margin: 0; text-shadow: 0 2px 10px rgba(0,0,0,.5); }
     @keyframes wkenburns { from { transform: scale(1); } to { transform: scale(1.11); } }
     @keyframes wtwinkle { 0%, 100% { opacity: .12; transform: scale(.6); } 50% { opacity: 1; transform: scale(1); } }
     .wslide > p.lead { font-size: 14px; color: var(--muted); margin: 0 0 18px; line-height: 1.55; }
@@ -800,7 +853,7 @@
     @keyframes shimmer { to { background-position: -200% 0; } }
     .gate { text-align: center; padding: 12vh 20px 0; }
     .gate .dot { width: 62px; height: 62px; border-radius: 20px; background: var(--aurora); margin: 0 auto 22px; box-shadow: 0 0 60px rgba(180,77,255,.5); }
-    .gate h1 { font-size: 30px; margin: 0 0 10px; letter-spacing: -.02em; font-weight: 800; }
+    .gate h1 { font-size: 30px; margin: 0 0 10px; font-weight: 700; }
     .gate p { color: var(--muted); margin: 0 auto 26px; max-width: 34ch; line-height: 1.6; }
     .gate .btn { max-width: 280px; margin: 0 auto; }
 
@@ -822,7 +875,7 @@
     .sheet-top .grip { margin: 4px auto 6px; }
     .sheet-x { position: absolute; top: 6px; right: 10px; width: 32px; height: 32px; border-radius: 999px; border: 0; background: rgba(255,255,255,.1); color: #fff; font-size: 15px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
     .sheet-x:active { background: rgba(255,255,255,.2); }
-    .sheet h3 { margin: 2px 0 14px; font-size: 18px; letter-spacing: -.01em; }
+    .sheet h3 { margin: 2px 0 14px; font-size: 18px; font-weight: 700; }
     .sheet .sub { color: var(--muted); font-size: 13px; margin: -8px 0 16px; line-height: 1.5; }
 
     .tabs { display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; margin-bottom: 16px; }
