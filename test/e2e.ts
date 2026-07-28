@@ -1606,6 +1606,41 @@ await step("partner v2: join → welcome (spend-only) + code; invitee pays → b
   assert.match(notify.payload.text as string, new RegExp(`кэшбэка.*p_${code}`));
 });
 
+await step("partner: a vanity code is still kind='partner' — laddered and withdrawable", async () => {
+  const { config: cfg } = await import("../src/config.js");
+  const vanity = "shambaiqyzy31";
+  const cre: From = { id: 8901, is_bot: false, first_name: "Cre", username: "cre" };
+  await sendText(cre, "/start");
+  await pressButton(cre, "claim:welcome");
+  await sendText(admin, `/partner_grant ${cre.id} ${vanity}`);
+
+  // the requested slug is what was minted, not a random one
+  const row = (await query("SELECT code, kind FROM partner_codes WHERE user_id=$1", [cre.id]))[0];
+  assert.equal(String(row.code), vanity);
+  // THE point of this test: /partner_add would have made this 'creator', which
+  // is a flat rate settled off-platform and NOT withdrawable — different
+  // commercial terms from the ones a partner is promised.
+  assert.equal(String(row.kind), "partner");
+
+  // an invitee through the vanity link pays → cashback lands in the WITHDRAWABLE
+  // balance, which only ever happens for kind='partner'
+  const inv: From = { id: 8902, is_bot: false, first_name: "Inv2", username: "inv2" };
+  await sendText(inv, `/start p_${vanity}`);
+  await pressButton(inv, "claim:welcome");
+  assert.equal(String((await getUser(inv.id))!.partner_code), vanity);
+  await payForPack(inv, "popular", 2300);
+  const acct = await partnerAccount(cre.id, { basePercent: cfg.partnerPercent, tiers: PARTNER_TIERS });
+  assert.equal(acct.withdrawable, Math.floor(200 * cfg.partnerPercent));
+  assert.equal(acct.rate!.percent, cfg.partnerPercent); // on the ladder, base rung
+
+  // a taken slug is refused rather than silently swapped for a random one
+  const other: From = { id: 8903, is_bot: false, first_name: "Oth", username: "oth" };
+  await sendText(other, "/start");
+  await sendText(admin, `/partner_grant ${other.id} ${vanity}`);
+  assert.equal((await query("SELECT code FROM partner_codes WHERE user_id=$1", [other.id])).length, 0);
+  assert.match(calls("sendMessage").at(-1)!.payload.text as string, /уже занят/);
+});
+
 await step("partner ladder: volume raises the rate; a grandfathered rate is never cut", async () => {
   const { config: cfg } = await import("../src/config.js");
   const { partnerRateFor } = await import("../src/db.js");

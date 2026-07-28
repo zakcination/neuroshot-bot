@@ -1095,15 +1095,24 @@ export async function joinPartnerProgram(userId: number, welcome: number): Promi
 }
 
 /**
- * Mint a new self-serve partner code for a user (kind='partner', flat percent).
- * Enforces the per-account active-code cap. Returns the code, or an error tag.
+ * Mint a partner's shareable code — always `kind='partner'`, i.e. laddered rate
+ * and withdrawable cashback.
+ *
+ * `customCode` lets an admin hand out a vanity slug (a creator's own handle)
+ * without dropping them onto `/partner_add`, which mints `kind='creator'`:
+ * flat rate, settled off-platform, **not** withdrawable. Those are different
+ * commercial terms, and a creator who is promised the partner ladder must not
+ * end up promoting a creator-kind link. A custom code gets ONE attempt — a
+ * collision is a real conflict the admin has to see and resolve, not something
+ * to silently retry into a different slug.
  */
 export async function createPartnerCode(
   userId: number,
   percent: number,
   inviteeBonus: number,
   maxActive: number,
-): Promise<{ ok: true; code: string } | { ok: false; error: "limit" }> {
+  customCode?: string,
+): Promise<{ ok: true; code: string } | { ok: false; error: "limit" | "taken" }> {
   const activeCount = async () =>
     Number(
       (
@@ -1117,8 +1126,9 @@ export async function createPartnerCode(
   // Insert only if still under the cap — the count is re-evaluated INSIDE the
   // statement, so two concurrent calls can't both slip past the limit. An empty
   // result means either the cap was hit in a race or a (rare) slug collision.
-  for (let i = 0; i < 5; i++) {
-    const code = genCode();
+  const attempts = customCode ? 1 : 5;
+  for (let i = 0; i < attempts; i++) {
+    const code = customCode ?? genCode();
     const ins = await q(
       `INSERT INTO partner_codes (code, user_id, percent, join_bonus, kind, active)
        SELECT $1, $2, $3, $4, 'partner', true
@@ -1128,6 +1138,10 @@ export async function createPartnerCode(
     );
     if (ins.length) return { ok: true, code };
     if ((await activeCount()) >= maxActive) return { ok: false, error: "limit" }; // cap, not collision
+    // A named code that did not insert is already taken — by this owner, by
+    // someone else, or by a creator deal. Say so instead of silently minting a
+    // different slug the admin never asked for.
+    if (customCode) return { ok: false, error: "taken" };
   }
   throw new Error("could not generate a unique partner code");
 }

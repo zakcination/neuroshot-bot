@@ -1565,9 +1565,17 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   // /partner_grant <tg_id>
   bot.command("partner_grant", async (ctx) => {
     if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
-    const targetId = Number((ctx.match ?? "").trim());
-    if (!Number.isInteger(targetId) || targetId <= 0) {
-      await ctx.reply("Формат: /partner_grant <tg_id>. Пользователь должен сначала запустить бота (/start).");
+    const [idS, codeS] = (ctx.match ?? "").trim().split(/\s+/);
+    const targetId = Number(idS);
+    // An optional vanity slug — a creator's own handle reads far better in a
+    // bio than a random one. It still mints kind='partner', so the ladder and
+    // withdrawable cashback come with it; /partner_add would NOT.
+    const custom = codeS ? codeS.toLowerCase() : undefined;
+    if (!Number.isInteger(targetId) || targetId <= 0 || (custom && !/^[a-z0-9_]{2,32}$/.test(custom))) {
+      await ctx.reply(
+        "Формат: /partner_grant <tg_id> [код a-z0-9_ 2–32]\n" +
+          "Пользователь должен сначала запустить бота (/start).",
+      );
       return;
     }
     const res = await joinPartnerProgram(targetId, config.partnerWelcome);
@@ -1576,14 +1584,31 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       return;
     }
     // Mint the partner's first shareable code, mirroring the old join flow.
-    await createPartnerCode(targetId, config.partnerPercent, config.partnerInviteeBonus, config.partnerMaxCodes);
+    const minted = await createPartnerCode(
+      targetId,
+      config.partnerPercent,
+      config.partnerInviteeBonus,
+      config.partnerMaxCodes,
+      custom,
+    );
+    if (!minted.ok) {
+      await ctx.reply(
+        minted.error === "taken"
+          ? `⚠️ Код «${custom}» уже занят. Партнёр подключён (+${nUnits(res.welcome)}), но ссылку надо создать заново: /partner_grant отменить нельзя, выдайте код через /partner (кнопка «Ещё ссылка»).`
+          : `⚠️ У ${targetId} исчерпан лимит активных ссылок (${config.partnerMaxCodes}).`,
+      );
+      return;
+    }
     await ctx.api
       .sendMessage(
         targetId,
         `🎉 Вас подключили к партнёрской программе NeuroShot! Начислен бонус ${UNIT_EMOJI} ${nUnits(res.welcome)}. Откройте /partner — там ваша персональная ссылка.`,
       )
       .catch(() => {});
-    await ctx.reply(`✅ ${targetId} подключён к партнёрской программе (+${nUnits(res.welcome)}, ссылка создана).`);
+    await ctx.reply(
+      `✅ ${targetId} подключён к партнёрской программе (+${nUnits(res.welcome)}).\n` +
+        `Ссылка: t.me/${config.webappBotUsername || "bot"}?start=p_${minted.code}`,
+    );
   });
 
   // Admin: create/update a creator code with per-deal terms.
