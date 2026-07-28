@@ -917,6 +917,22 @@
     /* live price badge in the composer */
     .priceBadge { display: inline-flex; align-items: center; gap: 6px; font-weight: 800; color: var(--amber); font-size: 15px; font-variant-numeric: tabular-nums; }
 
+    /* Seedance sale: a banner at the top of the video composers, and a small
+       tag on each discounted model's own price. Warm gradient (not the violet
+       aurora used for the entry-tile) so the two "look how good this deal is"
+       surfaces read as visually distinct campaigns, not one repeated design. */
+    .salebar {
+      display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700;
+      padding: 10px 13px; border-radius: var(--radius-s); margin-bottom: 12px;
+      background: linear-gradient(90deg, rgba(255,138,61,.16), rgba(255,77,141,.16));
+      border: 1px solid rgba(255,138,61,.35); color: var(--text);
+    }
+    .msale {
+      display: inline-block; font-size: 10px; font-weight: 800; letter-spacing: .02em;
+      background: linear-gradient(90deg, #ff8a3d, #ff4d8d); color: #fff;
+      padding: 2px 6px; border-radius: 999px; margin-right: 6px; vertical-align: middle;
+    }
+
     /* ————— duration slider —————
        Video length used to be two chips because the registry only offered two
        lengths. The endpoints accept every second in a range (Seedance 4–15,
@@ -1905,6 +1921,19 @@
       </div>`;
     }
 
+    /**
+     * The Seedance sale banner shown at the top of both video composers.
+     * Non-ticking by design — a day-granularity deadline six weeks out gains
+     * nothing from a per-second timer, and a static line computed once at
+     * render avoids running a second countdown interval alongside the combo
+     * offer's. Re-renders naturally every time the composer redraws (which
+     * happens on nearly every tap), so the date is never meaningfully stale.
+     */
+    function saleBanner() {
+      const until = new Date(ME.seedanceSale.endsAt).toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+      return `<div class="salebar">🔥 <b>Акция на Seedance</b> — цены ниже вдвое, до ${until}</div>`;
+    }
+
     /** A section label, with a tap-to-explain "?" when we have something to say. */
     function qLabel(text, hintKey) {
       const hint = hintKey && HINTS[hintKey]
@@ -2796,11 +2825,12 @@
             ${!isVideo && !has && x.needsImage ? `<div class="mnote">нужно фото</div>` : ""}
             ${stu.preset && x.key === stu.preset.model ? `<div class="mnote">рекомендовано для этого стиля</div>` : ""}
           </span>
-          <span class="price">${isVideo ? "от " : ""}${x.credits} ${PATRON}</span>
+          <span class="price">${x.onSale ? '<span class="msale">🔥 −50%</span>' : ""}${isVideo ? "от " : ""}${x.credits} ${PATRON}</span>
         </button>`;
 
       sheetBody.innerHTML = `
         <h3>Студия</h3>
+        ${isVideo && ME.seedanceSale && ME.seedanceSale.active ? saleBanner() : ""}
         ${stu.preset && !isVideo ? `
           <div class="stublock"><div class="stuchip">
             <span>${esc(stu.preset.label)}</span>
@@ -3145,9 +3175,10 @@
 
       sheetBody.innerHTML = `
         <h3>Настройки видео</h3>
+        ${ME.seedanceSale && ME.seedanceSale.active ? saleBanner() : ""}
         ${isCurated ? `${qLabel("Модель", "model")}
           <div class="chips" id="modRow">${ME.catalog.videoModels.map((v) =>
-            `<button class="chip ${v.key === m.key ? "on" : ""}" data-mod="${v.key}">${esc(v.label.replace("🎬 ", ""))} · ${v.credits}+ ${PATRON}</button>`).join("")}</div>` : ""}
+            `<button class="chip ${v.key === m.key ? "on" : ""}" data-mod="${v.key}">${v.onSale ? "🔥 " : ""}${esc(v.label.replace("🎬 ", ""))} · ${v.credits}+ ${PATRON}</button>`).join("")}</div>` : ""}
         ${scenes.length ? `<div class="quiz-q">Сюжет — что происходит?</div>
           <div class="chips" id="sceneRow">${scenes.map((s) =>
             `<button class="chip ${pick.scene === s.id ? "on" : ""}" data-scene="${s.id}" data-sctier="${s.tier || "simple"}" data-scmodel="${s.videoModelKey}">${esc(s.label)}${s.tier === "epic" ? ` · ⚡${s.videoCredits} ${PATRON}` : ""}</button>`).join("")}</div>

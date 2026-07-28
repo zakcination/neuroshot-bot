@@ -529,16 +529,29 @@ await step("the Seedance chooser lands on one model, cheapest-first, and never o
 
 await step("the video set really covers 3–5 finished videos, and the ladder stays monotonic", async () => {
   const { PACKS, MODELS, priceFor, packById } = await import("../src/models.js");
+  const { config: live } = await import("../src/config.js");
 
   // "One good video" = two strong frames + ten seconds of motion. These are the
   // four tiers a buyer can realistically work at; the set is sized so that the
   // promise on the title holds at EVERY one of them, not just the cheapest.
-  const recipes = [
-    { frame: MODELS.nb2_edit, video: MODELS.seedance_fast },
-    { frame: MODELS.nbpro_edit, video: MODELS.seedance_fast },
-    { frame: MODELS.nbpro_edit, video: MODELS.seedance },
-    { frame: MODELS.premium_edit, video: MODELS.seedance },
-  ].map((r) => 2 * priceFor(r.frame) + priceFor(r.video, { duration: 10 }));
+  //
+  // Priced at the STEADY-STATE Seedance rate, sale forced off: the 2026-07-28
+  // sale is temporary and deliberately makes this pack stretch FURTHER while
+  // it runs (a bonus, not a broken promise) — the pack's own printed claim is
+  // about what it covers once the promo ends, not during it.
+  const prevSale = live.seedanceSaleUntil;
+  (live as { seedanceSaleUntil: string }).seedanceSaleUntil = "2020-01-01T00:00:00Z";
+  let recipes: number[];
+  try {
+    recipes = [
+      { frame: MODELS.nb2_edit, video: MODELS.seedance_fast },
+      { frame: MODELS.nbpro_edit, video: MODELS.seedance_fast },
+      { frame: MODELS.nbpro_edit, video: MODELS.seedance },
+      { frame: MODELS.premium_edit, video: MODELS.seedance },
+    ].map((r) => 2 * priceFor(r.frame) + priceFor(r.video, { duration: 10 }));
+  } finally {
+    (live as { seedanceSaleUntil: string }).seedanceSaleUntil = prevSale;
+  }
 
   const videoSet = packById("video_set")!;
   const counts = recipes.map((cost) => Math.floor(videoSet.credits / cost));

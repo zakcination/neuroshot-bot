@@ -7,6 +7,7 @@
  * over hardcoding IDs elsewhere.
  */
 import { config } from "./config.js";
+import { seedanceSaleActive } from "./offer.js";
 import { UNIT_EMOJI } from "./text.js";
 
 export type ModelKind = "image_edit" | "text_to_image" | "image_to_video";
@@ -700,6 +701,29 @@ export function cheapestModel(kind: ModelKind): ModelSpec {
 }
 
 /**
+ * Seedance sale (owner decision, 2026-07-28 — docs/seedance-tiers.md § the
+ * 2026-07-28 sale): a flat, time-boxed cut to what these 4 models CHARGE.
+ *
+ * A flat multiplier, not a per-render profit floor, on purpose: an additive
+ * "cost + minimum margin" cap composes correctly with duration (both are
+ * linear) but NOT with the resolution multiplier applied after it — capping at
+ * 720p's cost then halving for 480p charges LESS than the same cap computed
+ * directly against 480p's (lower) cost would allow, which would have pushed
+ * profit on 480p renders below the floor the cap exists to guarantee. A flat
+ * percentage has no such interaction: it composes with every other multiplier
+ * in this function exactly the way the client already mirrors, so the Studio's
+ * live price preview cannot drift from what the server actually charges.
+ *
+ * Never touches `costUsdFor` — COGS accounting, the digest's margin estimate,
+ * and per-user cost caps all keep reading the real, undiscounted cost. Only
+ * the patron charge moves, and only downward: `Math.min` against the normal
+ * price a few lines below means this can never raise a charge, so a short
+ * render that was already cheap is untouched.
+ */
+export const SEEDANCE_SALE_KEYS = new Set(["seedance", "seedance_fast", "seedance_mini", "seedance_ref"]);
+export const SEEDANCE_SALE_MULT = 0.5;
+
+/**
  * Credit charge for a generation given composer options. Video credits scale
  * with the chosen duration (cost is per-second); images and default settings
  * use the fixed `credits`. Kept ≥1 and rounded up so margin never inverts.
@@ -723,6 +747,11 @@ export function priceFor(model: ModelSpec, opts?: GenOpts): number {
   if (maxCount && opts?.numImages && opts.numImages > 1) {
     const n = Math.min(maxCount, Math.floor(opts.numImages));
     credits = Math.max(1, Math.ceil(credits * n));
+  }
+  // Applied LAST, after every real-cost-driven scale-up above, and via `min`
+  // rather than direct assignment — see the doc comment on SEEDANCE_SALE_MULT.
+  if (SEEDANCE_SALE_KEYS.has(model.key) && seedanceSaleActive()) {
+    credits = Math.max(1, Math.min(credits, Math.round(credits * SEEDANCE_SALE_MULT)));
   }
   return credits;
 }

@@ -193,6 +193,55 @@ class of exposure than anything else we sell, and needs its own duration cap
 this reason) and its own pricing decision before it ships, not a mechanical
 multiplier applied to the existing ladder.
 
+## The 2026-07-28 sale
+
+Owner decision, 2026-07-28: Seedance had drifted into a profit center rather
+than the acquisition hook it was meant to be. A 15-second flagship render
+(base/720p) was printing **4,633–6,903 ₸ of profit** on a real cost of roughly
+2,200 ₸ — well past what a "good feeder" model should keep. The call: cut the
+charge, don't chase margin on Seedance specifically, and turn the cut itself
+into a visible, time-boxed promotion rather than a quiet reprice.
+
+**Mechanism**: `SEEDANCE_SALE_MULT = 0.5` in `src/models.ts` — a flat 50% cut
+applied as the LAST step inside `priceFor()`, after every duration/resolution/
+count scale-up, to exactly the 4 Seedance keys (`seedance`, `seedance_fast`,
+`seedance_mini`, `seedance_ref`). It runs while
+`seedanceSaleActive()` (`src/offer.ts`) is true — a fixed calendar deadline,
+`config.seedanceSaleUntil`, defaulting to **2026-09-10T23:59:59+05:00**
+(env: `SEEDANCE_SALE_UNTIL`).
+
+**Why multiplicative, not an additive profit-floor cut.** The first design
+tried to hold a hard floor (charge = cost + 990 ₸, no less) by capping credits
+directly at whatever a given duration/resolution combo actually costs. That
+breaks the moment it composes with the client's own resolution multiplier: capping
+at 720p's cost, then applying the existing "half price at 480p" multiplier on
+top, gives a DIFFERENT number than computing the same additive cap directly
+against 480p's own (lower) real cost — for base/480p/15s, direct-cap gives 66
+credits (992 ₸ profit, floor holds) while cap-then-halve gives only 53 credits
+(622 ₸ profit, floor **broken**). A flat multiplier has no such composition
+hazard: it's just one more multiplier in the same chain every other scale-up
+already goes through, so client and server mirror it exactly with zero parity
+risk.
+
+**What it does to the numbers.** The reference complaint case (base/720p/15s)
+lands at **1,243–2,383 ₸ of profit**, depending on which credit pack funded the
+purchase — down from 4,633–6,903 ₸, and squarely in the "don't expect big
+profit from Seedance specifically" zone the owner asked for. The worst case
+anywhere in the duration/resolution grid (mini/480p/4s) still clears roughly
+111–160 ₸ of profit — the sale never sells a render below its real cost.
+
+**What it does NOT touch**: `costUsdFor()` — the real provider-cost function
+feeding COGS accounting, the digest's margin estimate, and per-user cost
+caps — is untouched by design. Only `priceFor()` (the patron charge) is
+discounted; what a render actually costs us is unaffected by how much we
+charge for it.
+
+Surfacing: `/api/me` exposes `seedanceSale: { active, endsAt }`; the Studio and
+video composer show a "🔥 Акция на Seedance" banner while active, and the
+Studio's model row/chip badges the 4 discounted models with "🔥 −50%". The bot's
+course-lesson copy reads live prices via `priceFor()` rather than the models'
+raw `credits` field, so it never quotes a stale, pre-sale number.
+
 ## Sources
 
 - [Seedance 2.0 vs Fast vs Mini: Is the Cheap One Enough? (2026)](https://pixo.video/blog/seedance-2-0-vs-fast-vs-mini)
