@@ -10,6 +10,13 @@ run — see the open task at the bottom.**
 fal exposes nine variants. Three axes: tier (`mini` / `fast` / base), and mode
 (`image-to-video` / `reference-to-video` / `text-to-video`).
 
+**Duration**: every variant accepts any whole second from **4 to 15** (schema
+enum, probed 2026-07-28). We advertised only 5 and 10 until then — twelve lengths
+collapsed into two, with the middle of the range (6–8 s, the length most short-form
+video actually wants) unreachable. Kling 3.0 is the same story at 3–15 s. Kling 2.5
+and Hailuo 2.3 Fast really do accept only two values each, which is why the
+duration control indexes each model's own list instead of assuming a range.
+
 | tier | max resolution | max duration | relative price |
 |---|---|---|---|
 | Mini | 720p | 15 s | 0.5× |
@@ -98,8 +105,14 @@ of base in both — so the tiers are ordered correctly relative to each other.
 
 The absolute basis is another matter: published per-clip figures for a 5-second
 720p render come out roughly half what our per-second numbers imply, which would
-mean we overcharge for the whole family. And `SEEDANCE_RES` currently gives 480p
-and 720p the same multiplier, which cannot be right when cost tracks tokens.
+mean we overcharge for the whole family.
+
+`SEEDANCE_RES` gave 480p and 720p the same multiplier, which could not be right
+when cost tracks tokens and tokens track pixels. 480p is now charged at 0.5×
+(854×480 against 1280×720 is ~0.44× the work; the extra 0.06 is margin we keep
+until the basis is measured). The flagship endpoint also lists **1080p and 4K**,
+which we do not sell — their multipliers would have to be invented on top of a
+cost basis that is already unverified.
 
 No Seedance render has yet been observed with its real billed cost. Re-derive all
 four numbers from one measured run at each tier before trusting any of them, and

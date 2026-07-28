@@ -897,6 +897,51 @@
     /* live price badge in the composer */
     .priceBadge { display: inline-flex; align-items: center; gap: 6px; font-weight: 800; color: var(--amber); font-size: 15px; font-variant-numeric: tabular-nums; }
 
+    /* ————— duration slider —————
+       Video length used to be two chips because the registry only offered two
+       lengths. The endpoints accept every second in a range (Seedance 4–15,
+       Kling 3.0 3–15), so the control is a slider over the ALLOWED list by
+       index — it can only ever land on a value the provider accepts, including
+       for the two models that really do offer just two.
+
+       The price sits in the head row, next to the seconds, because that is the
+       number the choice is actually about: seconds are what you set, patrons
+       are what you pay, and putting them anywhere but side by side makes the
+       user hunt for the consequence of their own drag. */
+    .durbox { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 13px 15px 9px; }
+    .durhead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+    .durhead .dursec { font-size: 19px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+    .durhead .durprice { font-weight: 800; color: var(--amber); font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .durbox input[type="range"] {
+      -webkit-appearance: none; appearance: none; width: 100%; margin: 12px 0 2px;
+      background: transparent; height: 26px; display: block; cursor: pointer;
+    }
+    /* The travelled part of the track is filled, so "how long did I ask for" is
+       readable without finding the thumb first. --fill is a percentage kept in
+       sync by wireDurationSlider; 0% and 100% both render correctly because the
+       stop is hard rather than a gradient blur. */
+    .durbox input[type="range"]::-webkit-slider-runnable-track {
+      height: 6px; border-radius: 999px;
+      background: linear-gradient(90deg, #7c5cff 0 var(--fill, 0%), var(--surface-2) var(--fill, 0%) 100%);
+    }
+    .durbox input[type="range"]::-moz-range-track {
+      height: 6px; border-radius: 999px;
+      background: linear-gradient(90deg, #7c5cff 0 var(--fill, 0%), var(--surface-2) var(--fill, 0%) 100%);
+    }
+    /* 22px thumb: below ~20px a drag target on a phone is a coin flip, and this
+       one sets the price. */
+    .durbox input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none; width: 22px; height: 22px; border-radius: 50%;
+      background: var(--aurora); border: 2px solid var(--bg-2); box-shadow: 0 2px 10px rgba(124,92,255,.55);
+      margin-top: -8px;
+    }
+    .durbox input[type="range"]::-moz-range-thumb {
+      width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--bg-2);
+      background: #b44dff; box-shadow: 0 2px 10px rgba(124,92,255,.55);
+    }
+    .durbox input[type="range"]:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
+    .durends { display: flex; justify-content: space-between; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+
     /* quiz chips (story builder) */
     .quiz-q { font-size: 13px; font-weight: 700; color: var(--muted); margin: 14px 0 8px; }
     /* Tap-to-explain tooltip trigger next to a non-obvious control. Tap, not
@@ -1058,6 +1103,10 @@
       clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), (opts && opts.ms) || 2600);
     }
     function haptic(kind) { try { tg?.HapticFeedback?.notificationOccurred?.(kind); } catch (e) { /* optional */ } }
+    /* Telegram splits its haptics: notificationOccurred takes success/error/warning,
+       impactOccurred takes the physical weights. A slider tick is an impact — passing
+       "light" to the notification API would just be silently ignored. */
+    function hapticTick() { try { tg?.HapticFeedback?.impactOccurred?.("light"); } catch (e) { /* optional */ } }
 
     function reveal() {
       const io = new IntersectionObserver((es) => es.forEach((e) => {
@@ -2419,10 +2468,33 @@
       // how a user ends up wondering why their sound was ignored.
       if (!m.reference) { stu.refAudio = []; stu.refVideo = []; stu.refRights = false; }
       if (stu.mode === "video" && m.video) {
-        if (!m.video.durations.some((d) => d.seconds === stu.duration)) stu.duration = m.video.durations[0].seconds;
+        if (!m.video.durations.some((d) => d.seconds === stu.duration)) {
+          // The model's own default, not the first entry — that is the shortest
+          // option now that durations are full ranges.
+          const def = m.video.defaultSeconds;
+          stu.duration = m.video.durations.some((d) => d.seconds === def) ? def : m.video.durations[0].seconds;
+        }
         if (!m.video.endFrame) { stu.endPhoto = null; stu.endGenerationId = null; }
       } else { stu.duration = undefined; stu.endPhoto = null; stu.endGenerationId = null; }
     }
+    /**
+     * What one length costs at the CURRENT quality — the number the slider
+     * shows. studioPrice() answers "what will this render cost" for the
+     * settings as they stand; this answers "what would it cost at N seconds",
+     * which is what the user is deciding while dragging. Both apply the same
+     * resolution multiplier, so the slider can never quote a price the CTA
+     * badge then contradicts.
+     */
+    function stuDurPrice(seconds) {
+      const m = studioModel();
+      if (!m || !m.video) return 0;
+      const d = m.video.durations.find((x) => x.seconds === seconds);
+      let credits = d ? d.credits : m.credits;
+      const t = stu.resolution ? (m.video.resolutions || []).find((r) => r.id === stu.resolution) : null;
+      if (t && t.mult !== 1) credits = Math.ceil(credits * t.mult);
+      return credits;
+    }
+
     /** Live patron total — exact client mirror of the server's priceFor. */
     function studioPrice() {
       const m = studioModel();
@@ -2668,8 +2740,11 @@
             `<button class="chip ${c.n === (stu.numImages || 1) ? "on" : ""}" data-cnt="${c.n}">${c.n} шт${c.n > 1 ? ` · ${c.credits} ${PATRON}` : ""}</button>`).join("")}</div>` : ""}
         ${isVideo && m.video ? `
           ${qLabel("Длительность", "duration")}
-          <div class="chips" id="stuDur">${m.video.durations.map((d) =>
-            `<button class="chip ${d.seconds === stu.duration ? "on" : ""}" data-dur="${d.seconds}">${d.seconds} сек · ${d.credits} ${PATRON}</button>`).join("")}</div>` : ""}
+          <div id="stuDur">${durationSliderHtml(
+            m.video.durations.map((d) => d.seconds),
+            stu.duration,
+            stuDurPrice,
+          )}</div>` : ""}
         ${isVideo && m.video && m.video.endFrame ? `
           ${qLabel("Финальный кадр (необязательно)", "endframe")}
           <div id="stuEndZone">${stu.endPhoto ? `<div class="photo-preview"><img src="${stu.endPhoto}" alt="" /><button class="redo" id="stuEndRedo">✕ Убрать</button></div>`
@@ -2734,7 +2809,15 @@
       sheetBody.querySelectorAll("#stuAr .chip").forEach((c) => (c.onclick = () => { stu.aspect = c.dataset.ar; viewStudio(); }));
       sheetBody.querySelectorAll("#stuRes .chip").forEach((c) => (c.onclick = () => { stu.resolution = c.dataset.res; viewStudio(); }));
       sheetBody.querySelectorAll("#stuCount .chip").forEach((c) => (c.onclick = () => { stu.numImages = Number(c.dataset.cnt); viewStudio(); }));
-      sheetBody.querySelectorAll("#stuDur .chip").forEach((c) => (c.onclick = () => { stu.duration = Number(c.dataset.dur); viewStudio(); }));
+      // Live, without a re-render: the studio sheet holds typed prompt text and a
+      // scroll position, and rebuilding it on every step of a drag would throw
+      // both away mid-gesture. Only the two numbers that changed are updated.
+      if (isVideo && m.video) {
+        wireDurationSlider(sheetBody, m.video.durations.map((d) => d.seconds), stuDurPrice, (sec) => {
+          stu.duration = sec;
+          cta(); // the button carries the total (and flips to "Пополнить" when short)
+        });
+      }
       sheetBody.querySelectorAll("[data-story]").forEach((row) => {
         row.querySelectorAll(".chip").forEach((chip) => (chip.onclick = () => {
           const id = row.dataset.story;
@@ -2914,7 +2997,13 @@
       const story = isCurated ? [] : (ME.catalog.videoStory || []);
       pick.model = m.key; // always send the (possibly swapped) model
       pick.aspect_ratio = pick.aspect_ratio || ratios[0];
-      if (!durs.some((d) => d.seconds === pick.duration)) pick.duration = durs[0].seconds;
+      // Fall back to the model's own default length, not durs[0] — that is the
+      // SHORTEST option now, and defaulting to it would quietly downgrade every
+      // video the moment a model gained a shorter duration.
+      const defSec = (m.video && m.video.defaultSeconds) || durs[0].seconds;
+      if (!durs.some((d) => d.seconds === pick.duration)) {
+        pick.duration = durs.some((d) => d.seconds === defSec) ? defSec : durs[0].seconds;
+      }
       if (resList.length && !resList.some((r) => r.id === pick.resolution)) pick.resolution = resList[0].id;
       if (!resList.length) pick.resolution = undefined;
       if (!hasEnd) { pick.end_photo = null; pick.end_generation_id = null; } // drop a stale end frame on models without it
@@ -2945,8 +3034,7 @@
         <div class="chips" id="resRow">${resList.map((r) =>
           `<button class="chip ${r.id === pick.resolution ? "on" : ""}" data-res="${r.id}">${esc(r.label)}</button>`).join("")}</div>` : ""}
         ${qLabel("Длительность", "duration")}
-        <div class="chips" id="durRow">${durs.map((d) =>
-          `<button class="chip ${d.seconds === pick.duration ? "on" : ""}" data-dur="${d.seconds}">${d.seconds}с · ${priceOf(d.seconds)} ${PATRON}</button>`).join("")}</div>
+        <div id="durRow">${durationSliderHtml(durs.map((d) => d.seconds), pick.duration, priceOf)}</div>
         ${hasEnd ? `${qLabel("Финальный кадр — переход к другому фото (необязательно)", "endframe")}
         <div id="endZone">
           <label class="drop"><input type="file" accept="image/*" id="endFile" />
@@ -2997,11 +3085,10 @@
         sheetBody.querySelectorAll("#arRow .chip").forEach((x) => x.classList.remove("on"));
         c.classList.add("on"); pick.aspect_ratio = c.dataset.ar;
       }));
-      sheetBody.querySelectorAll("#durRow .chip").forEach((c) => (c.onclick = () => {
-        sheetBody.querySelectorAll("#durRow .chip").forEach((x) => x.classList.remove("on"));
-        c.classList.add("on"); pick.duration = Number(c.dataset.dur);
-        sheetBody.querySelector("#prN").textContent = priceOf(pick.duration);
-      }));
+      wireDurationSlider(sheetBody, durs.map((d) => d.seconds), priceOf, (sec) => {
+        pick.duration = sec;
+        sheetBody.querySelector("#prN").textContent = priceOf(sec);
+      });
       // Keep typed fields when a control re-renders the composer for fresh prices.
       const preserveRerender = () => {
         const cw = sheetBody.querySelector("#cw"); if (cw) pick.custom = cw.value.trim();
@@ -3498,6 +3585,60 @@
             ${twin ? `<div class="fp-was">${twin.kzt.toLocaleString("ru-RU")} ₸</div>` : ""}
           </span>
         </button>`);
+    }
+
+    /**
+     * Video-length slider over the ALLOWED seconds, addressed by index.
+     *
+     * Index, not seconds: the lists are dense ranges for most models but only
+     * two values for Kling 2.5 and Hailuo, and a range input over raw seconds
+     * would let those two land on a length the endpoint rejects — a paid render
+     * that fails on a value we offered. By index every position is legal by
+     * construction, whatever the model.
+     *
+     * `priceOf(seconds)` is passed in rather than computed here, because the
+     * two composers price differently (one has a resolution multiplier in play,
+     * the other reads a per-length price table) and both must show the number
+     * the SERVER will charge, not a second opinion.
+     */
+    function durationSliderHtml(durs, current, priceOf) {
+      const i = Math.max(0, durs.indexOf(current));
+      const fill = durs.length > 1 ? (i / (durs.length - 1)) * 100 : 100;
+      return `<div class="durbox" data-dursl style="--fill:${fill}%">
+        <div class="durhead">
+          <b class="dursec">${durs[i]} сек</b>
+          <span class="durprice">${priceOf(durs[i])} ${PATRON}</span>
+        </div>
+        <input type="range" min="0" max="${durs.length - 1}" step="1" value="${i}"
+               aria-label="Длительность видео, секунд" />
+        <div class="durends"><span>${durs[0]} с</span><span>${durs[durs.length - 1]} с</span></div>
+      </div>`;
+    }
+
+    /**
+     * Wire the slider. `onPick(seconds)` fires on every move, so the CTA badge
+     * tracks the drag rather than waiting for release — the price is the thing
+     * being chosen, and a number that only catches up on mouse-up reads as lag.
+     */
+    function wireDurationSlider(root, durs, priceOf, onPick) {
+      const box = root.querySelector("[data-dursl]");
+      if (!box) return;
+      const input = box.querySelector("input[type=range]");
+      const secEl = box.querySelector(".dursec");
+      const prEl = box.querySelector(".durprice");
+      let last = null;
+      const apply = () => {
+        const i = Number(input.value);
+        const sec = durs[i];
+        if (sec == null) return;
+        box.style.setProperty("--fill", `${durs.length > 1 ? (i / (durs.length - 1)) * 100 : 100}%`);
+        secEl.textContent = `${sec} сек`;
+        prEl.textContent = `${priceOf(sec)} ${PATRON}`;
+        if (sec !== last) { last = sec; hapticTick(); }
+        onPick(sec);
+      };
+      input.oninput = apply;
+      input.onchange = apply;
     }
 
     // Live combo-offer countdown: ticks the 🔥 badge each second; when the

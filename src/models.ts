@@ -80,7 +80,25 @@ export interface ImageParams {
 /** Video composer capabilities + per-second pricing (credits scale with length). */
 export interface VideoParams {
   perSecondUsd: number; // provider cost per second — the credit-scaling basis
-  durations: number[]; // selectable seconds; durations[0] = default (matches `credits`)
+  /**
+   * Every length the ENDPOINT accepts, ascending. Probed from each model's own
+   * OpenAPI schema, not chosen by us: offering a second the provider rejects
+   * turns a slider into a way to buy a failed render.
+   *
+   * Most of these are dense ranges (Seedance 4–15, Kling 3.0 3–15), which is
+   * what makes a slider the right control. Two of them genuinely accept only
+   * two values, so the control snaps to whatever is in this list rather than
+   * assuming a continuous range.
+   */
+  durations: number[];
+  /**
+   * The length `credits` is quoted for. Explicit rather than `durations[0]`,
+   * which was the old convention: once the list is a sorted range, its first
+   * element is the SHORTEST option, and pricing that silently keyed off array
+   * order would have re-anchored every model's base price the moment a shorter
+   * duration was added.
+   */
+  defaultSeconds: number;
   aspectRatios: string[]; // selectable ratios; "auto" keeps the source frame's ratio
   endFrame?: boolean; // accepts an optional end_image_url (morph source → end frame)
   resolutions?: ResTier[]; // optional quality ladder; resolutions[0] = default
@@ -220,13 +238,19 @@ const NBPRO_RES: ResTier[] = [
   { id: "2K", label: "2K", mult: 1 },
   { id: "4K", label: "4K 💎", mult: 2 },
 ];
-// Seedance 2.0 resolution enum is 480p/720p (NOT 1080p — that tier doesn't exist on
-// the 2.0 endpoint and a "1080p" request is rejected; fal schema, P1). 720p is the
-// balanced default (base price); 480p is faster, priced the same until its real
-// per-second cost is measured (then it can be discounted).
+// Seedance 2.0: the mini/fast endpoints expose 480p/720p; the flagship also lists
+// 1080p and 4K, which we do NOT sell yet — their multiplier would have to be
+// invented, and the whole family's cost basis is still unverified (task #92).
+//
+// 480p is discounted to half. The family bills per 1000 tokens and tokens track
+// pixels, so 854×480 against 1280×720 is ~0.44× the work; charging 0.5× keeps a
+// little margin over that while making the quality control mean something. It
+// was 1× before, which meant picking the cheaper, faster tier cost exactly the
+// same — a setting that changes the output and not the price reads as a setting
+// that does nothing.
 const SEEDANCE_RES: ResTier[] = [
   { id: "720p", label: "720p", mult: 1 },
-  { id: "480p", label: "480p ⚡", mult: 1 },
+  { id: "480p", label: "480p ⚡", mult: 0.5 },
 ];
 
 /**
@@ -322,7 +346,7 @@ export const MODELS = {
       image_url: imageUrl,
       duration: String(opts?.duration ?? 5),
     }),
-    video: { perSecondUsd: 0.1, durations: [5, 10], aspectRatios: ["auto"] },
+    video: { perSecondUsd: 0.1, durations: [5, 10], defaultSeconds: 5, aspectRatios: ["auto"] },
   },
   premium_image: {
     key: "premium_image",
@@ -423,7 +447,13 @@ export const MODELS = {
       duration: String(opts?.duration ?? 5),
       ...endParam(opts),
     }),
-    video: { perSecondUsd: 0.168, durations: [5, 10], aspectRatios: ["auto"], endFrame: true },
+    video: {
+      perSecondUsd: 0.168,
+      durations: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      defaultSeconds: 5,
+      aspectRatios: ["auto"],
+      endFrame: true,
+    },
   },
   // Seedance 2.0 Fast (ByteDance) — economy premium video, $0.2419/s → 5s ≈ $1.21.
   seedance_fast: {
@@ -444,7 +474,8 @@ export const MODELS = {
     }),
     video: {
       perSecondUsd: 0.2419,
-      durations: [5, 10],
+      durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      defaultSeconds: 5,
       aspectRatios: ["auto", "9:16", "16:9", "1:1", "4:3", "3:4"],
       endFrame: true,
       resolutions: SEEDANCE_RES,
@@ -471,7 +502,8 @@ export const MODELS = {
     }),
     video: {
       perSecondUsd: 0.3034,
-      durations: [5, 10],
+      durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      defaultSeconds: 5,
       aspectRatios: ["auto", "9:16", "16:9", "1:1", "4:3", "3:4"],
       endFrame: true,
       resolutions: SEEDANCE_RES,
@@ -512,7 +544,8 @@ export const MODELS = {
     }),
     video: {
       perSecondUsd: 0.1517,
-      durations: [5, 10],
+      durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      defaultSeconds: 5,
       aspectRatios: ["auto", "9:16", "16:9", "1:1", "4:3", "3:4"],
       endFrame: true,
       resolutions: SEEDANCE_RES,
@@ -568,7 +601,8 @@ export const MODELS = {
     image: { aspectRatios: IMAGE_ASPECTS, maxCount: 1, maxInputs: 9 },
     video: {
       perSecondUsd: 0.1517,
-      durations: [5, 10],
+      durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      defaultSeconds: 5,
       aspectRatios: ["auto", "9:16", "16:9", "1:1", "4:3", "3:4"],
       resolutions: SEEDANCE_RES,
     },
@@ -590,7 +624,7 @@ export const MODELS = {
       image_url: imageUrl,
       duration: String(opts?.duration ?? 6),
     }),
-    video: { perSecondUsd: 0.032, durations: [6, 10], aspectRatios: ["auto"] },
+    video: { perSecondUsd: 0.032, durations: [6, 10], defaultSeconds: 6, aspectRatios: ["auto"] },
   },
 } satisfies Record<string, ModelSpec>;
 
@@ -631,7 +665,7 @@ export function cheapestModel(kind: ModelKind): ModelSpec {
 export function priceFor(model: ModelSpec, opts?: GenOpts): number {
   let credits = model.credits;
   // Video: scale with the chosen duration (cost is per-second).
-  if (model.video && opts?.duration && opts.duration !== model.video.durations[0]) {
+  if (model.video && opts?.duration && opts.duration !== model.video.defaultSeconds) {
     credits = Math.max(1, Math.ceil((model.video.perSecondUsd * opts.duration) / CREDIT_COST_BASIS));
   }
   // Higher resolution/quality tier costs more provider $ — scale the charge so
@@ -663,7 +697,7 @@ export function priceFor(model: ModelSpec, opts?: GenOpts): number {
  */
 export function costUsdFor(model: ModelSpec, opts?: GenOpts): number {
   let usd = model.approxCostUsd;
-  if (model.video && opts?.duration && opts.duration !== model.video.durations[0]) {
+  if (model.video && opts?.duration && opts.duration !== model.video.defaultSeconds) {
     usd = model.video.perSecondUsd * opts.duration;
   }
   const tiers = model.image?.resolutions ?? model.video?.resolutions;

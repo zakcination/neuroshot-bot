@@ -294,6 +294,11 @@ function studioModelsOf(mode: "image" | "video", eta: Record<string, number>): A
       video: m.video
         ? {
             durations: m.video.durations.map((d) => ({ seconds: d, credits: priceFor(m, { duration: d }) })),
+            // The length `credits` is quoted for. The client must not fall back
+            // to durations[0] — that is now the SHORTEST option, not the
+            // default, so a composer opening on it would silently start every
+            // user on a different length than the price they were shown.
+            defaultSeconds: m.video.defaultSeconds,
             aspectRatios: m.video.aspectRatios,
             endFrame: !!m.video.endFrame,
             resolutions: (m.video.resolutions ?? []).map((t) => ({
@@ -442,6 +447,7 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
                 seconds: d,
                 credits: priceFor(spec, { duration: d }),
               })),
+              defaultSeconds: spec.video.defaultSeconds,
               aspectRatios: spec.video.aspectRatios,
               endFrame: !!spec.video.endFrame,
               resolutions: (spec.video.resolutions ?? []).map((t) => ({
