@@ -587,6 +587,54 @@ await step("the video set really covers 3–5 finished videos, and the ladder st
   assert.equal(packById("photo_set")!.offer, undefined, "photo_set is a standing tier now, not a countdown offer");
 });
 
+await step("course tiers price their patrons at ladder rates, and state their tuition honestly", async () => {
+  const { PACKS, packById, ladderValueOf } = await import("../src/models.js");
+
+  // A course tier is a bundle, so it sits outside every ladder filter in the
+  // codebase. That is a listing decision, not a pricing exemption: it still
+  // sells patrons, and before this step existed the reprice left both tiers at
+  // 61.7 and 50 ₸/🔫 against a 30–40 band — the priciest patrons in the product
+  // were the ones sold to the people we had just persuaded to learn.
+  const courses = PACKS.filter((p) => p.course && !p.retired).sort((a, b) => a.credits - b.credits);
+  assert.ok(courses.length >= 2, "both course tiers should be on sale");
+
+  const first = PACKS.find((p) => p.once && !p.retired)!;
+  const entryRate = first.kzt / first.credits;
+  for (const p of courses) {
+    const per = p.kzt / p.credits;
+    assert.ok(per >= 30 && per <= 40, `${p.id} is ${per.toFixed(1)} ₸/🔫 — outside the 30–40 band`);
+    // A course cheap enough to buy FOR the patrons is not a course, it is a hole
+    // in the ladder with lessons attached.
+    assert.ok(per > entryRate, `${p.id} (${per.toFixed(1)} ₸/🔫) undercuts the once-per-account entry price`);
+  }
+  for (let i = 1; i < courses.length; i++) {
+    const prev = courses[i - 1].kzt / courses[i - 1].credits;
+    const here = courses[i].kzt / courses[i].credits;
+    assert.ok(here < prev, `${courses[i].id} (${here.toFixed(1)} ₸/🔫) is a worse rate than the smaller ${courses[i - 1].id}`);
+  }
+
+  // The tripwire's pitch is arithmetic, not copy: /course tells the buyer the
+  // same patrons cost `ladderValueOf` on the pay screen and the lessons are
+  // free. Pinned here so a ladder move cannot quietly turn that into a lie.
+  const fast = packById("course_fast")!;
+  assert.equal(
+    fast.kzt,
+    ladderValueOf(fast.credits),
+    "course_fast must cost exactly its patron content — «уроки идут бесплатно» is a claim /course makes",
+  );
+
+  // The flagship charges real tuition. Priced at exactly its patron content it
+  // would be three modules, a cohort and a certificate given away.
+  const flagship = packById("course_flagship")!;
+  const tuition = flagship.kzt - ladderValueOf(flagship.credits);
+  assert.ok(tuition > 0, `course_flagship charges ${tuition} ₸ for the teaching — the course is being given away`);
+
+  // `ladderValueOf` must price against a rung that actually covers the size
+  // asked for, or the tuition it reports is measured off the wrong tile.
+  assert.equal(ladderValueOf(100), 3800, "100 🔫 is Фото-сет's size and rate");
+  assert.equal(ladderValueOf(700), 21000, "700 🔫 lands on Студия's rate — the smallest rung that covers it");
+});
+
 await step("paywall never anchors a pack that cannot cover the result it promises", async () => {
   // Regression: the anchor used to be the combo unconditionally, and the result
   // count was clamped with Math.max(1, …). The combo is 36 🔫 while the video
@@ -2114,7 +2162,10 @@ await step("course purchase: buying course_fast credits patrons AND DMs a one-ti
   const invitesBefore = calls("createChatInviteLink").length;
   const purchasesBefore = await ledgerCount("purchase");
   await payForPack(finn, "course_fast");
-  assert.equal(await credits(finn.id), 60);
+  // Read the size off the pack — this asserted a literal 60 and broke on the
+  // reprice, which is a test failing at the one thing it was never about.
+  const { packById: packOf } = await import("../src/models.js");
+  assert.equal(await credits(finn.id), packOf("course_fast")!.credits);
   assert.equal(await ledgerCount("purchase"), purchasesBefore + 1);
 
   const invites = calls("createChatInviteLink").slice(invitesBefore);
@@ -2145,7 +2196,8 @@ await step("course purchase guarantee: buying course_flagship with NO channel co
   const purchasesBefore = await ledgerCount("purchase");
 
   await payForPack(gia, "course_flagship");
-  assert.equal(await credits(gia.id), 500); // credits still granted
+  const { packById: packOf } = await import("../src/models.js");
+  assert.equal(await credits(gia.id), packOf("course_flagship")!.credits); // credits still granted
   assert.equal(await ledgerCount("purchase"), purchasesBefore + 1); // purchase still journaled normally
   assert.equal(calls("createChatInviteLink").length, invitesBefore); // no invite attempt — channel unset
 

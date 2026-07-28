@@ -66,6 +66,7 @@ import {
   FREE_SCENARIOS,
   freeScenarioById,
   IMAGE_MODEL_PICKER,
+  ladderValueOf,
   MODELS,
   packById,
   PARTNER_TIERS,
@@ -170,18 +171,38 @@ export function mainMenu(
   return kb;
 }
 
-/** /course overview text: the free → $9 → $50 ladder (docs/course-funnel.md). */
+/** «25 000 ₸» — grouped the way the pay screen and the Kaspi receipt show it. */
+const tenge = (n: number): string => `${n.toLocaleString("ru-RU")} ₸`;
+
+/**
+ * /course overview text: the free → «Быстрый старт» → «Под ключ» ladder
+ * (docs/course-funnel.md).
+ *
+ * Each paid tier states what its patrons cost on the pay screen, so the buyer
+ * can see what they are paying for the teaching instead of taking our word for
+ * it: zero on the tripwire (its patrons are worth exactly its ticket) and 4 000 ₸
+ * on the flagship. Both numbers are derived — `ladderValueOf` reads the same
+ * PACKS the pay screen does, so a ladder move updates this screen with it and
+ * cannot leave a stale claim behind. The old copy asserted «с запасом на весь
+ * курс» about a budget that the shipped Lesson 2 homework overspends by more
+ * than double (docs/course/BLOCKERS.md §4) — a pre-payment promise the product
+ * did not keep, and the kind most likely to come back as a refund demand.
+ */
 function courseText(): string {
   const fast = packById("course_fast");
   const flagship = packById("course_flagship");
+  const flagshipTuition = flagship ? flagship.kzt - ladderValueOf(flagship.credits) : 0;
   return (
     `🎓 <b>Курс по AI-контенту — от новичка до продаж</b>\n\n` +
     `📖 <b>Бесплатно</b> — 10 готовых промптов, каждый уже "зашит" в кнопку бота.\n` +
     (fast
-      ? `🚀 <b>«Быстрый старт» — ${fast.kzt} ₸</b> — 5 уроков + ${nUnits(fast.credits)} внутри (с запасом на весь курс).\n`
+      ? `🚀 <b>«Быстрый старт» — ${tenge(fast.kzt)}</b> — 5 уроков + ${nUnits(fast.credits)} внутри. ` +
+        `Столько же патронов отдельно стоят ${tenge(ladderValueOf(fast.credits))} — уроки идут бесплатно.\n`
       : "") +
     (flagship
-      ? `🎓 <b>«AI-контент под ключ» — ${flagship.kzt} ₸</b> — 3 модуля + когорта + ${nUnits(flagship.credits)}.\n\n`
+      ? `🎓 <b>«AI-контент под ключ» — ${tenge(flagship.kzt)}</b> — 3 модуля + когорта + сертификат + ` +
+        `${nUnits(flagship.credits)} (отдельно — ${tenge(ladderValueOf(flagship.credits))}, ` +
+        `то есть обучение — ${tenge(flagshipTuition)}).\n\n`
       : "\n") +
     `Обучение — в приватном Telegram-канале вашей когорты; доступ к каналу открывается ` +
     `автоматически сразу после оплаты.`
@@ -193,8 +214,8 @@ function courseKeyboard(): InlineKeyboard {
   const fast = packById("course_fast");
   const flagship = packById("course_flagship");
   const kb = new InlineKeyboard().text("📖 Бесплатный гайд: 10 промптов", "course:guide").row();
-  if (fast) kb.text(`🚀 «Быстрый старт» — ${fast.kzt} ₸`, "buy:course_fast").row();
-  if (flagship) kb.text(`🎓 «AI-контент под ключ» — ${flagship.kzt} ₸`, "buy:course_flagship").row();
+  if (fast) kb.text(`🚀 «Быстрый старт» — ${tenge(fast.kzt)}`, "buy:course_fast").row();
+  if (flagship) kb.text(`🎓 «AI-контент под ключ» — ${tenge(flagship.kzt)}`, "buy:course_flagship").row();
   return kb;
 }
 
@@ -206,6 +227,9 @@ function courseKeyboard(): InlineKeyboard {
  */
 function freeGuideMessages(): string[] {
   const idKeep = "Keep the person's face and identity exactly as in the photo.";
+  // Read from PACKS rather than typed inline: this line quoted 3700 ₸ / 60 🔫 as
+  // literals and went stale the moment the course tiers were repriced.
+  const fast = packById("course_fast");
   const msg1 =
     `📖 <b>10 готовых промптов, которые залетают</b>\n\n` +
     `Каждый промпт уже "зашит" одним тапом в боте — можно скопировать его в любой генератор вручную, ` +
@@ -264,13 +288,15 @@ function freeGuideMessages(): string[] {
     `Все 10 промптов доступны бесплатно в боте, без единой строчки текста — это и есть NeuroShot: результат, а ` +
     `не промпт-инжиниринг.\n\n` +
     `Хотите не только жать кнопки, но и научиться собирать из этого продающий контент, серии и кино — ` +
-    `5-урочный курс «Быстрый старт» (3700 ₸, ${nUnits(60)} внутри) ждёт вас: /course`;
+    (fast
+      ? `5-урочный курс «Быстрый старт» (${tenge(fast.kzt)}, ${nUnits(fast.credits)} внутри) ждёт вас: /course`
+      : `курс «Быстрый старт» ждёт вас: /course`);
 
   return [msg1, msg2, msg3];
 }
 
 /**
- * «Быстрый старт» ($9, docs/course/01-fast-start.md), lesson by lesson —
+ * «Быстрый старт» (docs/course/01-fast-start.md), lesson by lesson —
  * condensed to Telegram HTML, same treatment as freeGuideMessages. Menu paths
  * mirror the free guide's own shorthand (e.g. "🖼 Редактирование фото", "🎉
  * Кампании" name the FEATURE, not a literal main-menu button — same convention
@@ -396,7 +422,7 @@ export function fastStartLessonMessages(lessonNum: 1 | 2 | 3 | 4 | 5): string[] 
 }
 
 /**
- * «AI-контент под ключ» ($50, docs/course/02-flagship.md), module by module —
+ * «AI-контент под ключ» (docs/course/02-flagship.md), module by module —
  * same Telegram-HTML treatment as fastStartLessonMessages. Prices pulled live
  * from src/models.ts; the 7-day playbook table and frame/narrator table in the
  * source .md become plain numbered lists (Telegram HTML has no table markup).

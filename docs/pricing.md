@@ -152,6 +152,51 @@ Ladder in ₸/patron (bigger pack = better rate). Prices are data in
 Only «Первый набор» sits below the ladder, and only once per account — every
 standing price is inside the 30–40 ₸ band.
 
+### Course tiers
+
+The two course packs (`course_fast`, `course_flagship`) are bundles — patrons
+plus teaching — so they are filtered out of every listing, keyboard and paywall
+anchor (`!p.course`) and sold only through `/course`. That is a **listing**
+decision, not a pricing exemption. The 2026-07 ladder move left them at 61.7 and
+50 ₸/🔫 against a 30–40 band, which meant the most expensive patrons in the
+catalogue were the ones sold to the people we had just persuaded to learn — and
+made «Фото-сет» (100 🔫 for 3 800 ₸) a strictly better buy than the course that
+was supposed to feed it.
+
+Fixed by moving the **patrons**, not the sticker. Both tickets are unchanged, so
+no Kaspi fixed-amount link has to be re-issued:
+
+| Pack | Patrons | Price | ₸/patron | Patrons alone | Tuition |
+|---|---|---|---|---|---|
+| 🎓 Быстрый старт | 60 → **100** | 3 700 → **3 800 ₸** | 61.7 → **38.0** | 3 800 ₸ | **0 ₸** |
+| 🎓 AI-контент под ключ | 500 → **700** | 25 000 ₸ | 50.0 → **35.7** | 21 000 ₸ | **4 000 ₸** |
+
+"Patrons alone" is `ladderValueOf(credits)` (`src/models.ts`) — what the same
+patrons cost on the pay screen, valued at the rate of the smallest standing rung
+that covers the size, so it is a number the buyer can check against a tile.
+
+The two tiers answer the tuition question differently on purpose:
+
+- **«Быстрый старт» is a tripwire.** Its patrons are worth *exactly* its ticket
+  (100 🔫 = «Фото-сет» = 3 800 ₸), so «уроки идут бесплатно» is arithmetic the
+  buyer verifies two tiles down rather than a claim. The e2e step pins the
+  equality, so a future ladder move cannot quietly turn the pitch into a lie.
+- **«Под ключ» charges real tuition.** 700 🔫 cost 21 000 ₸ at «Студии»'s rate;
+  the remaining 4 000 ₸ buys three modules, the cohort and the certificate. A
+  course priced at exactly its patron content is a course we are giving away.
+
+Both stay inside the 30–40 band and **above** the once-per-account entry rate
+(25 ₸/🔫): a course cheap enough to buy *for* the patrons stops being a course
+and becomes a hole in the ladder with lessons attached. The e2e step asserts the
+band, the entry-rate floor, monotonicity between the two tiers, and both tuition
+rules.
+
+⚠️ Still open (`docs/course/BLOCKERS.md`): the shipped `fastStartLessonMessages`
+Lesson 2 homework costs ~143 🔫, which 100 🔫 still does not cover — the repackaged
+45 🔫 version was never landed in the codebase. The pre-payment claim «с запасом на
+весь курс» has been removed from `/course` in the meantime, so nothing is promised
+that the budget cannot keep, but the lesson copy itself remains blocker 3's job.
+
 The cheaper scenario stack also *reprices the value story*: a «Старт — 60 🔫»
 pack now buys **~5 whole Hailuo scenarios** (12 🔫 each) instead of ~1 Kling
 scenario. Same margin per patron, far better perceived value — the anchor a paid
