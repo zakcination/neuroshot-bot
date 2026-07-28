@@ -1626,10 +1626,19 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     }
     const res = await joinPartnerProgram(targetId, config.partnerWelcome);
     if (!res.justJoined) {
-      await ctx.reply(`Пользователь ${targetId} уже партнёр — или ещё не запускал бота (/start).`);
-      return;
+      // With a slug, re-running the command on an EXISTING partner mints that
+      // vanity code for them. Without this, a taken-slug failure was a dead
+      // end: the first attempt had already enrolled the partner, so the retry
+      // stopped at "уже партнёр" and never reached the mint — no admin path to
+      // the code the creator was promised. Welcome is never re-granted (that
+      // fired on the call that actually joined them).
+      if (!custom || !(await partnerAccount(targetId)).joined) {
+        await ctx.reply(`Пользователь ${targetId} уже партнёр — или ещё не запускал бота (/start).`);
+        return;
+      }
     }
-    // Mint the partner's first shareable code, mirroring the old join flow.
+    // Mint the shareable code — the first on a fresh join, or the requested
+    // vanity slug for an existing partner.
     const minted = await createPartnerCode(
       targetId,
       config.partnerPercent,
@@ -1640,19 +1649,23 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     if (!minted.ok) {
       await ctx.reply(
         minted.error === "taken"
-          ? `⚠️ Код «${custom}» уже занят. Партнёр подключён (+${nUnits(res.welcome)}), но ссылку надо создать заново: /partner_grant отменить нельзя, выдайте код через /partner (кнопка «Ещё ссылка»).`
+          ? `⚠️ Код «${custom}» уже занят — повторите /partner_grant с другим кодом.`
           : `⚠️ У ${targetId} исчерпан лимит активных ссылок (${config.partnerMaxCodes}).`,
       );
       return;
     }
-    await ctx.api
-      .sendMessage(
-        targetId,
-        `🎉 Вас подключили к партнёрской программе NeuroShot! Начислен бонус ${UNIT_EMOJI} ${nUnits(res.welcome)}. Откройте /partner — там ваша персональная ссылка.`,
-      )
-      .catch(() => {});
+    if (res.justJoined) {
+      await ctx.api
+        .sendMessage(
+          targetId,
+          `🎉 Вас подключили к партнёрской программе NeuroShot! Начислен бонус ${UNIT_EMOJI} ${nUnits(res.welcome)}. Откройте /partner — там ваша персональная ссылка.`,
+        )
+        .catch(() => {});
+    }
     await ctx.reply(
-      `✅ ${targetId} подключён к партнёрской программе (+${nUnits(res.welcome)}).\n` +
+      (res.justJoined
+        ? `✅ ${targetId} подключён к партнёрской программе (+${nUnits(res.welcome)}).\n`
+        : `✅ Код добавлен партнёру ${targetId}.\n`) +
         `Ссылка: t.me/${config.webappBotUsername || "bot"}?start=p_${minted.code}`,
     );
   });

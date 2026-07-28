@@ -1687,6 +1687,17 @@ await step("partner: a vanity code is still kind='partner' — laddered and with
   await sendText(admin, `/partner_grant ${other.id} ${vanity}`);
   assert.equal((await query("SELECT code FROM partner_codes WHERE user_id=$1", [other.id])).length, 0);
   assert.match(calls("sendMessage").at(-1)!.payload.text as string, /уже занят/);
+
+  // ...and the refusal is not a dead end: the first attempt already enrolled
+  // the partner, so the retry with a fresh slug must mint it for the EXISTING
+  // partner — without re-granting the welcome bonus.
+  const balBefore = await credits(other.id);
+  await sendText(admin, `/partner_grant ${other.id} oth31`);
+  const retry = (await query("SELECT code, kind FROM partner_codes WHERE user_id=$1", [other.id]))[0];
+  assert.equal(String(retry.code), "oth31");
+  assert.equal(String(retry.kind), "partner");
+  assert.equal(await credits(other.id), balBefore, "the retry must not pay the welcome bonus twice");
+  assert.match(calls("sendMessage").at(-1)!.payload.text as string, /p_oth31/);
 });
 
 await step("partner: /partner_grant @username enrols with just the handle — no /id round-trip", async () => {

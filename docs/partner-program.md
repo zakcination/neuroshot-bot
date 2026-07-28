@@ -101,7 +101,10 @@ granted when the payout runs). That is the direction to be generous in.
   way in). `@username` resolves against the stored (and interaction-refreshed)
   handle, so enrolling a creator needs nothing from them beyond `/start` — no
   «пришлите /id» round-trip; an ambiguous or unknown handle is refused with the
-  numeric-id fallback named. The optional slug mints a **vanity** code — a
+  numeric-id fallback named. Re-running it with a slug on an existing partner
+  mints that code for them (the welcome bonus is never re-granted) — so a
+  taken-slug refusal is retried with a different slug, not a dead end. The
+  optional slug mints a **vanity** code — a
   creator's own handle reads better in a bio than a random one — and it stays
   `kind='partner'`, so the ladder and the withdrawable cashback come with it. Do
   **not** reach for `/partner_add` to get a named code: that mints
