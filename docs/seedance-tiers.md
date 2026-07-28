@@ -65,6 +65,41 @@ prompt as `@Image1`, `@Image2`. Users write plain Russian, so `referencePrompt()
 writes the binding for them and adds what the list is FOR — the same subject
 repeated, not extra guests, and never a collage.
 
+### Subject: person vs object (2026-07-28)
+
+`referencePrompt()` was written entirely in the language of faces — "the same
+people repeated", "get the faces right". That was a real defect: several
+sources researching this endpoint independently agree that multi-angle input
+genuinely helps **products and objects**, and this mode is the obvious way a
+marketplace seller shoots nine angles of an item for a listing video. Every one
+of those requests got an instruction about people, because the wording never
+considered anything else could be uploaded here.
+
+`GenOpts.subject: "person" | "object"` picks the framing. Client-settable —
+unlike the URL fields on this same interface, it only changes wording, never
+what gets fetched, so there is no reason to hide it behind a server-only
+assignment. `normalizeOpts` rejects it outright on a model that doesn't declare
+`reference`; the field means nothing anywhere else, and silently ignoring it
+there would hide a caller's mistake instead of naming it.
+
+Default is `"person"`, reproducing the original wording byte for byte — every
+caller before this field existed was a face. The Studio shows a plain two-chip
+toggle (🙂 Человек / 📦 Товар) next to the "ещё ракурсов" affordance, visible
+only for models that declare `reference` — it is meaningless (and hidden)
+everywhere else, including the ordinary multi-angle-for-editing path on
+`photo_edit`/`premium_edit`/etc., which only ever means a face and keeps its
+fixed copy.
+
+**Left open, on purpose:** whether a multi-angle *character turnaround* (front /
+side / three-quarter / back) actually helps or hurts identity lock on the
+`person` path is contested — some sources claim it causes the model to read one
+face as several different people (the "twins" bug), and recommend a single
+clean headshot instead. That claim did not survive verification: the two pages
+it was sourced to on a first pass did not actually contain it. Nothing about the
+`person` wording changed here pending a measured test on our own endpoint
+(task #92) — an unverified prompt-engineering claim is not something to act on
+when each wrong render costs a user real patrons.
+
 Full endpoint limits: images up to 9 (JPEG/PNG/WebP, ≤30 MB each); audio up to 3
 (MP3/WAV, combined ≤15 s, ≤15 MB each, and requires at least one image or video);
 video up to 3 (MP4/MOV, combined 2–15 s, <50 MB total, each between ~640×640 and

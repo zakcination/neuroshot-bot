@@ -1017,6 +1017,14 @@
     .xdel { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border: 0; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; font: inherit; font-size: 11px; line-height: 20px; padding: 0; cursor: pointer; }
     .xadd { flex: 0 0 auto; width: 68px; height: 68px; border-radius: var(--radius-s); border: 1px dashed var(--violet); display: grid; place-items: center; color: var(--violet); font-size: 22px; cursor: pointer; }
     .xadd input { display: none; }
+    /* Reference-mode subject toggle (Seedance): decides whether the multi-photo
+       input is framed to the model as a face or an object — see referencePrompt
+       in src/models.ts. Two plain chips, not a dropdown: it is one decision made
+       once per render, and it needs to read at a glance before anyone uploads a
+       second photo, not after. */
+    .subjtoggle { display: flex; gap: 8px; }
+    .schip { flex: 1 1 0; padding: 9px 10px; border-radius: var(--radius-s); border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; text-align: center; }
+    .schip.on { border-color: var(--violet); background: rgba(124,92,255,.14); color: var(--violet); }
     .photo-preview .redo { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,.55); backdrop-filter: blur(6px); border: 0; color: #fff; border-radius: 999px; padding: 8px 13px; font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; }
 
     textarea.prompt {
@@ -1361,8 +1369,13 @@
       if (n) n.textContent = jobs.size;
     }
 
+    // Order is the reading order of the row, and it is deliberate: the two
+    // things most people came for sit together on the left (a photo, and that
+    // photo moving), the open-ended "describe it yourself" follows, and the two
+    // destination-style entries — a ready-made scenario, and the seller's
+    // product shot — anchor the right where you go looking for them.
     const TABS = [
-      ["shoot", "📸 Фотосессия"], ["product", "🛍 Товар"], ["scenes", "🎉 Сценарии"], ["video", "🎬 Видео"], ["text", "✨ По описанию"],
+      ["shoot", "📸 Фотосессия"], ["video", "🎬 Видео"], ["text", "✨ По описанию"], ["scenes", "🎉 Сценарии"], ["product", "🛍 Товар"],
     ];
 
     function studio(tab) {
@@ -1404,6 +1417,7 @@
       duration: "Длительность — сколько секунд будет видео. Дольше — дороже.",
       endframe: "Финальный кадр — необязательно. Если добавить, видео плавно придёт от вашего фото к этому кадру.",
       angles: "Несколько фото ОДНОГО человека с разных сторон — модель лучше понимает лицо и точнее его сохраняет. Не добавляйте сюда других людей: получится смесь. Дополнительные фото не стоят патронов.",
+      angles_object: "Несколько фото ОДНОГО предмета с разных сторон и ракурсов — модель лучше понимает форму и точнее её сохраняет в видео. Не добавляйте сюда другие предметы: получится смесь. Дополнительные фото не стоят патронов.",
     };
     /**
      * The progression card — the mobile-game read of "what level am I, how much
@@ -2546,7 +2560,11 @@
       // Keyed off the MODEL's capability, not the mode. This used to force 1 for
       // any video model, which was true until Seedance's reference mode arrived —
       // it builds a clip from up to 9 photographs of the same subject.
-      const maxInputs = (caps && caps.maxInputs) || 1;
+      // Read from the MODEL, not from `caps`: caps is m.image or m.video by mode,
+      // and the input limit belongs to neither — reading it off the video caps in
+      // video mode is exactly what made Seedance's 9-photo reference mode
+      // invisible from the day it shipped.
+      const maxInputs = (m && m.maxInputs) || 1;
       if (stu.extras.length > maxInputs - 1) stu.extras = stu.extras.slice(0, Math.max(0, maxInputs - 1));
       // Switching to a model that does not read audio/video drops them: the
       // server would refuse the request anyway, and carrying them invisibly is
@@ -2640,19 +2658,35 @@
       // `isVideo` no longer disqualifies: a video model that declares maxInputs
       // > 1 reads several photographs (Seedance reference mode). The gate is and
       // always was "does this model actually read more than one".
-      const caps = m && m.image;
-      const maxInputs = (caps && caps.maxInputs) || 1;
+      const maxInputs = (m && m.maxInputs) || 1;
       if (!hasSource || maxInputs < 2) return "";
       const extras = stu.extras || [];
       const room = maxInputs - 1 - extras.length;
+      // Only reference mode (Seedance) can point its multi-photo input at a
+      // product instead of a face — the ordinary "extra angles for editing"
+      // path (photo_edit, premium_edit, …) only ever means one thing: the same
+      // person's face, so it keeps the fixed copy it always had.
+      const isRef = !!(m && m.reference);
+      if (isRef && !stu.subject) stu.subject = "person";
+      const subjectToggle = isRef ? `
+          <div class="subjtoggle" role="group" aria-label="Что на фото">
+            <button type="button" class="schip ${stu.subject === "person" ? "on" : ""}" data-subj="person">🙂 Человек</button>
+            <button type="button" class="schip ${stu.subject === "object" ? "on" : ""}" data-subj="object">📦 Товар</button>
+          </div>` : "";
+      const label = isRef && stu.subject === "object" ? "Ещё ракурсы — точнее форма" : "Ещё ракурсы — точнее лицо";
+      const hint = isRef && stu.subject === "object" ? "angles_object" : "angles";
+      const sub = isRef && stu.subject === "object"
+        ? `Тот же предмет с других сторон — до ${maxInputs} фото. Цена не меняется.`
+        : `Те же черты лица с других сторон — до ${maxInputs} фото. Цена не меняется.`;
       return `
         <div class="xtra">
-          <div style="margin-top:12px">${qLabel("Ещё ракурсы — точнее лицо", "angles")}</div>
+          ${subjectToggle}
+          <div style="margin-top:12px">${qLabel(label, hint)}</div>
           <div class="xrow">
             ${extras.map((x, i) => `<div class="xthumb"><img src="${x.data}" alt="" /><button class="xdel" data-xi="${i}" aria-label="Убрать">✕</button></div>`).join("")}
             ${room > 0 ? `<label class="xadd"><input type="file" accept="image/*" id="stuExtraFile" multiple /><span>＋</span></label>` : ""}
           </div>
-          <div class="sub" style="margin-top:6px">Те же черты лица с других сторон — до ${maxInputs} фото. Цена не меняется.</div>
+          <div class="sub" style="margin-top:6px">${sub}</div>
         </div>
         ${refMediaBlock(m)}`;
     }
@@ -2963,7 +2997,10 @@
       }));
       bind("#stuExtraFile", (el) => (el.onchange = async (e) => {
         const m = studioModel();
-        const room = (((m && m.image && m.image.maxInputs) || 1) - 1) - (stu.extras || []).length;
+        // maxInputs lives at the model root (not under .image) — the same field
+        // the render-time clamp reads. This copy read the old, always-undefined
+        // location, so a video reference model's file input never had "room".
+        const room = (((m && m.maxInputs) || 1) - 1) - (stu.extras || []).length;
         const files = [...e.target.files].slice(0, Math.max(0, room));
         if (!files.length) return;
         let failed = 0;
@@ -2979,6 +3016,9 @@
       // PHOTO list — deleting a silent third photo when a user removes a sound.
       sheetBody.querySelectorAll(".xdel[data-xi]").forEach((b) => (b.onclick = () => {
         stu.extras.splice(Number(b.dataset.xi), 1); viewStudio();
+      }));
+      sheetBody.querySelectorAll("[data-subj]").forEach((b) => (b.onclick = () => {
+        stu.subject = b.dataset.subj; viewStudio();
       }));
       bind("#stuEndFile", (el) => (el.onchange = async (e) => {
         const f = e.target.files[0];
@@ -3029,6 +3069,7 @@
         aspect_ratio: stu.aspect && stu.aspect !== "auto" ? stu.aspect : undefined,
         resolution: stu.resolution || undefined,
         num_images: !isVideo && stu.numImages && stu.numImages > 1 ? stu.numImages : undefined,
+        subject: m.reference ? (stu.subject || "person") : undefined,
       };
       const body = stu.preset && !isVideo
         ? { source: "preset", id: stu.preset.id,

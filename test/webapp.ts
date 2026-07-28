@@ -685,12 +685,18 @@ await step("reference video: several photos of one subject build one clip", asyn
 
   // The Studio must OFFER the extra-photo affordance here: it is a video model,
   // and the client used to hide extras for every video model.
+  //
+  // Read at the MODEL root. This assertion used to check `image.maxInputs`, and
+  // it passed the whole time the feature was dead: the payload carried the cap,
+  // but the client's clamp read it off `m.video` in video mode, got undefined,
+  // and trimmed every added photo on the next render. Asserting the field the
+  // client actually consumes is the difference between the two.
   const cat = (await apiMe(signInitData(maker))).body.catalog as unknown as {
-    studio: { video: Array<{ key: string; image: { maxInputs: number } | null }> };
+    studio: { video: Array<{ key: string; maxInputs: number }> };
   };
   const entry = cat.studio.video.find((m) => m.key === "seedance_ref");
   assert.ok(entry, "seedance_ref missing from the studio video list");
-  assert.equal(entry.image?.maxInputs, 9, "the client cannot show the affordance without this cap");
+  assert.equal(entry.maxInputs, 9, "the client cannot show the affordance without this cap");
 
   await addCredits(maker.id, 38, "admin_grant", "test");
   const r = await fetch(`${base}/api/generate`, {
@@ -738,6 +744,71 @@ await step("reference video: several photos of one subject build one clip", asyn
   });
   assert.equal(tooMany.status, 400);
   assert.equal(((await tooMany.json()) as { error: string }).error, "too_many_inputs");
+});
+
+await step("reference subject: person vs object picks the framing, and the field means nothing outside reference mode", async () => {
+  // Default (unset) must reproduce the original, person-only wording exactly —
+  // every caller before this field existed was a face.
+  await addCredits(maker.id, 38, "admin_grant", "test");
+  const person = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref", image_url: "https://fal.test/storage/u-1.jpg",
+      image_urls: ["https://fal.test/storage/u-2.jpg"], prompt: "поворот головы",
+    }),
+  });
+  assert.equal(person.status, 200);
+  await pollGen(((await person.json()) as { id: number }).id);
+  const personPrompt = falCalls.at(-1)!.input.prompt as string;
+  assert.match(personPrompt, /SAME subject/);
+  assert.match(personPrompt, /the faces right/);
+  assert.match(personPrompt, /NOT additional people/);
+
+  // subject: "object" swaps to shape/material wording and drops every mention
+  // of people or faces — this is the fix: a seller's nine angles of a product
+  // must not carry an instruction about faces.
+  await addCredits(maker.id, 38, "admin_grant", "test");
+  const object = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref", image_url: "https://fal.test/storage/p-1.jpg",
+      image_urls: ["https://fal.test/storage/p-2.jpg", "https://fal.test/storage/p-3.jpg"],
+      prompt: "медленный оборот на подставке", subject: "object",
+    }),
+  });
+  assert.equal(object.status, 200);
+  const od = (await object.json()) as { id: number; credits: number };
+  assert.equal(od.credits, 38, "the subject choice must not change the price");
+  await pollGen(od.id);
+  const objectPrompt = falCalls.at(-1)!.input.prompt as string;
+  assert.match(objectPrompt, /SAME object/);
+  assert.match(objectPrompt, /shape, materials/);
+  assert.match(objectPrompt, /NOT several different objects/);
+  assert.doesNotMatch(objectPrompt, /face/i, "the object framing must not mention faces");
+  assert.doesNotMatch(objectPrompt, /people/i, "the object framing must not mention people");
+
+  // The field is meaningless anywhere else. A model that does not declare
+  // `reference` gets bad_opts rather than a silently ignored value — the same
+  // convention every other capability-gated option follows.
+  const wrongModel = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_mini", image_url: "https://fal.test/storage/u-1.jpg",
+      prompt: "тест", subject: "object",
+    }),
+  });
+  assert.equal(wrongModel.status, 400);
+  assert.equal(((await wrongModel.json()) as { error: string }).error, "bad_opts");
+
+  const badValue = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref", image_url: "https://fal.test/storage/u-1.jpg",
+      prompt: "тест", subject: "spaceship",
+    }),
+  });
+  assert.equal(badValue.status, 400);
+  assert.equal(((await badValue.json()) as { error: string }).error, "bad_opts");
 });
 
 await step("audio and video references: gated on rights, screened where we can, capped where the endpoint caps", async () => {
@@ -1864,6 +1935,29 @@ await step("video composer: duration scales the charge, ratio flows to fal, stor
   assert.equal(Number(row.cost_usd), 1.68); // 0.168 perSecondUsd × 10s
 });
 
+await step("studio catalog: the reference model advertises its 9 photos and its audio/video inputs", async () => {
+  // What broke: `maxInputs` was serialised inside the `image` block, and the
+  // studio reads `m.image` or `m.video` depending on mode. In video mode — the
+  // only mode seedance_ref runs in — the clamp read m.video.maxInputs, got
+  // undefined, fell back to 1, and trimmed every extra photo the user added on
+  // the very next render. The 9-photo reference mode was unreachable from the
+  // day it shipped, and so was the audio/video block nested under it.
+  const { body } = await apiMe(signInitData(maker));
+  const c = body.catalog as unknown as {
+    studio: { video: Array<{ key: string; maxInputs: number; reference: boolean }> };
+  };
+  const ref = c.studio.video.find((m) => m.key === "seedance_ref");
+  assert.ok(ref, "seedance_ref missing from the studio's video models");
+  assert.equal(ref!.maxInputs, 9, "the reference model must advertise all 9 photographs it reads");
+  assert.equal(ref!.reference, true, "the reference model must advertise its audio/video inputs");
+  // And the limit must be readable WITHOUT knowing which capability block the
+  // model happens to carry — that coupling is what hid it.
+  for (const m of c.studio.video) {
+    assert.equal(typeof m.maxInputs, "number", `${m.key}: maxInputs missing at the model root`);
+    assert.ok(m.maxInputs >= 1, `${m.key}: nonsense maxInputs`);
+  }
+});
+
 await step("every video model's duration ladder is sane: ascending, defaulted, monotonically priced", async () => {
   // The slider indexes these lists, so their SHAPE is load-bearing in a way it
   // was not when the UI was two chips: an unsorted list makes dragging right
@@ -2760,13 +2854,15 @@ await step("multi-image input: extra angles ride along, are capped per model, an
   assert.equal((await apiMe(signInitData(mu))).body.dashboard.credits, before, "refused requests must not charge");
 
   // The catalog tells the client the per-model cap, so the UI can stop earlier.
+  // At the model root, alongside the video models — one field, read the same way
+  // in both modes.
   const cat = (await apiMe(signInitData(mu))).body.catalog as unknown as {
-    studio: { image: Array<{ key: string; image: { maxInputs: number } | null }> };
+    studio: { image: Array<{ key: string; maxInputs: number }> };
   };
-  assert.equal(cat.studio.image.find((m) => m.key === "seedream_edit")!.image!.maxInputs, 4);
-  assert.equal(cat.studio.image.find((m) => m.key === "premium_edit")!.image!.maxInputs, 2);
+  assert.equal(cat.studio.image.find((m) => m.key === "seedream_edit")!.maxInputs, 4);
+  assert.equal(cat.studio.image.find((m) => m.key === "premium_edit")!.maxInputs, 2);
   // A text-to-image model reads no photo at all — 1, so no "add angle" affordance.
-  assert.equal(cat.studio.image.find((m) => m.key === "text_to_image")!.image!.maxInputs, 1);
+  assert.equal(cat.studio.image.find((m) => m.key === "text_to_image")!.maxInputs, 1);
 });
 
 await step("registry invariant: every declared styleRef points at art that actually exists", async () => {
