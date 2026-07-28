@@ -8,6 +8,7 @@ import {
   createOrder,
   getOrder,
   grantOrderCredits,
+  hasGrantedPack,
   logEvent,
   markPaidClaimed,
   offerBonusFor,
@@ -28,17 +29,25 @@ import { nResults, nUnits, UNIT_EMOJI } from "./text.js";
  * list once the sale ends — mirroring the Mini App's self-removing offer, so the
  * ladder is never "broken" by a permanent below-ladder price.
  */
-export function packsKeyboard(): InlineKeyboard {
+export function packsKeyboard(onceTaken = false): InlineKeyboard {
   const kb = new InlineKeyboard();
   const active = comboActive();
   // Course tiers are excluded here — they carry a cohort invite, not just
   // patrons, and would confuse a plain credit top-up buyer. They're surfaced
   // only via the dedicated /course command (bot.ts), reusing this same buy:<id>
   // callback under the hood.
-  const visible = PACKS.filter((p) => (!p.offer || active) && !p.course && !p.retired);
-  const ordered = [...visible].sort((a, b) => Number(b.offer ?? false) - Number(a.offer ?? false));
+  //
+  // A `once` pack disappears for anyone who has already taken it. Showing it and
+  // refusing at the till is how you turn the best thing on the screen into a
+  // complaint.
+  const visible = PACKS.filter(
+    (p) => (!p.offer || active) && !p.course && !p.retired && !(p.once && onceTaken),
+  );
+  // The entry price leads, then the (expiring) offer, then the ladder.
+  const rank = (p: Pack): number => (p.once ? 2 : p.offer ? 1 : 0);
+  const ordered = [...visible].sort((a, b) => rank(b) - rank(a));
   for (const pack of ordered) {
-    const left = pack.offer && active ? ` · ⏳ ${comboLeftText()}` : "";
+    const left = pack.offer && active ? ` · ⏳ ${comboLeftText()}` : pack.once ? " · только раз" : "";
     kb.text(`${pack.title} — ${pack.kzt} ₸${left}`, `buy:${pack.id}`).row();
   }
   return kb;
@@ -58,9 +67,17 @@ export function packsKeyboard(): InlineKeyboard {
  * as far as we have to. Every campaign video scene is affected, which is exactly
  * what paid traffic would be pointed at.
  */
-function entryPack(model?: ModelSpec, credits = 0): Pack {
+function entryPack(model?: ModelSpec, credits = 0, onceTaken = false): Pack {
   const shortfall = model ? Math.max(0, model.credits - credits) : 0;
   const covers = (p: Pack): boolean => p.credits >= shortfall;
+  // The once-per-account entry price outranks everything while it is still
+  // available: it is the cheapest patron in the product, so anchoring anything
+  // else in front of a first-time buyer quotes them a worse deal than the one
+  // they are entitled to.
+  if (!onceTaken) {
+    const first = PACKS.find((p) => p.once && !p.retired && covers(p));
+    if (first) return first;
+  }
   if (comboActive()) {
     const offer = PACKS.find((p) => p.offer && !p.retired && covers(p));
     if (offer) return offer;
@@ -71,7 +88,9 @@ function entryPack(model?: ModelSpec, credits = 0): Pack {
   // PURPOSE (ladder, then the purpose-built sets), so `video_set` at 650 🔫 is
   // declared after `studio` at 900 🔫. `find` on the raw array would hand a
   // 700 🔫 shortfall the 42 000 ₸ pack when the 31 000 ₸ one covers it.
-  const ladder = PACKS.filter((p) => !p.offer && !p.course && !p.retired).sort((a, b) => a.credits - b.credits);
+  const ladder = PACKS.filter((p) => !p.offer && !p.once && !p.course && !p.retired).sort(
+    (a, b) => a.credits - b.credits,
+  );
   return ladder.find(covers) ?? ladder[ladder.length - 1] ?? PACKS[0];
 }
 
@@ -86,9 +105,9 @@ function resultsAfterPack(pack: Pack, model: ModelSpec, credits: number): number
   return Math.floor((credits + pack.credits) / model.credits);
 }
 
-/** Short pack name for the CTA (strip the 🔥 and the ": …" tail). */
+/** Short pack name for the CTA (strip any leading badge emoji and the ": …" tail). */
 function packShort(pack: Pack): string {
-  return pack.title.replace(/^🔥\s*/, "").split(/[—:]/)[0].trim();
+  return pack.title.replace(/^\P{L}+/u, "").split(/[—:]/)[0].trim();
 }
 
 /**
@@ -98,10 +117,14 @@ function packShort(pack: Pack): string {
  * result the user just tried. While the combo sale is live it carries the same
  * countdown the Mini App shows, so urgency lands at the paywall moment.
  */
-export function paywallText(model: ModelSpec, credits: number): string {
-  const pack = entryPack(model, credits);
+export function paywallText(model: ModelSpec, credits: number, onceTaken = false): string {
+  const pack = entryPack(model, credits, onceTaken);
   const n = resultsAfterPack(pack, model, credits);
-  const left = pack.offer && comboActive() ? `\n⏳ <b>Осталось: ${comboLeftText()}</b> — успейте по акции!` : "";
+  const left = pack.offer && comboActive()
+    ? `\n⏳ <b>Осталось: ${comboLeftText()}</b> — успейте по акции!`
+    : pack.once
+      ? `\n🎁 Стартовая цена — <b>один раз на аккаунт</b>.`
+      : "";
   return (
     `✨ <b>Ещё один шаг до результата!</b>\n\n` +
     `«${model.label}» — ${nUnits(model.credits)}. У вас ${nUnits(credits)}.\n\n` +
@@ -115,9 +138,9 @@ export function paywallText(model: ModelSpec, credits: number): string {
  * claimWelcomeBonus in db.ts), that's the FIRST row — cheaper than a paywall
  * for someone who hasn't even collected their free patrons yet.
  */
-export function paywallKeyboard(model: ModelSpec, user?: UserRow): InlineKeyboard {
+export function paywallKeyboard(model: ModelSpec, user?: UserRow, onceTaken = false): InlineKeyboard {
   const credits = user?.credits ?? 0;
-  const pack = entryPack(model, credits);
+  const pack = entryPack(model, credits, onceTaken);
   const n = resultsAfterPack(pack, model, credits);
   const kb = new InlineKeyboard();
   const pending = user ? user.pendingSignupCredits + user.pendingJoinBonus : 0;
@@ -199,8 +222,28 @@ async function inviteToCourseCohort(api: Api, userId: number, tier: "fast" | "fl
  * double-crediting. A caller that loses the race returns immediately.
  */
 export async function grantPurchase(api: Api, userId: number, pack: Pack, orderId: number): Promise<void> {
+  // Read BEFORE granting: afterwards this order is itself granted, so every
+  // once-pack purchase would look like a repeat.
+  const repeatOnce = pack.once ? await hasGrantedPack(userId, pack.id) : false;
   if (!(await grantOrderCredits(orderId, userId, pack.credits, pack.kzt))) return;
   await logEvent(userId, "purchase", `${pack.id}:${pack.kzt}`);
+  // A second once-pack that got past the buy-time guard — two payments in flight
+  // at the same time. The patrons are granted anyway: the buyer paid, and
+  // refusing here would be taking money for nothing. It is an admin's call
+  // whether to refund, so tell them instead of swallowing it.
+  if (repeatOnce) {
+    console.error(`[once] order #${orderId}: ${pack.id} granted twice to user ${userId}`);
+    for (const adminId of config.adminIds) {
+      await api
+        .sendMessage(
+          adminId,
+          `⚠️ Заявка №${orderId}: пакет «${pack.id}» — стартовый, один раз на аккаунт, ` +
+            `но пользователь ${userId} получил его повторно (две оплаты одновременно). ` +
+            `Патроны начислены. Решение о возврате — за вами: /order ${orderId}`,
+        )
+        .catch(() => {});
+    }
+  }
   // XP for the money, and the inviter's share of it. Runs behind the same
   // claim as the credits, so it can only ever fire for a purchase that really
   // landed — never for a refunded or half-granted one. Never fatal: a failure
@@ -378,7 +421,9 @@ export async function claimOrderPaid(api: Api, orderId: number, who: string): Pr
 export function registerPayments(bot: Bot): void {
   bot.callbackQuery("show_packs", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply(`Выберите пакет ${UNIT_EMOJI} патронов (оплата картой Kaspi):`, { reply_markup: packsKeyboard() });
+    await ctx.reply(`Выберите пакет ${UNIT_EMOJI} патронов (оплата картой Kaspi):`, {
+      reply_markup: packsKeyboard(await onceTaken(ctx.from!.id)),
+    });
   });
 
   // Buy → record a pending order and hand over the Kaspi payment link. While the
@@ -387,6 +432,18 @@ export function registerPayments(bot: Bot): void {
     await ctx.answerCallbackQuery();
     const pack = packById(ctx.match[1]);
     if (!pack || !ctx.from) return;
+    // A `once` pack is gone for this account the moment one was granted. Checked
+    // here as well as in the keyboard, because the callback outlives the message
+    // it came from: an old chat still has the button, and a stale tap must get an
+    // explanation rather than a second entry price.
+    if (pack.once && (await hasGrantedPack(ctx.from.id, pack.id))) {
+      await ctx.reply(
+        `🎁 «${packShort(pack)}» — стартовое предложение, оно даётся один раз на аккаунт, и вы его уже получили.\n\n` +
+          `Остальные пакеты открыты всегда:`,
+        { reply_markup: packsKeyboard(true) },
+      );
+      return;
+    }
     const link = kaspiLinkFor(pack.id);
     if (!link) {
       await ctx.reply(
@@ -472,6 +529,25 @@ function priceCrib(): string {
 
 export async function sendBalance(ctx: Context, credits: number): Promise<void> {
   await ctx.reply(`💰 Баланс: ${UNIT_EMOJI} ${nUnits(credits)}\n\n` + priceCrib(), {
-    reply_markup: packsKeyboard(),
+    reply_markup: packsKeyboard(ctx.from ? await onceTaken(ctx.from.id) : true),
   });
+}
+
+/**
+ * Has this account used up its once-per-account entry price? Resolved across
+ * every `once` pack rather than one id, so adding a second one later does not
+ * quietly hand everybody a fresh entry price.
+ *
+ * Errs toward TAKEN on a read failure: showing a pack that will be refused is a
+ * worse first impression than not showing one the buyer could have had.
+ */
+export async function onceTaken(userId: number): Promise<boolean> {
+  const once = PACKS.filter((p) => p.once && !p.retired);
+  if (!once.length) return true;
+  try {
+    for (const p of once) if (!(await hasGrantedPack(userId, p.id))) return false;
+    return true;
+  } catch {
+    return true;
+  }
 }

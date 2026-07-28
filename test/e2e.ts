@@ -7,6 +7,7 @@
  * Run: npm run test:e2e
  */
 import assert from "node:assert/strict";
+import type { InlineKeyboard } from "grammy";
 
 // Env must be set before the app modules load (config/db read it at import time).
 process.env.BOT_TOKEN = "1000000:TEST_TOKEN";
@@ -407,11 +408,15 @@ await step("insufficient 🔫: animate (25) with 7 shows the sales-page paywall,
   const wall = calls("sendMessage").at(-1)!;
   assert.match(wall.payload.text as string, /Ещё один шаг до результата/);
   assert.match(wall.payload.text as string, /Kling 2\.5 Turbo/); // the model's REAL name reaches the paywall copy
-  assert.match(wall.payload.text as string, /Фото-сет/); // the live offer is anchored as the entry
-  assert.match(wall.payload.text as string, /Осталось/); // live countdown snapshot in the paywall
+  // The once-per-account entry price is anchored while this account still has
+  // it: it is the cheapest patron in the product, so quoting anything dearer to
+  // a first-time buyer is quoting a worse deal than they are entitled to.
+  assert.match(wall.payload.text as string, /Первый набор/);
+  assert.match(wall.payload.text as string, /один раз на аккаунт/);
+  assert.doesNotMatch(wall.payload.text as string, /Осталось/, "a once-pack must not carry a countdown");
   const kb = wall.payload.reply_markup as { inline_keyboard: Array<Array<{ callback_data: string }>> };
   const buttons = kb.inline_keyboard.flat().map((b) => b.callback_data);
-  assert.ok(buttons.includes("buy:photo_set"), "entry-pack CTA missing"); // one dominant CTA
+  assert.ok(buttons.includes("buy:first_set"), "entry-pack CTA missing"); // one dominant CTA
   assert.ok(buttons.includes("show_packs"), "all-packs fallback missing");
   assert.equal(await credits(alice.id), 7);
 });
@@ -544,21 +549,42 @@ await step("the video set really covers 3–5 finished videos, and the ladder st
 
   // Bigger pack ⇒ better ₸ per patron, across the whole ladder. The purpose-built
   // sets are declared out of size order, so this is a real invariant to hold.
-  const ladder = PACKS.filter((p) => !p.offer && !p.course && !p.retired).sort((a, b) => a.credits - b.credits);
+  // `once` packs are excluded: the entry price is below every rung by design, and
+  // it is the one price that does not have to obey the ladder.
+  const ladder = PACKS.filter((p) => !p.offer && !p.once && !p.course && !p.retired).sort(
+    (a, b) => a.credits - b.credits,
+  );
   for (let i = 1; i < ladder.length; i++) {
     const prev = ladder[i - 1].kzt / ladder[i - 1].credits;
     const here = ladder[i].kzt / ladder[i].credits;
     assert.ok(here < prev, `${ladder[i].id} (${here.toFixed(1)} ₸/🔫) is not better than ${ladder[i - 1].id} (${prev.toFixed(1)})`);
   }
 
-  // The offer is a tripwire: it must undercut the cheapest ladder rate, or it is
-  // just a pack with a countdown glued on.
-  const photoSet = packById("photo_set")!;
-  assert.ok(photoSet.offer, "the photo set is the tripwire and must be flagged as an offer");
+  // Every ladder rate sits in the 30–40 ₸/🔫 band. The floor is what protects the
+  // margin (provider cost is ~9.5 ₸ per patron on EVERY model, so 30 ₸ is 3.2×
+  // on the worst case); the ceiling is what keeps the entry rung sellable.
+  for (const p of ladder) {
+    const per = p.kzt / p.credits;
+    assert.ok(per >= 30 && per <= 40, `${p.id} is ${per.toFixed(1)} ₸/🔫 — outside the 30–40 band`);
+  }
+
+  // The entry price must actually undercut the ladder, and must be `once` rather
+  // than `offer`: an offer has to expire to stop being the standing rate, and a
+  // countdown on a permanent price is the part buyers stop believing.
+  const first = PACKS.find((p) => p.once && !p.retired)!;
+  assert.ok(first, "no once-per-account entry pack");
+  assert.ok(!first.offer, "the entry price must not also be a countdown offer");
   assert.ok(
-    photoSet.kzt / photoSet.credits < ladder[0].kzt / ladder[0].credits,
-    "the offer must be priced below the ladder floor",
+    first.kzt / first.credits < ladder[0].kzt / ladder[0].credits,
+    "the entry price must be below the ladder floor",
   );
+  // Sized to match a real ladder pack, so "было / стало" is a comparison the
+  // buyer can check on the same screen rather than a number we assert.
+  assert.ok(
+    ladder.some((p) => p.credits === first.credits),
+    "the entry pack must mirror a ladder pack's size, or its struck-through price is invented",
+  );
+  assert.equal(packById("photo_set")!.offer, undefined, "photo_set is a standing tier now, not a countdown offer");
 });
 
 await step("paywall never anchors a pack that cannot cover the result it promises", async () => {
@@ -601,19 +627,20 @@ await step("paywall never anchors a pack that cannot cover the result it promise
 });
 
 await step("purchase: /buy → Kaspi order → admin confirm credits the pack", async () => {
+  const { packById } = await import("../src/models.js");
   await sendText(alice, "/buy");
   const kb = calls("sendMessage").at(-1)!.payload.reply_markup as {
     inline_keyboard: Array<Array<{ callback_data: string }>>;
   };
   const packButtons = kb.inline_keyboard.flat().map((b) => b.callback_data);
-  // The limited-time offer leads, then the KZT ladder. `combo` is retired — it
-  // stays in PACKS so orders already placed against it still resolve, and must
-  // never appear for sale again.
-  assert.deepEqual(packButtons, ["buy:photo_set", "buy:start", "buy:popular", "buy:pro", "buy:studio", "buy:video_set"]);
+  // The once-per-account entry price leads, then the KZT ladder. `combo` is
+  // retired — it stays in PACKS so orders already placed against it still
+  // resolve, and must never appear for sale again.
+  assert.deepEqual(packButtons, ["buy:first_set", "buy:start", "buy:popular", "buy:pro", "buy:studio", "buy:photo_set", "buy:video_set"]);
   assert.ok(!packButtons.includes("buy:combo"), "a retired pack must never be listed for sale");
 
   await pressButton(alice, "buy:popular"); // creates a pending Kaspi order
-  assert.match(lastText(), /11000 ₸/); // KZT price shown
+  assert.match(lastText(), new RegExp(`${packById("popular")!.kzt} ₸`)); // KZT price shown
   const orderId = /Заявка №(\d+)/.exec(lastText())![1];
   assert.match(lastText(), /Kaspi/);
 
@@ -813,7 +840,10 @@ await step("/stats: admin sees totals, non-admin gets silence", async () => {
   assert.match(text, /Users: 2/); // alice, bob (/stats does not register its caller)
   assert.match(text, /Paying: 2/);
   assert.match(text, /Generations: 4/); // 3 ok + 1 error
-  assert.match(text, /Выручка: 22000 ₸/); // alice popular 11000 + bob popular 11000
+  // Two «Популярный» purchases (alice + bob) at whatever that pack costs today —
+  // read from the registry, so a reprice does not fail an assertion about /stats.
+  const popularKzt = (await import("../src/models.js")).packById("popular")!.kzt;
+  assert.match(text, new RegExp(`Выручка: ${2 * popularKzt} ₸`));
 
   const before = calls("sendMessage").length;
   await sendText(alice, "/stats");
@@ -1532,6 +1562,7 @@ await step("reward-architecture P4a: /season_new + /season_list are admin-only; 
 
 await step("partner v2: join → welcome (spend-only) + code; invitee pays → base-rate withdrawable cashback", async () => {
   const { config: cfg } = await import("../src/config.js");
+  const { packById } = await import("../src/models.js");
   const prt: From = { id: 8001, is_bot: false, first_name: "Prt", username: "prt" };
   await sendText(prt, "/start"); // 12 free
   await pressButton(prt, "claim:welcome"); // claim-gated
@@ -1569,7 +1600,7 @@ await step("partner v2: join → welcome (spend-only) + code; invitee pays → b
   assert.equal(acct1.withdrawable, cashback); // withdrawable cashback
   assert.equal(await credits(prt.id), joined + cashback); // also spendable
   assert.equal(acct1.rate!.percent, cfg.partnerPercent); // still on the base rung
-  assert.equal(acct1.rate!.volumeKzt, 11000); // one granted order, at its ₸
+  assert.equal(acct1.rate!.volumeKzt, packById("popular")!.kzt); // one granted order, at its ₸
   assert.equal(acct1.rate!.nextAt, PARTNER_TIERS[0].kzt);
   const notify = calls("sendMessage").filter((c) => c.payload.chat_id === prt.id).at(-1)!;
   assert.match(notify.payload.text as string, new RegExp(`кэшбэка.*p_${code}`));
@@ -1745,7 +1776,8 @@ await step("alerts: a buyer who said they paid and got nothing pulls an admin in
   const { stalePaidClaims } = await import("../src/db.js");
   const waiting = 7401;
   await getOrCreateUser(waiting, "waiting", null, 0);
-  const orderId = await createOrder(waiting, "photo_set", 2900);
+  const photoSetKzt = (await import("../src/models.js")).packById("photo_set")!.kzt;
+  const orderId = await createOrder(waiting, "photo_set", photoSetKzt);
 
   // Fresh claim: inside the grace window, so nothing fires yet — a buyer still
   // finishing in the Kaspi app is not an incident.
@@ -1758,7 +1790,7 @@ await step("alerts: a buyer who said they paid and got nothing pulls an admin in
   const alert = (await checkAlerts()).find((a) => a.key.startsWith(`order_waiting:${orderId}:`));
   assert.ok(alert, "a stuck paid claim must alert");
   assert.match(alert!.text, new RegExp(`/order ${orderId} ok`)); // the exact command to run
-  assert.match(alert!.text, /2900 ₸/);
+  assert.match(alert!.text, new RegExp(`${photoSetKzt} ₸`));
 
   // Age-bounded at the far end too: an ancient claim is history, not work. This
   // is the shape that produced the phantom-payment incident.
@@ -1889,7 +1921,7 @@ await step("reaper: a render stuck 'pending' is failed and refunded, idempotentl
 await step("reconciler: an order confirmed 'paid' but never granted (crashed mid-grant) is retried, idempotently", async () => {
   const eve = 5605;
   await getOrCreateUser(eve, "eve", null, 0);
-  const orderId = await createOrder(eve, "start", 3700);
+  const orderId = await createOrder(eve, "start", (await import("../src/models.js")).packById("start")!.kzt);
   // Simulate exactly the crash window this fix closes: resolveOrder already won
   // the pending→paid transition, but grantPurchase never ran (or crashed before
   // its atomic credit step) — so granted_at is still NULL, old enough to sweep.
@@ -2258,3 +2290,45 @@ await step("content moderation: a flagged photo is blocked BEFORE generation, re
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL || "embedded (pglite)"})`);
+
+await step("entry price: one per account — anchored until taken, then gone from every surface", async () => {
+  const { PACKS } = await import("../src/models.js");
+  const { paywallText, packsKeyboard, onceTaken } = await import("../src/payments.js");
+  const { MODELS } = await import("../src/models.js");
+  const first = PACKS.find((p) => p.once)!;
+  const buyer: From = { id: 9401, is_bot: false, first_name: "Once", username: "once" };
+  await sendText(buyer, "/start");
+  await pressButton(buyer, "claim:welcome");
+
+  // Before: offered in the buy menu and anchored on the paywall.
+  assert.equal(await onceTaken(buyer.id), false);
+  const shown = (kb: InlineKeyboard): string[] =>
+    kb.inline_keyboard.flat().map((b) => ("callback_data" in b ? b.callback_data : ""));
+  assert.ok(shown(packsKeyboard(false)).includes(`buy:${first.id}`));
+  assert.match(paywallText(MODELS.kling3, 0, false), new RegExp(first.kzt.toString()));
+
+  // Taking it is what closes it — a rejected or abandoned order must not, or a
+  // buyer who backs out of the Kaspi screen loses the entry price forever.
+  const abandoned = await createOrder(buyer.id, first.id, first.kzt);
+  assert.equal(await onceTaken(buyer.id), false, "an unpaid order must not burn the entry price");
+  await sendText(admin, `/order ${abandoned} no`);
+  assert.equal(await onceTaken(buyer.id), false, "a rejected order must not burn the entry price");
+
+  await payForPack(buyer, first.id, first.kzt);
+  assert.equal(await credits(buyer.id), 12 + first.credits);
+  assert.equal(await onceTaken(buyer.id), true);
+
+  // After: gone from the menu, and the paywall falls back to the ladder.
+  assert.ok(!shown(packsKeyboard(true)).includes(`buy:${first.id}`));
+  assert.doesNotMatch(paywallText(MODELS.kling3, 0, true), /Первый набор/);
+
+  // A stale button in an old chat explains itself instead of selling a second one.
+  const ordersBefore = (await query("SELECT COUNT(*)::int AS c FROM orders WHERE user_id = $1", [buyer.id]))[0].c;
+  await pressButton(buyer, `buy:${first.id}`);
+  assert.match(lastText(), /один раз на аккаунт/);
+  assert.equal(
+    (await query("SELECT COUNT(*)::int AS c FROM orders WHERE user_id = $1", [buyer.id]))[0].c,
+    ordersBefore,
+    "a repeat tap must not open a second order",
+  );
+});

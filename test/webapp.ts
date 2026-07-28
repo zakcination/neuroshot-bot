@@ -183,7 +183,7 @@ interface MeResponse {
   roadmap: { firstPhoto: boolean; ownIdea: boolean; revivePhoto: boolean; scenario: boolean; invitedFriend: boolean };
   roadmapBonus: { amount: number; claimed: boolean };
   referrals: Array<{ username: string | null; joinedAt: string; status: "inactive" | "used_free" | "paid" }>;
-  packs: Array<{ id: string; title: string; credits: number; kzt: number; offer: boolean }>;
+  packs: Array<{ id: string; title: string; credits: number; kzt: number; offer: boolean; once: boolean }>;
   catalog: {
     presetCredits: number;
     presets: Array<{ id: string; label: string; category: string; credits: number; previewUrl: string; usageCount: number; trending: boolean }>;
@@ -240,10 +240,16 @@ await step("GET /api/me onboards a new user with a CLAIMABLE welcome bonus (shar
   assert.equal(body.onboardingSeen, false); // slideshow hasn't been dismissed yet
   assert.equal(body.bot_username, "neuroshot_test_bot"); // from BOT_USERNAME env
   assert.deepEqual(body.generations, []);
-  // Pack catalog rides along — one source of truth with the bot's /buy.
-  assert.equal(body.packs.length, 6); // 5 ladder (incl. the video set) + the photo-set offer
+  // Pack catalog rides along — one source of truth with the bot's /buy. Counted
+  // against the registry rather than a literal: packs get added and retired, and
+  // a hard number here only ever fails for that.
+  const { PACKS } = await import("../src/models.js");
+  const sellable = PACKS.filter((p) => !p.course && !p.retired);
+  assert.equal(body.packs.length, sellable.length);
   assert.ok(body.packs.every((p) => p.kzt > 0 && p.credits > 0 && p.id));
-  assert.ok(body.packs.some((p) => p.id === "photo_set" && p.offer), "photo-set offer missing");
+  // A brand-new account still has its once-per-account entry price, so it is in
+  // the payload and flagged — the client styles it as its own tier, not a rung.
+  assert.ok(body.packs.some((p) => p.once), "the entry tier is missing for a new account");
   assert.ok(!body.packs.some((p) => p.id === "combo"), "the retired combo must not be offered for sale");
 });
 
@@ -1239,7 +1245,10 @@ await step("insufficient 🔫 → 402 with the pack catalog (in-app paywall)", a
   assert.equal(d.error, "insufficient");
   assert.equal(d.need, 10); // Hailuo 2.3 Fast default (6s)
   assert.equal(d.balance, 3);
-  assert.equal(d.packs.length, 6); // 5 ladder (incl. the video set) + the photo-set offer
+  // Everything sellable, including this account's still-unused entry price —
+  // the paywall is exactly where it should be reachable.
+  const { PACKS } = await import("../src/models.js");
+  assert.equal(d.packs.length, PACKS.filter((p) => !p.course && !p.retired).length);
 });
 
 await step("generate validation: unknown ids, missing photo, unknown model keys, empty prompt → 400", async () => {
@@ -1280,7 +1289,7 @@ await step("POST /api/order: records a pending Kaspi order and returns the pay l
   const d = (await r.json()) as { available: boolean; orderId: number; link: string; amount: number; title: string };
   assert.equal(d.available, true);
   assert.equal(d.link, "https://pay.test/neuroshot"); // the configured Kaspi link
-  assert.equal(d.amount, 3700); // Старт — 60 🔫 in KZT
+  assert.equal(d.amount, (await import("../src/models.js")).packById("start")!.kzt);
   assert.ok(Number.isInteger(d.orderId) && d.orderId > 0, "no order id");
 
   const bad = await fetch(`${base}/api/order`, {
@@ -1300,7 +1309,42 @@ await step("POST /api/order: a per-pack fixed-amount link overrides the fallback
   assert.equal(r.status, 200);
   const d = (await r.json()) as { available: boolean; link: string; amount: number };
   assert.equal(d.link, "https://pay.test/photoset"); // KASPI_PAY_URL_PHOTO_SET, not the fallback
-  assert.equal(d.amount, 2900); // photo set = 2900 ₸
+  assert.equal(d.amount, (await import("../src/models.js")).packById("photo_set")!.kzt);
+});
+
+await step("entry price: the server refuses a second one, whatever the client believes", async () => {
+  // The rule lives on the server or it does not live anywhere: the client is
+  // told the pack is gone, but a page opened before the first purchase landed
+  // still has the tile, and a request can be hand-rolled regardless.
+  const { PACKS } = await import("../src/models.js");
+  const first = PACKS.find((p) => p.once && !p.retired)!;
+  const buyer = { id: 990850, username: "once_api", first_name: "Once" };
+  const hdrs = { Authorization: `tma ${signInitData(buyer)}`, "Content-Type": "application/json" };
+  await apiMe(signInitData(buyer));
+
+  const order = async () =>
+    fetch(`${base}/api/order`, { method: "POST", headers: hdrs, body: JSON.stringify({ pack: first.id }) });
+
+  assert.equal((await order()).status, 200, "a new account must be able to take the entry price");
+  // Ordering is not taking: an abandoned order must leave the price available,
+  // or backing out of the Kaspi screen costs the buyer their one chance at it.
+  assert.equal((await order()).status, 200, "an unpaid order must not burn the entry price");
+  assert.ok(
+    (await apiMe(signInitData(buyer))).body.packs.some((p) => p.id === first.id),
+    "the tile must stay until the pack is actually granted",
+  );
+
+  await query("UPDATE orders SET status = 'paid', granted_at = now() WHERE user_id = $1 AND pack_id = $2", [
+    buyer.id,
+    first.id,
+  ]);
+  const refused = await order();
+  assert.equal(refused.status, 409);
+  assert.equal(((await refused.json()) as { error: string }).error, "once_taken");
+  assert.ok(
+    !(await apiMe(signInitData(buyer))).body.packs.some((p) => p.id === first.id),
+    "a taken entry price must be dropped from the payload, not shown and refused",
+  );
 });
 
 await step("a purchase started in the app survives leaving the app", async () => {
@@ -1347,7 +1391,7 @@ await step("a purchase started in the app survives leaving the app", async () =>
   const pend = body.pendingOrder as { orderId: number; amount: number; link: string } | null;
   assert.ok(pend, "an unfinished order must come back on /api/me");
   assert.equal(pend.orderId, orderId);
-  assert.equal(pend.amount, 2900);
+  assert.equal(pend.amount, (await import("../src/models.js")).packById("photo_set")!.kzt);
   assert.ok(pend.link, "the pay link must ride along so «открыть снова» needs no second order");
 
   // Once it is resolved it stops following the buyer around.
@@ -2824,10 +2868,14 @@ await step("payment audit: every granted order names the path that confirmed it"
 
   const buyer = 990300;
   await getOrCreateUser(buyer, "audit_buyer", null, 0);
+  // The order amount must match what the pack actually costs: the grant path
+  // re-reads PACKS and writes ITS price onto the order, so a stale literal here
+  // would make the audit assertions disagree with the row for no real reason.
+  const startKzt = (await import("../src/models.js")).packById("start")!.kzt;
 
   // 1) The webhook path stamps itself, and the stamp survives to the audit view.
-  const viaHook = await createOrder(buyer, "start", 3700);
-  const rawHook = Buffer.from(JSON.stringify({ orderId: viaHook, status: "paid", amount: 3700 }));
+  const viaHook = await createOrder(buyer, "start", startKzt);
+  const rawHook = Buffer.from(JSON.stringify({ orderId: viaHook, status: "paid", amount: startKzt }));
   const sigHook = createHmac("sha256", "test-kaspi-secret").update(rawHook).digest("hex");
   await kaspiCallbackResponse(rawHook, sigHook, async (uid, pack, oid) => {
     await grantOrderCredits(oid, uid, pack.credits, pack.kzt);
@@ -2836,12 +2884,12 @@ await step("payment audit: every granted order names the path that confirmed it"
 
   // 2) The admin path stamps a DIFFERENT value — the two are distinguishable,
   //    which is the whole point: "was this a human or a machine?"
-  const viaAdmin = await createOrder(buyer, "start", 3700);
+  const viaAdmin = await createOrder(buyer, "start", startKzt);
   await resolveOrder(viaAdmin, true, "admin");
   assert.equal((await getOrder(viaAdmin))?.approved_via, "admin");
 
   // 3) A REJECTED order is stamped too, and never shows up as a payment.
-  const rejected = await createOrder(buyer, "start", 3700);
+  const rejected = await createOrder(buyer, "start", startKzt);
   await resolveOrder(rejected, false, "admin");
   assert.equal((await getOrder(rejected))?.status, "rejected");
 
@@ -2852,14 +2900,14 @@ await step("payment audit: every granted order names the path that confirmed it"
   assert.equal(audited.length, 1, "audit must list exactly the orders that moved credits");
   assert.equal(audited[0]?.order_id, viaHook);
   assert.equal(audited[0]?.approved_via, "webhook");
-  assert.equal(audited[0]?.kzt, 3700);
+  assert.equal(audited[0]?.kzt, startKzt);
 
   // And the independent ledger read (what the digest counts) agrees here. A
   // DISAGREEMENT is the phantom-payment signal, so it must be a real second
   // read of a different table, not a derived copy of the same number.
   const ledger = await purchaseLedgerCount(24);
   assert.equal(ledger.rows, 1);
-  assert.equal(ledger.kzt, 3700);
+  assert.equal(ledger.kzt, startKzt);
 });
 
 await step("Kaspi verify: a paid-looking status with no amount is NOT auto-granted", async () => {

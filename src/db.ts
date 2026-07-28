@@ -1361,6 +1361,28 @@ export async function createOrder(userId: number, packId: string, amountKzt: num
   return Number(rows[0].id);
 }
 
+/**
+ * Has this account already RECEIVED this pack? The guard behind `Pack.once`.
+ *
+ * Granted, not merely ordered: an order that was opened and never paid, or one
+ * an admin rejected, must not burn the buyer's single shot at the entry price —
+ * people abandon a payment screen and come back all the time, and a permanent
+ * lockout on "you once tapped Buy" is indistinguishable from the product being
+ * broken.
+ *
+ * The gap that leaves is two payments in flight at once, which this cannot see.
+ * That is handled where the money lands (grantPurchase) by granting both and
+ * telling an admin — the opposite failure, taking a payment and refusing the
+ * patrons, is much worse than 100 🔫 sold twice at the entry price.
+ */
+export async function hasGrantedPack(userId: number, packId: string): Promise<boolean> {
+  const rows = await q(
+    "SELECT 1 FROM orders WHERE user_id = $1 AND pack_id = $2 AND granted_at IS NOT NULL LIMIT 1",
+    [userId, packId],
+  );
+  return rows.length > 0;
+}
+
 /** Admin: all pending orders awaiting payment confirmation. */
 export async function pendingOrders(): Promise<OrderRow[]> {
   const rows = await q(`SELECT ${ORDER_COLS} FROM orders WHERE status = 'pending' ORDER BY id`);

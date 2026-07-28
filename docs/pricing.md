@@ -22,9 +22,15 @@ digest only, never for pricing.
 credits = ceil(approxCostUsd / 0.02)
 ```
 
-so **cost-per-patron is always ≤ $0.02**. Patrons are then sold at **47–62 ₸**
-each (≈ $0.10–0.13) → comfortably **≥4× margin** on the ladder after the referral
-share.
+so **cost-per-patron is always ≤ $0.02** — about **9.5 ₸** at the rate the digest
+uses, and flat across every model in the catalogue, because the credits column is
+derived from cost rather than set per model.
+
+Patrons are sold at **30–40 ₸** each (≈ $0.06–0.08) → **3.2–4.2× gross margin** on
+any render anyone can make, with no model sold at a loss even at the floor. The
+band was lowered from 47–62 ₸ in 2026-07: at a per-patron price this far above
+provider cost, the number that decides revenue is how many people buy at all, not
+what each patron earns.
 
 ## The two purpose-built sets
 
@@ -34,15 +40,32 @@ oversized for someone who wanted to play with photo styles and useless to someon
 who wanted a real video. Split in two, each sized from the recipe it is named
 after.
 
-### 🎨 Фото-сет — 100 🔫 for 2 900 ₸ (the tripwire)
+### 🎁 Первый набор — 100 🔫 for 2 500 ₸ (the entry price, once per account)
 
-29 ₸/🔫, deliberately **below** the ladder, flagged `offer: true` and shown only
-with a countdown so it reads as a sale rather than a permanent tier. It buys 50
-preset looks (2 🔫), 25 fast frames (4 🔫) or 12 top-tier frames (8 🔫) — enough
-to play through a gallery instead of peeking at it. Window: `COMBO_OFFER_DAYS`
-from `COMBO_OFFER_START` (env names are historical; see `.env.example`).
+25 ₸/🔫, deliberately **below** the band, and `once: true` rather than
+`offer: true`. That distinction is the whole design. An offer has to expire to
+stop being the standing rate, which means a countdown, which means pressure — and
+a countdown that keeps coming back is the part buyers stop believing. A `once`
+pack needs no clock: for any given person it is gone the moment they take it, and
+from then on the same 100 🔫 costs the ladder price.
 
-### 🎬 Видео-сет — 650 🔫 for 31 000 ₸
+It is sized to match `photo_set` exactly (100 🔫 either way) so "было 3 800,
+стало 2 500" is a comparison the buyer can check two tiles down rather than a
+saving we assert.
+
+Enforced against **granted** orders (`db.hasGrantedPack`), at the buy button, at
+`POST /api/order`, and in what the Mini App is even sent. An abandoned or rejected
+order does not burn it — people back out of a payment screen constantly. Two
+payments genuinely in flight at once will grant both; `grantPurchase` alerts an
+admin instead, because taking money and refusing the patrons is the worse failure.
+
+### 🎨 Фото-сет — 100 🔫 for 3 800 ₸
+
+38 ₸/🔫 — a standing ladder tier now, not a countdown offer. Buys 50 preset looks
+(2 🔫), 25 fast frames (4 🔫) or 12 top-tier frames (8 🔫). Also the reference
+price the entry set is discounted against.
+
+### 🎬 Видео-сет — 650 🔫 for 21 000 ₸
 
 Sized from what one **good** video actually costs. The recipe is two strong
 frames — the still is what carries likeness and composition — and then ten
@@ -58,9 +81,9 @@ seconds of motion:
 650 🔫 covers **5 / 4 / 3 / 3** of those — three to five finished videos whichever
 tier the buyer works at, which is exactly what the title promises. It is **not**
 an `offer`: at this ticket a countdown is pressure, not a launch hook. Priced at
-47.7 ₸/🔫, between Про (50) and Студия (46.7), so "bigger pack, better rate"
-still holds end to end. An e2e step asserts both the 3–5 promise and the ladder
-monotonicity.
+32.3 ₸/🔫, between Про (34) and Студия (30), so "bigger pack, better rate"
+still holds end to end. An e2e step asserts the 3–5 promise, the ladder
+monotonicity, and that every rung stays inside the 30–40 band.
 
 The old `combo` pack stays in `PACKS` flagged `retired` — orders already placed
 against it must still resolve — and is filtered out of every listing, keyboard
@@ -117,15 +140,17 @@ Ladder in ₸/patron (bigger pack = better rate). Prices are data in
 
 | Pack | Patrons | Price | ₸/patron | ≈ USD | Margin* |
 |---|---|---|---|---|---|
-| 🎨 Фото-сет (offer) | 100 | 2 900 ₸ | 29 | $5.8 | ~3× |
-| Старт | 60 | 3 700 ₸ | 62 | $7.7 | ~6× |
-| Популярный | 200 | 11 000 ₸ | 55 | $23 | ~5.5× |
-| Про | 500 | 25 000 ₸ | 50 | $52 | ~5× |
-| 🎬 Видео-сет | 650 | 31 000 ₸ | 47.7 | $67 | ~4.8× |
-| Студия | 900 | 42 000 ₸ | 47 | $87 | ~4.7× |
+| 🎁 Первый набор (once) | 100 | 2 500 ₸ | 25 | $5.2 | ~2.6× |
+| Старт | 60 | 2 400 ₸ | 40 | $5.0 | ~4.2× |
+| 🎨 Фото-сет | 100 | 3 800 ₸ | 38 | $7.9 | ~4.0× |
+| Популярный | 200 | 7 400 ₸ | 37 | $15 | ~3.9× |
+| Про | 500 | 17 000 ₸ | 34 | $35 | ~3.6× |
+| 🎬 Видео-сет | 650 | 21 000 ₸ | 32.3 | $44 | ~3.4× |
+| Студия | 900 | 27 000 ₸ | 30 | $56 | ~3.2× |
 
-\* vs the ≤$0.02/patron provider cost, at `KZT_PER_USD=480`, before Kaspi fees.
-The photo set is intentionally below the ladder — a limited-time tripwire, not a tier.
+\* vs the ~9.5 ₸/patron provider cost, at `KZT_PER_USD=480`, before Kaspi fees.
+Only «Первый набор» sits below the ladder, and only once per account — every
+standing price is inside the 30–40 ₸ band.
 
 The cheaper scenario stack also *reprices the value story*: a «Старт — 60 🔫»
 pack now buys **~5 whole Hailuo scenarios** (12 🔫 each) instead of ~1 Kling
