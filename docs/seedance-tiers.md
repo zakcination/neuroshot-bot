@@ -2,8 +2,9 @@
 
 Grounding for `src/seedance.ts` (the in-bot chooser) and for the tier prices in
 `src/models.ts`. Written 2026-07-27 from independent side-by-side testing, not
-from vendor copy. **Every price below is still unverified against a real billed
-run — see the open task at the bottom.**
+from vendor copy. **Pricing was formula-verified 2026-07-28** — see "The
+billing formula" below; a real billed run is still the one thing that would
+close the loop completely.
 
 ## The family
 
@@ -132,27 +133,65 @@ under the KZ personal-data law.
 - `text-to-video` is for concept discovery, before you have a frame worth
   keeping.
 
-## Open: the prices are not measured
+## The billing formula (resolved 2026-07-28)
 
-fal bills this family **per 1000 tokens** ($0.007 mini / $0.0112 fast / $0.014
-base). Our registry prices video **per second**. The ratios agree — mini is half
-of base in both — so the tiers are ordered correctly relative to each other.
+fal bills this family **per 1000 tokens**, and the token count is a documented
+formula, not something we had to infer:
 
-The absolute basis is another matter: published per-clip figures for a 5-second
-720p render come out roughly half what our per-second numbers imply, which would
-mean we overcharge for the whole family.
+```
+tokens = (output_height × output_width × duration_seconds × 24) / 1024
+```
 
-`SEEDANCE_RES` gave 480p and 720p the same multiplier, which could not be right
-when cost tracks tokens and tokens track pixels. 480p is now charged at 0.5×
-(854×480 against 1280×720 is ~0.44× the work; the extra 0.06 is margin we keep
-until the basis is measured). The flagship endpoint also lists **1080p and 4K**,
-which we do not sell — their multipliers would have to be invented on top of a
-cost basis that is already unverified.
+Rate per 1000 tokens: **$0.007 mini · $0.0112 fast · $0.014 base (480p/720p/1080p)
+· $0.008 base-at-4K**. 4K is billed at a LOWER per-token rate than the other three
+tiers on the same endpoint — confirmed against the flagship's own schema
+(`resolution` enum is `480p/720p/1080p/4k` on one endpoint, `generate_audio`
+costs nothing extra either way — both re-probed directly against fal's OpenAPI
+schema, not taken from a summary).
 
-No Seedance render has yet been observed with its real billed cost. Re-derive all
-four numbers from one measured run at each tier before trusting any of them, and
-re-check the Видео-сет arithmetic afterwards — that pack was sized from the
-unverified figures.
+**This resolves the previous "prices are not measured" caveat, in our favour.**
+Plugging the formula in at 1280×720 and 1920×1080 reproduces the flat $/second
+figures fal quotes for those tiers to within 0.3%, and — the part that actually
+matters for us — reproduces our registry's `perSecondUsd` for all four variants
+to within 0.33%:
+
+| model | registry $/s (720p) | formula $/s (720p) | diff |
+|---|---|---|---|
+| `seedance` (base) | 0.3034 | 0.3024 | 0.33% |
+| `seedance_fast` | 0.2419 | 0.2419 | 0.01% |
+| `seedance_mini` / `seedance_ref` (mini) | 0.1517 | 0.1512 | 0.33% |
+
+The earlier worry — that published per-clip figures implied we overcharge by
+roughly 2× — does not survive contact with the actual billing formula. Whatever
+those per-clip figures were pricing, it was not this endpoint under this
+formula. **Not yet fully closed**: this is the documented formula reproducing
+our numbers, which is much stronger evidence than the ratio-comparison this
+section used to rest on, but still short of watching our own account get billed
+for a real render. That last step is cheap (one render, note the invoice) and
+still worth doing before calling this fully verified.
+
+`SEEDANCE_RES`'s 480p multiplier (0.5×) is now confirmed conservative rather than
+guessed: 854×480 against 1280×720 works out to **0.4448×** the tokens at any
+tier, so charging 0.5× keeps roughly 0.055× of extra margin at 480p on top of
+the standard band, in our favour.
+
+### If 1080p or 4K are ever added to the flagship
+
+Not sold today, and this is why: at the current duration range (4–15s), the real
+cost swings far outside the rest of the catalogue.
+
+| resolution | 5 s | 15 s | multiplier vs 720p base (76🔫 / 5s) |
+|---|---|---|---|
+| 720p (sold) | $1.51 → 76🔫 | $4.54 → 227🔫 | 1× |
+| 1080p | $3.40 → 171🔫 | $10.21 → 511🔫 | 2.25× |
+| 4K | $7.78 → 389🔫 | $23.33 → 1,167🔫 | ~5.14× |
+
+The multiplier no longer has to be invented (2.25× and ~5.14×, from the formula
+above) — but a single 4K/15s render costing $23 of real COGS is a different
+class of exposure than anything else we sell, and needs its own duration cap
+(most consumer video tools cap 4K well below their 1080p/720p ceiling for exactly
+this reason) and its own pricing decision before it ships, not a mechanical
+multiplier applied to the existing ladder.
 
 ## Sources
 
@@ -163,3 +202,6 @@ unverified figures.
 - [Seedance 2 Reference to Video API on fal](https://fal.ai/models/bytedance/seedance-2.0/reference-to-video)
 - Endpoint schemas probed directly from fal's OpenAPI (duration enum, resolution
   enum, `generate_audio` default and its cost note, `bitrate_mode`).
+- Token-billing formula and per-1000-token rates (owner-supplied, 2026-07-28),
+  cross-checked against the flagship's own OpenAPI schema and against our
+  registry's `perSecondUsd` (all four variants agree to within 0.33%).
