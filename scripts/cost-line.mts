@@ -49,7 +49,10 @@ function variantsOf(spec: Spec): Variant[] {
   return out;
 }
 
-const ladderRates = PACKS.filter((p) => !p.offer && !p.course && !p.retired)
+// `once` packs are excluded on purpose: a one-off entry set is priced below every
+// standing rung, so quoting it as the cheap end of the range would describe a
+// price nobody can buy twice. Same rule the buy screen uses (bestValuePackId).
+const ladderRates = PACKS.filter((p) => !p.offer && !p.course && !p.retired && !p.once)
   .map((p) => ({ id: p.id, rate: p.kzt / p.credits }))
   .sort((a, b) => b.rate - a.rate);
 const dearest = ladderRates[0]; // worst rate the customer can pay (smallest pack)
