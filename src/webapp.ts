@@ -1053,6 +1053,7 @@ export async function generateResponse(
     resolution: typeof body?.resolution === "string" ? body.resolution : undefined,
     endImageUrl,
     numImages: body?.num_images != null ? Number(body.num_images) : undefined,
+    subject: typeof body?.subject === "string" ? body.subject : undefined,
   } as GenOpts);
   if (opts === null) return { status: 400, body: { error: "bad_opts" } };
   // Curated style reference — assigned HERE, after normalizeOpts, and only from

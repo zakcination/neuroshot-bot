@@ -52,6 +52,18 @@ export interface GenOpts {
    */
   audioUrls?: string[];
   videoUrls?: string[];
+  /**
+   * What Seedance reference mode's attachments ARE — picks the framing
+   * `referencePrompt` writes (identity-lock wording for a person, shape/material
+   * wording for an object). Client-settable, unlike the URL fields above: this
+   * is a two-value enum that only changes wording, not a value that could turn
+   * /api/generate into "fetch this URL", so there is no reason to hide it behind
+   * a server-only assignment. normalizeOpts rejects it outright for a model that
+   * doesn't declare `reference` — the field means nothing anywhere else, and a
+   * client sending it there is either confused or probing, and either way
+   * "quietly ignored" is the wrong response.
+   */
+  subject?: "person" | "object";
 }
 
 /** A quality/resolution tier the composer can offer; `mult` scales credits AND cost. */
@@ -260,31 +272,61 @@ const SEEDANCE_RES: ResTier[] = [
  * appends the binding, and says what the images are FOR: several photographs of
  * one subject, not several subjects, and not a collage. Same failure this
  * codebase already fixed for multi-image edits (see refPrompt).
+ *
+ * `subject` picks WHICH framing, because "several angles of one X" wants
+ * different downstream instructions depending on what X is. Default "person" —
+ * every caller before this field existed was a face, so an absent value must
+ * reproduce that wording byte for byte.
+ *
+ * "person": asks the model to lock identity — faces, not just shapes — and
+ * warns against the specific failure a face reference is prone to (reading
+ * repeated angles as separate people, "the twins bug"). "object": asks it to
+ * lock geometry, materials and proportions instead. Sending photographs of a
+ * product through the person wording is a real, shipped defect this fixes —
+ * a marketplace seller's nine angles of a bag got an instruction about faces,
+ * because the wording never considered anything else could be uploaded here.
  */
-function referencePrompt(prompt: string, images: number, audio = 0, video = 0): string {
+function referencePrompt(
+  prompt: string,
+  images: number,
+  audio = 0,
+  video = 0,
+  subject: "person" | "object" = "person",
+): string {
   if (images + audio + video < 1) return prompt;
   const list = (name: string, n: number): string =>
     Array.from({ length: n }, (_, i) => `@${name}${i + 1}`).join(", ");
   const parts: string[] = [];
   if (images) {
     parts.push(
-      `${list("Image", images)} are reference photographs of the SAME subject or subjects, shot from ` +
-        `different angles and in different lighting — read them together to get the faces right. They ` +
-        `show the same people repeated, NOT additional people: the video must contain exactly the ` +
-        `people who appear in them, no one added and no one dropped. Never render a collage, a split ` +
-        `screen or a contact sheet — this is one continuous shot.`,
+      subject === "object"
+        ? `${list("Image", images)} are reference photographs of the SAME object, shot from different ` +
+            `angles and in different lighting — read them together to get its shape, materials, colour ` +
+            `and proportions right. They show ONE object repeated, NOT several different objects: the ` +
+            `video must contain exactly the object that appears in them, nothing added and nothing ` +
+            `swapped. Never render a collage, a split screen or a contact sheet — this is one continuous shot.`
+        : `${list("Image", images)} are reference photographs of the SAME subject or subjects, shot from ` +
+            `different angles and in different lighting — read them together to get the faces right. They ` +
+            `show the same people repeated, NOT additional people: the video must contain exactly the ` +
+            `people who appear in them, no one added and no one dropped. Never render a collage, a split ` +
+            `screen or a contact sheet — this is one continuous shot.`,
     );
   }
   if (video) {
     parts.push(
-      `${list("Video", video)} are reference clips: follow their MOTION, camera movement and pacing. ` +
-        `Take the people and the setting from the photographs, not from these clips.`,
+      subject === "object"
+        ? `${list("Video", video)} are reference clips: follow their MOTION, camera movement and pacing. ` +
+            `Take the object and the setting from the photographs, not from these clips.`
+        : `${list("Video", video)} are reference clips: follow their MOTION, camera movement and pacing. ` +
+            `Take the people and the setting from the photographs, not from these clips.`,
     );
   }
   if (audio) {
     parts.push(
-      `${list("Audio", audio)} is the reference sound: match the speech, timing and delivery to it, ` +
-        `and keep the subject's lips in sync with it.`,
+      subject === "object"
+        ? `${list("Audio", audio)} is the reference sound: match its timing and pacing.`
+        : `${list("Audio", audio)} is the reference sound: match the speech, timing and delivery to it, ` +
+            `and keep the subject's lips in sync with it.`,
     );
   }
   return `${prompt}\n\n${parts.join(" ")}`;
@@ -583,7 +625,7 @@ export const MODELS = {
       const audio = opts?.audioUrls ?? [];
       const video = opts?.videoUrls ?? [];
       return {
-        prompt: referencePrompt(prompt, urls.length, audio.length, video.length),
+        prompt: referencePrompt(prompt, urls.length, audio.length, video.length, opts?.subject),
         image_urls: urls,
         // Omitted entirely when empty: the endpoint treats an empty array and an
         // absent field the same, and sending [] would put a meaningless key in
@@ -744,6 +786,13 @@ export function normalizeOpts(model: ModelSpec, opts?: GenOpts): GenOpts | null 
     const max = model.image?.maxCount;
     if (!max || !Number.isInteger(opts.numImages) || opts.numImages < 1 || opts.numImages > max) return null;
     out.numImages = opts.numImages;
+  }
+  // Reference-mode subject — meaningless outside reference mode, so it is
+  // rejected there rather than silently dropped (same convention as every
+  // other capability-gated option above).
+  if (opts.subject != null) {
+    if (!model.reference || (opts.subject !== "person" && opts.subject !== "object")) return null;
+    out.subject = opts.subject;
   }
   return out;
 }

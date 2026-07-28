@@ -746,6 +746,71 @@ await step("reference video: several photos of one subject build one clip", asyn
   assert.equal(((await tooMany.json()) as { error: string }).error, "too_many_inputs");
 });
 
+await step("reference subject: person vs object picks the framing, and the field means nothing outside reference mode", async () => {
+  // Default (unset) must reproduce the original, person-only wording exactly —
+  // every caller before this field existed was a face.
+  await addCredits(maker.id, 38, "admin_grant", "test");
+  const person = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref", image_url: "https://fal.test/storage/u-1.jpg",
+      image_urls: ["https://fal.test/storage/u-2.jpg"], prompt: "поворот головы",
+    }),
+  });
+  assert.equal(person.status, 200);
+  await pollGen(((await person.json()) as { id: number }).id);
+  const personPrompt = falCalls.at(-1)!.input.prompt as string;
+  assert.match(personPrompt, /SAME subject/);
+  assert.match(personPrompt, /the faces right/);
+  assert.match(personPrompt, /NOT additional people/);
+
+  // subject: "object" swaps to shape/material wording and drops every mention
+  // of people or faces — this is the fix: a seller's nine angles of a product
+  // must not carry an instruction about faces.
+  await addCredits(maker.id, 38, "admin_grant", "test");
+  const object = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref", image_url: "https://fal.test/storage/p-1.jpg",
+      image_urls: ["https://fal.test/storage/p-2.jpg", "https://fal.test/storage/p-3.jpg"],
+      prompt: "медленный оборот на подставке", subject: "object",
+    }),
+  });
+  assert.equal(object.status, 200);
+  const od = (await object.json()) as { id: number; credits: number };
+  assert.equal(od.credits, 38, "the subject choice must not change the price");
+  await pollGen(od.id);
+  const objectPrompt = falCalls.at(-1)!.input.prompt as string;
+  assert.match(objectPrompt, /SAME object/);
+  assert.match(objectPrompt, /shape, materials/);
+  assert.match(objectPrompt, /NOT several different objects/);
+  assert.doesNotMatch(objectPrompt, /face/i, "the object framing must not mention faces");
+  assert.doesNotMatch(objectPrompt, /people/i, "the object framing must not mention people");
+
+  // The field is meaningless anywhere else. A model that does not declare
+  // `reference` gets bad_opts rather than a silently ignored value — the same
+  // convention every other capability-gated option follows.
+  const wrongModel = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_mini", image_url: "https://fal.test/storage/u-1.jpg",
+      prompt: "тест", subject: "object",
+    }),
+  });
+  assert.equal(wrongModel.status, 400);
+  assert.equal(((await wrongModel.json()) as { error: string }).error, "bad_opts");
+
+  const badValue = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref", image_url: "https://fal.test/storage/u-1.jpg",
+      prompt: "тест", subject: "spaceship",
+    }),
+  });
+  assert.equal(badValue.status, 400);
+  assert.equal(((await badValue.json()) as { error: string }).error, "bad_opts");
+});
+
 await step("audio and video references: gated on rights, screened where we can, capped where the endpoint caps", async () => {
   const { REF_LIMITS, REFERENCE_RIGHTS_NOTICE } = await import("../src/media.js");
 
