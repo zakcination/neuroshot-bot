@@ -285,6 +285,59 @@
        — it is a valid top-up — but visibly not the way out of this screen. */
     .pack.short { opacity: .55; }
 
+    /* ————— the once-per-account entry tier —————
+       Deliberately NOT a decorated .pack. It is a different KIND of thing: every
+       other tile is a price you can pay again tomorrow, this one disappears the
+       moment it is used, and a buyer has to be able to see that difference
+       before reading a word. So it gets its own object class — full-width even
+       in the two-column grid, a lit gradient face instead of the flat surface,
+       and the ladder price struck through beside it so the discount is a
+       comparison the buyer makes rather than a claim we assert.
+
+       No countdown anywhere on it: nothing here expires by clock, and a fake
+       timer on a permanent offer is the one thing that would make it read as a
+       trick. The scarcity is real and personal — "one per account" — and that
+       is what the badge says. */
+    .firstpack {
+      /* flex-start, not center: the body is three lines tall and the price is
+         one, so centring floats the title away from the icon it belongs to.
+         The top padding is what the badge occupies — it is positioned out of
+         flow, so without it the title runs underneath. */
+      position: relative; grid-column: 1 / -1; display: flex; align-items: flex-start; gap: 14px;
+      border-radius: var(--radius); padding: 34px 18px 17px; cursor: pointer; text-align: left;
+      color: var(--ink); font: inherit; overflow: hidden;
+      border: 1px solid rgba(124,92,255,.45);
+      background:
+        radial-gradient(120% 140% at 0% 0%, rgba(124,92,255,.30), transparent 62%),
+        radial-gradient(120% 140% at 100% 100%, rgba(255,77,141,.24), transparent 60%),
+        var(--surface);
+      box-shadow: 0 10px 40px rgba(124,92,255,.16);
+      transition: transform .15s ease, box-shadow .2s ease;
+    }
+    .firstpack:hover { transform: translateY(-2px); box-shadow: 0 14px 48px rgba(124,92,255,.24); }
+    /* The gift mark. A glyph rather than an image so it costs no request and
+       cannot arrive after the price it is meant to introduce. */
+    .firstpack .fp-ic {
+      flex: none; width: 46px; height: 46px; border-radius: 15px; display: grid; place-items: center;
+      font-size: 23px; background: var(--aurora); box-shadow: 0 6px 22px rgba(124,92,255,.4);
+    }
+    .firstpack .fp-body { flex: 1 1 auto; min-width: 0; }
+    .firstpack .fp-title { font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
+    .firstpack .fp-sub { color: var(--muted); font-size: 12px; margin-top: 3px; line-height: 1.45; }
+    .firstpack .fp-price { flex: none; text-align: right; }
+    .firstpack .fp-now { font-size: 19px; font-weight: 800; color: var(--amber); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .firstpack .fp-was { font-size: 11.5px; color: var(--faint); text-decoration: line-through; font-variant-numeric: tabular-nums; margin-top: 2px; }
+    .firstpack .fp-badge {
+      position: absolute; top: 0; left: 0; font-size: 9.5px; font-weight: 800; letter-spacing: .1em;
+      text-transform: uppercase; background: var(--aurora); color: #fff; padding: 5px 12px 5px 18px;
+      border-radius: var(--radius) 0 11px 0;
+    }
+    @media (max-width: 400px) {
+      .firstpack { padding: 32px 14px 15px; gap: 11px; }
+      .firstpack .fp-ic { width: 40px; height: 40px; border-radius: 13px; font-size: 20px; }
+      .firstpack .fp-title { font-size: 14px; }
+    }
+
     /* Progression card — the mobile-game "level ring + XP bar" read. The ring is
        a conic-gradient sweep driven by --pct, so the fill needs no extra markup
        and no SVG. */
@@ -1075,7 +1128,11 @@
       const el = document.getElementById("welcome");
       const c = d.catalog;
       const videoMin = c.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9);
-      const packs = [...(d.packs || [])].filter((p) => !p.offer).sort((a, b) => a.kzt - b.kzt);
+      // The onboarding ladder shows the STANDING prices. The entry tier is left
+      // out on purpose: this slide teaches "bigger pack, cheaper patron", and a
+      // one-off below every rung is the exception that makes the rule unreadable
+      // — the buy tab shows it in its own right, on its own tile.
+      const packs = [...(d.packs || [])].filter((p) => !p.offer && !p.once).sort((a, b) => a.kzt - b.kzt);
       const cheapestId = bestValuePackId(packs);
       const presetSample = c.presets.slice(0, 4);
 
@@ -1822,7 +1879,7 @@
      * value pick.
      */
     function bestValuePackId(packs) {
-      return (packs || []).filter((p) => !p.offer)
+      return (packs || []).filter((p) => !p.offer && !p.once)
         .reduce((best, p) => (!best || p.kzt / p.credits < best.kzt / best.credits) ? p : best, null)?.id;
     }
 
@@ -3135,21 +3192,34 @@
       const covers = (p) => p.credits >= gap;
       // Recommend the CHEAPEST pack that actually gets them there, not a fixed
       // slot in the list.
-      const best = packs.filter((p) => !p.offer && covers(p)).sort((a, b) => a.kzt - b.kzt)[0];
+      // The entry tier, if this account still has it AND it closes the gap. It is
+      // the cheapest way out of this screen, so it must not lose the "хватит на
+      // этот кадр" mark to a ladder pack that costs more.
+      const entry = packs.find((p) => p.once && covers(p));
+      const best = entry || packs.filter((p) => !p.offer && !p.once && covers(p)).sort((a, b) => a.kzt - b.kzt)[0];
       // The exit-offer only makes sense if the combo itself would unblock them.
       const combo = packs.find((p) => p.offer && covers(p));
       if (combo && !exitOfferShown) sheetCloseHook = () => viewExitOffer(combo, data);
-      sheetBody.innerHTML = `
-        <h3>Ещё один шаг до результата ✨</h3>
-        <div class="sub">Нужно ${data.need} ${PATRON}, на балансе ${data.balance}. Пополните — и результат сразу продолжит создаваться.</div>
-        <div class="packs">${packs.map((p) => `
+      const ladderTiles = packs.filter((p) => !p.once).map((p) => `
           <button class="pack ${best && p.id === best.id ? "best" : ""} ${covers(p) ? "" : "short"}" data-pk="${p.id}">
             ${packTileHtml(p, {
               badge: best && p.id === best.id ? '<span class="hot">Хватит на этот кадр</span>' : "",
               warn: covers(p) ? null : "не хватит на этот кадр",
             })}
-          </button>`).join("")}</div>
+          </button>`).join("");
+      sheetBody.innerHTML = `
+        <h3>Ещё один шаг до результата ✨</h3>
+        <div class="sub">Нужно ${data.need} ${PATRON}, на балансе ${data.balance}. Пополните — и результат сразу продолжит создаваться.</div>
+        <div class="packs" id="pwPacks">${ladderTiles}</div>
         <div class="row"><button class="btn ghost" id="backBtn">← Назад</button></div>`;
+      // Prepended as a node rather than interpolated, so the tile is built by the
+      // one function that owns its markup and the two screens cannot drift.
+      if (entry) {
+        const host = sheetBody.querySelector("#pwPacks");
+        const tile = firstPackTile(entry, packs);
+        tile.dataset.pk = entry.id;
+        host.insertBefore(tile, host.firstChild);
+      }
       sheetBody.querySelector("#backBtn").onclick = () => { if (sheetCloseHook) { closeSheet(); } else viewPick(); };
       sheetBody.querySelectorAll("[data-pk]").forEach((b) => (b.onclick = () => { sheetCloseHook = null; buyPack(b.dataset.pk); }));
     }
@@ -3158,7 +3228,7 @@
     function viewExitOffer(combo, paywallData) {
       exitOfferShown = true;
       haptic("warning");
-      const ladder = (paywallData.packs || []).filter((p) => !p.offer);
+      const ladder = (paywallData.packs || []).filter((p) => !p.offer && !p.once);
       const ladderPer = ladder.length ? Math.min(...ladder.map((p) => p.kzt / p.credits)) : 0;
       const per = combo.kzt / combo.credits;
       const saving = ladderPer ? Math.round((1 - per / ladderPer) * 100) : 0;
@@ -3182,6 +3252,14 @@
     // auto-credits, or pings an admin to approve — no need to switch to the bot.
     async function buyPack(packId) {
       const { status, data } = await api("/api/order", { method: "POST", body: JSON.stringify({ pack: packId }) });
+      // 409 = the entry price was already used on this account. Reachable from a
+      // page that was open before the first purchase landed, so say what happened
+      // and refresh rather than showing a generic failure for a rule we chose.
+      if (status === 409 && data && data.error === "once_taken") {
+        toast("Стартовый набор даётся один раз — он уже был получен");
+        load();
+        return;
+      }
       if (status !== 200) { toast("Не удалось создать заявку — попробуйте ещё раз"); return; }
       if (!data.available) { toast("💳 Оплата Kaspi скоро откроется 🙌"); return; }
       if (tg?.openLink) tg.openLink(data.link); else window.open(data.link, "_blank");
@@ -3388,8 +3466,8 @@
       if (!host || !ME || !ME.partner) return;
       const p = ME.partner;
       if (!p.joined) {
-        host.innerHTML = `<div class="fincard"><div class="finrow"><span>Партнёрская программа</span><b>${p.percent}%</b></div></div>
-          <p class="finnote">Партнёрам мы платим ${p.percent}% с каждой оплаты приглашённых, и этот кэшбэк можно вывести деньгами. Программа по приглашению — напишите нам, если хотите участвовать.</p>`;
+        host.innerHTML = `<div class="fincard"><div class="finrow"><span>Партнёрская программа</span><b>${p.percent}–${p.topPercent}%</b></div></div>
+          <p class="finnote">Партнёрам мы платим от ${p.percent}% с каждой оплаты приглашённых, и ставка растёт с оборотом — до ${p.topPercent}%. Кэшбэк можно вывести деньгами. Программа по приглашению — напишите нам, если хотите участвовать.</p>`;
         return;
       }
       const { status, data } = await api("/api/partner");
@@ -3413,9 +3491,11 @@
         <div class="fincard">
           <div class="finrow"><span>Приглашено · покупают</span><b>${p.invited} · ${p.paying}</b></div>
           <div class="finrow"><span>Всего заработано</span><b>${p.earned} ${PATRON}</b></div>
+          <div class="finrow"><span>Ваша ставка</span><b>${p.percent}%</b></div>
+          <div class="finrow"><span>Оборот по ссылкам</span><b>${p.volumeKzt.toLocaleString("ru-RU")} ₸</b></div>
           <div class="finrow owed"><span>Доступно к выводу</span><b>${p.withdrawable} ${PATRON}</b></div>
         </div>
-        <p class="finnote">${p.percent}% с каждой оплаты приглашённых. Вывод от ${p.withdrawMin} ${PATRON}, выплаты раз в 2 недели.</p>
+        <p class="finnote">${p.nextAt ? `До ставки ${p.nextPercent}% осталось ${Math.max(0, p.nextAt - p.volumeKzt).toLocaleString("ru-RU")} ₸ оборота. ` : "Вы на максимальной ставке. "}Вывод от ${p.withdrawMin} ${PATRON}, выплаты раз в 2 недели.</p>
         <button class="btn primary" id="wdBtn" ${canWithdraw ? "" : "disabled"} style="margin-top:8px">
           ${canWithdraw ? `💸 Вывести ${p.withdrawable} ${PATRON}` : `До вывода не хватает ${Math.max(0, p.withdrawMin - p.withdrawable)} ${PATRON}`}
         </button>
@@ -3475,6 +3555,35 @@
             <span class="rfchip ${st.cls}">${st.label}</span>
           </div>`;
       }).join("")}</div>`;
+    }
+
+    /**
+     * The once-per-account entry tile.
+     *
+     * The saving is computed against a REAL pack of the same size that is on the
+     * same screen (100 patrons either way), so "было 3 800" is something the buyer
+     * can check by looking two tiles down. If no same-size pack exists — someone
+     * resized one and forgot this — the struck-through price is omitted rather
+     * than derived from the nearest rung: an invented "was" price is exactly the
+     * kind of discount nobody believes twice.
+     */
+    function firstPackTile(pack, all) {
+      const twin = all.find((x) => !x.once && !x.offer && x.credits === pack.credits);
+      const per = Math.round(pack.kzt / pack.credits);
+      const off = twin ? Math.round((1 - pack.kzt / twin.kzt) * 100) : 0;
+      return $(`
+        <button class="firstpack" data-buy="${pack.id}">
+          <span class="fp-badge">Один раз на аккаунт</span>
+          <span class="fp-ic">🎁</span>
+          <span class="fp-body">
+            <span class="fp-title">${PATRON} ${pack.credits} патронов</span>
+            <div class="fp-sub">${per} ₸ за патрон${twin ? ` вместо ${Math.round(twin.kzt / twin.credits)}` : ""}${off > 0 ? ` — на ${off}% дешевле` : ""}. Срок не горит.</div>
+          </span>
+          <span class="fp-price">
+            <div class="fp-now">${pack.kzt.toLocaleString("ru-RU")} ₸</div>
+            ${twin ? `<div class="fp-was">${twin.kzt.toLocaleString("ru-RU")} ₸</div>` : ""}
+          </span>
+        </button>`);
     }
 
     // Live combo-offer countdown: ticks the 🔥 badge each second; when the
@@ -3694,7 +3803,7 @@
             <div class="sec-h"><h2>Приглашай друзей</h2></div>
             <div class="refcard">
               <h3>🎁 Приглашай — зарабатывай</h3>
-              <p>Друг получает бонусные ${PATRON} при входе, вы — награду за его первую покупку и 10% со всех его пакетов. Навсегда.</p>
+              <p>Друг получает ${d.referral.joinBonus} ${PATRON} при входе, вы — награду за его первую покупку и ${d.referral.percent}% со всех его пакетов. Навсегда.</p>
               <div class="linkrow">
                 <div class="linkbox" id="refL">${esc(refLink)}</div>
                 <button class="btn primary copy" id="refC">Копировать</button>
@@ -3798,10 +3907,18 @@
       // Offer packs (the limited-time combo) lead with a live countdown badge;
       // once the deadline passes the offer drops out of the list entirely.
       const comboEndsAt = d.comboOffer?.endsAt || 0;
-      const packsOrdered = [...(d.packs || [])]
+      const all = d.packs || [];
+      // Rank rather than a boolean sort: three classes of tile now share this
+      // grid (entry, expiring offer, ladder) and `Number(b.offer)-Number(a.offer)`
+      // cannot express three.
+      const rank = (x) => (x.once ? 2 : x.offer ? 1 : 0);
+      const packsOrdered = [...all]
         .filter((pack) => !(pack.offer && comboEndsAt && comboEndsAt <= Date.now()))
-        .sort((a, b) => Number(b.offer) - Number(a.offer));
+        .sort((a, b) => rank(b) - rank(a));
       for (const pack of packsOrdered) {
+        // The one-off entry set gets its own tile — its rate sits below every
+        // standing rung, so it is not part of the ladder story.
+        if (pack.once) { p.appendChild(firstPackTile(pack, all)); continue; }
         // "Выгоднее всего" — the same claim, the same computation
         // (bestValuePackId) and the same wording as the onboarding ladder
         // slide, so the tag is never fixed to a list slot («Популярный»,
@@ -3816,10 +3933,12 @@
       }
       // Exchange-rate transparency: the patron↔tenge rate is a ladder (bigger
       // pack = cheaper), so show its range up front rather than making the user
-      // reverse-engineer it from the pack tiles.
+      // reverse-engineer it from the pack tiles. The entry tier is excluded from
+      // the range — it is below the ladder by design, and folding it in would
+      // advertise a floor that most purchases will never be made at.
       const rn = document.getElementById("rateNote");
       if (rn) {
-        const rates = (d.packs || []).filter((p) => !p.offer).map((p) => p.kzt / p.credits);
+        const rates = all.filter((x) => !x.offer && !x.once).map((x) => x.kzt / x.credits);
         if (rates.length) {
           const minR = Math.round(Math.min(...rates)), maxR = Math.round(Math.max(...rates));
           rn.textContent = `1 ${PATRON} ≈ ${minR === maxR ? `${minR}` : `${minR}–${maxR}`} ₸ — чем больше пакет, тем дешевле`;

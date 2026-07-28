@@ -53,6 +53,7 @@ import {
   stats,
   upsertPartnerCode,
   type PartnerCodeRow,
+  type PartnerRate,
   type UserRow,
 } from "./db.js";
 import { isUploadedSource as isReusableUpload, modelByKey, runFreeScenario, runGeneration } from "./generate.js";
@@ -67,6 +68,7 @@ import {
   IMAGE_MODEL_PICKER,
   MODELS,
   packById,
+  PARTNER_TIERS,
   PRESET_MODEL,
   presetModel,
   PRESETS,
@@ -1109,10 +1111,22 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     return `🎓 <b>Ваши авторские коды (по договорённости)</b>\n${blocks.join("\n")}\n\n`;
   }
 
+  /** "12% → 15% с 300 000 ₸" — the rung a partner is on and the next raise. */
+  function rateLine(rate: PartnerRate | null): string {
+    if (!rate) return "";
+    const now = `<b>${Math.round(rate.percent * 100)}%</b>`;
+    if (rate.nextAt == null || rate.nextPercent == null) return `${now} — максимальная ставка 🏆`;
+    const left = Math.max(0, rate.nextAt - rate.volumeKzt);
+    return `${now} · до <b>${Math.round(rate.nextPercent * 100)}%</b> осталось ${left.toLocaleString("ru-RU")} ₸ оборота`;
+  }
+
   async function sendPartnerDash(ctx: Context): Promise<void> {
     const u = await user(ctx);
-    const acct = await partnerAccount(u.id);
+    const acct = await partnerAccount(u.id, { basePercent: config.partnerPercent, tiers: PARTNER_TIERS });
+    // The pitch quotes the range, the dashboard quotes what THIS partner is on:
+    // a flat number would be wrong for everyone not sitting on the base rung.
     const pct = Math.round(config.partnerPercent * 100);
+    const topPct = Math.round(Math.max(...PARTNER_TIERS.map((t) => t.percent)) * 100);
     const creatorBlock = await creatorCodesBlock(ctx, u.id);
 
     if (!acct.joined) {
@@ -1122,7 +1136,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       await ctx.reply(
         creatorBlock +
           `🤝 <b>Партнёрская программа NeuroShot</b>\n\n` +
-          `• <b>${pct}% кэшбэка</b> с каждой оплаты приглашённых пользователей\n` +
+          `• <b>${pct}% кэшбэка</b> с каждой оплаты приглашённых — и ставка растёт с оборотом, до <b>${topPct}%</b>\n` +
           `• Кэшбэк — в токенах: тратьте в NeuroShot или <b>выводите деньгами раз в 2 недели</b>\n` +
           `• Персональные ссылки и приветственный бонус для подключённых партнёров\n\n` +
           `Программа — <b>по приглашению</b>. Хотите участвовать? Напишите нам — подключим вручную.`,
@@ -1156,7 +1170,9 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
         `💸 Доступно к выводу: <b>${UNIT_EMOJI} ${nUnits(acct.withdrawable)}</b> ` +
         `(мин. ${config.withdrawMin}, раз в 2 недели)\n\n` +
         `<b>Ваши ссылки</b> (${acct.activeCodes}/${config.partnerMaxCodes}):\n${codeBlocks}\n\n` +
-        `Условия: <b>${pct}%</b> кэшбэка с покупок · +${config.partnerInviteeBonus} ${UNIT_EMOJI} новым по вашей ссылке.`,
+        `Ваша ставка: ${rateLine(acct.rate)}\n` +
+        `Оборот по вашим ссылкам: <b>${acct.rate ? acct.rate.volumeKzt.toLocaleString("ru-RU") : 0} ₸</b> · ` +
+        `+${config.partnerInviteeBonus} ${UNIT_EMOJI} новым по вашей ссылке.`,
       { parse_mode: "HTML", reply_markup: kb },
     );
   }
