@@ -15,13 +15,13 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { achievements, activeXpActions, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, latestPendingOrder, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { achievements, activeXpActions, hasGrantedPack, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, latestPendingOrder, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { enhancePrompt, ENHANCE_COST, ENHANCE_STACK } from "./enhance.js";
 import { latestReleaseId, unseenReleases } from "./changelog.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
 import { hit } from "./ratelimit.js";
-import { claimOrderPaid, grantPurchase, sendPendingOrderPrompt } from "./payments.js";
+import { claimOrderPaid, grantPurchase, onceTaken, sendPendingOrderPrompt } from "./payments.js";
 import { comboEndsAt } from "./offer.js";
 import { sanitizePrompt } from "./promptcraft.js";
 import {
@@ -46,6 +46,7 @@ import {
   normalizeOpts,
   packById,
   PACKS,
+  PARTNER_TIERS,
   PRESET_MODEL,
   presetModel,
   PRESETS,
@@ -306,13 +307,19 @@ function studioModelsOf(mode: "image" | "video", eta: Record<string, number>): A
     }));
 }
 
-function packsPayload(): Array<Record<string, unknown>> {
-  return PACKS.filter((p) => !p.course && !p.retired).map((p) => ({
+function packsPayload(onceTaken = false): Array<Record<string, unknown>> {
+  // A `once` pack the caller has already taken is dropped from the payload, not
+  // flagged in it: anything the client receives is something it can render, and
+  // "show it greyed out" only advertises a price this account can never pay
+  // again. The remaining packs carry `once` so the client can style the entry
+  // tier as its own thing rather than as another rung.
+  return PACKS.filter((p) => !p.course && !p.retired && !(p.once && onceTaken)).map((p) => ({
     id: p.id,
     title: p.title,
     credits: p.credits,
     kzt: p.kzt,
     offer: p.offer ?? false,
+    once: p.once ?? false,
   }));
 }
 
@@ -469,7 +476,7 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress, finance, enhanceLeft, awards, certs, partner, seenRelease, openOrder, xpActions] =
+  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress, finance, enhanceLeft, awards, certs, partner, seenRelease, openOrder, xpActions, startTaken] =
     await Promise.all([
       userDashboard(user.id),
       recentGenerations(user.id, 30),
@@ -486,10 +493,11 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
       enhanceChargesLeft(user.id, ENHANCE_STACK),
       achievements(user.id),
       certificates(user.id),
-      partnerAccount(user.id),
+      partnerAccount(user.id, { basePercent: config.partnerPercent, tiers: PARTNER_TIERS }),
       releaseState(user.id),
       latestPendingOrder(user.id),
       activeXpActions(),
+      onceTaken(user.id),
     ]);
   const gates = Object.fromEntries(gateRows.map((g) => [g.preset_id, g.min_level]));
   return {
@@ -499,7 +507,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     generations,
     bot_username: config.webappBotUsername,
     // Pack catalog for the app's pricing section — same source as the bot.
-    packs: packsPayload(),
+    packs: packsPayload(startTaken),
     catalog: catalogPayload(usage, gates, eta),
     // Combo offer deadline (ms epoch) for the live countdown.
     comboOffer: { endsAt: comboEndsAt() },
@@ -579,8 +587,24 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
       withdrawable: partner.withdrawable,
       activeCodes: partner.activeCodes,
       maxCodes: config.partnerMaxCodes,
-      percent: Math.round(config.partnerPercent * 100),
+      // The rate THIS partner is on, not the base — a grandfathered or
+      // volume-promoted partner reading the base number would be told they earn
+      // less than they actually do. `topPercent` is what the ladder tops out at,
+      // so the pitch shown to a non-partner can quote the range honestly.
+      percent: Math.round((partner.rate?.percent ?? config.partnerPercent) * 100),
+      topPercent: Math.round(Math.max(...PARTNER_TIERS.map((t) => t.percent)) * 100),
+      volumeKzt: partner.rate?.volumeKzt ?? 0,
+      nextAt: partner.rate?.nextAt ?? null,
+      nextPercent: partner.rate?.nextPercent == null ? null : Math.round(partner.rate.nextPercent * 100),
       withdrawMin: config.withdrawMin,
+    },
+    // Friend-track terms. Sent rather than written into the page, because the
+    // share is env-tunable: a number hard-coded in app.html silently becomes a
+    // lie the first time it is retuned.
+    referral: {
+      percent: Math.round(config.referralPercent * 100),
+      joinBonus: config.referralJoinBonus,
+      firstPurchaseBonus: config.referralFirstPurchaseBonus,
     },
     // "Ваш путь в NeuroShot" roadmap — real completion signals, see roadmapProgress.
     roadmap,
@@ -1276,6 +1300,12 @@ export async function orderResponse(
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const pack = packById(String(body?.pack ?? ""));
   if (!pack) return { status: 400, body: { error: "bad_request" } };
+  // Same guard as the bot's buy: button. The client is told this pack is gone,
+  // but a stale page (or a hand-rolled request) can still ask for it, and the
+  // entry price has to be enforced by the server or it is not enforced at all.
+  if (pack.once && (await hasGrantedPack(userId, pack.id))) {
+    return { status: 409, body: { error: "once_taken" } };
+  }
   // Per-pack fixed-amount link if configured (KASPI_PAY_URL_<PACK>), else the
   // single fallback link. Blank → payment not open yet.
   const link = kaspiLinkFor(pack.id);

@@ -19,7 +19,7 @@ import {
 } from "./db.js";
 import { costUsdFor, MODELS, priceFor, styleRefUrl, type FreeScenario, type GenOpts, type ModelSpec } from "./models.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
-import { paywallKeyboard, paywallText } from "./payments.js";
+import { onceTaken, paywallKeyboard, paywallText } from "./payments.js";
 import { craftPrompt } from "./promptcraft.js";
 import { UNIT_EMOJI } from "./text.js";
 import { brandForDelivery } from "./watermark.js";
@@ -357,9 +357,12 @@ export async function runGeneration(
       free = true;
     } else {
       await logEvent(user.id, "paywall", model.key);
-      await ctx.reply(paywallText(model, user.credits), {
+      // Resolved once and passed to both halves: the text and the button must
+      // quote the SAME pack, and each computing it separately is how they drift.
+      const taken = await onceTaken(user.id);
+      await ctx.reply(paywallText(model, user.credits, taken), {
         parse_mode: "HTML",
-        reply_markup: paywallKeyboard(model, user),
+        reply_markup: paywallKeyboard(model, user, taken),
       });
       return;
     }

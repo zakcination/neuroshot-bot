@@ -20,15 +20,30 @@ export const config = {
   // via a referral link (the only farmable surface — kept small on purpose).
   referralJoinBonus: Number(process.env.REFERRAL_JOIN_BONUS ?? 3),
   // One-time credits to the referrer when their friend makes their FIRST purchase.
+  // NOT part of the cashback cut below: this fires once, on the single event the
+  // whole referral loop exists to produce, and it is what people actually retell
+  // ("друг купил — мне упало"). The recurring share is the expensive half.
   referralFirstPurchaseBonus: Number(process.env.REFERRAL_FIRST_PURCHASE_BONUS ?? 10),
   // Lifetime share of every pack a referred friend buys, paid to the referrer.
-  referralPercent: Number(process.env.REFERRAL_PERCENT ?? 0.1),
-  // --- Partner program v2 (self-serve codes, docs/partner-program.md) ---
-  // 15% cashback of every pack bought by a user you invited via your code.
-  partnerPercent: Number(process.env.PARTNER_PERCENT ?? 0.15),
-  // One-time welcome bonus (🔫) granted when a user joins the partner program.
-  // Spend-only (never withdrawable) — ~$20 worth at retail pack rates.
-  partnerWelcome: Number(process.env.PARTNER_WELCOME ?? 180),
+  // Halved from 10% (2026-07-27): the friend track pays forever, on every pack,
+  // to someone who did one thing once. That standing claim on future revenue is
+  // exactly the budget that has to exist for levels to unlock real catalogue and
+  // for admins to keep shipping new styles. Milestones (REFERRAL_MILESTONES) are
+  // untouched — they pay for *sustained* results, which is what we want to buy.
+  referralPercent: Number(process.env.REFERRAL_PERCENT ?? 0.05),
+  // --- Partner program v2 (admin-served codes, docs/partner-program.md) ---
+  // BASE cashback of every pack bought by a user who arrived on your code. This
+  // is the floor, not the offer: PARTNER_TIERS raises it to 12/15/20% as a
+  // partner's codes actually bring revenue in, so the ceiling went UP (15 → 20%)
+  // while the rate paid to a partner who never converts anyone went down.
+  // Existing partners keep their stored rate — see partnerRateFor.
+  partnerPercent: Number(process.env.PARTNER_PERCENT ?? 0.1),
+  // One-time welcome bonus (🔫) granted when an admin enrols a partner.
+  // Spend-only (never withdrawable). Cut from 180 (2026-07-27): it was paid up
+  // front, before a single invitee existed, which is the one moment we know
+  // least about whether the partner will work out. The money moved into the
+  // volume rungs, where it is paid against revenue that already landed.
+  partnerWelcome: Number(process.env.PARTNER_WELCOME ?? 60),
   // Bonus 🔫 the INVITED user gets on top of freeCredits when joining via a code.
   partnerInviteeBonus: Number(process.env.PARTNER_INVITEE_BONUS ?? 5),
   // Max active codes one account may hold at a time.

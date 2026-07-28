@@ -2047,6 +2047,21 @@ export interface Pack {
   /** A limited-time promo (shown with a sale countdown) — priced below the ladder. */
   offer?: boolean;
   /**
+   * Buyable ONCE per account, ever — the below-ladder entry price.
+   *
+   * This is what lets a genuinely cheap first purchase exist without breaking
+   * the ladder: an `offer` has to expire to stop being the permanent best rate,
+   * which means a countdown, which means pressure. A `once` pack needs neither.
+   * It can sit on the shelf forever, because for any given person it is gone
+   * after they take it, and from then on the same 100 🔫 costs the ladder price.
+   *
+   * Enforced against GRANTED orders (db.hasGrantedPack), checked where the
+   * buyer is shown the price. Two simultaneous payments can still slip through;
+   * that race grants both and alerts an admin rather than taking money and
+   * refusing the patrons — see grantPurchase.
+   */
+  once?: boolean;
+  /**
    * GenAI course tier (docs/course/README.md) — grants patrons AND a one-time
    * invite into that tier's private cohort channel (payments.ts grantPurchase
    * → inviteToCourseCohort). Excluded from the generic packsKeyboard() listing
@@ -2065,22 +2080,48 @@ export interface Pack {
   retired?: boolean;
 }
 
+/**
+ * The patron ladder, in ₸ per patron.
+ *
+ * Two rules hold across the whole array and are worth checking against before
+ * touching a number (test/webapp.ts pins both):
+ *
+ *  1. **Every ladder pack sits in the 30–40 ₸/🔫 band.** Provider cost is a flat
+ *     ~9.5 ₸ per patron for every model in the catalogue (the credits column is
+ *     derived from cost, so it does not drift per model) — which means the band
+ *     is a 3.2–4.2× gross margin on any render anyone can make, with no model
+ *     sold at a loss at the bottom of it.
+ *  2. **A bigger pack is never a worse rate.** Sorted by patrons, ₸/🔫 only
+ *     goes down. A ladder that inverts anywhere teaches buyers to distrust the
+ *     whole thing, and they find the inversion faster than we do.
+ *
+ * The one deliberate exception is `first_set`, which is BELOW the band. It is
+ * `once` rather than `offer`: for any given person it disappears after they take
+ * it, so it can be permanent without ever becoming the standing rate.
+ */
 export const PACKS: Pack[] = [
-  { id: "start", kzt: 3700, credits: 60, title: `Старт — 60 ${UNIT_EMOJI}` }, // ~62 ₸/🔫
-  { id: "popular", kzt: 11000, credits: 200, title: `Популярный — 200 ${UNIT_EMOJI}` }, // 55 ₸/🔫
-  { id: "pro", kzt: 25000, credits: 500, title: `Про — 500 ${UNIT_EMOJI}` }, // 50 ₸/🔫
-  { id: "studio", kzt: 42000, credits: 900, title: `Студия — 900 ${UNIT_EMOJI}` }, // 47 ₸/🔫
+  // The entry price, once per account. 100 🔫 at 25 ₸ against the same 100 🔫 at
+  // 38 ₸ on the ladder (`photo_set`) — the comparison a buyer can make on one
+  // screen, which is the whole point of sizing it to match a real pack rather
+  // than inventing a number nobody can check.
+  { id: "first_set", kzt: 2500, credits: 100, title: `🎁 Первый набор — 100 ${UNIT_EMOJI}`, once: true },
+
+  { id: "start", kzt: 2400, credits: 60, title: `Старт — 60 ${UNIT_EMOJI}` }, // 40 ₸/🔫
+  { id: "popular", kzt: 7400, credits: 200, title: `Популярный — 200 ${UNIT_EMOJI}` }, // 37 ₸/🔫
+  { id: "pro", kzt: 17000, credits: 500, title: `Про — 500 ${UNIT_EMOJI}` }, // 34 ₸/🔫
+  { id: "studio", kzt: 27000, credits: 900, title: `Студия — 900 ${UNIT_EMOJI}` }, // 30 ₸/🔫
+
   // --- Purpose-built sets ---------------------------------------------------
   // One generic "combo" used to serve both intents at 36 🔫, which is enough for
   // three of the CHEAPEST videos and not one of the good ones. Split in two, each
   // sized from the real recipe it is named after.
 
-  // Photo set — the tripwire. 100 🔫 buys 50 preset looks (Seedream edit, 2 🔫),
-  // 25 Nano Banana 2 frames (4 🔫) or 12 Nano Banana Pro frames (8 🔫): enough to
-  // play through a whole gallery rather than peek at it. Deliberately BELOW the
-  // ladder at 29 ₸/🔫, so it is flagged `offer` and shown only with a countdown —
-  // a limited-time hook, not a permanent tier (which would break the ladder).
-  { id: "photo_set", kzt: 2900, credits: 100, title: `🎨 Фото-сет — 100 ${UNIT_EMOJI}`, offer: true },
+  // Photo set. 100 🔫 buys 50 preset looks (Seedream edit, 2 🔫), 25 Nano Banana 2
+  // frames (4 🔫) or 12 Nano Banana Pro frames (8 🔫): enough to play through a
+  // whole gallery rather than peek at it. Now a permanent ladder tier at
+  // 38 ₸/🔫 rather than a countdown offer — `first_set` carries the below-ladder
+  // entry price, so this no longer has to expire to keep the ladder honest.
+  { id: "photo_set", kzt: 3800, credits: 100, title: `🎨 Фото-сет — 100 ${UNIT_EMOJI}` },
 
   // Video set — sized from what one GOOD video actually costs. The recipe is two
   // strong frames (the still is what carries likeness and composition) and then
@@ -2091,19 +2132,20 @@ export const PACKS: Pack[] = [
   //   2× GPT Image 2     +  Seedance 2.0 10s+звук  =  22 + 152 = 174 🔫
   // 650 🔫 covers 5 / 4 / 3 / 3 of those — "three to five finished videos"
   // whichever tier the buyer works at, which is the promise the title makes.
-  // NOT an `offer`: at this size a countdown would be pressure, not a launch
-  // hook. Priced at 47.7 ₸/🔫 — between Про (50) and Студия (46.7), so the
+  // Priced at 32.3 ₸/🔫 — between Про (34) and Студия (30), so the
   // "bigger pack, better rate" ladder still holds end to end.
-  { id: "video_set", kzt: 31000, credits: 650, title: `🎬 Видео-сет — 650 ${UNIT_EMOJI}` },
+  { id: "video_set", kzt: 21000, credits: 650, title: `🎬 Видео-сет — 650 ${UNIT_EMOJI}` },
 
   // Retired: the old one-size combo. Kept ONLY so orders already placed against
   // it can still be granted (see Pack.retired) — never listed, never anchored.
   { id: "combo", kzt: 1000, credits: 36, title: "🔥 Комбо-сет: 3 видео", offer: true, retired: true },
 
   // --- GenAI course tiers (docs/course-funnel.md, docs/course/README.md) ---
-  // Priced identically to `start`/`pro` on purpose — the course-funnel pricing
-  // is the same ladder anchor, just packaged with a cohort invite on top, so the
-  // included 🔫 alone already covers most of the sticker price.
+  // These kept their prices through the 2026-07 reprice, so they are no longer
+  // at ladder parity: the patrons inside `course_fast` are worth 2 400 ₸ of a
+  // 3 700 ₸ product, and `course_flagship`'s are worth 17 000 ₸ of 25 000 ₸. The
+  // difference is what the teaching costs, stated instead of hidden — a course
+  // priced at exactly its patron content is a course we are giving away.
   {
     id: "course_fast",
     kzt: 3700,
@@ -2138,4 +2180,38 @@ export const REFERRAL_MILESTONES: Milestone[] = [
   { friends: 3, bonus: 20 },
   { friends: 10, bonus: 75 },
   { friends: 25, bonus: 250 },
+];
+
+/**
+ * Partner cashback ladder — a LOWER base with a HIGHER ceiling than the flat
+ * rate it replaces.
+ *
+ * A flat rate pays the same share to a partner who brought one buyer and to one
+ * who brought a hundred, so it is simultaneously too expensive at the bottom
+ * (where most codes never convert twice) and not competitive at the top (where
+ * the people who actually move volume can get better terms elsewhere). The
+ * ladder moves that money from the bottom to the top: the base is
+ * `PARTNER_PERCENT` (config), and each rung below raises it once a partner's
+ * codes have actually brought that much PAID revenue in.
+ *
+ * Volume is lifetime ₸ of *granted* orders attributed to the partner's own
+ * codes — money that already arrived, never invites or clicks, so a rung cannot
+ * be reached by farming signups.
+ *
+ * Percent is a per-code column, so a partner enrolled on older terms keeps
+ * whatever they were promised: the effective rate is the MAX of their stored
+ * rate and the rung their volume has earned. Nobody's terms get worse.
+ *
+ * Thresholds are commercial terms we state to partners out loud (unlike the XP
+ * table, which is private tuning) — they belong in the repo so the bot, the
+ * Mini App and docs/partner-program.md cannot drift apart.
+ */
+export interface PartnerTier {
+  kzt: number; // lifetime attributed PAID revenue that unlocks this rung
+  percent: number; // cashback share of the pack, in 🔫
+}
+export const PARTNER_TIERS: PartnerTier[] = [
+  { kzt: 100_000, percent: 0.12 },
+  { kzt: 300_000, percent: 0.15 },
+  { kzt: 1_000_000, percent: 0.2 },
 ];
