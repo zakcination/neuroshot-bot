@@ -685,12 +685,18 @@ await step("reference video: several photos of one subject build one clip", asyn
 
   // The Studio must OFFER the extra-photo affordance here: it is a video model,
   // and the client used to hide extras for every video model.
+  //
+  // Read at the MODEL root. This assertion used to check `image.maxInputs`, and
+  // it passed the whole time the feature was dead: the payload carried the cap,
+  // but the client's clamp read it off `m.video` in video mode, got undefined,
+  // and trimmed every added photo on the next render. Asserting the field the
+  // client actually consumes is the difference between the two.
   const cat = (await apiMe(signInitData(maker))).body.catalog as unknown as {
-    studio: { video: Array<{ key: string; image: { maxInputs: number } | null }> };
+    studio: { video: Array<{ key: string; maxInputs: number }> };
   };
   const entry = cat.studio.video.find((m) => m.key === "seedance_ref");
   assert.ok(entry, "seedance_ref missing from the studio video list");
-  assert.equal(entry.image?.maxInputs, 9, "the client cannot show the affordance without this cap");
+  assert.equal(entry.maxInputs, 9, "the client cannot show the affordance without this cap");
 
   await addCredits(maker.id, 38, "admin_grant", "test");
   const r = await fetch(`${base}/api/generate`, {
@@ -1864,6 +1870,29 @@ await step("video composer: duration scales the charge, ratio flows to fal, stor
   assert.equal(Number(row.cost_usd), 1.68); // 0.168 perSecondUsd × 10s
 });
 
+await step("studio catalog: the reference model advertises its 9 photos and its audio/video inputs", async () => {
+  // What broke: `maxInputs` was serialised inside the `image` block, and the
+  // studio reads `m.image` or `m.video` depending on mode. In video mode — the
+  // only mode seedance_ref runs in — the clamp read m.video.maxInputs, got
+  // undefined, fell back to 1, and trimmed every extra photo the user added on
+  // the very next render. The 9-photo reference mode was unreachable from the
+  // day it shipped, and so was the audio/video block nested under it.
+  const { body } = await apiMe(signInitData(maker));
+  const c = body.catalog as unknown as {
+    studio: { video: Array<{ key: string; maxInputs: number; reference: boolean }> };
+  };
+  const ref = c.studio.video.find((m) => m.key === "seedance_ref");
+  assert.ok(ref, "seedance_ref missing from the studio's video models");
+  assert.equal(ref!.maxInputs, 9, "the reference model must advertise all 9 photographs it reads");
+  assert.equal(ref!.reference, true, "the reference model must advertise its audio/video inputs");
+  // And the limit must be readable WITHOUT knowing which capability block the
+  // model happens to carry — that coupling is what hid it.
+  for (const m of c.studio.video) {
+    assert.equal(typeof m.maxInputs, "number", `${m.key}: maxInputs missing at the model root`);
+    assert.ok(m.maxInputs >= 1, `${m.key}: nonsense maxInputs`);
+  }
+});
+
 await step("every video model's duration ladder is sane: ascending, defaulted, monotonically priced", async () => {
   // The slider indexes these lists, so their SHAPE is load-bearing in a way it
   // was not when the UI was two chips: an unsorted list makes dragging right
@@ -2760,13 +2789,15 @@ await step("multi-image input: extra angles ride along, are capped per model, an
   assert.equal((await apiMe(signInitData(mu))).body.dashboard.credits, before, "refused requests must not charge");
 
   // The catalog tells the client the per-model cap, so the UI can stop earlier.
+  // At the model root, alongside the video models — one field, read the same way
+  // in both modes.
   const cat = (await apiMe(signInitData(mu))).body.catalog as unknown as {
-    studio: { image: Array<{ key: string; image: { maxInputs: number } | null }> };
+    studio: { image: Array<{ key: string; maxInputs: number }> };
   };
-  assert.equal(cat.studio.image.find((m) => m.key === "seedream_edit")!.image!.maxInputs, 4);
-  assert.equal(cat.studio.image.find((m) => m.key === "premium_edit")!.image!.maxInputs, 2);
+  assert.equal(cat.studio.image.find((m) => m.key === "seedream_edit")!.maxInputs, 4);
+  assert.equal(cat.studio.image.find((m) => m.key === "premium_edit")!.maxInputs, 2);
   // A text-to-image model reads no photo at all — 1, so no "add angle" affordance.
-  assert.equal(cat.studio.image.find((m) => m.key === "text_to_image")!.image!.maxInputs, 1);
+  assert.equal(cat.studio.image.find((m) => m.key === "text_to_image")!.maxInputs, 1);
 });
 
 await step("registry invariant: every declared styleRef points at art that actually exists", async () => {

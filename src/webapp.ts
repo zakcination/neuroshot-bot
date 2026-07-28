@@ -267,6 +267,17 @@ function studioModelsOf(mode: "image" | "video", eta: Record<string, number>): A
       // yet, and the client must then show its coarse copy, not a fake number.
       etaSeconds: eta[m.key] ?? 0,
       needsImage: m.kind !== "text_to_image",
+      // How many of the user's OWN photos this model reads, including the first.
+      // 1 = single-photo model, so the client shows no "add another angle"
+      // affordance. Extra angles never change the price.
+      //
+      // At the MODEL root, not inside `image`, because that is what it describes:
+      // how many inputs the endpoint takes. It used to live in the image block,
+      // which meant the studio — reading `m.video` while in video mode — could
+      // not see it at all, and `seedance_ref` (9 photos, the whole point of the
+      // model) silently fell back to 1. Nothing about a limit on input photos
+      // belongs to the image-vs-video split.
+      maxInputs: m.image?.maxInputs ?? 1,
       image: m.image
         ? {
             aspectRatios: m.image.aspectRatios,
@@ -282,10 +293,6 @@ function studioModelsOf(mode: "image" | "video", eta: Record<string, number>): A
             // rather than reading a precomputed per-count price. 0 = no count
             // selector (maxCount unset — unverified endpoints, e.g. premium_*).
             maxCount: m.image.maxCount ?? 0,
-            // How many of the user's OWN photos this model reads, including the
-            // first. 1 = single-photo model, so the client shows no "add another
-            // angle" affordance. Extra angles do not change the price.
-            maxInputs: m.image.maxInputs ?? 1,
           }
         : null,
       // Does this model read audio/video references? The client shows the rights

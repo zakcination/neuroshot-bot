@@ -1361,8 +1361,13 @@
       if (n) n.textContent = jobs.size;
     }
 
+    // Order is the reading order of the row, and it is deliberate: the two
+    // things most people came for sit together on the left (a photo, and that
+    // photo moving), the open-ended "describe it yourself" follows, and the two
+    // destination-style entries — a ready-made scenario, and the seller's
+    // product shot — anchor the right where you go looking for them.
     const TABS = [
-      ["shoot", "📸 Фотосессия"], ["product", "🛍 Товар"], ["scenes", "🎉 Сценарии"], ["video", "🎬 Видео"], ["text", "✨ По описанию"],
+      ["shoot", "📸 Фотосессия"], ["video", "🎬 Видео"], ["text", "✨ По описанию"], ["scenes", "🎉 Сценарии"], ["product", "🛍 Товар"],
     ];
 
     function studio(tab) {
@@ -2546,7 +2551,11 @@
       // Keyed off the MODEL's capability, not the mode. This used to force 1 for
       // any video model, which was true until Seedance's reference mode arrived —
       // it builds a clip from up to 9 photographs of the same subject.
-      const maxInputs = (caps && caps.maxInputs) || 1;
+      // Read from the MODEL, not from `caps`: caps is m.image or m.video by mode,
+      // and the input limit belongs to neither — reading it off the video caps in
+      // video mode is exactly what made Seedance's 9-photo reference mode
+      // invisible from the day it shipped.
+      const maxInputs = (m && m.maxInputs) || 1;
       if (stu.extras.length > maxInputs - 1) stu.extras = stu.extras.slice(0, Math.max(0, maxInputs - 1));
       // Switching to a model that does not read audio/video drops them: the
       // server would refuse the request anyway, and carrying them invisibly is
@@ -2641,7 +2650,7 @@
       // > 1 reads several photographs (Seedance reference mode). The gate is and
       // always was "does this model actually read more than one".
       const caps = m && m.image;
-      const maxInputs = (caps && caps.maxInputs) || 1;
+      const maxInputs = (m && m.maxInputs) || 1;
       if (!hasSource || maxInputs < 2) return "";
       const extras = stu.extras || [];
       const room = maxInputs - 1 - extras.length;
