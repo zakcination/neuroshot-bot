@@ -1776,6 +1776,7 @@ await step("catalog: model news banner + video composer params (durations priced
       key: string;
       video: {
         durations: Array<{ seconds: number; credits: number }>;
+        defaultSeconds: number;
         aspectRatios: string[];
         endFrame: boolean;
         resolutions: Array<{ id: string; label: string; credits: number }>;
@@ -1793,9 +1794,26 @@ await step("catalog: model news banner + video composer params (durations priced
   for (const n of c.news) assert.equal(n.freeTrial, n.credits <= 3, `${n.key} freeTrial wrong`);
   assert.ok(c.news.some((n) => n.key === "text_to_image" && n.credits === 2 && n.freeTrial), "Seedream free-trial entry missing from news");
   const kling = c.videoModels.find((m) => m.key === "kling3")!;
-  assert.deepEqual(kling.video!.durations.map((d) => d.seconds), [5, 10]);
-  assert.equal(kling.video!.durations[0].credits, 42); // 5s default
-  assert.equal(kling.video!.durations[1].credits, 84); // 10s = 2× ($0.168/s)
+  // Every second the endpoint accepts, not the two we used to offer. Asserted as
+  // a dense ascending range rather than a literal list, so adding a length is a
+  // registry edit and not a test edit — what must hold is the SHAPE.
+  const kSecs = kling.video!.durations.map((d) => d.seconds);
+  assert.deepEqual([...kSecs].sort((a, b) => a - b), kSecs, "durations must be ascending — the slider indexes them");
+  assert.ok(kSecs.length >= 10, `kling3 offers only ${kSecs.length} lengths — the endpoint accepts 3–15`);
+  assert.deepEqual(kSecs, Array.from({ length: kSecs.length }, (_, i) => kSecs[0] + i), "gaps in a dense range");
+  // The price is quoted for defaultSeconds, and that must be IN the list — the
+  // client opens the composer on it.
+  assert.ok(kSecs.includes(kling.video!.defaultSeconds));
+  assert.equal(kling.video!.durations.find((d) => d.seconds === kling.video!.defaultSeconds)!.credits, 42);
+  assert.equal(kling.video!.durations.find((d) => d.seconds === 10)!.credits, 84); // 2× the 5s ($0.168/s)
+  // Longer is never cheaper: the slider shows this price as the user drags, and
+  // a non-monotonic ladder would read as a bug in the product, not in the data.
+  for (let i = 1; i < kling.video!.durations.length; i++) {
+    assert.ok(
+      kling.video!.durations[i].credits > kling.video!.durations[i - 1].credits,
+      `${kling.video!.durations[i].seconds}s is not dearer than ${kling.video!.durations[i - 1].seconds}s`,
+    );
+  }
   // Kling has NO aspect_ratio param (ratio inherited from the frame) — advertise honestly.
   assert.deepEqual(kling.video!.aspectRatios, ["auto"]);
   assert.equal(kling.video!.endFrame, true); // …but it DOES support an end frame
@@ -1846,13 +1864,55 @@ await step("video composer: duration scales the charge, ratio flows to fal, stor
   assert.equal(Number(row.cost_usd), 1.68); // 0.168 perSecondUsd × 10s
 });
 
+await step("every video model's duration ladder is sane: ascending, defaulted, monotonically priced", async () => {
+  // The slider indexes these lists, so their SHAPE is load-bearing in a way it
+  // was not when the UI was two chips: an unsorted list makes dragging right
+  // shorten the video, a defaultSeconds outside the list opens the composer on
+  // a length nobody can select, and a non-monotonic price makes the number next
+  // to the slider jump backwards while the user drags forwards.
+  const { MODELS, priceFor } = await import("../src/models.js");
+  for (const [key, spec] of Object.entries(MODELS)) {
+    const v = (spec as { video?: { durations: number[]; defaultSeconds: number } }).video;
+    if (!v) continue;
+    assert.ok(v.durations.length >= 2, `${key}: a slider needs at least two lengths`);
+    assert.deepEqual([...v.durations].sort((a, b) => a - b), v.durations, `${key}: durations not ascending`);
+    assert.equal(new Set(v.durations).size, v.durations.length, `${key}: duplicate durations`);
+    assert.ok(v.durations.includes(v.defaultSeconds), `${key}: defaultSeconds ${v.defaultSeconds} is not selectable`);
+    // The base `credits` is the quote for defaultSeconds — if these disagree the
+    // catalogue advertises one price and the paywall charges another.
+    assert.equal(
+      priceFor(spec, { duration: v.defaultSeconds }),
+      (spec as { credits: number }).credits,
+      `${key}: the default length is not what \`credits\` quotes`,
+    );
+    let prev = 0;
+    for (const sec of v.durations) {
+      const p = priceFor(spec, { duration: sec });
+      assert.ok(p > prev, `${key}: ${sec}s (${p} 🔫) is not dearer than the length before it`);
+      prev = p;
+    }
+  }
+});
+
 await step("video composer validation: bad duration/ratio → 400 bad_opts, bad story id → bad_option", async () => {
+  // Past the endpoint's ceiling — 15s is the longest Kling 3.0 accepts.
   const badDur = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "model", model: "kling3", image_url: "https://fal.test/x/a.jpg", prompt: "m", duration: 7 }),
+    body: JSON.stringify({ source: "model", model: "kling3", image_url: "https://fal.test/x/a.jpg", prompt: "m", duration: 20 }),
   });
   assert.equal(badDur.status, 400);
   assert.equal(((await badDur.json()) as { error: string }).error, "bad_opts");
+
+  // Per-MODEL, not one global range: 7s is perfectly valid on Kling 3.0 and not
+  // a length Hailuo offers at all. This is the guarantee the duration slider
+  // leans on — it indexes each model's own list, so a value legal elsewhere must
+  // still be refused here rather than sent on to fail at the provider.
+  const wrongModelDur = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "hailuo_fast", image_url: "https://fal.test/x/a.jpg", prompt: "m", duration: 7 }),
+  });
+  assert.equal(wrongModelDur.status, 400);
+  assert.equal(((await wrongModelDur.json()) as { error: string }).error, "bad_opts");
 
   const badRatio = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
@@ -1901,7 +1961,10 @@ await step("input params: image aspect ratio → image_size, quality tier prices
   });
   assert.equal(sv.status, 200);
   const svd = (await sv.json()) as { id: number; credits: number };
-  assert.equal(svd.credits, 61); // 61 base (5s 720p); 480p priced same as 720p (mult 1) until measured
+  // 480p is half the 720p charge: the family bills per token and tokens track
+  // pixels, so the cheaper tier must actually cost less — a quality control that
+  // changes the render and not the price is a control that appears broken.
+  assert.equal(svd.credits, 31); // ceil(61 × 0.5)
   await pollGen(svd.id);
   const scall = falCalls.at(-1)!;
   assert.equal(scall.input.aspect_ratio, "9:16");
