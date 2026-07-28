@@ -1689,6 +1689,48 @@ await step("partner: a vanity code is still kind='partner' — laddered and with
   assert.match(calls("sendMessage").at(-1)!.payload.text as string, /уже занят/);
 });
 
+await step("partner: /partner_grant @username enrols with just the handle — no /id round-trip", async () => {
+  // The scalable onboarding path: the creator taps /start (the only thing we
+  // ever ask of them), the admin enrols by the @handle they are already talking
+  // to. Case-insensitive, because Telegram handles are.
+  const cre: From = { id: 8904, is_bot: false, first_name: "Handled", username: "Handled_Creator" };
+  await sendText(cre, "/start");
+  await sendText(admin, "/partner_grant @handled_creator handled31");
+  const row = (await query("SELECT code, kind FROM partner_codes WHERE user_id=$1", [cre.id]))[0];
+  assert.ok(row, "the @username path must actually enrol");
+  assert.equal(String(row.code), "handled31");
+  assert.equal(String(row.kind), "partner");
+  // the confirmation names the finished link, so the admin can forward it as-is
+  const confirm = calls("sendMessage").filter((c) => c.payload.chat_id === admin.id).at(-1)!;
+  assert.match(confirm.payload.text as string, /p_handled31/);
+
+  // the contract-tranche flow runs on the same handle: /grant @handle <n>
+  const balBefore = await credits(cre.id);
+  await sendText(admin, "/grant @handled_creator 400");
+  assert.equal(await credits(cre.id), balBefore + 400);
+
+  // an unknown handle fails with the fallback instruction, enrolling nobody
+  const before = (await query("SELECT COUNT(*) AS n FROM partner_codes"))[0].n;
+  await sendText(admin, "/partner_grant @nobody_here nope31");
+  assert.equal((await query("SELECT COUNT(*) AS n FROM partner_codes"))[0].n, before);
+  assert.match(calls("sendMessage").at(-1)!.payload.text as string, /Не знаю @nobody_here/);
+});
+
+await step("a changed @username is refreshed on the next interaction, so handle-lookup stays current", async () => {
+  // getOrCreateUser used to write username once at INSERT and never again —
+  // a handle recorded a year ago may belong to a STRANGER today (Telegram
+  // recycles freed usernames), and an admin command resolving by handle would
+  // enrol whoever holds the stale row. Any interaction now refreshes it.
+  const { findUserIdByUsername } = await import("../src/db.js");
+  const ren: From = { id: 8905, is_bot: false, first_name: "Ren", username: "old_handle" };
+  await sendText(ren, "/start");
+  assert.deepEqual(await findUserIdByUsername("@old_handle"), { ok: true, id: 8905 });
+
+  await sendText({ ...ren, username: "new_handle" }, "/menu");
+  assert.deepEqual(await findUserIdByUsername("@new_handle"), { ok: true, id: 8905 });
+  assert.equal((await findUserIdByUsername("@old_handle")).ok, false, "the stale handle must stop resolving");
+});
+
 await step("partner ladder: volume raises the rate; a grandfathered rate is never cut", async () => {
   const { config: cfg } = await import("../src/config.js");
   const { partnerRateFor } = await import("../src/db.js");

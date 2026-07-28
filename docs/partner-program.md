@@ -8,6 +8,10 @@ Enrolment is **by invitation**: an admin runs `/partner_grant`. There is no
 self-serve join, and no button anywhere grants the welcome bonus to whoever taps
 it.
 
+The end-to-end business process around this machinery — outreach, offer,
+contract, enrolment, instruction, payouts, renewal — is
+`docs/creator-partnerships.md`.
+
 ## The offer (user-facing)
 
 - Персональная ссылка и приветственный бонус в токенах 🔫
@@ -93,13 +97,17 @@ granted when the payout runs). That is the direction to be generous in.
 - `/partner` — dashboard: codes + per-code funnel / current rate + ₸ to the next
   rung / withdrawable / withdraw / manage. Non-partners see the pitch and how to
   apply, never a button that enrols them.
-- `/partner_grant <tg_id> [code]` — admin: enrol a partner (the only way in).
-  The optional slug mints a **vanity** code — a creator's own handle reads better
-  in a bio than a random one — and it stays `kind='partner'`, so the ladder and the
-  withdrawable cashback come with it. Do **not** reach for `/partner_add` to get a
-  named code: that mints `kind='creator'`, which is a flat rate settled off-platform
-  and **not** withdrawable. A slug already in use is refused rather than silently
-  swapped for a random one.
+- `/partner_grant <tg_id | @username> [code]` — admin: enrol a partner (the only
+  way in). `@username` resolves against the stored (and interaction-refreshed)
+  handle, so enrolling a creator needs nothing from them beyond `/start` — no
+  «пришлите /id» round-trip; an ambiguous or unknown handle is refused with the
+  numeric-id fallback named. The optional slug mints a **vanity** code — a
+  creator's own handle reads better in a bio than a random one — and it stays
+  `kind='partner'`, so the ladder and the withdrawable cashback come with it. Do
+  **not** reach for `/partner_add` to get a named code: that mints
+  `kind='creator'`, which is a flat rate settled off-platform and **not**
+  withdrawable. A slug already in use is refused rather than silently swapped
+  for a random one.
 - `/partner_add <code> <tg_id> <% 1–50> <bonus> [title]` — admin: mint a creator deal.
 - `/payouts` · `/payout <id> ok|no` — admin: process cash-outs.
 

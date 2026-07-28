@@ -15,6 +15,7 @@ import {
   deactivatePartnerCode,
   deleteUserData,
   ensureRefCode,
+  findUserIdByUsername,
   funnel,
   getGeneration,
   getOrCreateUser,
@@ -1588,20 +1589,39 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   // Admin: enroll a user into the partner program. Partnerships are admin-served,
   // never self-serve — this is the ONLY way the welcome bonus + first code are
   // granted. The target must have started the bot first (/start).
-  // /partner_grant <tg_id>
+  // /partner_grant <tg_id | @username> [код]
   bot.command("partner_grant", async (ctx) => {
     if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
-    const [idS, codeS] = (ctx.match ?? "").trim().split(/\s+/);
-    const targetId = Number(idS);
+    const [whoS, codeS] = (ctx.match ?? "").trim().split(/\s+/);
     // An optional vanity slug — a creator's own handle reads far better in a
     // bio than a random one. It still mints kind='partner', so the ladder and
     // withdrawable cashback come with it; /partner_add would NOT.
     const custom = codeS ? codeS.toLowerCase() : undefined;
-    if (!Number.isInteger(targetId) || targetId <= 0 || (custom && !/^[a-z0-9_]{2,32}$/.test(custom))) {
-      await ctx.reply(
-        "Формат: /partner_grant <tg_id> [код a-z0-9_ 2–32]\n" +
-          "Пользователь должен сначала запустить бота (/start).",
-      );
+    const usage =
+      "Формат: /partner_grant <tg_id | @username> [код a-z0-9_ 2–32]\n" +
+      "Пользователь должен сначала запустить бота (/start).";
+    if (!whoS || (custom && !/^[a-z0-9_]{2,32}$/.test(custom))) {
+      await ctx.reply(usage);
+      return;
+    }
+    // Accept the @handle the admin is already talking to — the numeric id
+    // required a «пришлите /id» round-trip with every creator, which was the
+    // one manual step left in an otherwise one-tap enrolment.
+    let targetId = Number(whoS);
+    if (whoS.startsWith("@")) {
+      const found = await findUserIdByUsername(whoS);
+      if (!found.ok) {
+        await ctx.reply(
+          found.error === "ambiguous"
+            ? `⚠️ ${whoS} числится за несколькими аккаунтами (освободившийся юзернейм могли занять заново). Подключите по числовому id — пусть пользователь пришлёт /id.`
+            : `Не знаю ${whoS} — пользователь ещё не запускал бота (/start), либо юзернейм записан иначе. Запасной путь: числовой id из /id.`,
+        );
+        return;
+      }
+      targetId = found.id;
+    }
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      await ctx.reply(usage);
       return;
     }
     const res = await joinPartnerProgram(targetId, config.partnerWelcome);
@@ -1684,12 +1704,34 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     );
   });
 
-  // Admin: top up 🔫 for testing (self by default, or a target user).
-  // /grant <amount>  |  /grant <tg_id> <amount>  (amount may be negative to deduct)
+  // Admin: top up 🔫 for testing, or issue a creator's contract tranche
+  // (docs/creator-partnerships.md §4).
+  // /grant <amount>  |  /grant <tg_id | @username> <amount>  (negative deducts)
   bot.command("grant", async (ctx) => {
     if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
     const args = (ctx.match ?? "").trim().split(/\s+/).filter(Boolean);
-    const targetId = args.length === 2 ? Number(args[0]) : ctx.from.id;
+    const usage =
+      "Формат: /grant <кол-во> или /grant <tg_id | @username> <кол-во>\nПример: /grant 9999";
+    // Accept the @handle here too — the creator-tranche flow runs entirely on
+    // the handle the admin is already talking to (same resolver as
+    // /partner_grant, same ambiguity refusal).
+    let targetId = ctx.from.id;
+    if (args.length === 2) {
+      if (args[0].startsWith("@")) {
+        const found = await findUserIdByUsername(args[0]);
+        if (!found.ok) {
+          await ctx.reply(
+            found.error === "ambiguous"
+              ? `⚠️ ${args[0]} числится за несколькими аккаунтами — начислите по числовому id (/id).`
+              : `Не знаю ${args[0]} — пользователь ещё не запускал бота (/start). Запасной путь: числовой id из /id.`,
+          );
+          return;
+        }
+        targetId = found.id;
+      } else {
+        targetId = Number(args[0]);
+      }
+    }
     const amount = Number(args.length === 2 ? args[1] : args[0]);
     // Exactly 1 or 2 args — reject trailing tokens so a mistyped command can't
     // silently grant something other than what the admin meant.
@@ -1700,7 +1742,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       !Number.isInteger(amount) ||
       amount === 0
     ) {
-      await ctx.reply("Формат: /grant <кол-во> или /grant <tg_id> <кол-во>\nПример: /grant 9999");
+      await ctx.reply(usage);
       return;
     }
     const target = await getUser(targetId);
