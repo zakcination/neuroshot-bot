@@ -8,13 +8,19 @@ and the viral campaigns that feed it. Campaigns are LIVE in the bot
 > lives only on the owner's machine — push it to the repo and we mine it for
 > the strongest prompts (→ more campaign presets) and course lesson content.
 
-## The ladder (free → $9 → $50)
+## The ladder (free → 3 800 ₸ → 25 000 ₸)
+
+Both paid tiers are priced by their **patron count**, not their sticker: the
+2026-07 ladder move left them at 61.7 and 50 ₸/🔫 against a 30–40 ₸ band, which
+made the tier below («Фото-сет», 38 ₸/🔫) a strictly better buy than the course
+it was supposed to feed. The tickets stayed where they were and the patrons
+inside moved up instead — see `docs/pricing.md` § Course tiers for the split.
 
 | Tier | Offer | Contents | Why it converts |
 |---|---|---|---|
 | **Free tripwire** | «10 готовых промптов + 5 🔫 в подарок» | Telegra.ph/PDF guide with 10 copy-paste prompts, each ending "или просто нажмите кнопку в боте"; a partner deep link (`?start=c_<code>`) grants +5 🔫 | Value up front (valuemaxxing); the gift lands them *inside* the bot with ammo to feel the magic |
-| **$9 «Быстрый старт»** | Mini-course, 5 short lessons + **60 🔫 included** | Lessons: 1) фото → 3 стиля, 2) карточка товара, 3) сказка с ребёнком (campaign!), 4) оживление фото, 5) как продавать результат. Delivered as a private TG channel — invite is now automatic on purchase (see below) | The included 🔫 pack alone ≈ the price — the course feels free (valuemaxxing) |
-| **$50 «AI-контент под ключ»** | Flagship, 3 modules + **500 🔫** + cohort chat + certificate | M1: фото/аватары, M2: видео и оживление, M3: продажи — маркетплейсы, клиенты, прайсинг. Homework runs in the bot | Serious buyers get a business skill + practice budget; mentor co-brand carries trust |
+| **3 800 ₸ «Быстрый старт»** | Mini-course, 5 short lessons + **100 🔫 included** | Lessons: 1) фото → 3 стиля, 2) карточка товара, 3) сказка с ребёнком (campaign!), 4) оживление фото, 5) как продавать результат. Delivered as a private TG channel — invite is now automatic on purchase (see below) | The included 🔫 pack alone **is** the price — 100 🔫 cost 3 800 ₸ on the pay screen, so the lessons are literally free, and an e2e step keeps that equality true |
+| **25 000 ₸ «AI-контент под ключ»** | Flagship, 3 modules + **700 🔫** + cohort chat + certificate | M1: фото/аватары, M2: видео и оживление, M3: продажи — маркетплейсы, клиенты, прайсинг. Homework runs in the bot | Serious buyers get a business skill + practice budget; the 700 🔫 cost 21 000 ₸ alone, so the teaching is a stated 4 000 ₸ rather than a hidden markup |
 
 Payments: Kaspi/KZT (`course_fast` / `course_flagship` packs, `src/models.ts`),
 bought via the same `/buy`-style flow as any pack, surfaced through the
@@ -36,8 +42,11 @@ teaching/homework review inside the channel is still manual.
 2. **Value** — free tripwire guide drop. Every reader lands in the bot with +5 🔫.
 3. **Proof** — user-generated results, before/after, screen-recording of the
    one-tap flow (it takes literally two taps — show that).
-4. **Open cart** — $9 mini-course, 48-hour window, «60 🔫 внутри».
-5. **Ascend** — buyers of $9 get the $50 offer with the $9 credited.
+4. **Open cart** — «Быстрый старт», 48-hour window, «100 🔫 внутри — уроки бесплатно».
+5. **Ascend** — «Быстрый старт» buyers get the flagship offer. ⚠️ The old copy
+   promised «цена $9 засчитывается»; no upgrade, coupon or credit path exists in
+   `grantPurchase` (`docs/course/BLOCKERS.md` §6), so this sequence must not
+   promise a credit until one is built.
 
 ## The 6 live campaigns (one-tap presets in the bot)
 

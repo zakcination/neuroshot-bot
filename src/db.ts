@@ -579,7 +579,45 @@ export async function getOrCreateUser(
     return u;
   }
   const existing = await q("SELECT * FROM users WHERE id = $1", [id]);
-  return mapUser(existing[0]);
+  const u = mapUser(existing[0]);
+  // Refresh a drifted @username. It used to be written once at INSERT and never
+  // again, which quietly rotted every surface that resolves people by handle —
+  // /ref_math's display names, and /partner_grant @username enrolment, where a
+  // stale handle can point at the WRONG человек (Telegram recycles freed
+  // usernames). Only on change (no write on the hot path otherwise), and never
+  // for a soft-deleted account: deleteUserData scrubbed that column on purpose,
+  // and an API call carrying the old session must not quietly undo the scrub.
+  if (username && u.username !== username) {
+    const updated = await q(
+      "UPDATE users SET username = $2 WHERE id = $1 AND deleted_at IS NULL RETURNING id",
+      [id, username],
+    );
+    if (updated.length) u.username = username;
+  }
+  return u;
+}
+
+/**
+ * Resolve a Telegram @username to the account that currently holds it — for
+ * admin commands, so enrolling a partner needs only the handle the admin is
+ * already talking to, not a «пришлите /id» round-trip with the creator.
+ *
+ * Case-insensitive (Telegram handles are), and returns "ambiguous" when the
+ * handle matches more than one row: usernames are unique on Telegram at any
+ * moment but can be freed and re-taken, so two stale rows CAN collide — and an
+ * admin command that silently picks one would enrol a stranger. The staleness
+ * window itself is closed by getOrCreateUser refreshing the handle on every
+ * interaction, so the holder who talked to the bot most recently is current.
+ */
+export async function findUserIdByUsername(
+  username: string,
+): Promise<{ ok: true; id: number } | { ok: false; error: "not_found" | "ambiguous" }> {
+  const rows = await q(
+    "SELECT id FROM users WHERE LOWER(username) = LOWER($1) AND deleted_at IS NULL",
+    [username.replace(/^@/, "")],
+  );
+  if (rows.length === 1) return { ok: true, id: Number(rows[0].id) };
+  return { ok: false, error: rows.length ? "ambiguous" : "not_found" };
 }
 
 export interface WelcomeClaim {
@@ -1095,15 +1133,24 @@ export async function joinPartnerProgram(userId: number, welcome: number): Promi
 }
 
 /**
- * Mint a new self-serve partner code for a user (kind='partner', flat percent).
- * Enforces the per-account active-code cap. Returns the code, or an error tag.
+ * Mint a partner's shareable code — always `kind='partner'`, i.e. laddered rate
+ * and withdrawable cashback.
+ *
+ * `customCode` lets an admin hand out a vanity slug (a creator's own handle)
+ * without dropping them onto `/partner_add`, which mints `kind='creator'`:
+ * flat rate, settled off-platform, **not** withdrawable. Those are different
+ * commercial terms, and a creator who is promised the partner ladder must not
+ * end up promoting a creator-kind link. A custom code gets ONE attempt — a
+ * collision is a real conflict the admin has to see and resolve, not something
+ * to silently retry into a different slug.
  */
 export async function createPartnerCode(
   userId: number,
   percent: number,
   inviteeBonus: number,
   maxActive: number,
-): Promise<{ ok: true; code: string } | { ok: false; error: "limit" }> {
+  customCode?: string,
+): Promise<{ ok: true; code: string } | { ok: false; error: "limit" | "taken" }> {
   const activeCount = async () =>
     Number(
       (
@@ -1117,8 +1164,9 @@ export async function createPartnerCode(
   // Insert only if still under the cap — the count is re-evaluated INSIDE the
   // statement, so two concurrent calls can't both slip past the limit. An empty
   // result means either the cap was hit in a race or a (rare) slug collision.
-  for (let i = 0; i < 5; i++) {
-    const code = genCode();
+  const attempts = customCode ? 1 : 5;
+  for (let i = 0; i < attempts; i++) {
+    const code = customCode ?? genCode();
     const ins = await q(
       `INSERT INTO partner_codes (code, user_id, percent, join_bonus, kind, active)
        SELECT $1, $2, $3, $4, 'partner', true
@@ -1128,6 +1176,10 @@ export async function createPartnerCode(
     );
     if (ins.length) return { ok: true, code };
     if ((await activeCount()) >= maxActive) return { ok: false, error: "limit" }; // cap, not collision
+    // A named code that did not insert is already taken — by this owner, by
+    // someone else, or by a creator deal. Say so instead of silently minting a
+    // different slug the admin never asked for.
+    if (customCode) return { ok: false, error: "taken" };
   }
   throw new Error("could not generate a unique partner code");
 }

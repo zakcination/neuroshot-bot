@@ -15,6 +15,7 @@ import {
   deactivatePartnerCode,
   deleteUserData,
   ensureRefCode,
+  findUserIdByUsername,
   funnel,
   getGeneration,
   getOrCreateUser,
@@ -66,6 +67,7 @@ import {
   FREE_SCENARIOS,
   freeScenarioById,
   IMAGE_MODEL_PICKER,
+  ladderValueOf,
   MODELS,
   packById,
   PARTNER_TIERS,
@@ -170,18 +172,38 @@ export function mainMenu(
   return kb;
 }
 
-/** /course overview text: the free → $9 → $50 ladder (docs/course-funnel.md). */
+/** «25 000 ₸» — grouped the way the pay screen and the Kaspi receipt show it. */
+const tenge = (n: number): string => `${n.toLocaleString("ru-RU")} ₸`;
+
+/**
+ * /course overview text: the free → «Быстрый старт» → «Под ключ» ladder
+ * (docs/course-funnel.md).
+ *
+ * Each paid tier states what its patrons cost on the pay screen, so the buyer
+ * can see what they are paying for the teaching instead of taking our word for
+ * it: zero on the tripwire (its patrons are worth exactly its ticket) and 4 000 ₸
+ * on the flagship. Both numbers are derived — `ladderValueOf` reads the same
+ * PACKS the pay screen does, so a ladder move updates this screen with it and
+ * cannot leave a stale claim behind. The old copy asserted «с запасом на весь
+ * курс» about a budget that the shipped Lesson 2 homework overspends by more
+ * than double (docs/course/BLOCKERS.md §4) — a pre-payment promise the product
+ * did not keep, and the kind most likely to come back as a refund demand.
+ */
 function courseText(): string {
   const fast = packById("course_fast");
   const flagship = packById("course_flagship");
+  const flagshipTuition = flagship ? flagship.kzt - ladderValueOf(flagship.credits) : 0;
   return (
     `🎓 <b>Курс по AI-контенту — от новичка до продаж</b>\n\n` +
     `📖 <b>Бесплатно</b> — 10 готовых промптов, каждый уже "зашит" в кнопку бота.\n` +
     (fast
-      ? `🚀 <b>«Быстрый старт» — ${fast.kzt} ₸</b> — 5 уроков + ${nUnits(fast.credits)} внутри (с запасом на весь курс).\n`
+      ? `🚀 <b>«Быстрый старт» — ${tenge(fast.kzt)}</b> — 5 уроков + ${nUnits(fast.credits)} внутри. ` +
+        `Столько же патронов отдельно стоят ${tenge(ladderValueOf(fast.credits))} — уроки идут бесплатно.\n`
       : "") +
     (flagship
-      ? `🎓 <b>«AI-контент под ключ» — ${flagship.kzt} ₸</b> — 3 модуля + когорта + ${nUnits(flagship.credits)}.\n\n`
+      ? `🎓 <b>«AI-контент под ключ» — ${tenge(flagship.kzt)}</b> — 3 модуля + когорта + сертификат + ` +
+        `${nUnits(flagship.credits)} (отдельно — ${tenge(ladderValueOf(flagship.credits))}, ` +
+        `то есть обучение — ${tenge(flagshipTuition)}).\n\n`
       : "\n") +
     `Обучение — в приватном Telegram-канале вашей когорты; доступ к каналу открывается ` +
     `автоматически сразу после оплаты.`
@@ -193,8 +215,8 @@ function courseKeyboard(): InlineKeyboard {
   const fast = packById("course_fast");
   const flagship = packById("course_flagship");
   const kb = new InlineKeyboard().text("📖 Бесплатный гайд: 10 промптов", "course:guide").row();
-  if (fast) kb.text(`🚀 «Быстрый старт» — ${fast.kzt} ₸`, "buy:course_fast").row();
-  if (flagship) kb.text(`🎓 «AI-контент под ключ» — ${flagship.kzt} ₸`, "buy:course_flagship").row();
+  if (fast) kb.text(`🚀 «Быстрый старт» — ${tenge(fast.kzt)}`, "buy:course_fast").row();
+  if (flagship) kb.text(`🎓 «AI-контент под ключ» — ${tenge(flagship.kzt)}`, "buy:course_flagship").row();
   return kb;
 }
 
@@ -206,6 +228,9 @@ function courseKeyboard(): InlineKeyboard {
  */
 function freeGuideMessages(): string[] {
   const idKeep = "Keep the person's face and identity exactly as in the photo.";
+  // Read from PACKS rather than typed inline: this line quoted 3700 ₸ / 60 🔫 as
+  // literals and went stale the moment the course tiers were repriced.
+  const fast = packById("course_fast");
   const msg1 =
     `📖 <b>10 готовых промптов, которые залетают</b>\n\n` +
     `Каждый промпт уже "зашит" одним тапом в боте — можно скопировать его в любой генератор вручную, ` +
@@ -264,13 +289,15 @@ function freeGuideMessages(): string[] {
     `Все 10 промптов доступны бесплатно в боте, без единой строчки текста — это и есть NeuroShot: результат, а ` +
     `не промпт-инжиниринг.\n\n` +
     `Хотите не только жать кнопки, но и научиться собирать из этого продающий контент, серии и кино — ` +
-    `5-урочный курс «Быстрый старт» (3700 ₸, ${nUnits(60)} внутри) ждёт вас: /course`;
+    (fast
+      ? `5-урочный курс «Быстрый старт» (${tenge(fast.kzt)}, ${nUnits(fast.credits)} внутри) ждёт вас: /course`
+      : `курс «Быстрый старт» ждёт вас: /course`);
 
   return [msg1, msg2, msg3];
 }
 
 /**
- * «Быстрый старт» ($9, docs/course/01-fast-start.md), lesson by lesson —
+ * «Быстрый старт» (docs/course/01-fast-start.md), lesson by lesson —
  * condensed to Telegram HTML, same treatment as freeGuideMessages. Menu paths
  * mirror the free guide's own shorthand (e.g. "🖼 Редактирование фото", "🎉
  * Кампании" name the FEATURE, not a literal main-menu button — same convention
@@ -396,7 +423,7 @@ export function fastStartLessonMessages(lessonNum: 1 | 2 | 3 | 4 | 5): string[] 
 }
 
 /**
- * «AI-контент под ключ» ($50, docs/course/02-flagship.md), module by module —
+ * «AI-контент под ключ» (docs/course/02-flagship.md), module by module —
  * same Telegram-HTML treatment as fastStartLessonMessages. Prices pulled live
  * from src/models.ts; the 7-day playbook table and frame/narrator table in the
  * source .md become plain numbered lists (Telegram HTML has no table markup).
@@ -1562,28 +1589,85 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   // Admin: enroll a user into the partner program. Partnerships are admin-served,
   // never self-serve — this is the ONLY way the welcome bonus + first code are
   // granted. The target must have started the bot first (/start).
-  // /partner_grant <tg_id>
+  // /partner_grant <tg_id | @username> [код]
   bot.command("partner_grant", async (ctx) => {
     if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
-    const targetId = Number((ctx.match ?? "").trim());
+    const [whoS, codeS] = (ctx.match ?? "").trim().split(/\s+/);
+    // An optional vanity slug — a creator's own handle reads far better in a
+    // bio than a random one. It still mints kind='partner', so the ladder and
+    // withdrawable cashback come with it; /partner_add would NOT.
+    const custom = codeS ? codeS.toLowerCase() : undefined;
+    const usage =
+      "Формат: /partner_grant <tg_id | @username> [код a-z0-9_ 2–32]\n" +
+      "Пользователь должен сначала запустить бота (/start).";
+    if (!whoS || (custom && !/^[a-z0-9_]{2,32}$/.test(custom))) {
+      await ctx.reply(usage);
+      return;
+    }
+    // Accept the @handle the admin is already talking to — the numeric id
+    // required a «пришлите /id» round-trip with every creator, which was the
+    // one manual step left in an otherwise one-tap enrolment.
+    let targetId = Number(whoS);
+    if (whoS.startsWith("@")) {
+      const found = await findUserIdByUsername(whoS);
+      if (!found.ok) {
+        await ctx.reply(
+          found.error === "ambiguous"
+            ? `⚠️ ${whoS} числится за несколькими аккаунтами (освободившийся юзернейм могли занять заново). Подключите по числовому id — пусть пользователь пришлёт /id.`
+            : `Не знаю ${whoS} — пользователь ещё не запускал бота (/start), либо юзернейм записан иначе. Запасной путь: числовой id из /id.`,
+        );
+        return;
+      }
+      targetId = found.id;
+    }
     if (!Number.isInteger(targetId) || targetId <= 0) {
-      await ctx.reply("Формат: /partner_grant <tg_id>. Пользователь должен сначала запустить бота (/start).");
+      await ctx.reply(usage);
       return;
     }
     const res = await joinPartnerProgram(targetId, config.partnerWelcome);
     if (!res.justJoined) {
-      await ctx.reply(`Пользователь ${targetId} уже партнёр — или ещё не запускал бота (/start).`);
+      // With a slug, re-running the command on an EXISTING partner mints that
+      // vanity code for them. Without this, a taken-slug failure was a dead
+      // end: the first attempt had already enrolled the partner, so the retry
+      // stopped at "уже партнёр" and never reached the mint — no admin path to
+      // the code the creator was promised. Welcome is never re-granted (that
+      // fired on the call that actually joined them).
+      if (!custom || !(await partnerAccount(targetId)).joined) {
+        await ctx.reply(`Пользователь ${targetId} уже партнёр — или ещё не запускал бота (/start).`);
+        return;
+      }
+    }
+    // Mint the shareable code — the first on a fresh join, or the requested
+    // vanity slug for an existing partner.
+    const minted = await createPartnerCode(
+      targetId,
+      config.partnerPercent,
+      config.partnerInviteeBonus,
+      config.partnerMaxCodes,
+      custom,
+    );
+    if (!minted.ok) {
+      await ctx.reply(
+        minted.error === "taken"
+          ? `⚠️ Код «${custom}» уже занят — повторите /partner_grant с другим кодом.`
+          : `⚠️ У ${targetId} исчерпан лимит активных ссылок (${config.partnerMaxCodes}).`,
+      );
       return;
     }
-    // Mint the partner's first shareable code, mirroring the old join flow.
-    await createPartnerCode(targetId, config.partnerPercent, config.partnerInviteeBonus, config.partnerMaxCodes);
-    await ctx.api
-      .sendMessage(
-        targetId,
-        `🎉 Вас подключили к партнёрской программе NeuroShot! Начислен бонус ${UNIT_EMOJI} ${nUnits(res.welcome)}. Откройте /partner — там ваша персональная ссылка.`,
-      )
-      .catch(() => {});
-    await ctx.reply(`✅ ${targetId} подключён к партнёрской программе (+${nUnits(res.welcome)}, ссылка создана).`);
+    if (res.justJoined) {
+      await ctx.api
+        .sendMessage(
+          targetId,
+          `🎉 Вас подключили к партнёрской программе NeuroShot! Начислен бонус ${UNIT_EMOJI} ${nUnits(res.welcome)}. Откройте /partner — там ваша персональная ссылка.`,
+        )
+        .catch(() => {});
+    }
+    await ctx.reply(
+      (res.justJoined
+        ? `✅ ${targetId} подключён к партнёрской программе (+${nUnits(res.welcome)}).\n`
+        : `✅ Код добавлен партнёру ${targetId}.\n`) +
+        `Ссылка: t.me/${config.webappBotUsername || "bot"}?start=p_${minted.code}`,
+    );
   });
 
   // Admin: create/update a creator code with per-deal terms.
@@ -1633,12 +1717,34 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     );
   });
 
-  // Admin: top up 🔫 for testing (self by default, or a target user).
-  // /grant <amount>  |  /grant <tg_id> <amount>  (amount may be negative to deduct)
+  // Admin: top up 🔫 for testing, or issue a creator's contract tranche
+  // (docs/creator-partnerships.md §4).
+  // /grant <amount>  |  /grant <tg_id | @username> <amount>  (negative deducts)
   bot.command("grant", async (ctx) => {
     if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
     const args = (ctx.match ?? "").trim().split(/\s+/).filter(Boolean);
-    const targetId = args.length === 2 ? Number(args[0]) : ctx.from.id;
+    const usage =
+      "Формат: /grant <кол-во> или /grant <tg_id | @username> <кол-во>\nПример: /grant 9999";
+    // Accept the @handle here too — the creator-tranche flow runs entirely on
+    // the handle the admin is already talking to (same resolver as
+    // /partner_grant, same ambiguity refusal).
+    let targetId = ctx.from.id;
+    if (args.length === 2) {
+      if (args[0].startsWith("@")) {
+        const found = await findUserIdByUsername(args[0]);
+        if (!found.ok) {
+          await ctx.reply(
+            found.error === "ambiguous"
+              ? `⚠️ ${args[0]} числится за несколькими аккаунтами — начислите по числовому id (/id).`
+              : `Не знаю ${args[0]} — пользователь ещё не запускал бота (/start). Запасной путь: числовой id из /id.`,
+          );
+          return;
+        }
+        targetId = found.id;
+      } else {
+        targetId = Number(args[0]);
+      }
+    }
     const amount = Number(args.length === 2 ? args[1] : args[0]);
     // Exactly 1 or 2 args — reject trailing tokens so a mistyped command can't
     // silently grant something other than what the admin meant.
@@ -1649,7 +1755,7 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
       !Number.isInteger(amount) ||
       amount === 0
     ) {
-      await ctx.reply("Формат: /grant <кол-во> или /grant <tg_id> <кол-во>\nПример: /grant 9999");
+      await ctx.reply(usage);
       return;
     }
     const target = await getUser(targetId);

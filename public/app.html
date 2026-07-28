@@ -246,16 +246,36 @@
 
     .packs { display: grid; gap: 11px; }
     @media (min-width: 560px) { .packs { grid-template-columns: 1fr 1fr; } }
+    /* Card, not a single row: name+price on top, the patron amount + its rate
+       below, and a yield line at the bottom translating the credits into what
+       they actually buy — see packTileHtml. A flat "60 patrons · 3 700 ₸" row
+       read as three unrelated numbers with no unit of meaning between them. */
     .pack {
-      position: relative; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      position: relative; display: flex; flex-direction: column; gap: 10px;
       background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s);
       padding: 16px; cursor: pointer; transition: transform .15s ease, border-color .2s ease; text-align: left;
       color: var(--ink); font: inherit;
     }
     .pack:hover { transform: translateY(-2px); border-color: rgba(124,92,255,.5); }
+    .packtop { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+    /* flex:1 + nowrap/ellipsis, not wrap: at the 2-column breakpoint (≥560px)
+       the narrower card has too little room for "ВИДЕО-СЕТ" beside its price
+       on one line, and letting it wrap breaks mid-word ("ВИДЕО-" / "СЕТ") —
+       an ellipsis reads better than a broken word at any width. */
+    .packname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-size: 12px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .packprice { flex: none; font-weight: 800; color: var(--amber); font-size: 16px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .packmid { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
     .pack .amount { font-size: 21px; font-weight: 800; font-variant-numeric: tabular-nums; }
-    .pack .per { color: var(--faint); font-size: 11px; margin-top: 3px; }
-    .pack .stars { font-weight: 800; color: var(--amber); font-size: 16px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .pack .per { color: var(--faint); font-size: 11px; white-space: nowrap; }
+    .packyield { display: flex; flex-wrap: wrap; gap: 6px 16px; padding-top: 9px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--muted); }
+    .packyield span { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+    .packyield img { width: 13px; height: 13px; opacity: .85; }
+    /* A pack too small to finish the render the user just tried (see .short
+       below) swaps the yield line for the shortfall itself — knowing it
+       covers "up to 30 photos" is useless when the point is that it can't
+       cover THIS request. */
+    .packyield.warn { color: #ff9a9a; border-top-color: rgba(255,138,138,.25); }
     .pack .hot {
       position: absolute; top: -9px; left: 14px; font-size: 9.5px; font-weight: 800; letter-spacing: .1em;
       text-transform: uppercase; background: var(--aurora); padding: 4px 9px; border-radius: 999px; color: #fff;
@@ -1113,7 +1133,7 @@
       // one-off below every rung is the exception that makes the rule unreadable
       // — the buy tab shows it in its own right, on its own tile.
       const packs = [...(d.packs || [])].filter((p) => !p.offer && !p.once).sort((a, b) => a.kzt - b.kzt);
-      const cheapestId = packs.reduce((best, p) => (!best || p.kzt / p.credits < best.kzt / best.credits) ? p : best, null)?.id;
+      const cheapestId = bestValuePackId(packs);
       const presetSample = c.presets.slice(0, 4);
 
       el.innerHTML = `
@@ -1843,6 +1863,71 @@
     /** One wording for a lock, wherever it surfaces — card tap or a server 403. */
     function lockText(lock) {
       return `🔒 Этот стиль открывается на ${lock.need}-м уровне — у вас ${lock.have}.`;
+    }
+
+    /**
+     * The pack with the best real ₸-per-patron rate — excluding time-limited
+     * offers, which are deliberately priced BELOW the ladder as a tripwire
+     * (see PACKS in src/models.ts), not a permanent "best value" to compare
+     * against. Was previously two different things in two places: the
+     * onboarding ladder slide computed this correctly; the buy page and
+     * paywall instead hardcoded a fixed list slot («Популярный», packs[1])
+     * and called it a recommendation regardless of whether it actually was
+     * the best rate — a pack with a WORSE per-patron price than a bigger one
+     * sitting right next to it, wearing a "best" ribbon. One honest
+     * computation now, shared by every surface that tags a pack as the
+     * value pick.
+     */
+    function bestValuePackId(packs) {
+      return (packs || []).filter((p) => !p.offer && !p.once)
+        .reduce((best, p) => (!best || p.kzt / p.credits < best.kzt / best.credits) ? p : best, null)?.id;
+    }
+
+    /**
+     * What a pack's credits actually buy, in things instead of an abstract
+     * number — the translation a raw patron count can't give on its own. Uses the
+     * SAME real minimum prices the onboarding slides already show
+     * (presetCredits, the cheapest video model), never an invented figure, so
+     * it reads as "up to" rather than a promise: mixing photos and videos in
+     * one purchase is the norm, this is just the two pure ends of that range.
+     */
+    function packYield(pack) {
+      const c = (ME && ME.catalog) || {};
+      const photoMin = c.presetCredits || 2;
+      const videoMin = (c.videoModels || []).reduce((a, m) => Math.min(a, m.credits), 1e9);
+      return {
+        photos: Math.floor(pack.credits / Math.max(1, photoMin)),
+        videos: Math.floor(pack.credits / Math.max(1, Math.min(videoMin, 1e9))),
+      };
+    }
+
+    /**
+     * One pack tile's inner markup — shared by the buy page and the paywall/
+     * exit-offer sheets so the three surfaces never drift into three
+     * different readings of the same `.pack` component. `opts.badge` is the
+     * ribbon HTML (sale countdown / recommendation); `opts.warn` replaces the
+     * yield row with a shortfall notice instead of "up to N photos" when this
+     * specific pack can't finish what the user is trying to buy.
+     */
+    function packTileHtml(pack, opts) {
+      opts = opts || {};
+      const name = esc((pack.title || "").split(" — ")[0]);
+      const per = (pack.kzt / pack.credits).toFixed(0);
+      const { photos, videos } = packYield(pack);
+      return `
+        ${opts.badge || ""}
+        <div class="packtop">
+          <span class="packname">${name}</span>
+          <span class="packprice">${pack.kzt.toLocaleString("ru-RU")} ₸</span>
+        </div>
+        <div class="packmid">
+          <span class="amount">${PATRON} ${pack.credits}</span>
+          <span class="per">≈ ${per} ₸ за ${PATRON}</span>
+        </div>
+        <div class="packyield${opts.warn ? " warn" : ""}">${opts.warn ? `<span>⚠️ ${esc(opts.warn)}</span>` : `
+          <span><img class="appicon" src="/img/ic-frame.png" alt="" /> до ${photos} фото</span>
+          <span><img class="appicon" src="/img/ic-film.png" alt="" /> до ${videos} видео</span>`}
+        </div>`;
     }
 
     function viewPick() {
@@ -3087,7 +3172,7 @@
       }
     }
 
-    // ————— paywall: buy Stars packs WITHOUT leaving the app —————
+    // ————— paywall: buy patron packs WITHOUT leaving the app —————
     // Exit-offer shown at most once per app session (growth doctrine #683: the
     // moment the paywall is dismissed is the highest-intent instant to make the
     // best offer). The offer IS the existing combo pack — already ~half the
@@ -3117,9 +3202,10 @@
       if (combo && !exitOfferShown) sheetCloseHook = () => viewExitOffer(combo, data);
       const ladderTiles = packs.filter((p) => !p.once).map((p) => `
           <button class="pack ${best && p.id === best.id ? "best" : ""} ${covers(p) ? "" : "short"}" data-pk="${p.id}">
-            ${best && p.id === best.id ? '<span class="hot">Хватит на этот кадр</span>' : ""}
-            <span><span class="amount">${PATRON} ${p.credits}</span><div class="per">≈ ${(p.kzt / p.credits).toFixed(0)} ₸ за патрон${covers(p) ? "" : ` · не хватит на этот кадр`}</div></span>
-            <span class="stars">${p.kzt.toLocaleString("ru-RU")} ₸</span>
+            ${packTileHtml(p, {
+              badge: best && p.id === best.id ? '<span class="hot">Хватит на этот кадр</span>' : "",
+              warn: covers(p) ? null : "не хватит на этот кадр",
+            })}
           </button>`).join("");
       sheetBody.innerHTML = `
         <h3>Ещё один шаг до результата ✨</h3>
@@ -3599,7 +3685,7 @@
       const dash = d.dashboard;
       BOT = d.bot_username || "neuroshot_ai_bot";
       const refLink = "https://t.me/" + BOT + "?start=" + d.user.ref_code;
-      const bestPack = (d.packs || [])[1]?.id; // «Популярный»
+      const bestPack = bestValuePackId(d.packs);
       renderWelcome(d);
 
       const avatarUrl = tg?.initDataUnsafe?.user?.photo_url || "";
@@ -3830,16 +3916,19 @@
         .filter((pack) => !(pack.offer && comboEndsAt && comboEndsAt <= Date.now()))
         .sort((a, b) => rank(b) - rank(a));
       for (const pack of packsOrdered) {
+        // The one-off entry set gets its own tile — its rate sits below every
+        // standing rung, so it is not part of the ladder story.
         if (pack.once) { p.appendChild(firstPackTile(pack, all)); continue; }
-        const per = (pack.kzt / pack.credits).toFixed(0);
+        // "Выгоднее всего" — the same claim, the same computation
+        // (bestValuePackId) and the same wording as the onboarding ladder
+        // slide, so the tag is never fixed to a list slot («Популярный»,
+        // packs[1]) regardless of whether that pack's rate actually earns it.
         const badge = pack.offer
           ? `<span class="hot" data-countdown="${comboEndsAt}">🔥 Акция</span>`
-          : pack.id === bestPack ? '<span class="hot">Популярный</span>' : "";
+          : pack.id === bestPack ? '<span class="hot">Выгоднее всего</span>' : "";
         p.appendChild($(`
           <button class="pack ${pack.offer || pack.id === bestPack ? "best" : ""}" data-buy="${pack.id}">
-            ${badge}
-            <span><span class="amount">${PATRON} ${pack.credits}</span><div class="per">≈ ${per} ₸ за патрон</div></span>
-            <span class="stars">${pack.kzt.toLocaleString("ru-RU")} ₸</span>
+            ${packTileHtml(pack, { badge })}
           </button>`));
       }
       // Exchange-rate transparency: the patron↔tenge rate is a ladder (bigger

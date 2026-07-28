@@ -1,15 +1,15 @@
 # GenAI video course — 101 → expert
 
 The three-tier ladder from `docs/course-funnel.md`, written out as actual
-lesson content. Free → $9 → $50, each tier a sellable, deliverable artifact
+lesson content. Free → 3 800 ₸ → 25 000 ₸, each tier a sellable, deliverable artifact
 (Telegra.ph/PDF for the free guide, a private TG channel drip for the paid
 tiers).
 
 | File | Tier | Format |
 |---|---|---|
 | [`00-free-guide.md`](00-free-guide.md) | Free tripwire | 10 copy-paste prompts + partner deep link |
-| [`01-fast-start.md`](01-fast-start.md) | $9 «Быстрый старт» | 5 lessons |
-| [`02-flagship.md`](02-flagship.md) | $50 «AI-контент под ключ» | 3 modules + cohort |
+| [`01-fast-start.md`](01-fast-start.md) | «Быстрый старт», 3 800 ₸ | 5 lessons |
+| [`02-flagship.md`](02-flagship.md) | «AI-контент под ключ», 25 000 ₸ | 3 modules + cohort |
 
 ## Design principle
 

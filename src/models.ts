@@ -2141,29 +2141,77 @@ export const PACKS: Pack[] = [
   { id: "combo", kzt: 1000, credits: 36, title: "🔥 Комбо-сет: 3 видео", offer: true, retired: true },
 
   // --- GenAI course tiers (docs/course-funnel.md, docs/course/README.md) ---
-  // These kept their prices through the 2026-07 reprice, so they are no longer
-  // at ladder parity: the patrons inside `course_fast` are worth 2 400 ₸ of a
-  // 3 700 ₸ product, and `course_flagship`'s are worth 17 000 ₸ of 25 000 ₸. The
-  // difference is what the teaching costs, stated instead of hidden — a course
-  // priced at exactly its patron content is a course we are giving away.
+  //
+  // A course tier is a bundle — patrons plus teaching — so it is excluded from
+  // the ladder filter everywhere. That exclusion is not a licence to charge what
+  // we like for the patrons inside it. The 2026-07 reprice moved the ladder and
+  // left these two where they were, which put them at 61.7 and 50 ₸/🔫 against a
+  // 30–40 ₸ band: the most expensive patrons in the catalogue were the ones sold
+  // to the people we had just persuaded to learn. That is backwards, and it
+  // contradicted the funnel's own pitch — «the included pack alone ≈ the price,
+  // so the course feels free» (docs/course-funnel.md).
+  //
+  // Repriced by moving the PATRONS, not the sticker:
+  //
+  //   Быстрый старт   3 800 ₸ / 100 🔫 = 38.0 ₸/🔫  — exactly Фото-сет's rate
+  //   Под ключ       25 000 ₸ / 700 🔫 = 35.7 ₸/🔫  — between Про and Студия
+  //
+  // What the buyer pays for the teaching is the price minus what the same
+  // patrons cost on the pay screen (`ladderValueOf`), and the two tiers answer
+  // that differently on purpose:
+  //
+  //  - `course_fast` is a TRIPWIRE. Its patrons are worth exactly its ticket
+  //    (100 🔫 = `photo_set` = 3 800 ₸), so «уроки бесплатно» is not a claim, it
+  //    is arithmetic the buyer can check two tiles down. An e2e step pins the
+  //    equality, so the next ladder move cannot quietly turn it into a lie.
+  //  - `course_flagship` charges real tuition: 700 🔫 cost 21 000 ₸ at Студия's
+  //    rate, and the remaining 4 000 ₸ buys three modules, the cohort and the
+  //    certificate. Priced at exactly its patron content it would be a course we
+  //    are giving away.
+  //
+  // Both stay inside the 30–40 band and above the once-per-account entry rate
+  // (25 ₸/🔫): a course cheap enough to buy FOR the patrons stops being a course
+  // and becomes a hole in the ladder with lessons attached.
   {
     id: "course_fast",
-    kzt: 3700,
-    credits: 60,
-    title: `🎓 Быстрый старт (курс) — 60 ${UNIT_EMOJI} + 5 уроков`,
+    kzt: 3800,
+    credits: 100,
+    title: `🎓 Быстрый старт (курс) — 100 ${UNIT_EMOJI} + 5 уроков`,
     course: "fast",
   },
   {
     id: "course_flagship",
     kzt: 25000,
-    credits: 500,
-    title: `🎓 AI-контент под ключ — 500 ${UNIT_EMOJI} + когорта`,
+    credits: 700,
+    title: `🎓 AI-контент под ключ — 700 ${UNIT_EMOJI} + когорта`,
     course: "flagship",
   },
 ];
 
 export function packById(id: string): Pack | undefined {
   return PACKS.find((p) => p.id === id);
+}
+
+/**
+ * What `credits` patrons cost on the pay screen — the price of the same patrons
+ * with no course attached. Used to state a course tier's tuition as its ticket
+ * minus its patron content (bot.ts `/course`), and to pin that split in the e2e
+ * pricing step so a future ladder move cannot silently invert it.
+ *
+ * Valued at the rate of the SMALLEST standing tier that is at least this big —
+ * the rung a buyer of that size actually lands on — so the number is one the
+ * buyer can check against a tile rather than a blend we invent.
+ *
+ * `once` and `offer` tiers are excluded along with the courses themselves: the
+ * entry price is below every rung by design and disappears after one purchase,
+ * so anything priced against it is only true for a buyer's first order.
+ */
+export function ladderValueOf(credits: number): number {
+  const ladder = PACKS.filter((p) => !p.offer && !p.once && !p.course && !p.retired).sort(
+    (a, b) => a.credits - b.credits,
+  );
+  const tier = ladder.find((p) => p.credits >= credits) ?? ladder[ladder.length - 1];
+  return tier ? Math.round(credits * (tier.kzt / tier.credits)) : 0;
 }
 
 /**
