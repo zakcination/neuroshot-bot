@@ -38,9 +38,17 @@ integration** (business account + API credentials) — that's what turns
 
 A plain link's amount can't be reliably set via a query string. The clean way to
 show the correct amount per pack is **one fixed-amount Kaspi link per pack**: set
-`KASPI_PAY_URL_COMBO`, `KASPI_PAY_URL_START`, … and each buy button opens the
+`KASPI_PAY_URL_FIRST_SET`, `KASPI_PAY_URL_START`, … and each buy button opens the
 correctly-priced page (`kaspiLinkFor`, `src/config.ts`). Any pack without its own
 link falls back to `KASPI_PAY_URL`.
+
+**A reprice invalidates every one of these.** The amount lives inside the link,
+in Kaspi Pay, where nothing in this repo can read or correct it — so a pack whose
+price changed keeps charging the old one while the bot quotes the new one, and
+the buyer finds out at the payment screen. After any change to `PACKS`
+(`src/models.ts`), recreate the affected links before the deploy reaches users,
+or clear them: the blank fallback lets the buyer enter the amount themselves,
+which is worse UX and better than a wrong charge.
 
 ## Going live checklist
 
