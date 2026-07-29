@@ -35,12 +35,20 @@ either way.
 ## One-time setup
 
 ```bash
-fly apps create neuroshot-bot-staging --org personal   # staging.yml also does this, idempotently
+fly apps create neuroshot-bot-staging
 fly secrets set -a neuroshot-bot-staging \
   BOT_TOKEN=<same token as production> \
   FAL_KEY=<same key as production> \
   BOT_USERNAME=neuroshot_ai_bot \
   ADMIN_IDS=<same as production>
+
+# CI needs its own deploy token for this app — Fly deploy tokens are scoped
+# to ONE app, so production's FLY_API_TOKEN (used by ci.yml's `deploy` job)
+# cannot also push here even though it's the same Fly account.
+fly tokens create deploy -a neuroshot-bot-staging
+# → add the printed token as a GitHub Actions repo secret named
+#   FLY_STAGING_API_TOKEN (Settings → Secrets and variables → Actions).
+#   staging.yml reads it under that name.
 ```
 
 Real secrets, on purpose: initData verification needs the real `BOT_TOKEN`, and

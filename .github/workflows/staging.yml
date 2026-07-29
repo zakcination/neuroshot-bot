@@ -39,14 +39,15 @@ jobs:
 
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
-      # Idempotent: fails harmlessly with "already exists" on every run after
-      # the first. Needs an org — `personal` is the default slug Fly assigns
-      # a single-user account (not an actual organization), matching how this
-      # repo's one existing app was created.
+      # Idempotent: fails harmlessly ("already exists", or "unauthorized" if
+      # FLY_STAGING_API_TOKEN is a per-app deploy token rather than an
+      # org-wide one — either way harmless once the app already exists,
+      # which is the normal steady state after the one-time bootstrap in
+      # docs/staging.md) on every run after the first.
       - name: Ensure the staging app exists
         run: flyctl apps create neuroshot-bot-staging --org personal || true
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_API_TOKEN: ${{ secrets.FLY_STAGING_API_TOKEN }}
 
       - name: Deploy PR HEAD to staging
         run: |
@@ -57,7 +58,12 @@ jobs:
           flyctl deploy -c fly.staging.toml -a neuroshot-bot-staging --remote-only \
             -e "STAGING_LABEL=${LABEL}"
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          # Deliberately a SEPARATE secret from production's FLY_API_TOKEN
+          # (used by ci.yml's `deploy` job): Fly deploy tokens are scoped to
+          # one app, so the token that can push to production cannot also
+          # push here — see docs/staging.md's bootstrap step for how to mint
+          # this one (`fly tokens create deploy -a neuroshot-bot-staging`).
+          FLY_API_TOKEN: ${{ secrets.FLY_STAGING_API_TOKEN }}
 
       - name: Comment the staging link on the PR
         if: github.event.pull_request.number
