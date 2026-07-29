@@ -998,7 +998,16 @@
     .pcard.locked .pbg { opacity: .32; filter: saturate(.4); }
     .pcard.locked b, .pcard.locked .price { opacity: .6; }
     .pcard b { position: relative; z-index: 2; font-size: 13px; line-height: 1.3; }
-    .pcard .prow { position: relative; z-index: 2; display: flex; justify-content: space-between; align-items: baseline; gap: 6px; margin-top: 3px; }
+    .pcard .prow { position: relative; z-index: 2; display: flex; justify-content: space-between; align-items: flex-end; gap: 6px; margin-top: 3px; }
+    /* Preset cards put the label and the price on ONE row (name left, price
+       pill right). The label takes the slack and ellipsises so a long style
+       name can never push the price out of the card. Campaign cards keep the
+       label on its own line above — their price is a compound
+       "image + video" string that would leave the name almost no room. */
+    .pcard .prow b {
+      min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      text-shadow: 0 1px 8px rgba(0,0,0,.8);
+    }
     .pcard .price {
       font-size: 11.5px; font-weight: 700; color: var(--ink); white-space: nowrap;
       background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.12); padding: 3px 8px; border-radius: 999px;
@@ -1119,10 +1128,39 @@
     .tile b { font-size: 17px; font-weight: 700; letter-spacing: -.2px; }
     .tile span { font-size: 11px; color: var(--muted); }
 
-    /* Home-gallery-only chrome: "Все ›" link, and the Фото/Видео segment
-       reuses .seg's exact on/off convention (Studio composer mode toggle). */
+    /* Home-gallery-only chrome: "Все ›" link, and the Фото/Видео segment.
+       The segment overrides .seg's fill-the-active-button convention with a
+       sliding indicator: one absolutely-positioned pill animates its `left`
+       between the two halves, so the change reads as a single object moving
+       rather than one button lighting up while the other goes dark. Position
+       comes from [data-k], set in JS rather than inferred with :has(), so it
+       stays deterministic on older Telegram WebViews. */
     .seeall { border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; padding: 8px 0; }
-    .gallseg { margin: 0 0 10px; }
+    .gallseg {
+      position: relative; margin: 0 0 10px; height: 44px; padding: 3px;
+      background: #14111c; border: 1px solid rgba(255,255,255,.07); border-radius: 14px;
+    }
+    .gallseg::before {
+      content: ""; position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc(50% - 3px);
+      border-radius: 11px; background: #1b1726; border: 1px solid rgba(255,255,255,.08);
+      transition: left .24s cubic-bezier(.4,0,.2,1); pointer-events: none;
+    }
+    .gallseg[data-k="video"]::before { left: 50%; }
+    /* Both buttons stay transparent — the indicator behind them is the only
+       fill, so .seg's `background: var(--aurora)` must not win here. */
+    .gallseg button, .gallseg button.on {
+      position: relative; z-index: 1; background: transparent; border-radius: 11px;
+      font-size: 14px; font-weight: 600; padding: 0; transition: color .2s;
+    }
+    .gallseg button { color: var(--muted); }
+    .gallseg button.on { color: var(--ink); }
+    /* The design gives this one section a real title instead of the small-caps
+       eyebrow .sec-h uses elsewhere; scoped so every other section keeps it. */
+    .gallery-sec .sec-h { align-items: center; margin-bottom: 10px; }
+    .gallery-sec .sec-h h2 {
+      font-size: 17px; font-weight: 700; letter-spacing: -.2px;
+      text-transform: none; color: var(--ink);
+    }
     .gallery-sec .pcards { margin-top: 4px; }
 
     /* ————— duration slider —————
@@ -2322,11 +2360,18 @@
 
     /**
      * One preset card — shared by the full Style Gallery sheet (viewPick)
-     * and the Home tab's inline "Галерея промптов" grid, so the two surfaces
+     * and the Home tab's inline "Что снимаем?" grid, so the two surfaces
      * never drift apart. Badge layout: hot (real trending, no fabricated
      * numbers) top-left next to the no-art emoji fallback, usage-count
      * pill top-right (formatCount, e.g. "4.1K"), price bottom.
      */
+    /* Below this many uses the count pill is hidden entirely rather than shown
+       small. The pill is social proof, and proof only works in one direction:
+       "4.1K" sells a style, "12" actively says nobody picks this. Suppressing
+       it also protects a genuinely good new preset during its cold start —
+       it competes on its art instead of on a number it cannot yet have. */
+    const PROOF_MIN = 100;
+
     function presetCardHtml(p) {
       const lock = presetLock(p); // null = open (the default for every style)
       return `
@@ -2342,12 +2387,14 @@
             ${p.trending && !lock ? `<span class="phot">🔥</span>` : ""}
           </span>
           <span class="pright">
-            ${p.usageCount > 0 && !lock ? `<span class="pcount">${formatCount(p.usageCount)}</span>` : ""}
+            ${p.usageCount >= PROOF_MIN && !lock ? `<span class="pcount">${formatCount(p.usageCount)}</span>` : ""}
             ${lock ? `<span class="plock">🔒 ур. ${lock.need}</span>` : ""}
           </span>
         </div>
-        <b>${esc(p.label)}</b>
-        <div class="prow"><span class="price">${p.credits} ${PATRON}</span></div>
+        <!-- "от" because the card shows the 1-variant price: a style whose
+             engine allows several variants multiplies it (see numImages in
+             openStudio), so a bare number would understate the basket. -->
+        <div class="prow"><b>${esc(p.label)}</b><span class="price">от ${p.credits} ${PATRON}</span></div>
       </button>`;
     }
 
@@ -2371,18 +2418,48 @@
      *  same-scope function declarations of the same name silently shadow each
      *  other in a classic script, which is exactly the bug that shipped here
      *  the first time this was written. */
+    /* Патрон is an invented currency, so "от 2 🔫" carries no sense of cost to
+       anyone who hasn't bought a pack yet — the number could be trivial or
+       expensive and nothing on screen says which, right at the point they're
+       deciding whether to tap. One muted line under the grid anchors it in ₸.
+       Derived from the real entry pack (cheapest standard, same filter the
+       wallet uses) rather than a hardcoded rate, so it cannot drift from
+       actual pricing; returns "" if the pack catalog is missing instead of
+       guessing a number. */
+    function unitHintHtml(d) {
+      const entry = [...(d.packs || [])]
+        .filter((p) => !p.offer && !p.once)
+        .sort((a, b) => a.kzt - b.kzt)[0];
+      if (!entry || !entry.credits) return "";
+      return `<div class="hint">1 ${PATRON} ≈ ${Math.round(entry.kzt / entry.credits)} ₸ · пополнение от ${entry.kzt.toLocaleString("ru-RU")} ₸</div>`;
+    }
+
     function renderPromptGallery(kind) {
       const grid = document.getElementById("galleryGrid");
       if (!grid) return;
       const c = ME.catalog;
+      // Either side of the filter can legitimately come back empty — campaigns
+      // unpublished, every photo preset level-gated. Mapping an empty array
+      // rendered an empty string, leaving a blank hole under a segment that
+      // still looked selectable: that reads as a broken app rather than an
+      // empty shelf, and it points at the half that does have something.
+      // .empty already spans the grid (grid-column: 1 / -1).
+      const showEmpty = () => {
+        grid.innerHTML = `<div class="empty">${kind === "video"
+          ? "Видео-сценарии скоро вернутся.<br>Пока посмотрите Фото ✨"
+          : "Здесь пока пусто.<br>Загляните в Видео ✨"}</div>`;
+      };
       if (kind === "video") {
-        grid.innerHTML = c.campaigns.map(campaignCardHtml).join("");
+        const camps = c.campaigns || [];
+        if (!camps.length) { showEmpty(); return; }
+        grid.innerHTML = camps.map(campaignCardHtml).join("");
         grid.querySelectorAll("[data-camp]").forEach((b) => (b.onclick = () => { st.tab = "scenes"; openSheet(); viewCampaign(b.dataset.camp); }));
       } else {
-        const list = c.presets.filter((p) => p.category === "photo")
+        const list = (c.presets || []).filter((p) => p.category === "photo")
           .map((p, i) => ({ p, i }))
           .sort((a, b) => (b.p.usageCount - a.p.usageCount) || (a.i - b.i))
           .slice(0, 6);
+        if (!list.length) { showEmpty(); return; }
         grid.innerHTML = list.map(({ p }) => presetCardHtml(p)).join("");
         grid.querySelectorAll(".pcard .pbg").forEach((img) => (img.onerror = () => img.closest(".pcard").classList.add("noart")));
         grid.querySelectorAll("[data-preset]").forEach((b) => (b.onclick = () => {
@@ -4679,12 +4756,18 @@
           </section>
 
           <section class="reveal gallery-sec">
-            <div class="sec-h"><h2>Галерея промптов</h2><button class="seeall" id="gallerySeeAll">Все ›</button></div>
-            <div class="seg gallseg" id="gallSeg">
+            <!-- "Что снимаем?" rather than "Галерея промптов": "промпт" is
+                 practitioner jargon, and to the user these cards aren't prompts
+                 — they're looks. A question also covers both halves of the
+                 filter, where a noun doesn't: the Фото side is styles, the
+                 Видео side is scenarios. -->
+            <div class="sec-h"><h2>Что снимаем?</h2><button class="seeall" id="gallerySeeAll">Все ›</button></div>
+            <div class="seg gallseg" id="gallSeg" data-k="photo">
               <button class="on" data-gk="photo">Фото</button>
               <button data-gk="video">Видео</button>
             </div>
             <div class="pcards" id="galleryGrid"></div>
+            ${unitHintHtml(d)}
           </section>
 
           <div class="roadmap reveal${roadmapGraduated(d, ROADMAP_STEPS) ? " graduated" : ""}">${roadmapCardInner(d, ROADMAP_STEPS)}</div>
@@ -4913,10 +4996,20 @@
       const gallSeg = document.getElementById("gallSeg");
       if (gallSeg) gallSeg.querySelectorAll("button").forEach((b) => (b.onclick = () => {
         gallSeg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+        // Drives the sliding indicator's `left` (see .gallseg[data-k]); the
+        // .on class only carries the label colour now.
+        gallSeg.dataset.k = b.dataset.gk;
         renderPromptGallery(b.dataset.gk);
       }));
       const gallerySeeAll = document.getElementById("gallerySeeAll");
-      if (gallerySeeAll) gallerySeeAll.onclick = () => { st.tab = "shoot"; openSheet(); viewPick(); };
+      // "Все ›" has to honour the segment. viewPick branches on st.tab, so
+      // hardcoding "shoot" sent anyone browsing Видео into the photo styles —
+      // the filter said one thing and the full gallery opened on another.
+      if (gallerySeeAll) gallerySeeAll.onclick = () => {
+        st.tab = gallSeg && gallSeg.dataset.k === "video" ? "scenes" : "shoot";
+        openSheet();
+        viewPick();
+      };
       // Roadmap steps are the same entry points as "Что создаём" — either into
       // the studio sheet on a given tab, or the Друзья page for the invite step
       // — plus the completion-bonus claim button (see renderRoadmap for the

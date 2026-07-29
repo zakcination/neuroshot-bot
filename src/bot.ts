@@ -2438,10 +2438,15 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
   // item #2). Registered BEFORE the general /^preset:(.+)$/ handler below so
   // this exact-string match wins for "preset:surprise" (grammY stops at the
   // first matching callbackQuery handler). Weighted toward the top-5 tapped
-  // presets when real usage data exists (same trending set the Mini App's
-  // Style Gallery badges — presetUsageCounts, src/db.ts); a fresh deploy with
-  // zero taps falls back to fully random across the whole catalog, same
-  // graceful "no fake trending" fallback the Style Gallery itself uses.
+  // presets when real usage data exists (presetUsageCounts, src/db.ts); a fresh
+  // deploy with zero taps falls back to fully random across the whole catalog,
+  // the same graceful "no fake trending" fallback the Style Gallery uses.
+  //
+  // Deliberately NOT the Mini App's 🔥 set: that one is the top decile, sized to
+  // keep a badge scarce, and early on it is a single preset. This needs a POOL
+  // wide enough to feel random — reusing the decile would make "Удиви меня"
+  // return the same style every time until the catalog is well used. Same
+  // signal, different sizing, on purpose.
   bot.callbackQuery("preset:surprise", async (ctx) => {
     await ctx.answerCallbackQuery();
     const u = await user(ctx);
