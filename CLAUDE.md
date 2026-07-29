@@ -4,19 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Product Context
 
-**What:** One-tap AI photo studio inside Telegram. Send a photo → get studio-quality edit back in chat. No prompts, no model selection, no separate app.
+**Vision:** Best AI studio for ready-made photo and video. Users send a photo or idea → AI handles the creativity → they get broadcast-quality results in seconds.
 
-**Who:** Newcomers (not pros). They want **wow**, not control. Default to presets over prompt-writing.
+**Core values:**
+- **Instant gratification over control** — one-tap presets, no prompt engineering. Users get wow on first try.
+- **Reliability first** — async rendering + automatic refunds on failure. Trust is non-negotiable.
+- **Creator-first pricing** — affordable entry point, real returns for creators (referral program, partner tiers). Not a wealth extraction machine.
+- **Delightful retention** — weekly featured models, gallery discovery, seasonal campaigns. Keep people coming back because they *want* to, not FOMO.
 
-**Strategic thesis:** Anti-VeoSee. VeoSee failed because: (1) prompt complexity → users had to learn, (2) format fatigue → endless similar results, (3) unreliable rendering → users lost credits. We solve all three: one-tap presets kill prompt friction, featured weekly "новинка" refreshes novelty, async + reaper kill reliability debt.
+**How it works:**
+1. **First 30 seconds** — photo in → immediate preview → credit cost shown → buy or use free tier. Respect their time.
+2. **Studio experience** — curated presets (headshots, product shots, editorials, video animations). Each preset is tuned to a real use case.
+3. **Creator economy** — referral bonus, partner codes, lifetime share. Word-of-mouth is the growth engine.
+4. **Long-tail** — courses, partner tiers, seasonal promotions. Monetize without squeezing.
 
-**Key principles:**
-1. **First 30 seconds matter most** — photo in → immediate wow → paywall. Everything else is retention.
-2. **First result free, second paid** — newcomer gets one wow on us before any credit spend.
-3. **Paywall as sales page, not a wall** — outcome-focused ("готовое резюме за 1 минуту"), not a price list.
-4. **Recurring reasons built in** — weekly featured model, gallery re-engagement, seasonal rotation. Don't rely on user discipline.
-
-**NOT in scope:** General-purpose model aggregator. Course/mentoring is learning product (separate biz). Partner program is creator tier, not mainstream.
+**NOT pursuing:** Generic model aggregator. Our strength is *curation and reliability*, not breadth.
 
 ---
 
