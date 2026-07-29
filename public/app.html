@@ -2384,7 +2384,10 @@
             ${lock ? `<span class="plock">🔒 ур. ${lock.need}</span>` : ""}
           </span>
         </div>
-        <div class="prow"><b>${esc(p.label)}</b><span class="price">${p.credits} ${PATRON}</span></div>
+        <!-- "от" because the card shows the 1-variant price: a style whose
+             engine allows several variants multiplies it (see numImages in
+             openStudio), so a bare number would understate the basket. -->
+        <div class="prow"><b>${esc(p.label)}</b><span class="price">от ${p.credits} ${PATRON}</span></div>
       </button>`;
     }
 

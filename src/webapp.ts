@@ -407,16 +407,22 @@ function packsPayload(onceTaken = false): Array<Record<string, unknown>> {
  *
  * `usage` is real per-preset tap counts (db.presetUsageCounts — the events log,
  * see docs/prompt-library.md's "Style Gallery" section) — never fabricated.
- * The top 5 tapped presets (with ≥1 real tap) are flagged `trending`; a fresh
+ * The most-tapped DECILE (with ≥1 real tap) is flagged `trending`; a fresh
  * deploy with no taps yet simply shows no trending badges, not fake ones.
+ *
+ * A proportion rather than a fixed top-5: the badge has to stay scarce as the
+ * library grows, otherwise 5-of-12 reads as "half of these are hot" and 5-of-80
+ * reads as noise. The pool is presets with real taps, not all presets, so early
+ * on — when only a handful have ever been used — the badge marks the leader of
+ * what people actually tapped instead of nothing at all. Ceil with a floor of 1
+ * keeps exactly one winner in that early window.
  */
 function catalogPayload(usage: Record<string, number>, gates: Record<string, number>, eta: Record<string, number>): Record<string, unknown> {
+  const ranked = PRESETS.map((p) => ({ id: p.id, count: usage[p.id] ?? 0 }))
+    .filter((p) => p.count > 0)
+    .sort((a, b) => b.count - a.count);
   const trending = new Set(
-    PRESETS.map((p) => ({ id: p.id, count: usage[p.id] ?? 0 }))
-      .filter((p) => p.count > 0)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5)
-      .map((p) => p.id),
+    ranked.slice(0, ranked.length ? Math.max(1, Math.ceil(ranked.length * 0.1)) : 0).map((p) => p.id),
   );
   return {
     // "от X 🔫" headline = the cheapest look; each card carries its own price
