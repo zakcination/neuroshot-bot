@@ -71,8 +71,9 @@ import {
   MODELS,
   packById,
   PARTNER_TIERS,
-  PRESET_MODEL,
   presetModel,
+  PRESET_MODEL,
+  priceFor,
   PRESETS,
   REFERRAL_MILESTONES,
   VIDEO_MODEL_PICKER,
@@ -382,7 +383,10 @@ export function fastStartLessonMessages(lessonNum: 1 | 2 | 3 | 4 | 5): string[] 
           `<b>Ценовой ориентир</b> (весь список цен бот показывает сразу, от дешёвого к дорогому): простое видео — ` +
           `от ${MODELS.hailuo_fast.credits} ${UNIT_EMOJI} (эконом-движок), кино-движение — ` +
           `${MODELS.kling3.credits} ${UNIT_EMOJI}, "эпичная" сцена со звуком и физикой — ` +
-          `${MODELS.seedance_fast.credits}–${MODELS.seedance.credits} ${UNIT_EMOJI}.\n\n` +
+          // priceFor, not the raw field: seedance/seedance_fast are sale keys, and a
+          // lesson quoting the pre-sale number while the composer charges half that
+          // is exactly the kind of mismatch that reads as the bot lying about price.
+          `${priceFor(MODELS.seedance_fast)}–${priceFor(MODELS.seedance)} ${UNIT_EMOJI}.\n\n` +
           `📝 <b>Домашнее задание:</b> возьмите карточку товара из Урока 2, "оживите" её (например, товар медленно ` +
           `поворачивается или появляется на сцене) — так рождается видео-контент для маркетплейса, который ` +
           `увеличивает конверсию сильнее статичного фото.`,
@@ -481,7 +485,7 @@ export function flagshipModuleMessages(moduleNum: 1 | 2 | 3): string[] {
           `<b>Апгрейд «со звуком» одним тапом:</b> для одного ролика (не серии) кампания <b>🎞 Мини-фильм с вами</b> ` +
           `включает опцию <b>🎞 Снять мини-фильм (со звуком)</b> — рендерит многокадровую сцену с собственным ` +
           `амбиентным звуком на флагманском видео-движке, без внешней озвучки. До ` +
-          `${MODELS.seedance.credits} ${UNIT_EMOJI} за ролик — из 500 ${UNIT_EMOJI} модуля хватает на несколько ` +
+          `${priceFor(MODELS.seedance)} ${UNIT_EMOJI} за ролик — из 500 ${UNIT_EMOJI} модуля хватает на несколько ` +
           `таких попыток.\n\n` +
           `📝 <b>Задание модуля:</b> соберите 6–8-кадровую серию по структуре выше, озвучьте через steosvoice или ` +
           `ElevenLabs, смонтируйте в один ролик.`,

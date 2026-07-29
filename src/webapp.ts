@@ -22,7 +22,7 @@ import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
 import { hit } from "./ratelimit.js";
 import { claimOrderPaid, grantPurchase, onceTaken, sendPendingOrderPrompt } from "./payments.js";
-import { comboEndsAt } from "./offer.js";
+import { comboEndsAt, seedanceSaleActive, seedanceSaleEndsAt, flagshipCapActive } from "./offer.js";
 import { sanitizePrompt } from "./promptcraft.js";
 import {
   AUDIO_MIME,
@@ -48,9 +48,12 @@ import {
   PACKS,
   PARTNER_TIERS,
   PRESET_MODEL,
+  SEEDANCE_SALE_KEYS,
+  FLAGSHIP_CAP_KEY,
   presetModel,
   PRESETS,
   priceFor,
+  rawPriceFor,
   sceneModel,
   styleRefUrl,
   VIDEO_MODEL_PICKER,
@@ -255,18 +258,29 @@ function studioModelsOf(mode: "image" | "video", eta: Record<string, number>): A
   const kinds = mode === "video" ? ["image_to_video"] : ["image_edit", "text_to_image"];
   return Object.values(MODELS as Record<string, ModelSpec>)
     .filter((m) => kinds.includes(m.kind))
-    .sort((a, b) => a.credits - b.credits) // cheapest first — honest ladder
+    // Sorted by what the model actually CHARGES right now, not its steady-state
+    // registry price — during the Seedance sale those disagree, and a "cheapest
+    // first" ladder sorted by the wrong number would put a discounted model in
+    // the wrong place in its own honest ladder.
+    .sort((a, b) => priceFor(a) - priceFor(b))
     .map((m) => ({
       key: m.key,
       label: m.label,
       // What the (real, provider-given) name doesn't say on its own.
       note: m.note ?? "",
       kind: m.kind,
-      credits: m.credits,
+      credits: priceFor(m),
+      // Pre-discount price, for a strikethrough "было X → стало Y" — equal to
+      // `credits` whenever nothing is discounted, so the client only renders
+      // the strikethrough when the two actually differ.
+      wasCredits: rawPriceFor(m),
       // MEASURED median seconds from our own recent runs; 0 = not enough data
       // yet, and the client must then show its coarse copy, not a fake number.
       etaSeconds: eta[m.key] ?? 0,
       needsImage: m.kind !== "text_to_image",
+      // See src/models.ts § SEEDANCE_SALE_MULT — true only for the 4 sale keys,
+      // and only while config.seedanceSaleUntil hasn't passed.
+      onSale: SEEDANCE_SALE_KEYS.has(m.key) && seedanceSaleActive(),
       // How many of the user's OWN photos this model reads, including the first.
       // 1 = single-photo model, so the client shows no "add another angle"
       // affordance. Extra angles never change the price.
@@ -300,7 +314,7 @@ function studioModelsOf(mode: "image" | "video", eta: Record<string, number>): A
       reference: !!m.reference,
       video: m.video
         ? {
-            durations: m.video.durations.map((d) => ({ seconds: d, credits: priceFor(m, { duration: d }) })),
+            durations: m.video.durations.map((d) => ({ seconds: d, credits: priceFor(m, { duration: d }), wasCredits: rawPriceFor(m, { duration: d }) })),
             // The length `credits` is quoted for. The client must not fall back
             // to durations[0] — that is now the SHORTEST option, not the
             // default, so a composer opening on it would silently start every
@@ -386,7 +400,7 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
       presets: c.presets.map((p) => ({ id: p.id, label: p.label })),
       imageCredits: PRESET_MODEL.credits,
       animateLabel: c.animateLabel,
-      videoCredits: c.animateModel.credits,
+      videoCredits: priceFor(c.animateModel),
       videoModelKey: c.animateModel.key, // composer reads its duration/ratio params
       // On-theme viral video scenes (prompts stay server-side — labels/ids only).
       // Epic scenes carry the Seedance engine they're gated to + its price so the
@@ -398,7 +412,7 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
           label: s.label,
           tier: s.tier ?? "simple",
           videoModelKey: m.key,
-          videoCredits: m.credits,
+          videoCredits: priceFor(m),
         };
       }),
       // Story-builder steps (fragments stay server-side — labels/ids only).
@@ -446,13 +460,16 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
       return {
         key: k,
         label: spec.label,
-        credits: spec.credits,
+        credits: priceFor(spec),
+        wasCredits: rawPriceFor(spec),
+        onSale: SEEDANCE_SALE_KEYS.has(k) && seedanceSaleActive(),
         // Composer capabilities: durations (per-length price), ratios, end-frame, quality.
         video: spec.video
           ? {
               durations: spec.video.durations.map((d) => ({
                 seconds: d,
                 credits: priceFor(spec, { duration: d }),
+                wasCredits: rawPriceFor(spec, { duration: d }),
               })),
               defaultSeconds: spec.video.defaultSeconds,
               aspectRatios: spec.video.aspectRatios,
@@ -479,9 +496,12 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
       key: n.key,
       title: n.title,
       tag: n.tag,
-      credits: MODELS[n.key].credits,
+      // What it costs to tap RIGHT NOW — two of these entries (seedance,
+      // seedance_fast) are sale keys, and the banner is exactly where someone
+      // decides whether to try it, so it must never quote a stale price.
+      credits: priceFor(MODELS[n.key]),
       kind: MODELS[n.key].kind,
-      freeTrial: MODELS[n.key].credits <= config.freeCredits,
+      freeTrial: priceFor(MODELS[n.key]) <= config.freeCredits,
     })),
   };
 }
@@ -524,6 +544,18 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     catalog: catalogPayload(usage, gates, eta),
     // Combo offer deadline (ms epoch) for the live countdown.
     comboOffer: { endsAt: comboEndsAt() },
+    // Seedance sale (docs/seedance-tiers.md § the 2026-07-28 sale): `active`
+    // lets the client decide whether to render the badge at all without
+    // reimplementing the date check; `endsAt` is what it formats into "до N
+    // <месяц>". Model entries carry their own `onSale` flag (see
+    // studioModelsOf/videoModels below) — this block is only the date.
+    seedanceSale: { active: seedanceSaleActive(), endsAt: seedanceSaleEndsAt() },
+    // Flagship price curve (docs/seedance-tiers.md § flagship ceiling):
+    // permanent once active, no `endsAt` — unlike seedanceSale above. No
+    // single `maxKzt` — it's a per-duration curve, not one flat number, so
+    // the client shows it via the normal per-duration `credits` it already
+    // reads, not a headline figure here.
+    flagshipCeiling: { active: flagshipCapActive(), modelKey: FLAGSHIP_CAP_KEY },
     // Reward-architecture P4a: null (the normal state) until an admin runs
     // /season_new. No quest/reward data yet — that's P4b, built once this
     // entity exists.
@@ -1471,6 +1503,20 @@ export function createWebApp(): Server {
           const type = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
           const buf = readFileSync(join(PUBLIC_DIR, "img", imgMatch[1]));
           res.writeHead(200, { "Content-Type": type, "Cache-Control": "public, max-age=604800, immutable" });
+          return res.end(buf);
+        } catch {
+          return json(res, 404, { error: "not_found" });
+        }
+      }
+
+      // GET /fonts/<name> — self-hosted webfonts (public/fonts/), same
+      // allowlist-and-long-cache treatment as /img/<name>: content-addressed
+      // by deploy, never user-editable, so an immutable cache is safe.
+      const fontMatch = /^\/fonts\/([a-z0-9][a-z0-9._-]{0,63}\.woff2)$/i.exec(url.pathname);
+      if (fontMatch) {
+        try {
+          const buf = readFileSync(join(PUBLIC_DIR, "fonts", fontMatch[1]));
+          res.writeHead(200, { "Content-Type": "font/woff2", "Cache-Control": "public, max-age=604800, immutable" });
           return res.end(buf);
         } catch {
           return json(res, 404, { error: "not_found" });

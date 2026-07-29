@@ -7,6 +7,7 @@
  * over hardcoding IDs elsewhere.
  */
 import { config } from "./config.js";
+import { seedanceSaleActive, flagshipCapActive } from "./offer.js";
 import { UNIT_EMOJI } from "./text.js";
 
 export type ModelKind = "image_edit" | "text_to_image" | "image_to_video";
@@ -700,11 +701,75 @@ export function cheapestModel(kind: ModelKind): ModelSpec {
 }
 
 /**
- * Credit charge for a generation given composer options. Video credits scale
- * with the chosen duration (cost is per-second); images and default settings
- * use the fixed `credits`. Kept ≥1 and rounded up so margin never inverts.
+ * Seedance sale (owner decision, 2026-07-28 — docs/seedance-tiers.md § the
+ * 2026-07-28 sale): a flat, time-boxed cut to what these 4 models CHARGE.
+ *
+ * A flat multiplier, not a per-render profit floor, on purpose: an additive
+ * "cost + minimum margin" cap composes correctly with duration (both are
+ * linear) but NOT with the resolution multiplier applied after it — capping at
+ * 720p's cost then halving for 480p charges LESS than the same cap computed
+ * directly against 480p's (lower) cost would allow, which would have pushed
+ * profit on 480p renders below the floor the cap exists to guarantee. A flat
+ * percentage has no such interaction: it composes with every other multiplier
+ * in this function exactly the way the client already mirrors, so the Studio's
+ * live price preview cannot drift from what the server actually charges.
+ *
+ * Never touches `costUsdFor` — COGS accounting, the digest's margin estimate,
+ * and per-user cost caps all keep reading the real, undiscounted cost. Only
+ * the patron charge moves, and only downward: `Math.min` against the normal
+ * price a few lines below means this can never raise a charge, so a short
+ * render that was already cheap is untouched.
  */
-export function priceFor(model: ModelSpec, opts?: GenOpts): number {
+export const SEEDANCE_SALE_KEYS = new Set(["seedance", "seedance_fast", "seedance_mini", "seedance_ref"]);
+export const SEEDANCE_SALE_MULT = 0.5;
+
+/**
+ * Flagship price CURVE (owner decision, 2026-07-29, revised same day —
+ * docs/seedance-tiers.md § flagship ceiling): the flagship model (`seedance`)
+ * is capped by DURATION, not by one flat number — unlike SEEDANCE_SALE_MULT,
+ * this is permanent, not tied to seedanceSaleActive, and applies to exactly
+ * one model, not the family.
+ *
+ * The original design (2026-07-29, first cut) was one flat number, 74
+ * credits, so 10s and 15s cost identically once capped — the owner replaced
+ * it same-day with a real per-second curve so price keeps climbing with
+ * length instead of plateauing. The owner named three anchor points directly
+ * (5s→38, 10s→65, 15s→92 credits); those three fall EXACTLY on one line
+ * (slope 5.4 credits/s, intercept 11), so the curve below is that line, not
+ * an approximation — it reproduces the named numbers to the credit.
+ *
+ * IMPORTANT: unlike the flat-74 design, this does NOT hold a strict "never
+ * above N ₸" ceiling across every pack rate — at the priciest recurring pack
+ * (40 ₸/credit), 15s reaches 92 × 40 = 3,680 ₸, above the ~3,000 ₸ figure
+ * discussed when this was scoped. It DOES stay under ~3,000 ₸ at the
+ * cheaper/typical pack rates (30–34 ₸/credit → 2,760–3,128 ₸ at 15s). If a
+ * strict cross-pack ceiling is wanted again, that requires capping the curve
+ * itself (e.g. min(11 + 5.4×duration, 75) for a hard 3,000 ₸/40 ₸ ceiling) —
+ * not done here because the owner's anchor points were given without one.
+ *
+ * Margin holds everywhere in the duration grid, including at the one-time
+ * 25 ₸/credit entry pack (the one case the flat-74 design could dip below
+ * cost on) — worst case is 15s/720p at +116 ₸ margin even there. Real numbers
+ * (720p, KZT_PER_USD=480): see docs/seedance-tiers.md § flagship ceiling.
+ *
+ * `Math.min` only, same as the sale — this can lower a charge, never raise
+ * one, so every duration where the curve exceeds the sale price (4–5s) is
+ * untouched.
+ */
+export const FLAGSHIP_CAP_KEY = "seedance";
+export function flagshipCapCredits(durationSeconds: number): number {
+  return Math.max(1, Math.round(11 + 5.4 * durationSeconds));
+}
+
+/**
+ * Credit charge before any promotional discount — duration/resolution/count
+ * scaling only, the real-cost-driven steps every model goes through. This is
+ * what a render would cost with the Seedance sale AND the flagship curve both
+ * off — i.e. the "was" price a dramatic before/after UI compares the current
+ * (discounted) price against (see priceFor below and the client's use of it
+ * for strikethrough pricing in the Studio and video composer).
+ */
+export function rawPriceFor(model: ModelSpec, opts?: GenOpts): number {
   let credits = model.credits;
   // Video: scale with the chosen duration (cost is per-second).
   if (model.video && opts?.duration && opts.duration !== model.video.defaultSeconds) {
@@ -723,6 +788,31 @@ export function priceFor(model: ModelSpec, opts?: GenOpts): number {
   if (maxCount && opts?.numImages && opts.numImages > 1) {
     const n = Math.min(maxCount, Math.floor(opts.numImages));
     credits = Math.max(1, Math.ceil(credits * n));
+  }
+  return credits;
+}
+
+/**
+ * Credit charge for a generation given composer options — rawPriceFor with
+ * whatever promotional discounts are currently active layered on top. Kept
+ * ≥1 and rounded up so margin never inverts.
+ */
+export function priceFor(model: ModelSpec, opts?: GenOpts): number {
+  let credits = rawPriceFor(model, opts);
+  // Applied LAST, after every real-cost-driven scale-up above, and via `min`
+  // rather than direct assignment — see the doc comment on SEEDANCE_SALE_MULT.
+  if (SEEDANCE_SALE_KEYS.has(model.key) && seedanceSaleActive()) {
+    credits = Math.max(1, Math.min(credits, Math.round(credits * SEEDANCE_SALE_MULT)));
+  }
+  // Flagship curve — independent of the sale above and outlives it (see the
+  // doc comment on flagshipCapCredits). Applied last so it wins regardless of
+  // what the sale already did to `credits`. Duration falls back to
+  // defaultSeconds the same way the duration-scale step above does, so a
+  // no-duration call (the catalogue's base quote) is capped consistently
+  // with an explicit `{ duration: defaultSeconds }` call.
+  if (model.key === FLAGSHIP_CAP_KEY && flagshipCapActive()) {
+    const dur = opts?.duration ?? model.video?.defaultSeconds ?? 0;
+    credits = Math.min(credits, flagshipCapCredits(dur));
   }
   return credits;
 }

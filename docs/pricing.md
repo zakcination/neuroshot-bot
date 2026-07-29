@@ -106,6 +106,13 @@ and paywall anchor.
 | Seedance Fast (5s) | **epic scenes** (physics/audio) | $1.21 | 61 |
 | Seedance flagship (5s) | max quality swap-up | $1.51 | 76 |
 
+> **Temporary**: the 4 Seedance rows above (`seedance`, `seedance_fast`,
+> `seedance_mini`, `seedance_ref`) are at **−50%** through a fixed deadline —
+> see `docs/seedance-tiers.md` § "The 2026-07-28 sale". The steady-state
+> patrons shown here are what the ladder reverts to once the sale ends; treat
+> them as the durable numbers, not the currently-charged ones, for as long as
+> the sale is running.
+
 ### Scenario economics — the free-hook lever
 
 The whole scenario stack was re-based onto the two cheapest capable engines so a

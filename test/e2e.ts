@@ -529,16 +529,34 @@ await step("the Seedance chooser lands on one model, cheapest-first, and never o
 
 await step("the video set really covers 3–5 finished videos, and the ladder stays monotonic", async () => {
   const { PACKS, MODELS, priceFor, packById } = await import("../src/models.js");
+  const { config: live } = await import("../src/config.js");
 
   // "One good video" = two strong frames + ten seconds of motion. These are the
   // four tiers a buyer can realistically work at; the set is sized so that the
   // promise on the title holds at EVERY one of them, not just the cheapest.
-  const recipes = [
-    { frame: MODELS.nb2_edit, video: MODELS.seedance_fast },
-    { frame: MODELS.nbpro_edit, video: MODELS.seedance_fast },
-    { frame: MODELS.nbpro_edit, video: MODELS.seedance },
-    { frame: MODELS.premium_edit, video: MODELS.seedance },
-  ].map((r) => 2 * priceFor(r.frame) + priceFor(r.video, { duration: 10 }));
+  //
+  // Priced at the pre-promotion Seedance rate, sale AND flagship ceiling both
+  // forced off: both the 2026-07-28 sale (temporary) and the 2026-07-29
+  // flagship ceiling (permanent — see docs/seedance-tiers.md § flagship
+  // ceiling) deliberately make this pack stretch FURTHER (a bonus, not a
+  // broken promise) — the pack's own printed claim is about the floor it
+  // guarantees with zero promotional pricing, not what today's price gets you.
+  const prevSale = live.seedanceSaleUntil;
+  const prevCap = live.flagshipCapFrom;
+  (live as { seedanceSaleUntil: string }).seedanceSaleUntil = "2020-01-01T00:00:00Z";
+  (live as { flagshipCapFrom: string }).flagshipCapFrom = "2099-01-01T00:00:00Z";
+  let recipes: number[];
+  try {
+    recipes = [
+      { frame: MODELS.nb2_edit, video: MODELS.seedance_fast },
+      { frame: MODELS.nbpro_edit, video: MODELS.seedance_fast },
+      { frame: MODELS.nbpro_edit, video: MODELS.seedance },
+      { frame: MODELS.premium_edit, video: MODELS.seedance },
+    ].map((r) => 2 * priceFor(r.frame) + priceFor(r.video, { duration: 10 }));
+  } finally {
+    (live as { seedanceSaleUntil: string }).seedanceSaleUntil = prevSale;
+    (live as { flagshipCapFrom: string }).flagshipCapFrom = prevCap;
+  }
 
   const videoSet = packById("video_set")!;
   const counts = recipes.map((cost) => Math.floor(videoSet.credits / cost));

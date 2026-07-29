@@ -2,8 +2,9 @@
 
 Grounding for `src/seedance.ts` (the in-bot chooser) and for the tier prices in
 `src/models.ts`. Written 2026-07-27 from independent side-by-side testing, not
-from vendor copy. **Every price below is still unverified against a real billed
-run — see the open task at the bottom.**
+from vendor copy. **Pricing was formula-verified 2026-07-28** — see "The
+billing formula" below; a real billed run is still the one thing that would
+close the loop completely.
 
 ## The family
 
@@ -132,27 +133,178 @@ under the KZ personal-data law.
 - `text-to-video` is for concept discovery, before you have a frame worth
   keeping.
 
-## Open: the prices are not measured
+## The billing formula (resolved 2026-07-28)
 
-fal bills this family **per 1000 tokens** ($0.007 mini / $0.0112 fast / $0.014
-base). Our registry prices video **per second**. The ratios agree — mini is half
-of base in both — so the tiers are ordered correctly relative to each other.
+fal bills this family **per 1000 tokens**, and the token count is a documented
+formula, not something we had to infer:
 
-The absolute basis is another matter: published per-clip figures for a 5-second
-720p render come out roughly half what our per-second numbers imply, which would
-mean we overcharge for the whole family.
+```
+tokens = (output_height × output_width × duration_seconds × 24) / 1024
+```
 
-`SEEDANCE_RES` gave 480p and 720p the same multiplier, which could not be right
-when cost tracks tokens and tokens track pixels. 480p is now charged at 0.5×
-(854×480 against 1280×720 is ~0.44× the work; the extra 0.06 is margin we keep
-until the basis is measured). The flagship endpoint also lists **1080p and 4K**,
-which we do not sell — their multipliers would have to be invented on top of a
-cost basis that is already unverified.
+Rate per 1000 tokens: **$0.007 mini · $0.0112 fast · $0.014 base (480p/720p/1080p)
+· $0.008 base-at-4K**. 4K is billed at a LOWER per-token rate than the other three
+tiers on the same endpoint — confirmed against the flagship's own schema
+(`resolution` enum is `480p/720p/1080p/4k` on one endpoint, `generate_audio`
+costs nothing extra either way — both re-probed directly against fal's OpenAPI
+schema, not taken from a summary).
 
-No Seedance render has yet been observed with its real billed cost. Re-derive all
-four numbers from one measured run at each tier before trusting any of them, and
-re-check the Видео-сет arithmetic afterwards — that pack was sized from the
-unverified figures.
+**This resolves the previous "prices are not measured" caveat, in our favour.**
+Plugging the formula in at 1280×720 and 1920×1080 reproduces the flat $/second
+figures fal quotes for those tiers to within 0.3%, and — the part that actually
+matters for us — reproduces our registry's `perSecondUsd` for all four variants
+to within 0.33%:
+
+| model | registry $/s (720p) | formula $/s (720p) | diff |
+|---|---|---|---|
+| `seedance` (base) | 0.3034 | 0.3024 | 0.33% |
+| `seedance_fast` | 0.2419 | 0.2419 | 0.01% |
+| `seedance_mini` / `seedance_ref` (mini) | 0.1517 | 0.1512 | 0.33% |
+
+The earlier worry — that published per-clip figures implied we overcharge by
+roughly 2× — does not survive contact with the actual billing formula. Whatever
+those per-clip figures were pricing, it was not this endpoint under this
+formula. **Not yet fully closed**: this is the documented formula reproducing
+our numbers, which is much stronger evidence than the ratio-comparison this
+section used to rest on, but still short of watching our own account get billed
+for a real render. That last step is cheap (one render, note the invoice) and
+still worth doing before calling this fully verified.
+
+`SEEDANCE_RES`'s 480p multiplier (0.5×) is now confirmed conservative rather than
+guessed: 854×480 against 1280×720 works out to **0.4448×** the tokens at any
+tier, so charging 0.5× keeps roughly 0.055× of extra margin at 480p on top of
+the standard band, in our favour.
+
+### If 1080p or 4K are ever added to the flagship
+
+Not sold today, and this is why: at the current duration range (4–15s), the real
+cost swings far outside the rest of the catalogue.
+
+| resolution | 5 s | 15 s | multiplier vs 720p base (76🔫 / 5s) |
+|---|---|---|---|
+| 720p (sold) | $1.51 → 76🔫 | $4.54 → 227🔫 | 1× |
+| 1080p | $3.40 → 171🔫 | $10.21 → 511🔫 | 2.25× |
+| 4K | $7.78 → 389🔫 | $23.33 → 1,167🔫 | ~5.14× |
+
+The multiplier no longer has to be invented (2.25× and ~5.14×, from the formula
+above) — but a single 4K/15s render costing $23 of real COGS is a different
+class of exposure than anything else we sell, and needs its own duration cap
+(most consumer video tools cap 4K well below their 1080p/720p ceiling for exactly
+this reason) and its own pricing decision before it ships, not a mechanical
+multiplier applied to the existing ladder.
+
+## The 2026-07-28 sale
+
+Owner decision, 2026-07-28: Seedance had drifted into a profit center rather
+than the acquisition hook it was meant to be. A 15-second flagship render
+(base/720p) was printing **4,633–6,903 ₸ of profit** on a real cost of roughly
+2,200 ₸ — well past what a "good feeder" model should keep. The call: cut the
+charge, don't chase margin on Seedance specifically, and turn the cut itself
+into a visible, time-boxed promotion rather than a quiet reprice.
+
+**Mechanism**: `SEEDANCE_SALE_MULT = 0.5` in `src/models.ts` — a flat 50% cut
+applied as the LAST step inside `priceFor()`, after every duration/resolution/
+count scale-up, to exactly the 4 Seedance keys (`seedance`, `seedance_fast`,
+`seedance_mini`, `seedance_ref`). It runs while
+`seedanceSaleActive()` (`src/offer.ts`) is true — a fixed calendar deadline,
+`config.seedanceSaleUntil`, defaulting to **2026-09-10T23:59:59+05:00**
+(env: `SEEDANCE_SALE_UNTIL`).
+
+**Why multiplicative, not an additive profit-floor cut.** The first design
+tried to hold a hard floor (charge = cost + 990 ₸, no less) by capping credits
+directly at whatever a given duration/resolution combo actually costs. That
+breaks the moment it composes with the client's own resolution multiplier: capping
+at 720p's cost, then applying the existing "half price at 480p" multiplier on
+top, gives a DIFFERENT number than computing the same additive cap directly
+against 480p's own (lower) real cost — for base/480p/15s, direct-cap gives 66
+credits (992 ₸ profit, floor holds) while cap-then-halve gives only 53 credits
+(622 ₸ profit, floor **broken**). A flat multiplier has no such composition
+hazard: it's just one more multiplier in the same chain every other scale-up
+already goes through, so client and server mirror it exactly with zero parity
+risk.
+
+**What it does to the numbers.** The reference complaint case (base/720p/15s)
+lands at **1,243–2,383 ₸ of profit**, depending on which credit pack funded the
+purchase — down from 4,633–6,903 ₸, and squarely in the "don't expect big
+profit from Seedance specifically" zone the owner asked for. The worst case
+anywhere in the duration/resolution grid (mini/480p/4s) still clears roughly
+111–160 ₸ of profit — the sale never sells a render below its real cost.
+
+**What it does NOT touch**: `costUsdFor()` — the real provider-cost function
+feeding COGS accounting, the digest's margin estimate, and per-user cost
+caps — is untouched by design. Only `priceFor()` (the patron charge) is
+discounted; what a render actually costs us is unaffected by how much we
+charge for it.
+
+Surfacing: `/api/me` exposes `seedanceSale: { active, endsAt }`; the Studio and
+video composer show a "🔥 Акция на Seedance" banner while active, and the
+Studio's model row/chip badges the 4 discounted models with "🔥 −50%". The bot's
+course-lesson copy reads live prices via `priceFor()` rather than the models'
+raw `credits` field, so it never quotes a stale, pre-sale number.
+
+## The flagship ceiling (2026-07-29, permanent, revised same day)
+
+Owner decision, 2026-07-29: reposition the flagship (`seedance`) as a
+loss-leader "staple" price point, distinct from — and outliving — the
+time-boxed sale above. Unlike the sale, this does not expire on 2026-09-10.
+
+**First cut vs. shipped version.** The first design was one flat number —
+`FLAGSHIP_CAP_CREDITS = 74`, so 10s and 15s cost identically once capped. The
+owner replaced it same-day with a real per-second CURVE, naming three anchor
+points directly: **5s → 38, 10s → 65, 15s → 92 credits**. Those three fall
+exactly on one line (verified, not approximated): slope 5.4 credits/second,
+intercept 11. `flagshipCapCredits(duration)` in `src/models.ts` is that line —
+`round(11 + 5.4 × duration)` — so it reproduces the named numbers to the
+credit and gives every other duration (4, 6, 7, 8, 9, 11, 12, 13, 14s) a
+sensible, strictly-increasing value in between.
+
+**Mechanism**: applied via `Math.min` as the step AFTER the sale multiplier
+inside `priceFor()`, and only to the `seedance` key (not the other 3 Seedance
+tiers). Gated on `flagshipCapActive()` (`src/offer.ts`) — a start timestamp,
+`config.flagshipCapFrom`, defaulting to **2026-07-29T20:00:00+05:00**
+(env: `FLAGSHIP_CAP_FROM`). Once it starts, it never turns back off — there is
+no end-date config, unlike `seedanceSaleUntil`.
+
+**This is NOT a strict "never above N ₸" ceiling**, unlike the first design.
+At the priciest recurring pack (40 ₸/credit), 15s reaches 92 × 40 = **3,680 ₸**
+— above the ~3,000 ₸ figure discussed when this was scoped. It stays under
+~3,000 ₸ at the cheaper/typical packs (30–34 ₸/credit → 2,760–3,128 ₸ at 15s).
+If a strict cross-pack ceiling is wanted again, the curve itself needs an
+upper clamp (e.g. `min(round(11 + 5.4×duration), 75)` for a hard 3,000 ₸ cap
+at the 40 ₸ pack) — not done here because the owner's anchor points were given
+without one. The in-app banner deliberately makes no specific ₸ claim for this
+reason (see `saleBanner()` in `public/app.html`).
+
+**Margin, full grid (720p, KZT_PER_USD=480), worst case per pack rate:**
+
+| duration | real cost | credits | value @25₸ (one-time) | @30₸ | @40₸ | margin @25₸ |
+|---|---|---|---|---|---|---|
+| 4s | 583 ₸ | 33 | 825 ₸ | 990 ₸ | 1,320 ₸ | +242 ₸ |
+| 5s | 730 ₸ | 38 | 950 ₸ | 1,140 ₸ | 1,520 ₸ | +220 ₸ |
+| 10s | 1,456 ₸ | 65 | 1,625 ₸ | 1,950 ₸ | 2,600 ₸ | +169 ₸ |
+| 15s | 2,184 ₸ | 92 | 2,300 ₸ | 2,760 ₸ | 3,680 ₸ | +116 ₸ |
+
+Margin is positive everywhere in the grid — including, unlike the first flat-74
+design, at the one-time 25 ₸/credit entry pack (worst case +116 ₸ at 15s,
+never negative). The curve binds (produces a lower price than the plain -50%
+sale) from 6s onward; at 4–5s the sale price alone is already cheaper, so
+nothing changes there.
+
+**Why this interacts safely with the sale expiring.** The cap is a pure
+`Math.min(credits, flagshipCapCredits(duration))` regardless of how `credits`
+got computed — whether the sale is on (today) or has expired (after
+2026-09-10, when steady-state per-second pricing resumes and pushes the
+uncapped price further above the curve at every duration), the final capped
+price and its margin against real cost are identical. The two mechanisms
+don't need to know about each other.
+
+Surfacing: `/api/me` exposes `flagshipCeiling: { active, modelKey }` (no
+`maxKzt` — there's no single number to show; no `endsAt` — it's permanent).
+The shared "🔥 Seedance" banner in the Studio and video composer appends a
+ceiling sentence (duration-neutral, no specific ₸ figure) once active,
+independent of whether the sale sentence is still showing. The real
+per-duration prices are visible where they always were — the composer's
+duration slider, which reads `priceFor()` directly.
 
 ## Sources
 
@@ -163,3 +315,6 @@ unverified figures.
 - [Seedance 2 Reference to Video API on fal](https://fal.ai/models/bytedance/seedance-2.0/reference-to-video)
 - Endpoint schemas probed directly from fal's OpenAPI (duration enum, resolution
   enum, `generate_audio` default and its cost note, `bitrate_mode`).
+- Token-billing formula and per-1000-token rates (owner-supplied, 2026-07-28),
+  cross-checked against the flagship's own OpenAPI schema and against our
+  registry's `perSecondUsd` (all four variants agree to within 0.33%).

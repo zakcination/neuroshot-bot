@@ -96,6 +96,25 @@ export const config = {
   // countdown is ~1 month from deploy; pin COMBO_OFFER_START to fix the date.
   comboOfferDays: Number(process.env.COMBO_OFFER_DAYS ?? 30),
   comboOfferStart: process.env.COMBO_OFFER_START ?? "",
+  // --- Seedance sale (docs/seedance-tiers.md § the 2026-07-28 sale) ---
+  // A time-boxed price cut on the 4 Seedance video models specifically, NOT the
+  // catalog-wide ladder: owner decision, 2026-07-28. Seedance had drifted into a
+  // profit center rather than the acquisition hook it was meant to be (a
+  // 15-second flagship render was printing 4,600–6,900 ₸ of profit on a ~2,200 ₸
+  // cost) — cut for a big, publicized, EXPIRING campaign, not a permanent
+  // reprice. Fixed calendar deadline (unlike COMBO_OFFER's rolling N-day
+  // window) because the owner named an actual date; pin a different
+  // SEEDANCE_SALE_UNTIL (ISO) to move it without a code change. An unparseable
+  // value turns the sale OFF, never on — see seedanceSaleActive in offer.ts.
+  seedanceSaleUntil: process.env.SEEDANCE_SALE_UNTIL ?? "2026-09-10T23:59:59+05:00",
+  // --- Flagship price ceiling (docs/seedance-tiers.md § flagship ceiling) ---
+  // Owner decision, 2026-07-29: unlike the sale above, this is a PERMANENT
+  // reprice of the flagship model, not an expiring campaign — it holds even
+  // after SEEDANCE_SALE_UNTIL passes. Start time (not a deadline) because it
+  // turns a cap ON rather than a discount OFF; a start in the past means "on
+  // now". An unparseable value turns the ceiling OFF, never on — see
+  // flagshipCapActive in offer.ts (same fail-safe direction as the sale).
+  flagshipCapFrom: process.env.FLAGSHIP_CAP_FROM ?? "2026-07-29T20:00:00+05:00",
   // --- CEO monitoring (docs/monitoring.md): digest pushed, alerts interrupt ---
   // UTC hour when the daily digest is pushed to admins (6 UTC = 09:00 МСК).
   digestHourUtc: Number(process.env.DIGEST_HOUR_UTC ?? 6),

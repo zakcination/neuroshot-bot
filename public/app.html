@@ -11,9 +11,78 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="NeuroShot" />
+  <!-- Self-hosted (no third-party request, no CSP/latency risk for users on
+       slower KZ mobile connections) — see the cyrillic files, since Russian
+       copy is nearly all visible text. Both are variable fonts (one file
+       covers the whole weight range), so this is 2 requests, not 10. -->
+  <link rel="preload" href="/fonts/golos-cyrillic.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/unbounded-cyrillic.woff2" as="font" type="font/woff2" crossorigin />
+  <!-- ₸ (tenge) — its own tiny file (~700 B), see the @font-face comment below;
+       every price in the app uses it, so it's worth its own preload. -->
+  <link rel="preload" href="/fonts/golos-tenge.woff2" as="font" type="font/woff2" crossorigin />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     /* ————— NeuroShot design system: dark luxe, aurora accent (violet→magenta) ————— */
+    /* Type: Unbounded (display, headings/big numbers only — geometric and
+       distinctive rather than another Inter/Roboto-alike) paired with Golos
+       Text (body — a humanist sans designed for Cyrillic, reads well small on
+       phones). Both self-hosted as variable woff2 (public/fonts/), Cyrillic +
+       Latin subsets only. font-display: swap so first paint never blocks on
+       the font request — the system-font fallback chain renders immediately
+       and swaps in once the file lands. */
+    @font-face {
+      font-family: "Unbounded";
+      font-style: normal;
+      font-weight: 200 900;
+      font-display: swap;
+      src: url("/fonts/unbounded-cyrillic.woff2") format("woff2");
+      unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+    }
+    @font-face {
+      font-family: "Unbounded";
+      font-style: normal;
+      font-weight: 200 900;
+      font-display: swap;
+      src: url("/fonts/unbounded-latin.woff2") format("woff2");
+      unicode-range: U+0000-00FF, U+2000-206F, U+20AC, U+2122;
+    }
+    @font-face {
+      font-family: "Golos Text";
+      font-style: normal;
+      font-weight: 400 900;
+      font-display: swap;
+      src: url("/fonts/golos-cyrillic.woff2") format("woff2");
+      unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+    }
+    @font-face {
+      font-family: "Golos Text";
+      font-style: normal;
+      font-weight: 400 900;
+      font-display: swap;
+      src: url("/fonts/golos-latin.woff2") format("woff2");
+      unicode-range: U+0000-00FF, U+2000-206F, U+20AC, U+2122;
+    }
+    /* The tenge sign (₸, U+20B8) falls outside every predefined Cyrillic/Latin
+       subset Google ships for these families — it's a single-glyph file
+       fetched separately (google's own on-demand subsetting API), not part of
+       either block above. Without this, every price in a KZT-priced app falls
+       back to tofu. */
+    @font-face {
+      font-family: "Golos Text";
+      font-style: normal;
+      font-weight: 400 900;
+      font-display: swap;
+      src: url("/fonts/golos-tenge.woff2") format("woff2");
+      unicode-range: U+20B8;
+    }
+    @font-face {
+      font-family: "Unbounded";
+      font-style: normal;
+      font-weight: 200 900;
+      font-display: swap;
+      src: url("/fonts/unbounded-tenge.woff2") format("woff2");
+      unicode-range: U+20B8;
+    }
     :root {
       --bg: #08070c;
       --bg-2: #0d0b13;
@@ -34,10 +103,18 @@
     html { color-scheme: dark; }
     body {
       margin: 0; background: var(--bg); color: var(--ink);
-      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      font: 15px/1.5 "Golos Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
       min-height: 100dvh; overflow-x: hidden;
     }
     ::selection { background: rgba(124, 92, 255, .4); }
+    /* Display face: real headline moments only (headings + the onboarding
+       gift number) — never body copy, buttons, or dense list text, where
+       Unbounded's wide geometric letterforms would hurt legibility at small
+       mobile sizes. Falls back to the body stack, never to Unbounded-less
+       system-ui, so a slow font load never leaves a heading looking bare. */
+    h1, h2, h3, .wgiftbox .gn {
+      font-family: "Unbounded", "Golos Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    }
 
     .sky { position: fixed; inset: -20% -30%; z-index: 0; pointer-events: none; filter: blur(90px); opacity: .5; }
     .sky i { position: absolute; border-radius: 50%; }
@@ -147,7 +224,7 @@
     section { margin-top: 30px; }
     /* Outcome-led hero at the top of the studio — sells the result, not the tool. */
     .hero { margin: 2px 0 18px; }
-    .heroh { margin: 0; font-size: 25px; line-height: 1.12; font-weight: 800; letter-spacing: -.01em; }
+    .heroh { margin: 0; font-size: 25px; line-height: 1.12; font-weight: 700; }
     .herosub { margin: 6px 0 0; font-size: 13.5px; line-height: 1.45; color: var(--muted); }
     /* The wedge rail is the hero content, so it hugs the headline (no big top gap). */
     .hero + section { margin-top: 14px; }
@@ -658,7 +735,7 @@
       color: var(--ink); background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px;
     }
     .brandtag i { width: 6px; height: 6px; border-radius: 50%; background: var(--violet); box-shadow: 0 0 8px var(--violet); }
-    .aboutcard h2 { margin: 0 0 8px; font-size: 19px; letter-spacing: -.01em; }
+    .aboutcard h2 { margin: 0 0 8px; font-size: 19px; }
     .aboutcard h2 span { color: var(--violet); }
     .aboutcard p { margin: 0 0 16px; color: var(--muted); font-size: 13px; line-height: 1.55; }
     .steps3 { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 4px; margin-bottom: 16px; }
@@ -716,7 +793,7 @@
     }
     .whero .wherotext { position: absolute; left: 16px; right: 16px; bottom: 14px; z-index: 2; }
     .kicker { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: rgba(255,255,255,.75); font-weight: 700; margin-bottom: 4px; }
-    .whero h2 { font-size: 21px; font-weight: 800; letter-spacing: -.01em; color: #fff; margin: 0; text-shadow: 0 2px 10px rgba(0,0,0,.5); }
+    .whero h2 { font-size: 21px; font-weight: 700; color: #fff; margin: 0; text-shadow: 0 2px 10px rgba(0,0,0,.5); }
     @keyframes wkenburns { from { transform: scale(1); } to { transform: scale(1.11); } }
     @keyframes wtwinkle { 0%, 100% { opacity: .12; transform: scale(.6); } 50% { opacity: 1; transform: scale(1); } }
     .wslide > p.lead { font-size: 14px; color: var(--muted); margin: 0 0 18px; line-height: 1.55; }
@@ -800,7 +877,7 @@
     @keyframes shimmer { to { background-position: -200% 0; } }
     .gate { text-align: center; padding: 12vh 20px 0; }
     .gate .dot { width: 62px; height: 62px; border-radius: 20px; background: var(--aurora); margin: 0 auto 22px; box-shadow: 0 0 60px rgba(180,77,255,.5); }
-    .gate h1 { font-size: 30px; margin: 0 0 10px; letter-spacing: -.02em; font-weight: 800; }
+    .gate h1 { font-size: 30px; margin: 0 0 10px; font-weight: 700; }
     .gate p { color: var(--muted); margin: 0 auto 26px; max-width: 34ch; line-height: 1.6; }
     .gate .btn { max-width: 280px; margin: 0 auto; }
 
@@ -822,7 +899,7 @@
     .sheet-top .grip { margin: 4px auto 6px; }
     .sheet-x { position: absolute; top: 6px; right: 10px; width: 32px; height: 32px; border-radius: 999px; border: 0; background: rgba(255,255,255,.1); color: #fff; font-size: 15px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
     .sheet-x:active { background: rgba(255,255,255,.2); }
-    .sheet h3 { margin: 2px 0 14px; font-size: 18px; letter-spacing: -.01em; }
+    .sheet h3 { margin: 2px 0 14px; font-size: 18px; font-weight: 700; }
     .sheet .sub { color: var(--muted); font-size: 13px; margin: -8px 0 16px; line-height: 1.5; }
 
     .tabs { display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; margin-bottom: 16px; }
@@ -917,6 +994,22 @@
     /* live price badge in the composer */
     .priceBadge { display: inline-flex; align-items: center; gap: 6px; font-weight: 800; color: var(--amber); font-size: 15px; font-variant-numeric: tabular-nums; }
 
+    /* Seedance sale: a banner at the top of the video composers, and a small
+       tag on each discounted model's own price. Warm gradient (not the violet
+       aurora used for the entry-tile) so the two "look how good this deal is"
+       surfaces read as visually distinct campaigns, not one repeated design. */
+    .salebar {
+      display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700;
+      padding: 10px 13px; border-radius: var(--radius-s); margin-bottom: 12px;
+      background: linear-gradient(90deg, rgba(255,138,61,.16), rgba(255,77,141,.16));
+      border: 1px solid rgba(255,138,61,.35); color: var(--text);
+    }
+    .msale {
+      display: inline-block; font-size: 10px; font-weight: 800; letter-spacing: .02em;
+      background: linear-gradient(90deg, #ff8a3d, #ff4d8d); color: #fff;
+      padding: 2px 6px; border-radius: 999px; margin-right: 6px; vertical-align: middle;
+    }
+
     /* ————— duration slider —————
        Video length used to be two chips because the registry only offered two
        lengths. The endpoints accept every second in a range (Seedance 4–15,
@@ -931,7 +1024,21 @@
     .durbox { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 13px 15px 9px; }
     .durhead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
     .durhead .dursec { font-size: 19px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
-    .durhead .durprice { font-weight: 800; color: var(--amber); font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .durhead .durprice { white-space: nowrap; }
+    /* Dramatic before/after price — reuses the same visual language as
+       .fp-now/.fp-was (first-pack gift box) and .msale (sale pill), so a
+       discount always looks the same everywhere it appears (duration slider,
+       model picker rows). Wrapper (.durprice / .mrow .price / .mpick .price)
+       stacks now-over-was; the pieces themselves are unscoped so any price
+       spot in the app can opt in just by calling priceBlockHtml(). */
+    .durprice, .mrow .price, .mpick .price { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+    .pd-now { font-weight: 800; color: var(--amber); font-size: 15px; font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+    .pd-was { font-size: 11px; color: var(--faint); text-decoration: line-through; font-variant-numeric: tabular-nums; }
+    .pd-badge {
+      display: inline-block; font-size: 10px; font-weight: 800; letter-spacing: .02em;
+      background: linear-gradient(90deg, #ff8a3d, #ff4d8d); color: #fff;
+      padding: 2px 6px; border-radius: 999px;
+    }
     .durbox input[type="range"] {
       -webkit-appearance: none; appearance: none; width: 100%; margin: 12px 0 2px;
       background: transparent; height: 26px; display: block; cursor: pointer;
@@ -1905,6 +2012,29 @@
       </div>`;
     }
 
+    /**
+     * The Seedance sale banner shown at the top of both video composers.
+     * Non-ticking by design — a day-granularity deadline six weeks out gains
+     * nothing from a per-second timer, and a static line computed once at
+     * render avoids running a second countdown interval alongside the combo
+     * offer's. Re-renders naturally every time the composer redraws (which
+     * happens on nearly every tap), so the date is never meaningfully stale.
+     */
+    function saleBanner() {
+      const saleOn = ME.seedanceSale && ME.seedanceSale.active;
+      const ceilingOn = ME.flagshipCeiling && ME.flagshipCeiling.active;
+      const until = saleOn ? new Date(ME.seedanceSale.endsAt).toLocaleDateString("ru-RU", { day: "numeric", month: "long" }) : "";
+      const salePart = saleOn ? `Все модели Seedance — цены ниже вдвое, до ${until}.` : "";
+      // The ceiling is permanent (no end date), unlike the sale, so it keeps
+      // its own sentence even once the sale above has expired.
+      // No fixed "never above N ₸" figure here on purpose — the ceiling is a
+      // per-duration curve now (docs/seedance-tiers.md § flagship ceiling),
+      // not one flat number, so a specific ₸ claim would be true at some pack
+      // rates and false at others (up to 3,680 ₸ at 15s on the priciest pack).
+      const ceilingPart = ceilingOn ? ` Флагман — цена на длинных роликах снижена ещё сильнее.` : "";
+      return `<div class="salebar">🔥 <b>Seedance</b> — ${salePart}${ceilingPart}</div>`;
+    }
+
     /** A section label, with a tap-to-explain "?" when we have something to say. */
     function qLabel(text, hintKey) {
       const hint = hintKey && HINTS[hintKey]
@@ -2597,6 +2727,17 @@
       if (t && t.mult !== 1) credits = Math.ceil(credits * t.mult);
       return credits;
     }
+    /** Same shape as stuDurPrice, but the pre-discount price — for the
+     * dramatic before/after strikethrough on the duration slider. */
+    function stuDurWasPrice(seconds) {
+      const m = studioModel();
+      if (!m || !m.video) return 0;
+      const d = m.video.durations.find((x) => x.seconds === seconds);
+      let credits = d ? d.wasCredits : m.wasCredits;
+      const t = stu.resolution ? (m.video.resolutions || []).find((r) => r.id === stu.resolution) : null;
+      if (t && t.mult !== 1) credits = Math.ceil(credits * t.mult);
+      return credits;
+    }
 
     /** Live patron total — exact client mirror of the server's priceFor. */
     function studioPrice() {
@@ -2796,11 +2937,12 @@
             ${!isVideo && !has && x.needsImage ? `<div class="mnote">нужно фото</div>` : ""}
             ${stu.preset && x.key === stu.preset.model ? `<div class="mnote">рекомендовано для этого стиля</div>` : ""}
           </span>
-          <span class="price">${isVideo ? "от " : ""}${x.credits} ${PATRON}</span>
+          <span class="price">${priceBlockHtml(x.credits, x.wasCredits, isVideo ? "от " : "")}</span>
         </button>`;
 
       sheetBody.innerHTML = `
         <h3>Студия</h3>
+        ${isVideo && ((ME.seedanceSale && ME.seedanceSale.active) || (ME.flagshipCeiling && ME.flagshipCeiling.active)) ? saleBanner() : ""}
         ${stu.preset && !isVideo ? `
           <div class="stublock"><div class="stuchip">
             <span>${esc(stu.preset.label)}</span>
@@ -2837,7 +2979,7 @@
           ${stu.mopen
             ? `<span><b>Выберите модель</b></span><span class="mchev">свернуть ▲</span>`
             : `<span><b>${esc(m.label)}</b>${m.note ? `<div class="mnote">${esc(m.note)}</div>` : ""}</span>
-               <span class="price">${isVideo ? "от " : ""}${m.credits} ${PATRON}</span>
+               <span class="price">${priceBlockHtml(m.credits, m.wasCredits, isVideo ? "от " : "")}</span>
                <span class="mchev">▼</span>`}
         </button>
         ${stu.mopen ? `<div class="mlist">
@@ -2863,6 +3005,7 @@
             m.video.durations.map((d) => d.seconds),
             stu.duration,
             stuDurPrice,
+            stuDurWasPrice,
           )}</div>` : ""}
         ${isVideo && m.video && m.video.endFrame ? `
           ${qLabel("Финальный кадр (необязательно)", "endframe")}
@@ -2935,7 +3078,7 @@
         wireDurationSlider(sheetBody, m.video.durations.map((d) => d.seconds), stuDurPrice, (sec) => {
           stu.duration = sec;
           cta(); // the button carries the total (and flips to "Пополнить" when short)
-        });
+        }, stuDurWasPrice);
       }
       sheetBody.querySelectorAll("[data-story]").forEach((row) => {
         row.querySelectorAll(".chip").forEach((chip) => (chip.onclick = () => {
@@ -3142,12 +3285,14 @@
         return (resList.find((r) => r.id === pick.resolution) || resList[0]).mult;
       };
       const priceOf = (sec) => Math.ceil((durs.find((d) => d.seconds === sec) || durs[0]).credits * resMult());
+      const wasPriceOf = (sec) => Math.ceil((durs.find((d) => d.seconds === sec) || durs[0]).wasCredits * resMult());
 
       sheetBody.innerHTML = `
         <h3>Настройки видео</h3>
+        ${(ME.seedanceSale && ME.seedanceSale.active) || (ME.flagshipCeiling && ME.flagshipCeiling.active) ? saleBanner() : ""}
         ${isCurated ? `${qLabel("Модель", "model")}
           <div class="chips" id="modRow">${ME.catalog.videoModels.map((v) =>
-            `<button class="chip ${v.key === m.key ? "on" : ""}" data-mod="${v.key}">${esc(v.label.replace("🎬 ", ""))} · ${v.credits}+ ${PATRON}</button>`).join("")}</div>` : ""}
+            `<button class="chip ${v.key === m.key ? "on" : ""}" data-mod="${v.key}">${v.onSale ? "🔥 " : ""}${esc(v.label.replace("🎬 ", ""))} · ${v.credits}+ ${PATRON}</button>`).join("")}</div>` : ""}
         ${scenes.length ? `<div class="quiz-q">Сюжет — что происходит?</div>
           <div class="chips" id="sceneRow">${scenes.map((s) =>
             `<button class="chip ${pick.scene === s.id ? "on" : ""}" data-scene="${s.id}" data-sctier="${s.tier || "simple"}" data-scmodel="${s.videoModelKey}">${esc(s.label)}${s.tier === "epic" ? ` · ⚡${s.videoCredits} ${PATRON}` : ""}</button>`).join("")}</div>
@@ -3160,7 +3305,7 @@
         <div class="chips" id="resRow">${resList.map((r) =>
           `<button class="chip ${r.id === pick.resolution ? "on" : ""}" data-res="${r.id}">${esc(r.label)}</button>`).join("")}</div>` : ""}
         ${qLabel("Длительность", "duration")}
-        <div id="durRow">${durationSliderHtml(durs.map((d) => d.seconds), pick.duration, priceOf)}</div>
+        <div id="durRow">${durationSliderHtml(durs.map((d) => d.seconds), pick.duration, priceOf, wasPriceOf)}</div>
         ${hasEnd ? `${qLabel("Финальный кадр — переход к другому фото (необязательно)", "endframe")}
         <div id="endZone">
           <label class="drop"><input type="file" accept="image/*" id="endFile" />
@@ -3214,7 +3359,7 @@
       wireDurationSlider(sheetBody, durs.map((d) => d.seconds), priceOf, (sec) => {
         pick.duration = sec;
         sheetBody.querySelector("#prN").textContent = priceOf(sec);
-      });
+      }, wasPriceOf);
       // Keep typed fields when a control re-renders the composer for fresh prices.
       const preserveRerender = () => {
         const cw = sheetBody.querySelector("#cw"); if (cw) pick.custom = cw.value.trim();
@@ -3715,6 +3860,25 @@
     }
 
     /**
+     * Dramatic before/after price block: strikethrough "was" + bold "now" +
+     * a "-N%" pill, whenever `was` is genuinely higher than `now`. Falls back
+     * to a plain price with no badge when there's nothing to compare (was
+     * missing, or equal — a discount that fully expired, or a model never on
+     * sale to begin with). One function so every price surface in the app
+     * (duration slider, model rows) renders a discount identically.
+     */
+    function priceBlockHtml(now, was, prefix) {
+      // `prefix` ("от " on a video model's collapsed price) lives INSIDE
+      // pd-now, not beside the whole block — the block's parent is a flex
+      // column (stacks now over was), so a sibling text node would land on
+      // its own line above the price instead of reading "от 38 <PATRON>".
+      prefix = prefix || "";
+      if (!was || was <= now) return `<span class="pd-now">${prefix}${now} ${PATRON}</span>`;
+      const pct = Math.round((1 - now / was) * 100);
+      return `<span class="pd-now"><span class="pd-badge">−${pct}%</span>${prefix}${now} ${PATRON}</span><span class="pd-was">${was} ${PATRON}</span>`;
+    }
+
+    /**
      * Video-length slider over the ALLOWED seconds, addressed by index.
      *
      * Index, not seconds: the lists are dense ranges for most models but only
@@ -3723,18 +3887,20 @@
      * that fails on a value we offered. By index every position is legal by
      * construction, whatever the model.
      *
-     * `priceOf(seconds)` is passed in rather than computed here, because the
-     * two composers price differently (one has a resolution multiplier in play,
-     * the other reads a per-length price table) and both must show the number
-     * the SERVER will charge, not a second opinion.
+     * `priceOf(seconds)` / `wasPriceOf(seconds)` are passed in rather than
+     * computed here, because the two composers price differently (one has a
+     * resolution multiplier in play, the other reads a per-length price table)
+     * and both must show the number the SERVER will charge, not a second
+     * opinion. `wasPriceOf` is optional — omit it where there's no pre-discount
+     * price to compare against.
      */
-    function durationSliderHtml(durs, current, priceOf) {
+    function durationSliderHtml(durs, current, priceOf, wasPriceOf) {
       const i = Math.max(0, durs.indexOf(current));
       const fill = durs.length > 1 ? (i / (durs.length - 1)) * 100 : 100;
       return `<div class="durbox" data-dursl style="--fill:${fill}%">
         <div class="durhead">
           <b class="dursec">${durs[i]} сек</b>
-          <span class="durprice">${priceOf(durs[i])} ${PATRON}</span>
+          <span class="durprice">${priceBlockHtml(priceOf(durs[i]), wasPriceOf ? wasPriceOf(durs[i]) : 0)}</span>
         </div>
         <input type="range" min="0" max="${durs.length - 1}" step="1" value="${i}"
                aria-label="Длительность видео, секунд" />
@@ -3747,7 +3913,7 @@
      * tracks the drag rather than waiting for release — the price is the thing
      * being chosen, and a number that only catches up on mouse-up reads as lag.
      */
-    function wireDurationSlider(root, durs, priceOf, onPick) {
+    function wireDurationSlider(root, durs, priceOf, onPick, wasPriceOf) {
       const box = root.querySelector("[data-dursl]");
       if (!box) return;
       const input = box.querySelector("input[type=range]");
@@ -3760,7 +3926,7 @@
         if (sec == null) return;
         box.style.setProperty("--fill", `${durs.length > 1 ? (i / (durs.length - 1)) * 100 : 100}%`);
         secEl.textContent = `${sec} сек`;
-        prEl.textContent = `${priceOf(sec)} ${PATRON}`;
+        prEl.innerHTML = priceBlockHtml(priceOf(sec), wasPriceOf ? wasPriceOf(sec) : 0);
         if (sec !== last) { last = sec; hapticTick(); }
         onPick(sec);
       };

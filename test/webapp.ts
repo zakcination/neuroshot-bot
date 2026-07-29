@@ -430,6 +430,21 @@ await step("GET /img/<name>: serves decorative art, long-cached; rejects travers
   assert.notEqual(badExt.status, 200);
 });
 
+await step("GET /fonts/<name>: serves self-hosted webfonts, long-cached; rejects traversal/unknown", async () => {
+  const ok = await fetch(`${base}/fonts/golos-cyrillic.woff2`);
+  assert.equal(ok.status, 200);
+  assert.match(ok.headers.get("content-type") ?? "", /font\/woff2/);
+  assert.match(ok.headers.get("cache-control") ?? "", /immutable/);
+
+  const missing = await fetch(`${base}/fonts/does-not-exist.woff2`);
+  assert.equal(missing.status, 404);
+
+  const traversal = await fetch(`${base}/fonts/..%2F..%2Fpackage.json`);
+  assert.notEqual(traversal.status, 200);
+  const badExt2 = await fetch(`${base}/fonts/app.html`);
+  assert.notEqual(badExt2.status, 200);
+});
+
 await step("method gating: /api/auth is POST-only, /api/me is GET-only (405 otherwise)", async () => {
   const getAuth = await fetch(`${base}/api/auth`); // GET
   assert.equal(getAuth.status, 405);
@@ -460,6 +475,7 @@ async function pollGen(
 }
 
 await step("catalog rides on /api/me: presets, campaigns with video prices, model pickers", async () => {
+  const { MODELS, priceFor } = await import("../src/models.js");
   const { body } = await apiMe(signInitData(maker));
   const c = body.catalog;
   assert.ok(c.presets.some((p) => p.id === "headshot" && p.category === "photo"));
@@ -467,7 +483,7 @@ await step("catalog rides on /api/me: presets, campaigns with video prices, mode
   assert.equal(c.presetCredits, 2); // Seedream 4.5 edit preset/scenario engine
   const mini = c.campaigns.find((k) => k.id === "minifilm");
   assert.ok(mini, "minifilm campaign missing from catalog");
-  assert.equal(mini!.videoCredits, 76); // flagship Seedance 2.0 (audio) story upsell
+  assert.equal(mini!.videoCredits, priceFor(MODELS.seedance)); // flagship Seedance 2.0 (audio) story upsell
   assert.ok(mini!.presets.length >= 3);
   assert.ok(c.imageModels.some((m) => m.key === "nbpro_image"));
   assert.equal(c.videoModels[0].key, "hailuo_fast"); // cheap default video first
@@ -679,7 +695,7 @@ await step("reference video: several photos of one subject build one clip", asyn
   // reads up to 9. This is the "two strong frames, then motion" recipe — more
   // angles is the cheapest way to hold a likeness through movement, and the
   // extra references cost nothing.
-  const { MODELS } = await import("../src/models.js");
+  const { MODELS, priceFor } = await import("../src/models.js");
   assert.equal(MODELS.seedance_ref.image?.maxInputs, 9);
   assert.equal(MODELS.seedance_ref.kind, "image_to_video");
 
@@ -712,7 +728,7 @@ await step("reference video: several photos of one subject build one clip", asyn
   });
   assert.equal(r.status, 200);
   const d = (await r.json()) as { id: number; credits: number };
-  assert.equal(d.credits, 38, "extra references must not change the price");
+  assert.equal(d.credits, priceFor(MODELS.seedance_ref), "extra references must not change the price");
   await pollGen(d.id);
 
   const call = falCalls.at(-1)!;
@@ -747,6 +763,8 @@ await step("reference video: several photos of one subject build one clip", asyn
 });
 
 await step("reference subject: person vs object picks the framing, and the field means nothing outside reference mode", async () => {
+  const { MODELS, priceFor } = await import("../src/models.js");
+
   // Default (unset) must reproduce the original, person-only wording exactly —
   // every caller before this field existed was a face.
   await addCredits(maker.id, 38, "admin_grant", "test");
@@ -778,7 +796,7 @@ await step("reference subject: person vs object picks the framing, and the field
   });
   assert.equal(object.status, 200);
   const od = (await object.json()) as { id: number; credits: number };
-  assert.equal(od.credits, 38, "the subject choice must not change the price");
+  assert.equal(od.credits, priceFor(MODELS.seedance_ref), "the subject choice must not change the price");
   await pollGen(od.id);
   const objectPrompt = falCalls.at(-1)!.input.prompt as string;
   assert.match(objectPrompt, /SAME object/);
@@ -813,6 +831,7 @@ await step("reference subject: person vs object picks the framing, and the field
 
 await step("audio and video references: gated on rights, screened where we can, capped where the endpoint caps", async () => {
   const { REF_LIMITS, REFERENCE_RIGHTS_NOTICE } = await import("../src/media.js");
+  const { MODELS, priceFor } = await import("../src/models.js");
 
   // Nothing is accepted without the acknowledgement, and the refusal carries
   // the notice itself so the client cannot show different words than we record.
@@ -895,7 +914,7 @@ await step("audio and video references: gated on rights, screened where we can, 
   });
   assert.equal(r.status, 200);
   const d = (await r.json()) as { id: number; credits: number };
-  assert.equal(d.credits, 38, "references must not change the price");
+  assert.equal(d.credits, priceFor(MODELS.seedance_ref), "references must not change the price");
   await pollGen(d.id);
   const call = falCalls.at(-1)!;
   assert.deepEqual(call.input.audio_urls, ["https://fal.test/storage/a-1.mp3"]);
@@ -1284,7 +1303,10 @@ await step("Style Gallery: catalog presets carry preview art + real (never fabri
   assert.equal(after.usageCount, 1); // exactly the one real tap above
 });
 
-await step("campaign video upsell via API: minifilm renders on flagship Seedance 2.0 with audio (76 🔫)", async () => {
+await step("campaign video upsell via API: minifilm renders on flagship Seedance 2.0 with audio", async () => {
+  const { MODELS, priceFor } = await import("../src/models.js");
+  const cost = priceFor(MODELS.seedance);
+  const before = (await apiMe(signInitData(maker))).body.dashboard.credits;
   const r = await fetch(`${base}/api/generate`, {
     method: "POST",
     headers: { ...makerHeaders(), "Content-Type": "application/json" },
@@ -1292,8 +1314,8 @@ await step("campaign video upsell via API: minifilm renders on flagship Seedance
   });
   assert.equal(r.status, 200);
   const d = (await r.json()) as { id: number; credits: number; balance: number };
-  assert.equal(d.credits, 76);
-  assert.equal(d.balance, 25); // 101 − 76
+  assert.equal(d.credits, cost);
+  assert.equal(d.balance, before - cost);
   const done = await pollGen(d.id);
   assert.equal(done.status, "ok");
   assert.match(done.output_url ?? "", /\.mp4$/);
@@ -1972,19 +1994,93 @@ await step("every video model's duration ladder is sane: ascending, defaulted, m
     assert.deepEqual([...v.durations].sort((a, b) => a - b), v.durations, `${key}: durations not ascending`);
     assert.equal(new Set(v.durations).size, v.durations.length, `${key}: duplicate durations`);
     assert.ok(v.durations.includes(v.defaultSeconds), `${key}: defaultSeconds ${v.defaultSeconds} is not selectable`);
-    // The base `credits` is the quote for defaultSeconds — if these disagree the
-    // catalogue advertises one price and the paywall charges another.
+    // The base price (priceFor with no duration override — i.e. the catalogue
+    // quote) is the quote for defaultSeconds — if these disagree the catalogue
+    // advertises one price and the paywall charges another. Compared against
+    // priceFor(spec), not the raw `credits` field, since a sale discount would
+    // otherwise make the two look inconsistent when they are not.
     assert.equal(
       priceFor(spec, { duration: v.defaultSeconds }),
-      (spec as { credits: number }).credits,
+      priceFor(spec),
       `${key}: the default length is not what \`credits\` quotes`,
     );
+    // The flagship's price curve (docs/seedance-tiers.md § flagship ceiling)
+    // is a real per-second line, not a flat plateau — every model, including
+    // the flagship, must be strictly dearer duration over duration.
     let prev = 0;
     for (const sec of v.durations) {
       const p = priceFor(spec, { duration: sec });
       assert.ok(p > prev, `${key}: ${sec}s (${p} 🔫) is not dearer than the length before it`);
       prev = p;
     }
+  }
+});
+
+await step("flagship price curve: reproduces the owner's named anchors, never sells below cost, only the flagship, only once active", async () => {
+  const { MODELS, priceFor, costUsdFor, flagshipCapCredits, FLAGSHIP_CAP_KEY, SEEDANCE_SALE_KEYS } = await import("../src/models.js");
+  const KZT_PER_USD = 480;
+  const CHEAPEST_PACK_KZT = 25; // the one-time entry pack — the worst case a real customer can ever pay
+  assert.equal(FLAGSHIP_CAP_KEY, "seedance", "test assumes the ceiling targets MODELS.seedance");
+  const flagship = MODELS.seedance;
+
+  // The curve must reproduce the owner's three named anchor points exactly —
+  // that's the whole point of fitting a line to them rather than eyeballing
+  // one (docs/seedance-tiers.md § flagship ceiling).
+  assert.equal(flagshipCapCredits(5), 38, "5s anchor drifted");
+  assert.equal(flagshipCapCredits(10), 65, "10s anchor drifted");
+  assert.equal(flagshipCapCredits(15), 92, "15s anchor drifted");
+
+  const prevCap = config.flagshipCapFrom;
+  (config as { flagshipCapFrom: string }).flagshipCapFrom = "2000-01-01T00:00:00Z"; // force active
+  try {
+    let sawTheCurveBind = false;
+    for (const d of flagship.video!.durations) {
+      for (const res of flagship.video!.resolutions ?? [{ id: "" }]) {
+        const opts = res.id ? { duration: d, resolution: res.id } : { duration: d };
+        const credits = priceFor(flagship, opts);
+        assert.ok(credits <= flagshipCapCredits(d), `${d}s/${res.id}: ${credits} 🔫 exceeds the curve's own value for ${d}s`);
+        if (credits === flagshipCapCredits(d) && res.id === "720p") sawTheCurveBind = true;
+
+        // Real cost must be covered even at the CHEAPEST pack a real customer
+        // can ever pay (the one-time 25 ₸ entry pack) — this curve is stronger
+        // than the first flat-74 design, which could dip below cost there.
+        const costKzt = costUsdFor(flagship, opts) * KZT_PER_USD;
+        const worstCaseValueKzt = credits * CHEAPEST_PACK_KZT;
+        assert.ok(
+          worstCaseValueKzt >= costKzt,
+          `${d}s/${res.id}: sells below cost even at the cheapest pack (${worstCaseValueKzt} ₸ < ${costKzt.toFixed(0)} ₸ cost)`,
+        );
+      }
+    }
+    assert.ok(sawTheCurveBind, "no 720p duration actually hit the curve — the test grid no longer exercises it");
+
+    // The other 3 Seedance tiers must price IDENTICALLY whether the flagship
+    // curve is active or not — toggling it must not touch them at all.
+    for (const key of SEEDANCE_SALE_KEYS) {
+      if (key === FLAGSHIP_CAP_KEY) continue;
+      const m = MODELS[key as keyof typeof MODELS];
+      const v = (m as { video?: { durations: number[] } }).video;
+      assert.ok(v, `${key}: expected a video model`);
+      const longest = v.durations.at(-1);
+      const withCurveActive = priceFor(m, { duration: longest });
+      (config as { flagshipCapFrom: string }).flagshipCapFrom = prevCap;
+      const withCurveAtDefault = priceFor(m, { duration: longest });
+      (config as { flagshipCapFrom: string }).flagshipCapFrom = "2000-01-01T00:00:00Z";
+      assert.equal(withCurveActive, withCurveAtDefault, `${key}: unexpectedly changed by the flagship-only curve`);
+    }
+  } finally {
+    (config as { flagshipCapFrom: string }).flagshipCapFrom = prevCap;
+  }
+
+  // Before its start time (real production default, restored above), the
+  // curve must not touch anything — a future FLAGSHIP_CAP_FROM is "off".
+  (config as { flagshipCapFrom: string }).flagshipCapFrom = "2099-01-01T00:00:00Z";
+  try {
+    const longest = flagship.video!.durations.at(-1)!;
+    const uncapped = priceFor(flagship, { duration: longest, resolution: "720p" });
+    assert.ok(uncapped > flagshipCapCredits(longest), "curve applied before its own start time");
+  } finally {
+    (config as { flagshipCapFrom: string }).flagshipCapFrom = prevCap;
   }
 });
 
@@ -2024,6 +2120,7 @@ await step("video composer validation: bad duration/ratio → 400 bad_opts, bad 
 });
 
 await step("input params: image aspect ratio → image_size, quality tier prices up, Seedance ratio+res flow", async () => {
+  const { MODELS, priceFor } = await import("../src/models.js");
   await addCredits(maker.id, 300, "admin_grant", "test");
   // Image aspect ratio: Seedream maps "9:16" → the named portrait_16_9 size (no more square-by-default).
   const img = await fetch(`${base}/api/generate`, {
@@ -2058,7 +2155,7 @@ await step("input params: image aspect ratio → image_size, quality tier prices
   // 480p is half the 720p charge: the family bills per token and tokens track
   // pixels, so the cheaper tier must actually cost less — a quality control that
   // changes the render and not the price is a control that appears broken.
-  assert.equal(svd.credits, 31); // ceil(61 × 0.5)
+  assert.equal(svd.credits, priceFor(MODELS.seedance_fast, { resolution: "480p" }));
   await pollGen(svd.id);
   const scall = falCalls.at(-1)!;
   assert.equal(scall.input.aspect_ratio, "9:16");
@@ -2090,6 +2187,7 @@ await step("end frame is validated as strictly as the source: video url or forei
 });
 
 await step("scenario video scenes: on-theme scene sets the motion; model swap adjusts price", async () => {
+  const { MODELS, priceFor } = await import("../src/models.js");
   const { body } = await apiMe(signInitData(maker));
   const wc = body.catalog.campaigns.find((k) => k.id === "skazka") as unknown as {
     videoScenes: Array<{ id: string; label: string }>;
@@ -2098,7 +2196,7 @@ await step("scenario video scenes: on-theme scene sets the motion; model swap ad
   for (const s of wc.videoScenes) assert.ok(!("prompt" in s), "scene prompt leaked to client");
 
   await addCredits(maker.id, 200, "admin_grant", "test");
-  // Scene "score" (legendary goal) + model swapped to Seedance 2.0 Fast (61 🔫).
+  // Scene "score" (legendary goal) + model swapped to Seedance 2.0 Fast.
   const r = await fetch(`${base}/api/generate`, {
     method: "POST",
     headers: { ...makerHeaders(), "Content-Type": "application/json" },
@@ -2109,7 +2207,7 @@ await step("scenario video scenes: on-theme scene sets the motion; model swap ad
   });
   assert.equal(r.status, 200);
   const d = (await r.json()) as { id: number; credits: number };
-  assert.equal(d.credits, 61); // Seedance Fast (epic scene), not the Hailuo default (10)
+  assert.equal(d.credits, priceFor(MODELS.seedance_fast)); // Seedance Fast (epic scene), not the Hailuo default (10)
   await pollGen(d.id);
   const call = falCalls.at(-1)!;
   assert.equal(call.endpoint, "bytedance/seedance-2.0/fast/image-to-video");
@@ -2131,6 +2229,8 @@ await step("scenario video scenes: on-theme scene sets the motion; model swap ad
 });
 
 await step("scene tiering: epic scene auto-upgrades to Seedance; simple stays on the Hailuo default", async () => {
+  const { MODELS, priceFor } = await import("../src/models.js");
+  const seedanceFastCredits = priceFor(MODELS.seedance_fast);
   const { body } = await apiMe(signInitData(maker));
   const wc = body.catalog.campaigns.find((k) => k.id === "skazka") as unknown as {
     videoScenes: Array<{ id: string; tier: string; videoModelKey: string; videoCredits: number }>;
@@ -2139,18 +2239,18 @@ await step("scene tiering: epic scene auto-upgrades to Seedance; simple stays on
   const fan = wc.videoScenes.find((s) => s.id === "castspell")!;
   assert.equal(score.tier, "epic"); // dragon flight needs physics/multi-actor
   assert.equal(score.videoModelKey, "seedance_fast");
-  assert.equal(score.videoCredits, 61);
+  assert.equal(score.videoCredits, seedanceFastCredits);
   assert.equal(fan.tier, "simple");
   assert.equal(fan.videoCredits, 10); // Hailuo default
 
   await addCredits(maker.id, 200, "admin_grant", "test");
-  // Epic scene WITHOUT an explicit model → server upgrades to Seedance (61), not Hailuo (10).
+  // Epic scene WITHOUT an explicit model → server upgrades to Seedance, not Hailuo (10).
   const epic = await fetch(`${base}/api/generate`, {
     method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({ source: "campaign_video", id: "skazka", image_url: "https://fal.test/storage/u-1.jpg", scene: "flydragon" }),
   });
   assert.equal(epic.status, 200);
-  assert.equal(((await epic.json()) as { credits: number }).credits, 61);
+  assert.equal(((await epic.json()) as { credits: number }).credits, seedanceFastCredits);
 
   // Simple scene WITHOUT a model → the cheap Hailuo default (10).
   const simple = await fetch(`${base}/api/generate`, {
