@@ -707,11 +707,15 @@ await step("reference video: several photos of one subject build one clip", asyn
   // but the client's clamp read it off `m.video` in video mode, got undefined,
   // and trimmed every added photo on the next render. Asserting the field the
   // client actually consumes is the difference between the two.
+  //
+  // Looked up under the "seedance" umbrella key, not "seedance_ref" — the 4
+  // real tiers are collapsed into one catalog row, and the umbrella row is
+  // the one that carries the borrowed reference-tier caps for discoverability.
   const cat = (await apiMe(signInitData(maker))).body.catalog as unknown as {
     studio: { video: Array<{ key: string; maxInputs: number }> };
   };
-  const entry = cat.studio.video.find((m) => m.key === "seedance_ref");
-  assert.ok(entry, "seedance_ref missing from the studio video list");
+  const entry = cat.studio.video.find((m) => m.key === "seedance");
+  assert.ok(entry, "seedance missing from the studio video list");
   assert.equal(entry.maxInputs, 9, "the client cannot show the affordance without this cap");
 
   await addCredits(maker.id, 38, "admin_grant", "test");
@@ -989,8 +993,15 @@ await step("Studio catalog: FULL registry by mode, patron-only prices; every mod
   // Full registry — the display pickers hide some models; the Studio never does
   // (spec G5 "ALL models"). Counted against MODELS rather than written down, so
   // adding a model cannot quietly leave the Studio showing a subset.
+  //
+  // The one deliberate exception: the 3 real Seedance tiers behind the toggle
+  // (seedance_mini/seedance_fast/seedance_ref) are collapsed into the single
+  // "seedance" umbrella row (src/seedance.ts routeSeedance) — they stay real,
+  // directly generable MODELS keys (covered by the dedicated Seedance dispatch
+  // tests above), just no longer separate catalog ROWS.
   const { MODELS: ALL } = await import("../src/models.js");
-  const registry = Object.values(ALL);
+  const HIDDEN_SEEDANCE_KEYS = new Set(["seedance_mini", "seedance_fast", "seedance_ref"]);
+  const registry = Object.values(ALL).filter((m) => !HIDDEN_SEEDANCE_KEYS.has(m.key));
   assert.equal(s.image.length, registry.filter((m) => m.kind !== "image_to_video").length);
   assert.equal(s.video.length, registry.filter((m) => m.kind === "image_to_video").length);
   for (const m of registry) {
@@ -1864,7 +1875,7 @@ await step("POST /api/send delivers a generation into the user's Telegram chat",
 await step("catalog: model news banner + video composer params (durations priced, ratios, story)", async () => {
   const { body } = await apiMe(signInitData(maker));
   const c = body.catalog as unknown as {
-    news: Array<{ key: string; title: string; credits: number; kind: string; freeTrial: boolean }>;
+    news: Array<{ key: string; title: string; credits: number; wasCredits: number; onSale: boolean; kind: string; freeTrial: boolean }>;
     videoModels: Array<{
       key: string;
       video: {
@@ -1886,6 +1897,19 @@ await step("catalog: model news banner + video composer params (durations priced
   // freeTrial is credits ≤ FREE_CREDITS (3 in this env; Seedream @2🔫 is the free-trial anchor).
   for (const n of c.news) assert.equal(n.freeTrial, n.credits <= 3, `${n.key} freeTrial wrong`);
   assert.ok(c.news.some((n) => n.key === "text_to_image" && n.credits === 2 && n.freeTrial), "Seedream free-trial entry missing from news");
+  // wasCredits/onSale (added for the Home tab's hero-carousel strikethrough) —
+  // same triplet every other catalog section already carries. onSale is only
+  // ever true for the Seedance-family keys, and wasCredits === credits
+  // whenever nothing's discounted (so the client only renders a strikethrough
+  // when the two actually differ).
+  for (const n of c.news) {
+    assert.equal(typeof n.wasCredits, "number", `${n.key}: wasCredits missing`);
+    assert.ok(n.wasCredits >= n.credits, `${n.key}: wasCredits must never be cheaper than the live price`);
+    assert.equal(typeof n.onSale, "boolean", `${n.key}: onSale missing`);
+    if (n.onSale) assert.ok(n.key.startsWith("seedance"), `${n.key}: onSale true for a non-Seedance model`);
+  }
+  const seedanceFastNews = c.news.find((n) => n.key === "seedance_fast");
+  assert.ok(seedanceFastNews, "seedance_fast missing from news — the Home tab promo banner reads this entry directly");
   const kling = c.videoModels.find((m) => m.key === "kling3")!;
   // Every second the endpoint accepts, not the two we used to offer. Asserted as
   // a dense ascending range rather than a literal list, so adding a length is a
@@ -1911,7 +1935,10 @@ await step("catalog: model news banner + video composer params (durations priced
   assert.deepEqual(kling.video!.aspectRatios, ["auto"]);
   assert.equal(kling.video!.endFrame, true); // …but it DOES support an end frame
   // Seedance actually honors ratio + a resolution ladder.
-  const seed = c.videoModels.find((m) => m.key === "seedance_fast")!;
+  // Looked up under the umbrella "seedance" key — VIDEO_MODEL_PICKER no
+  // longer lists the tiers separately, and this legacy picker labels/prices
+  // that key's row as the default Fast tier (src/webapp.ts videoModels).
+  const seed = c.videoModels.find((m) => m.key === "seedance")!;
   assert.ok(seed.video!.aspectRatios.includes("9:16"), "Seedance missing vertical ratio");
   // Seedance 2.0 resolution enum is 480p/720p (fal schema) — 1080p is NOT a real tier there.
   assert.ok(seed.video!.resolutions.some((r) => r.id === "480p"), "Seedance missing 480p tier");
@@ -1968,8 +1995,8 @@ await step("studio catalog: the reference model advertises its 9 photos and its 
   const c = body.catalog as unknown as {
     studio: { video: Array<{ key: string; maxInputs: number; reference: boolean }> };
   };
-  const ref = c.studio.video.find((m) => m.key === "seedance_ref");
-  assert.ok(ref, "seedance_ref missing from the studio's video models");
+  const ref = c.studio.video.find((m) => m.key === "seedance");
+  assert.ok(ref, "seedance missing from the studio's video models");
   assert.equal(ref!.maxInputs, 9, "the reference model must advertise all 9 photographs it reads");
   assert.equal(ref!.reference, true, "the reference model must advertise its audio/video inputs");
   // And the limit must be readable WITHOUT knowing which capability block the
@@ -2084,6 +2111,161 @@ await step("flagship price curve: reproduces the owner's named anchors, never se
   }
 });
 
+await step("routeSeedance: cheap/fast/quality toggle, reference mode overrides unconditionally", async () => {
+  const { routeSeedance } = await import("../src/seedance.js");
+  // No references: the toggle alone decides.
+  assert.equal(routeSeedance("cheap", 1, false), "seedance_mini");
+  assert.equal(routeSeedance("fast", 1, false), "seedance_fast");
+  assert.equal(routeSeedance("quality", 1, false), "seedance");
+  // No photo at all (text-only entry point) behaves the same as one photo.
+  assert.equal(routeSeedance("fast", 0, false), "seedance_fast");
+  // 2+ photos win over every toggle position.
+  assert.equal(routeSeedance("cheap", 2, false), "seedance_ref");
+  assert.equal(routeSeedance("fast", 2, false), "seedance_ref");
+  assert.equal(routeSeedance("quality", 2, false), "seedance_ref");
+  // Any audio/video reference wins too, even with just the primary photo.
+  assert.equal(routeSeedance("quality", 1, true), "seedance_ref");
+});
+
+await step("Studio catalog collapses the 4 Seedance keys into one row with a per-tier price table", async () => {
+  const { body } = await apiMe(signInitData(maker));
+  const c = body.catalog as unknown as {
+    studio: {
+      video: Array<{
+        key: string; label: string; maxInputs: number; reference: boolean;
+        seedanceTiers?: Record<string, { key: string; credits: number }>;
+      }>;
+    };
+  };
+  const rows = c.studio.video.filter((m) => m.key.startsWith("seedance"));
+  assert.equal(rows.length, 1, "the 3 real Seedance tier keys must not appear as separate rows");
+  const row = rows[0]!;
+  assert.equal(row.key, "seedance");
+  assert.equal(row.label, "Seedance 2.0", "must be the family name, not the fast tier's own label");
+  // Discoverability fields borrow the reference tier's caps regardless of which
+  // tier is priced by default — otherwise the "add more photos" UI never renders.
+  assert.equal(row.maxInputs, 9);
+  assert.equal(row.reference, true);
+  assert.ok(row.seedanceTiers, "umbrella row must carry all 4 tier sub-payloads for the live price table");
+  for (const k of ["cheap", "fast", "quality", "ref"]) assert.ok(row.seedanceTiers![k], `seedanceTiers.${k} missing`);
+  assert.equal(row.seedanceTiers!.cheap!.key, "seedance_mini");
+  assert.equal(row.seedanceTiers!.fast!.key, "seedance_fast");
+  assert.equal(row.seedanceTiers!.quality!.key, "seedance");
+  assert.equal(row.seedanceTiers!.ref!.key, "seedance_ref");
+});
+
+await step("seedance dispatch: the toggle picks the real tier, references override it, and the umbrella flag never leaks a rejected `subject`", async () => {
+  const { MODELS, priceFor } = await import("../src/models.js");
+
+  // No tier sent at all → SEEDANCE_TIER_DEFAULT ("fast"). Also: the client always
+  // advertises reference:true for the umbrella row and may send `subject` even
+  // when the request resolves to a non-reference tier — this must NOT 400.
+  await addCredits(maker.id, 500, "admin_grant", "test");
+  const dflt = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance", image_url: "https://fal.test/storage/u-1.jpg",
+      prompt: "поворот в кадре", subject: "person",
+    }),
+  });
+  assert.equal(dflt.status, 200, "subject on a non-reference route must not trip normalizeOpts");
+  const dfltD = (await dflt.json()) as { id: number; credits: number };
+  assert.equal(dfltD.credits, priceFor(MODELS.seedance_fast));
+  await pollGen(dfltD.id);
+  assert.equal(falCalls.at(-1)!.endpoint, "bytedance/seedance-2.0/fast/image-to-video");
+
+  // "cheap" → seedance_mini.
+  const cheap = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance", image_url: "https://fal.test/storage/u-1.jpg",
+      prompt: "поворот в кадре", seedance_tier: "cheap",
+    }),
+  });
+  assert.equal(cheap.status, 200);
+  const cheapD = (await cheap.json()) as { id: number; credits: number };
+  assert.equal(cheapD.credits, priceFor(MODELS.seedance_mini));
+  await pollGen(cheapD.id);
+  assert.equal(falCalls.at(-1)!.endpoint, "bytedance/seedance-2.0/mini/image-to-video");
+
+  // "quality" → the flagship, generate_audio true.
+  const quality = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance", image_url: "https://fal.test/storage/u-1.jpg",
+      prompt: "поворот в кадре", seedance_tier: "quality",
+    }),
+  });
+  assert.equal(quality.status, 200);
+  const qualityD = (await quality.json()) as { id: number; credits: number };
+  assert.equal(qualityD.credits, priceFor(MODELS.seedance));
+  await pollGen(qualityD.id);
+  const qCall = falCalls.at(-1)!;
+  assert.equal(qCall.endpoint, "bytedance/seedance-2.0/image-to-video");
+  assert.equal(qCall.input.generate_audio, true);
+
+  // 2 photos beats even "quality" — reference mode is not a toggle position.
+  const ref = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance", image_url: "https://fal.test/storage/u-1.jpg",
+      image_urls: ["https://fal.test/storage/u-2.jpg"],
+      prompt: "поворот в кадре", seedance_tier: "quality",
+    }),
+  });
+  assert.equal(ref.status, 200);
+  const refD = (await ref.json()) as { id: number; credits: number };
+  assert.equal(refD.credits, priceFor(MODELS.seedance_ref), "2 photos must charge the reference tier, not the requested toggle");
+  await pollGen(refD.id);
+  assert.equal(falCalls.at(-1)!.endpoint, "bytedance/seedance-2.0/mini/reference-to-video");
+});
+
+await step("Grok Imagine + Kling 3.0 Turbo: real endpoints, real params, correct charge", async () => {
+  const { MODELS, priceFor } = await import("../src/models.js");
+  await addCredits(maker.id, 100, "admin_grant", "test");
+
+  const img = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "grok_image", prompt: "неоновый город ночью", aspect_ratio: "9:16" }),
+  });
+  assert.equal(img.status, 200);
+  const imgD = (await img.json()) as { id: number; credits: number };
+  assert.equal(imgD.credits, priceFor(MODELS.grok_image));
+  await pollGen(imgD.id);
+  const imgCall = falCalls.at(-1)!;
+  assert.equal(imgCall.endpoint, "xai/grok-imagine-image");
+  assert.equal(imgCall.input.aspect_ratio, "9:16");
+
+  const edit = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "grok_edit", image_url: "https://fal.test/storage/u-1.jpg", prompt: "поменяй фон на пляж",
+    }),
+  });
+  assert.equal(edit.status, 200);
+  const editD = (await edit.json()) as { id: number; credits: number };
+  assert.equal(editD.credits, priceFor(MODELS.grok_edit));
+  await pollGen(editD.id);
+  const editCall = falCalls.at(-1)!;
+  assert.equal(editCall.endpoint, "xai/grok-imagine-image/edit");
+  assert.deepEqual(editCall.input.image_urls, ["https://fal.test/storage/u-1.jpg"]);
+
+  const vid = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "kling_turbo", image_url: "https://fal.test/storage/u-1.jpg", prompt: "медленный наезд",
+    }),
+  });
+  assert.equal(vid.status, 200);
+  const vidD = (await vid.json()) as { id: number; credits: number };
+  assert.equal(vidD.credits, priceFor(MODELS.kling_turbo));
+  await pollGen(vidD.id);
+  const vidCall = falCalls.at(-1)!;
+  assert.equal(vidCall.endpoint, "fal-ai/kling-video/v3/turbo/standard/image-to-video");
+  assert.equal(vidCall.input.start_image_url, "https://fal.test/storage/u-1.jpg");
+  assert.equal(vidCall.input.duration, "5");
+});
+
 await step("video composer validation: bad duration/ratio → 400 bad_opts, bad story id → bad_option", async () => {
   // Past the endpoint's ceiling — 15s is the longest Kling 3.0 accepts.
   const badDur = await fetch(`${base}/api/generate`, {
@@ -2196,13 +2378,15 @@ await step("scenario video scenes: on-theme scene sets the motion; model swap ad
   for (const s of wc.videoScenes) assert.ok(!("prompt" in s), "scene prompt leaked to client");
 
   await addCredits(maker.id, 200, "admin_grant", "test");
-  // Scene "score" (legendary goal) + model swapped to Seedance 2.0 Fast.
+  // Scene "score" (legendary goal) + model swapped to Seedance 2.0 (this swap
+  // surface has no cheap/fast/quality toggle — the umbrella key always means
+  // the default Fast tier here, same as the videoModels row it's picked from).
   const r = await fetch(`${base}/api/generate`, {
     method: "POST",
     headers: { ...makerHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({
       source: "campaign_video", id: "skazka", image_url: "https://fal.test/storage/u-1.jpg",
-      scene: "flydragon", model: "seedance_fast",
+      scene: "flydragon", model: "seedance",
     }),
   });
   assert.equal(r.status, 200);

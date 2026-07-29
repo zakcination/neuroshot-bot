@@ -23,6 +23,7 @@ import { assertImageSafe, UnsafeImageError } from "./moderation.js";
 import { hit } from "./ratelimit.js";
 import { claimOrderPaid, grantPurchase, onceTaken, sendPendingOrderPrompt } from "./payments.js";
 import { comboEndsAt, seedanceSaleActive, seedanceSaleEndsAt, flagshipCapActive } from "./offer.js";
+import { routeSeedance, SEEDANCE_TIER_DEFAULT, type SeedanceTier } from "./seedance.js";
 import { sanitizePrompt } from "./promptcraft.js";
 import {
   AUDIO_MIME,
@@ -254,83 +255,132 @@ export async function enhanceResponse(
  * (decision D4-revised): the patron is the app's single price language; real ₸
  * appears solely on pack purchase prices, where actual money changes hands.
  */
+/**
+ * One catalog row for a model. Factored out of studioModelsOf so the Seedance
+ * umbrella row (below) can build the SAME shape for each of its 3 hidden
+ * tiers, once for the row itself (the default/fast tier) and once per entry
+ * under `seedanceTiers` (so the client can re-render price/duration live as
+ * the cheap/fast/quality toggle moves, without another request).
+ */
+function studioModelRow(m: ModelSpec, eta: Record<string, number>): Record<string, unknown> {
+  return {
+    key: m.key,
+    label: m.label,
+    // What the (real, provider-given) name doesn't say on its own.
+    note: m.note ?? "",
+    kind: m.kind,
+    credits: priceFor(m),
+    // Pre-discount price, for a strikethrough "было X → стало Y" — equal to
+    // `credits` whenever nothing is discounted, so the client only renders
+    // the strikethrough when the two actually differ.
+    wasCredits: rawPriceFor(m),
+    // MEASURED median seconds from our own recent runs; 0 = not enough data
+    // yet, and the client must then show its coarse copy, not a fake number.
+    etaSeconds: eta[m.key] ?? 0,
+    needsImage: m.kind !== "text_to_image",
+    // See src/models.ts § SEEDANCE_SALE_MULT — true only for the 4 sale keys,
+    // and only while config.seedanceSaleUntil hasn't passed.
+    onSale: SEEDANCE_SALE_KEYS.has(m.key) && seedanceSaleActive(),
+    // How many of the user's OWN photos this model reads, including the first.
+    // 1 = single-photo model, so the client shows no "add another angle"
+    // affordance. Extra angles never change the price.
+    //
+    // At the MODEL root, not inside `image`, because that is what it describes:
+    // how many inputs the endpoint takes. It used to live in the image block,
+    // which meant the studio — reading `m.video` while in video mode — could
+    // not see it at all, and `seedance_ref` (9 photos, the whole point of the
+    // model) silently fell back to 1. Nothing about a limit on input photos
+    // belongs to the image-vs-video split.
+    maxInputs: m.image?.maxInputs ?? 1,
+    image: m.image
+      ? {
+          aspectRatios: m.image.aspectRatios,
+          resolutions: (m.image.resolutions ?? []).map((t) => ({
+            id: t.id,
+            label: t.label,
+            mult: t.mult, // exact multiplier — client mirrors priceFor with it
+            credits: priceFor(m, { resolution: t.id }),
+          })),
+          // Output count (num_images): a plain max — unlike resolution/duration,
+          // count composes multiplicatively WITH whichever resolution is chosen,
+          // so the client mirrors priceFor's exact `credits × n` (rounded up)
+          // rather than reading a precomputed per-count price. 0 = no count
+          // selector (maxCount unset — unverified endpoints, e.g. premium_*).
+          maxCount: m.image.maxCount ?? 0,
+        }
+      : null,
+    // Does this model read audio/video references? The client shows the rights
+    // notice and the file pickers off this flag alone.
+    reference: !!m.reference,
+    video: m.video
+      ? {
+          durations: m.video.durations.map((d) => ({ seconds: d, credits: priceFor(m, { duration: d }), wasCredits: rawPriceFor(m, { duration: d }) })),
+          // The length `credits` is quoted for. The client must not fall back
+          // to durations[0] — that is now the SHORTEST option, not the
+          // default, so a composer opening on it would silently start every
+          // user on a different length than the price they were shown.
+          defaultSeconds: m.video.defaultSeconds,
+          aspectRatios: m.video.aspectRatios,
+          endFrame: !!m.video.endFrame,
+          resolutions: (m.video.resolutions ?? []).map((t) => ({
+            id: t.id,
+            label: t.label,
+            mult: t.mult, // exact multiplier — client mirrors priceFor with it
+            credits: priceFor(m, { resolution: t.id }),
+          })),
+        }
+      : null,
+  };
+}
+
+// The 3 Seedance tiers folded behind the single "seedance" catalog row — see
+// routeSeedance (src/seedance.ts). Hidden from the plain model list, but
+// still real, priced, generable MODELS entries.
+const HIDDEN_SEEDANCE_KEYS = new Set(["seedance_mini", "seedance_fast", "seedance_ref"]);
+
 function studioModelsOf(mode: "image" | "video", eta: Record<string, number>): Array<Record<string, unknown>> {
   const kinds = mode === "video" ? ["image_to_video"] : ["image_edit", "text_to_image"];
   return Object.values(MODELS as Record<string, ModelSpec>)
-    .filter((m) => kinds.includes(m.kind))
-    // Sorted by what the model actually CHARGES right now, not its steady-state
-    // registry price — during the Seedance sale those disagree, and a "cheapest
-    // first" ladder sorted by the wrong number would put a discounted model in
-    // the wrong place in its own honest ladder.
-    .sort((a, b) => priceFor(a) - priceFor(b))
-    .map((m) => ({
-      key: m.key,
-      label: m.label,
-      // What the (real, provider-given) name doesn't say on its own.
-      note: m.note ?? "",
-      kind: m.kind,
-      credits: priceFor(m),
-      // Pre-discount price, for a strikethrough "было X → стало Y" — equal to
-      // `credits` whenever nothing is discounted, so the client only renders
-      // the strikethrough when the two actually differ.
-      wasCredits: rawPriceFor(m),
-      // MEASURED median seconds from our own recent runs; 0 = not enough data
-      // yet, and the client must then show its coarse copy, not a fake number.
-      etaSeconds: eta[m.key] ?? 0,
-      needsImage: m.kind !== "text_to_image",
-      // See src/models.ts § SEEDANCE_SALE_MULT — true only for the 4 sale keys,
-      // and only while config.seedanceSaleUntil hasn't passed.
-      onSale: SEEDANCE_SALE_KEYS.has(m.key) && seedanceSaleActive(),
-      // How many of the user's OWN photos this model reads, including the first.
-      // 1 = single-photo model, so the client shows no "add another angle"
-      // affordance. Extra angles never change the price.
-      //
-      // At the MODEL root, not inside `image`, because that is what it describes:
-      // how many inputs the endpoint takes. It used to live in the image block,
-      // which meant the studio — reading `m.video` while in video mode — could
-      // not see it at all, and `seedance_ref` (9 photos, the whole point of the
-      // model) silently fell back to 1. Nothing about a limit on input photos
-      // belongs to the image-vs-video split.
-      maxInputs: m.image?.maxInputs ?? 1,
-      image: m.image
-        ? {
-            aspectRatios: m.image.aspectRatios,
-            resolutions: (m.image.resolutions ?? []).map((t) => ({
-              id: t.id,
-              label: t.label,
-              mult: t.mult, // exact multiplier — client mirrors priceFor with it
-              credits: priceFor(m, { resolution: t.id }),
-            })),
-            // Output count (num_images): a plain max — unlike resolution/duration,
-            // count composes multiplicatively WITH whichever resolution is chosen,
-            // so the client mirrors priceFor's exact `credits × n` (rounded up)
-            // rather than reading a precomputed per-count price. 0 = no count
-            // selector (maxCount unset — unverified endpoints, e.g. premium_*).
-            maxCount: m.image.maxCount ?? 0,
-          }
-        : null,
-      // Does this model read audio/video references? The client shows the rights
-      // notice and the file pickers off this flag alone.
-      reference: !!m.reference,
-      video: m.video
-        ? {
-            durations: m.video.durations.map((d) => ({ seconds: d, credits: priceFor(m, { duration: d }), wasCredits: rawPriceFor(m, { duration: d }) })),
-            // The length `credits` is quoted for. The client must not fall back
-            // to durations[0] — that is now the SHORTEST option, not the
-            // default, so a composer opening on it would silently start every
-            // user on a different length than the price they were shown.
-            defaultSeconds: m.video.defaultSeconds,
-            aspectRatios: m.video.aspectRatios,
-            endFrame: !!m.video.endFrame,
-            resolutions: (m.video.resolutions ?? []).map((t) => ({
-              id: t.id,
-              label: t.label,
-              mult: t.mult, // exact multiplier — client mirrors priceFor with it
-              credits: priceFor(m, { resolution: t.id }),
-            })),
-          }
-        : null,
-    }));
+    .filter((m) => kinds.includes(m.kind) && !HIDDEN_SEEDANCE_KEYS.has(m.key))
+    .map((m) => {
+      if (m.key !== "seedance") return studioModelRow(m, eta);
+      // The umbrella row shows the DEFAULT tier's price (Быстро/fast), not the
+      // flagship's — the toggle opens on Fast, and a price quoting the
+      // priciest tier would contradict what the user sees the instant the
+      // composer opens. seedanceTiers carries all 3 full rows so the client
+      // can swap price/duration live as the toggle moves, no extra request.
+      const fastRow = studioModelRow(MODELS.seedance_fast, eta);
+      return {
+        ...fastRow,
+        key: "seedance", // the umbrella key the client always sends back
+        label: MODELS.seedance.label, // "Seedance 2.0" — the family name, not "…Fast"
+        note: "Дёшево / Быстро / Качество — выберите ниже",
+        // Borrowed from seedance_ref, NOT the fast tier: this is what makes
+        // the existing "ещё ракурсы" / audio-video reference UI (extrasBlock,
+        // refMediaBlock — public/app.html) discoverable at all from the
+        // umbrella row. Attaching a 2nd photo or any audio/video is how a
+        // user reaches reference mode; without this override maxInputs would
+        // stay 1 (the fast tier's own value) and that affordance would never
+        // render, and routeSeedance would never see refCount ≥ 2.
+        maxInputs: MODELS.seedance_ref.image?.maxInputs ?? 9,
+        reference: true,
+        seedanceTiers: {
+          cheap: studioModelRow(MODELS.seedance_mini, eta),
+          fast: fastRow,
+          quality: studioModelRow(MODELS.seedance, eta),
+          // Not one of the 3 toggle positions — the client shows THIS row's
+          // price/duration table instead of the toggle's whenever reference
+          // mode is active (≥2 photos or any audio/video attached), since
+          // that's what routeSeedance will actually charge regardless of
+          // which toggle position is selected.
+          ref: studioModelRow(MODELS.seedance_ref, eta),
+        },
+      };
+    })
+    // Sorted by what's actually SHOWN — the umbrella row displays the fast
+    // tier's price, so it must sort by that, not by the flagship's (pre-remap)
+    // price, or it would land in the wrong spot in its own honest ladder.
+    .sort((a, b) => (a.credits as number) - (b.credits as number));
 }
 
 function packsPayload(onceTaken = false): Array<Record<string, unknown>> {
@@ -456,13 +506,17 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
       };
     }),
     videoModels: VIDEO_MODEL_PICKER.map((k) => {
-      const spec = MODELS[k] as ModelSpec;
+      // "seedance" here is the umbrella key — this legacy/curated picker has
+      // no cheap/fast/quality toggle, so it always shows (and, via the
+      // campaign_video branch of generateResponse, always charges) the
+      // default Fast tier's price, same as the Cinema Studio's collapsed row.
+      const spec = (k === "seedance" ? MODELS.seedance_fast : MODELS[k]) as ModelSpec;
       return {
         key: k,
-        label: spec.label,
+        label: k === "seedance" ? MODELS.seedance.label : spec.label, // "Seedance 2.0", not "…Fast"
         credits: priceFor(spec),
         wasCredits: rawPriceFor(spec),
-        onSale: SEEDANCE_SALE_KEYS.has(k) && seedanceSaleActive(),
+        onSale: SEEDANCE_SALE_KEYS.has(spec.key) && seedanceSaleActive(),
         // Composer capabilities: durations (per-length price), ratios, end-frame, quality.
         video: spec.video
           ? {
@@ -500,6 +554,11 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
       // seedance_fast) are sale keys, and the banner is exactly where someone
       // decides whether to try it, so it must never quote a stale price.
       credits: priceFor(MODELS[n.key]),
+      // Same strikethrough pair every other catalog section already carries
+      // (studioModelRow, videoModels) — equal to `credits` whenever nothing's
+      // discounted, so the client only renders a strikethrough when they differ.
+      wasCredits: rawPriceFor(MODELS[n.key]),
+      onSale: SEEDANCE_SALE_KEYS.has(n.key) && seedanceSaleActive(),
       kind: MODELS[n.key].kind,
       freeTrial: priceFor(MODELS[n.key]) <= config.freeCredits,
     })),
@@ -940,6 +999,9 @@ export async function generateResponse(
     }
   }
   let model: ModelSpec, prompt: string, crafted;
+  // Set only in the `source === "model"` branch, when the client sent the
+  // Seedance umbrella key — read further down by the `subject` gate.
+  let viaSeedanceUmbrella = false;
 
   // Aspect a preset PINS (marketplace cards must be 3:4) — used as the default
   // ratio below when the user didn't pick one themselves (explicit choice wins).
@@ -1020,7 +1082,10 @@ export async function generateResponse(
       if (!m || !(VIDEO_MODEL_PICKER as readonly string[]).includes(m.key)) {
         return { status: 400, body: { error: "bad_request" } };
       }
-      vmodel = m;
+      // This swap surface has no cheap/fast/quality toggle (unlike the Cinema
+      // Studio) — "seedance" always means the default Fast tier here, same as
+      // the videoModels catalog row it was picked from.
+      vmodel = m.key === "seedance" ? MODELS.seedance_fast : m;
     }
     // On-theme scene (viral topical suggestion) as the base motion, else default.
     let base = c.animatePrompt;
@@ -1044,8 +1109,26 @@ export async function generateResponse(
     // allow-list (only vetted, priced models live in MODELS), kind decides
     // whether a source image is required, and normalizeOpts below rejects any
     // option the model doesn't declare.
-    const m = modelByKey(String(body?.model ?? ""));
+    let m = modelByKey(String(body?.model ?? ""));
     if (!m) return { status: 400, body: { error: "bad_request" } };
+    // The Studio shows ONE "Seedance" row (the 4 real tiers are collapsed
+    // behind it) plus a Дёшево/Быстро/Качество toggle — resolve the umbrella
+    // key to a real tier here, before anything downstream (price, moderation,
+    // the fal call) ever sees it. Reference mode (≥2 photos, or any audio/
+    // video attached) always overrides the toggle — see routeSeedance
+    // (src/seedance.ts) for why. `m.key === "seedance"` and not some other
+    // check because that's the one key the client ever sends for this family
+    // now; the other 3 keys stay real, generable models for tests/tooling,
+    // just no longer independently selectable from the picker.
+    viaSeedanceUmbrella = m.key === "seedance";
+    if (viaSeedanceUmbrella) {
+      const tier: SeedanceTier =
+        body?.seedance_tier === "cheap" || body?.seedance_tier === "quality" ? body.seedance_tier : SEEDANCE_TIER_DEFAULT;
+      const refCount = (imageUrl ? 1 : 0) + extraImageUrls.length;
+      const hasAvRef = audioUrls.length > 0 || videoUrls.length > 0;
+      m = modelByKey(routeSeedance(tier, refCount, hasAvRef));
+      if (!m) return { status: 400, body: { error: "bad_request" } };
+    }
     if (m.kind !== "text_to_image" && !imageUrl) return { status: 400, body: { error: "bad_request" } };
     let raw = typeof body?.prompt === "string" ? body.prompt : "";
     // Video: fold in the composer story/personalization before craft mapping.
@@ -1085,7 +1168,21 @@ export async function generateResponse(
     resolution: typeof body?.resolution === "string" ? body.resolution : undefined,
     endImageUrl,
     numImages: body?.num_images != null ? Number(body.num_images) : undefined,
-    subject: typeof body?.subject === "string" ? body.subject : undefined,
+    // `model` here is already the FINAL resolved model (the Seedance router
+    // above runs first). Suppressed ONLY when the request came in through the
+    // umbrella "seedance" key and resolved to a non-reference tier — the
+    // client's umbrella row always advertises reference: true (that's what
+    // makes the extra-photo/audio/video UI discoverable at all — see
+    // studioModelsOf), so it will legitimately send `subject` even when the
+    // toggle resolves to fast/mini/quality. Forwarding it there would make
+    // normalizeOpts reject the ENTIRE request for something that isn't user
+    // error — just an artifact of the collapse. Every OTHER path (a direct,
+    // non-umbrella model key) keeps the strict rule: `subject` on a model that
+    // doesn't declare `reference` is a capability mismatch and still 400s.
+    subject:
+      viaSeedanceUmbrella && !model.reference
+        ? undefined
+        : typeof body?.subject === "string" ? body.subject : undefined,
   } as GenOpts);
   if (opts === null) return { status: 400, body: { error: "bad_opts" } };
   // Curated style reference — assigned HERE, after normalizeOpts, and only from
