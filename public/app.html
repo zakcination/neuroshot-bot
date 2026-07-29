@@ -3643,7 +3643,13 @@
           go: () => tryModel(sale),
         });
       }
-      const rest = news.find((n) => n.key !== "seedance_fast" && !n.key.startsWith("seedance"));
+      // Prefer a different KIND from the sale card first — artFor buckets by
+      // kind, and two image_to_video entries back to back (e.g. Hailuo right
+      // after the Seedance sale) would render the exact same background photo
+      // twice in a row. Falls back to any non-Seedance entry if every other
+      // entry happens to share the sale's kind.
+      const rest = news.find((n) => n.key !== "seedance_fast" && !n.key.startsWith("seedance") && n.kind !== (sale && sale.kind))
+        || news.find((n) => n.key !== "seedance_fast" && !n.key.startsWith("seedance"));
       if (rest) {
         items.push({
           img: "/img/" + artFor(rest.kind),
@@ -3663,6 +3669,33 @@
           title: camp.label.slice(camp.label.indexOf(" ") + 1),
           sub: `${camp.imageCredits} ${PATRON} + видео ${camp.videoCredits} ${PATRON}`,
           go: () => { st.tab = "scenes"; openSheet(); viewCampaign("odyssey"); },
+        });
+      }
+      // Referral share: percent read from ME.referral (server-computed off
+      // config.referralPercent) — never hardcoded, so a future retune of the
+      // rate can't leave a stale number sitting in this card.
+      if (ME.referral) {
+        items.push({
+          img: "/img/card-referral.jpg",
+          tag: "🎁 РЕФЕРАЛКА",
+          free: false,
+          title: "Приведи друга — получи бонус",
+          sub: `${ME.referral.percent}% пожизненно с его покупок`,
+          go: () => showPage("friends"),
+        });
+      }
+      // Creator/partner collaboration: base and ceiling both read from
+      // ME.partner (server-computed off config.partnerPercent/PARTNER_TIERS) —
+      // this is the SAME "напишите нам" touchpoint already on the Друзья page
+      // (renderPartnerBlock), not a new signup flow.
+      if (ME.partner) {
+        items.push({
+          img: "/img/card-creators.jpg",
+          tag: "🤝 КРИЭЙТОРАМ",
+          free: false,
+          title: "Открыты к коллаборациям",
+          sub: `Свой код и до ${ME.partner.topPercent}% с продаж`,
+          go: () => showPage("friends"),
         });
       }
       return items;
