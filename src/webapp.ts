@@ -598,6 +598,10 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     dashboard,
     generations,
     bot_username: config.webappBotUsername,
+    // null on production (the default `role: "bot"` never sets a label) — the
+    // client only renders the "🧪 STAGING" ribbon when this is non-null, so a
+    // real deploy can never accidentally show it. See docs/staging.md.
+    staging: config.role === "webapp" && config.stagingLabel ? { label: config.stagingLabel } : null,
     // Pack catalog for the app's pricing section — same source as the bot.
     packs: packsPayload(startTaken),
     catalog: catalogPayload(usage, gates, eta),

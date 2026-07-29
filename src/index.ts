@@ -34,36 +34,47 @@ bot.api.config.use(async (prev, method, payload, signal) => {
  */
 const POLL_STALE_MS = 100_000;
 
+// role: "webapp" (docs/staging.md) means this process is a SECOND, independent
+// deployment sharing the real bot token with production (e.g. a staging build
+// redeployed per-PR) — it must never touch anything that assumes it is the
+// one true bot instance: no getUpdates (Telegram allows exactly one caller
+// per token — see fly.toml's own note on the outage this caused once
+// already), no rewriting the command list or menu button production users
+// see, no duplicate admin digests/alerts firing from two processes at once.
+const isWebappOnly = config.role === "webapp";
+
 // CEO monitoring: daily digest to admins + exception alerts (docs/monitoring.md).
-startMonitor((chatId, text) => bot.api.sendMessage(chatId, text, { parse_mode: "HTML" }), bot.api);
+if (!isWebappOnly) {
+  startMonitor((chatId, text) => bot.api.sendMessage(chatId, text, { parse_mode: "HTML" }), bot.api);
 
-// Fire-and-forget, but NEVER unhandled: a rejected promise with no catch is
-// an unhandled rejection, which terminates the process on modern Node.
-// Failing to set the command list is cosmetic and must not take the bot down.
-void bot.api.setMyCommands([
-  { command: "menu", description: "📋 Меню — что создаём?" },
-  // /help sits second on purpose: the person who opens this list is usually the
-  // person something went wrong for, and support used to be unreachable.
-  { command: "help", description: "🆘 Помощь и поддержка" },
-  { command: "app", description: "🌐 Открыть приложение" },
-  { command: "premium", description: "💎 Премиум-картинка из текста" },
-  { command: "buy", description: `💰 Купить патроны ${UNIT_EMOJI}` },
-  { command: "balance", description: "Мой баланс" },
-  { command: "ref", description: "🎁 Реферальная ссылка (10%)" },
-  { command: "partner", description: "🤝 Партнёрам и авторам" },
-  { command: "whoami", description: "🪪 Мои данные и ID" },
-  { command: "refund", description: "↩️ Возврат и гарантии" },
-  { command: "delete_me", description: "🗑 Удалить мои данные" },
-  { command: "start", description: "Перезапустить бота" },
-]).catch((e) => console.error("setMyCommands failed:", e));
+  // Fire-and-forget, but NEVER unhandled: a rejected promise with no catch is
+  // an unhandled rejection, which terminates the process on modern Node.
+  // Failing to set the command list is cosmetic and must not take the bot down.
+  void bot.api.setMyCommands([
+    { command: "menu", description: "📋 Меню — что создаём?" },
+    // /help sits second on purpose: the person who opens this list is usually the
+    // person something went wrong for, and support used to be unreachable.
+    { command: "help", description: "🆘 Помощь и поддержка" },
+    { command: "app", description: "🌐 Открыть приложение" },
+    { command: "premium", description: "💎 Премиум-картинка из текста" },
+    { command: "buy", description: `💰 Купить патроны ${UNIT_EMOJI}` },
+    { command: "balance", description: "Мой баланс" },
+    { command: "ref", description: "🎁 Реферальная ссылка (10%)" },
+    { command: "partner", description: "🤝 Партнёрам и авторам" },
+    { command: "whoami", description: "🪪 Мои данные и ID" },
+    { command: "refund", description: "↩️ Возврат и гарантии" },
+    { command: "delete_me", description: "🗑 Удалить мои данные" },
+    { command: "start", description: "Перезапустить бота" },
+  ]).catch((e) => console.error("setMyCommands failed:", e));
 
-// Set the persistent chat menu button to launch the Mini App when configured.
-if (config.webappUrl) {
-  bot.api
-    .setChatMenuButton({
-      menu_button: { type: "web_app", text: "🌐 Приложение", web_app: { url: config.webappUrl } },
-    })
-    .catch((e) => console.error("setChatMenuButton failed:", e));
+  // Set the persistent chat menu button to launch the Mini App when configured.
+  if (config.webappUrl) {
+    bot.api
+      .setChatMenuButton({
+        menu_button: { type: "web_app", text: "🌐 Приложение", web_app: { url: config.webappUrl } },
+      })
+      .catch((e) => console.error("setChatMenuButton failed:", e));
+  }
 }
 
 // Shared web layer (Telegram Mini App) — only runs if WEBAPP_URL is set.
@@ -74,7 +85,9 @@ if (config.webappUrl) {
 // machine is on its way out anyway. Only report unhealthy when polling died
 // while we still intended to be serving. Note this asks whether Telegram
 // answered recently, NOT whether grammy thinks it is running: see lastPollAt.
-setLivenessProbe(() => shuttingDown || Date.now() - lastPollAt < POLL_STALE_MS);
+// role:"webapp" never polls at all, so lastPollAt would never refresh — the
+// only thing worth reporting there is a deliberate shutdown.
+setLivenessProbe(() => shuttingDown || isWebappOnly || Date.now() - lastPollAt < POLL_STALE_MS);
 startWebApp();
 
 // Graceful shutdown: stop polling, then let detached render tails finish (deliver
@@ -84,9 +97,9 @@ let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`${signal} received — stopping bot and draining renders…`);
+  console.log(`${signal} received — stopping${isWebappOnly ? "" : " bot"} and draining renders…`);
   try {
-    await bot.stop();
+    if (!isWebappOnly) await bot.stop();
     // Renders take 1–3 min, so wait comfortably past that for in-flight tails to
     // deliver/refund (the platform's kill_timeout must be ≥ this — see fly.toml —
     // and the reaper is the backstop if a hard kill still cuts it short).
@@ -98,13 +111,17 @@ async function shutdown(signal: string): Promise<void> {
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
 process.once("SIGINT", () => void shutdown("SIGINT"));
 
-console.log("NeuroShot bot starting (long polling)…");
-// If polling ever fails to start or dies, EXIT so the platform restarts us.
-// bot.catch() does not cover this: it handles errors raised inside update
-// handlers, not a failure of the fetch loop itself. Without this the promise
-// rejects unobserved, the HTTP server keeps the process alive, and the bot is
-// silently down while every external signal still reads healthy.
-bot.start().catch((e) => {
-  console.error("long polling stopped — exiting so the platform restarts:", e);
-  process.exit(1);
-});
+if (isWebappOnly) {
+  console.log("NeuroShot web app starting (role=webapp — no polling, no command/menu writes)…");
+} else {
+  console.log("NeuroShot bot starting (long polling)…");
+  // If polling ever fails to start or dies, EXIT so the platform restarts us.
+  // bot.catch() does not cover this: it handles errors raised inside update
+  // handlers, not a failure of the fetch loop itself. Without this the promise
+  // rejects unobserved, the HTTP server keeps the process alive, and the bot is
+  // silently down while every external signal still reads healthy.
+  bot.start().catch((e) => {
+    console.error("long polling stopped — exiting so the platform restarts:", e);
+    process.exit(1);
+  });
+}

@@ -1,0 +1,60 @@
+# Fly.io deploy for the SHARED STAGING app (docs/staging.md) — a second,
+# independent deployment of the exact same code/Dockerfile as fly.toml,
+# redeployed onto this app by .github/workflows/staging.yml on every push to
+# an open PR, so "what does PR #N currently look like in the real Telegram
+# Mini App UI" is one bot command away (/staging, admin-only) without ever
+# touching production.
+#
+# Two deliberate differences from fly.toml, both load-bearing:
+#   - ROLE=webapp (below): this process never calls bot.start() — it shares
+#     the REAL bot token with production (see config.ts's own note on why:
+#     Mini App initData is signed with the token the user actually opened it
+#     from), and Telegram allows exactly one getUpdates caller per token.
+#     Skipping polling here is what makes sharing that token safe at all.
+#   - No DATABASE_URL is set → src/db.ts falls back to embedded, in-memory
+#     Postgres (pglite). Staging state resets on every deploy/restart, which
+#     is exactly right for a "test iteration" box: nobody's real credits or
+#     history live here, and there is no separate database to provision.
+#
+# One-time setup (this repo's CI does the rest automatically thereafter):
+#   fly apps create neuroshot-bot-staging
+#   fly secrets set -a neuroshot-bot-staging \
+#     BOT_TOKEN=<same token as production> FAL_KEY=<same key as production> \
+#     BOT_USERNAME=neuroshot_ai_bot ADMIN_IDS=<same as production>
+app = "neuroshot-bot-staging"
+primary_region = "fra"
+kill_timeout = "3m"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  WEBAPP_PORT = "8080"
+  WEBAPP_URL = "https://neuroshot-bot-staging.fly.dev"
+  ROLE = "webapp"
+  # STAGING_LABEL is set per-deploy via `flyctl deploy -e STAGING_LABEL=...`
+  # (staging.yml) — never hardcoded here, so the in-app banner always names
+  # whichever PR is actually live.
+  # BOT_TOKEN / FAL_KEY / BOT_USERNAME / ADMIN_IDS → `fly secrets set` (one-time, above)
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Unlike production, this app has no standing connection to keep alive —
+  # let it scale to zero between visits. The Mini App button's first open
+  # after a while eats one cold-start (a few seconds); every open after that
+  # is instant until it idles down again.
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "20s"
+    interval = "30s"
+    method = "get"
+    path = "/healthz"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

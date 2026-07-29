@@ -1,0 +1,80 @@
+name: Staging
+
+# One shared staging app (docs/staging.md), redeployed with whichever PR's
+# latest commit pushed last — not a preview-per-PR fleet (that's real Fly
+# cost/complexity this project doesn't need yet). The in-app "🧪 STAGING"
+# banner and this workflow's PR comment both name the PR that's actually
+# live, so "which build am I looking at" is never a guess. If two PRs are
+# open at once, staging always reflects whichever pushed most recently.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  # Manual re-run without needing a new commit — e.g. to redeploy the same
+  # PR after fixing staging infra itself. Requires the PR number since a
+  # workflow_dispatch run has no pull_request event to read one from.
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to deploy to staging"
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: fly-deploy-staging
+      # A newer push (to this PR or a different one) should win outright —
+      # finishing an old deploy just to have the next one overwrite it
+      # seconds later wastes the run for no benefit, unlike production's
+      # deploy (see ci.yml), which never cancels one in flight.
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || format('refs/pull/{0}/head', inputs.pr_number) }}
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # Idempotent: fails harmlessly with "already exists" on every run after
+      # the first. Needs an org — `personal` is the default slug Fly assigns
+      # a single-user account (not an actual organization), matching how this
+      # repo's one existing app was created.
+      - name: Ensure the staging app exists
+        run: flyctl apps create neuroshot-bot-staging --org personal || true
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Deploy PR HEAD to staging
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number || inputs.pr_number }}"
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          LABEL="PR #${PR_NUMBER}"
+          if [ -n "$PR_TITLE" ]; then LABEL="PR #${PR_NUMBER} · ${PR_TITLE}"; fi
+          flyctl deploy -c fly.staging.toml -a neuroshot-bot-staging --remote-only \
+            -e "STAGING_LABEL=${LABEL}"
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Comment the staging link on the PR
+        if: github.event.pull_request.number
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = [
+              "🧪 **Staging deployed** — this PR is now live at https://neuroshot-bot-staging.fly.dev",
+              "",
+              "Open it exactly like production: in the bot chat, send `/staging` (admin-only) and tap the button. The in-app banner confirms which PR you're looking at.",
+            ].join("\n");
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number,
+            });
+            const mine = comments.find((c) => c.user?.type === "Bot" && c.body?.startsWith("🧪 **Staging deployed**"));
+            if (mine) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: mine.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
+            }
