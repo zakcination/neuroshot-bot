@@ -107,6 +107,14 @@ export const config = {
   // SEEDANCE_SALE_UNTIL (ISO) to move it without a code change. An unparseable
   // value turns the sale OFF, never on — see seedanceSaleActive in offer.ts.
   seedanceSaleUntil: process.env.SEEDANCE_SALE_UNTIL ?? "2026-09-10T23:59:59+05:00",
+  // --- Flagship price ceiling (docs/seedance-tiers.md § flagship ceiling) ---
+  // Owner decision, 2026-07-29: unlike the sale above, this is a PERMANENT
+  // reprice of the flagship model, not an expiring campaign — it holds even
+  // after SEEDANCE_SALE_UNTIL passes. Start time (not a deadline) because it
+  // turns a cap ON rather than a discount OFF; a start in the past means "on
+  // now". An unparseable value turns the ceiling OFF, never on — see
+  // flagshipCapActive in offer.ts (same fail-safe direction as the sale).
+  flagshipCapFrom: process.env.FLAGSHIP_CAP_FROM ?? "2026-07-29T20:00:00+05:00",
   // --- CEO monitoring (docs/monitoring.md): digest pushed, alerts interrupt ---
   // UTC hour when the daily digest is pushed to admins (6 UTC = 09:00 МСК).
   digestHourUtc: Number(process.env.DIGEST_HOUR_UTC ?? 6),

@@ -1986,7 +1986,7 @@ await step("every video model's duration ladder is sane: ascending, defaulted, m
   // shorten the video, a defaultSeconds outside the list opens the composer on
   // a length nobody can select, and a non-monotonic price makes the number next
   // to the slider jump backwards while the user drags forwards.
-  const { MODELS, priceFor } = await import("../src/models.js");
+  const { MODELS, priceFor, FLAGSHIP_CAP_KEY } = await import("../src/models.js");
   for (const [key, spec] of Object.entries(MODELS)) {
     const v = (spec as { video?: { durations: number[]; defaultSeconds: number } }).video;
     if (!v) continue;
@@ -2004,12 +2004,81 @@ await step("every video model's duration ladder is sane: ascending, defaulted, m
       priceFor(spec),
       `${key}: the default length is not what \`credits\` quotes`,
     );
+    // The flagship's price ceiling (docs/seedance-tiers.md § flagship
+    // ceiling) deliberately flattens price at long 720p durations — once
+    // capped, dragging further costs the same, not more. Every other model
+    // must still be strictly dearer duration over duration.
+    const canPlateau = key === FLAGSHIP_CAP_KEY;
     let prev = 0;
     for (const sec of v.durations) {
       const p = priceFor(spec, { duration: sec });
-      assert.ok(p > prev, `${key}: ${sec}s (${p} 🔫) is not dearer than the length before it`);
+      assert.ok(canPlateau ? p >= prev : p > prev, `${key}: ${sec}s (${p} 🔫) is cheaper than the length before it`);
       prev = p;
     }
+  }
+});
+
+await step("flagship price ceiling: never above 2,990 ₸, never below real cost, only the flagship, only once active", async () => {
+  const { MODELS, priceFor, costUsdFor, FLAGSHIP_CAP_KEY, FLAGSHIP_CAP_CREDITS, FLAGSHIP_CAP_DISPLAY_KZT, SEEDANCE_SALE_KEYS } =
+    await import("../src/models.js");
+  const KZT_PER_USD = 480;
+  const WORST_PACK_KZT = 40; // priciest recurring pack rate a real customer pays
+  const CHEAPEST_RECURRING_PACK_KZT = 30; // cheapest RECURRING pack; the one-time 25₸ entry pack is excluded on purpose (see docs/seedance-tiers.md)
+  assert.equal(FLAGSHIP_CAP_KEY, "seedance", "test assumes the ceiling targets MODELS.seedance");
+  const flagship = MODELS.seedance;
+
+  const prevCap = config.flagshipCapFrom;
+  (config as { flagshipCapFrom: string }).flagshipCapFrom = "2000-01-01T00:00:00Z"; // force active
+  try {
+    let sawACap = false;
+    for (const d of flagship.video!.durations) {
+      for (const res of flagship.video!.resolutions ?? [{ id: "" }]) {
+        const opts = res.id ? { duration: d, resolution: res.id } : { duration: d };
+        const credits = priceFor(flagship, opts);
+        assert.ok(credits <= FLAGSHIP_CAP_CREDITS, `${d}s/${res.id}: ${credits} 🔫 exceeds the ${FLAGSHIP_CAP_CREDITS}-🔫 ceiling`);
+        if (credits === FLAGSHIP_CAP_CREDITS) sawACap = true;
+
+        const costKzt = costUsdFor(flagship, opts) * KZT_PER_USD;
+        const worstValueKzt = credits * WORST_PACK_KZT;
+        assert.ok(worstValueKzt <= FLAGSHIP_CAP_DISPLAY_KZT, `${d}s/${res.id}: ${worstValueKzt} ₸ breaks the advertised ${FLAGSHIP_CAP_DISPLAY_KZT} ₸ promise`);
+
+        // Real cost must be covered at every RECURRING pack rate — the one-time
+        // entry pack is the one documented exception (docs/seedance-tiers.md).
+        const cheapestRecurringValueKzt = credits * CHEAPEST_RECURRING_PACK_KZT;
+        assert.ok(
+          cheapestRecurringValueKzt >= costKzt,
+          `${d}s/${res.id}: sells below cost even at the cheapest recurring pack (${cheapestRecurringValueKzt} ₸ < ${costKzt.toFixed(0)} ₸ cost)`,
+        );
+      }
+    }
+    assert.ok(sawACap, "no duration/resolution combo actually hit the ceiling — the test grid no longer exercises it");
+
+    // The other 3 Seedance tiers must price IDENTICALLY whether the flagship
+    // ceiling is active or not — toggling it must not touch them at all.
+    for (const key of SEEDANCE_SALE_KEYS) {
+      if (key === FLAGSHIP_CAP_KEY) continue;
+      const m = MODELS[key as keyof typeof MODELS];
+      const v = (m as { video?: { durations: number[] } }).video;
+      assert.ok(v, `${key}: expected a video model`);
+      const longest = v.durations.at(-1);
+      const withCeilingActive = priceFor(m, { duration: longest });
+      (config as { flagshipCapFrom: string }).flagshipCapFrom = prevCap;
+      const withCeilingAtDefault = priceFor(m, { duration: longest });
+      (config as { flagshipCapFrom: string }).flagshipCapFrom = "2000-01-01T00:00:00Z";
+      assert.equal(withCeilingActive, withCeilingAtDefault, `${key}: unexpectedly changed by the flagship-only ceiling`);
+    }
+  } finally {
+    (config as { flagshipCapFrom: string }).flagshipCapFrom = prevCap;
+  }
+
+  // Before its start time (real production default, restored above), the
+  // ceiling must not touch anything — a future FLAGSHIP_CAP_FROM is "off".
+  (config as { flagshipCapFrom: string }).flagshipCapFrom = "2099-01-01T00:00:00Z";
+  try {
+    const uncapped = priceFor(flagship, { duration: flagship.video!.durations.at(-1), resolution: "720p" });
+    assert.ok(uncapped > FLAGSHIP_CAP_CREDITS, "ceiling applied before its own start time");
+  } finally {
+    (config as { flagshipCapFrom: string }).flagshipCapFrom = prevCap;
   }
 });
 

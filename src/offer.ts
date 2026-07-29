@@ -67,3 +67,19 @@ export function seedanceSaleLeftText(now: number = Date.now()): string {
   const hours = Math.floor((totalMin % 1440) / 60);
   return days > 0 ? `${days}д ${hours}ч` : `${hours}ч`;
 }
+
+/**
+ * The flagship price ceiling's start timestamp (ms epoch). An unparseable
+ * config value returns +Infinity ("never"), so a broken date reads as
+ * "ceiling off" rather than "ceiling on for everyone right now" — the safe
+ * direction for a pricing failure, same convention as seedanceSaleEndsAt.
+ */
+export function flagshipCapStartsAt(): number {
+  const start = Date.parse(config.flagshipCapFrom);
+  return Number.isNaN(start) ? Infinity : start;
+}
+
+/** True from config.flagshipCapFrom onward — permanent once it starts, no end. */
+export function flagshipCapActive(now: number = Date.now()): boolean {
+  return now >= flagshipCapStartsAt();
+}

@@ -535,12 +535,16 @@ await step("the video set really covers 3–5 finished videos, and the ladder st
   // four tiers a buyer can realistically work at; the set is sized so that the
   // promise on the title holds at EVERY one of them, not just the cheapest.
   //
-  // Priced at the STEADY-STATE Seedance rate, sale forced off: the 2026-07-28
-  // sale is temporary and deliberately makes this pack stretch FURTHER while
-  // it runs (a bonus, not a broken promise) — the pack's own printed claim is
-  // about what it covers once the promo ends, not during it.
+  // Priced at the pre-promotion Seedance rate, sale AND flagship ceiling both
+  // forced off: both the 2026-07-28 sale (temporary) and the 2026-07-29
+  // flagship ceiling (permanent — see docs/seedance-tiers.md § flagship
+  // ceiling) deliberately make this pack stretch FURTHER (a bonus, not a
+  // broken promise) — the pack's own printed claim is about the floor it
+  // guarantees with zero promotional pricing, not what today's price gets you.
   const prevSale = live.seedanceSaleUntil;
+  const prevCap = live.flagshipCapFrom;
   (live as { seedanceSaleUntil: string }).seedanceSaleUntil = "2020-01-01T00:00:00Z";
+  (live as { flagshipCapFrom: string }).flagshipCapFrom = "2099-01-01T00:00:00Z";
   let recipes: number[];
   try {
     recipes = [
@@ -551,6 +555,7 @@ await step("the video set really covers 3–5 finished videos, and the ladder st
     ].map((r) => 2 * priceFor(r.frame) + priceFor(r.video, { duration: 10 }));
   } finally {
     (live as { seedanceSaleUntil: string }).seedanceSaleUntil = prevSale;
+    (live as { flagshipCapFrom: string }).flagshipCapFrom = prevCap;
   }
 
   const videoSet = packById("video_set")!;

@@ -17,6 +17,9 @@
        covers the whole weight range), so this is 2 requests, not 10. -->
   <link rel="preload" href="/fonts/golos-cyrillic.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="/fonts/unbounded-cyrillic.woff2" as="font" type="font/woff2" crossorigin />
+  <!-- ₸ (tenge) — its own tiny file (~700 B), see the @font-face comment below;
+       every price in the app uses it, so it's worth its own preload. -->
+  <link rel="preload" href="/fonts/golos-tenge.woff2" as="font" type="font/woff2" crossorigin />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     /* ————— NeuroShot design system: dark luxe, aurora accent (violet→magenta) ————— */
@@ -58,6 +61,27 @@
       font-display: swap;
       src: url("/fonts/golos-latin.woff2") format("woff2");
       unicode-range: U+0000-00FF, U+2000-206F, U+20AC, U+2122;
+    }
+    /* The tenge sign (₸, U+20B8) falls outside every predefined Cyrillic/Latin
+       subset Google ships for these families — it's a single-glyph file
+       fetched separately (google's own on-demand subsetting API), not part of
+       either block above. Without this, every price in a KZT-priced app falls
+       back to tofu. */
+    @font-face {
+      font-family: "Golos Text";
+      font-style: normal;
+      font-weight: 400 900;
+      font-display: swap;
+      src: url("/fonts/golos-tenge.woff2") format("woff2");
+      unicode-range: U+20B8;
+    }
+    @font-face {
+      font-family: "Unbounded";
+      font-style: normal;
+      font-weight: 200 900;
+      font-display: swap;
+      src: url("/fonts/unbounded-tenge.woff2") format("woff2");
+      unicode-range: U+20B8;
     }
     :root {
       --bg: #08070c;
@@ -1983,8 +2007,14 @@
      * happens on nearly every tap), so the date is never meaningfully stale.
      */
     function saleBanner() {
-      const until = new Date(ME.seedanceSale.endsAt).toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
-      return `<div class="salebar">🔥 <b>Акция на Seedance</b> — цены ниже вдвое, до ${until}</div>`;
+      const saleOn = ME.seedanceSale && ME.seedanceSale.active;
+      const ceilingOn = ME.flagshipCeiling && ME.flagshipCeiling.active;
+      const until = saleOn ? new Date(ME.seedanceSale.endsAt).toLocaleDateString("ru-RU", { day: "numeric", month: "long" }) : "";
+      const salePart = saleOn ? `Все модели Seedance — цены ниже вдвое, до ${until}.` : "";
+      // The ceiling is permanent (no end date), unlike the sale, so it keeps
+      // its own sentence even once the sale above has expired.
+      const ceilingPart = ceilingOn ? ` Флагман — никогда не дороже ${ME.flagshipCeiling.maxKzt} ₸, любая длина и качество.` : "";
+      return `<div class="salebar">🔥 <b>Seedance</b> — ${salePart}${ceilingPart}</div>`;
     }
 
     /** A section label, with a tap-to-explain "?" when we have something to say. */
@@ -2883,7 +2913,7 @@
 
       sheetBody.innerHTML = `
         <h3>Студия</h3>
-        ${isVideo && ME.seedanceSale && ME.seedanceSale.active ? saleBanner() : ""}
+        ${isVideo && ((ME.seedanceSale && ME.seedanceSale.active) || (ME.flagshipCeiling && ME.flagshipCeiling.active)) ? saleBanner() : ""}
         ${stu.preset && !isVideo ? `
           <div class="stublock"><div class="stuchip">
             <span>${esc(stu.preset.label)}</span>
@@ -3228,7 +3258,7 @@
 
       sheetBody.innerHTML = `
         <h3>Настройки видео</h3>
-        ${ME.seedanceSale && ME.seedanceSale.active ? saleBanner() : ""}
+        ${(ME.seedanceSale && ME.seedanceSale.active) || (ME.flagshipCeiling && ME.flagshipCeiling.active) ? saleBanner() : ""}
         ${isCurated ? `${qLabel("Модель", "model")}
           <div class="chips" id="modRow">${ME.catalog.videoModels.map((v) =>
             `<button class="chip ${v.key === m.key ? "on" : ""}" data-mod="${v.key}">${v.onSale ? "🔥 " : ""}${esc(v.label.replace("🎬 ", ""))} · ${v.credits}+ ${PATRON}</button>`).join("")}</div>` : ""}

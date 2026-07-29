@@ -22,7 +22,7 @@ import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
 import { hit } from "./ratelimit.js";
 import { claimOrderPaid, grantPurchase, onceTaken, sendPendingOrderPrompt } from "./payments.js";
-import { comboEndsAt, seedanceSaleActive, seedanceSaleEndsAt } from "./offer.js";
+import { comboEndsAt, seedanceSaleActive, seedanceSaleEndsAt, flagshipCapActive } from "./offer.js";
 import { sanitizePrompt } from "./promptcraft.js";
 import {
   AUDIO_MIME,
@@ -49,6 +49,8 @@ import {
   PARTNER_TIERS,
   PRESET_MODEL,
   SEEDANCE_SALE_KEYS,
+  FLAGSHIP_CAP_KEY,
+  FLAGSHIP_CAP_DISPLAY_KZT,
   presetModel,
   PRESETS,
   priceFor,
@@ -542,6 +544,9 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     // <месяц>". Model entries carry their own `onSale` flag (see
     // studioModelsOf/videoModels below) — this block is only the date.
     seedanceSale: { active: seedanceSaleActive(), endsAt: seedanceSaleEndsAt() },
+    // Flagship price ceiling (docs/seedance-tiers.md § flagship ceiling):
+    // permanent once active, no `endsAt` — unlike seedanceSale above.
+    flagshipCeiling: { active: flagshipCapActive(), maxKzt: FLAGSHIP_CAP_DISPLAY_KZT, modelKey: FLAGSHIP_CAP_KEY },
     // Reward-architecture P4a: null (the normal state) until an admin runs
     // /season_new. No quest/reward data yet — that's P4b, built once this
     // entity exists.

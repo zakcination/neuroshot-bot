@@ -7,7 +7,7 @@
  * over hardcoding IDs elsewhere.
  */
 import { config } from "./config.js";
-import { seedanceSaleActive } from "./offer.js";
+import { seedanceSaleActive, flagshipCapActive } from "./offer.js";
 import { UNIT_EMOJI } from "./text.js";
 
 export type ModelKind = "image_edit" | "text_to_image" | "image_to_video";
@@ -724,6 +724,34 @@ export const SEEDANCE_SALE_KEYS = new Set(["seedance", "seedance_fast", "seedanc
 export const SEEDANCE_SALE_MULT = 0.5;
 
 /**
+ * Flagship price ceiling (owner decision, 2026-07-29 — docs/seedance-tiers.md
+ * § flagship ceiling): the flagship model (`seedance`) never charges more than
+ * FLAGSHIP_CAP_CREDITS, at ANY duration/resolution — unlike SEEDANCE_SALE_MULT,
+ * this is permanent, not tied to seedanceSaleActive, and applies to exactly one
+ * model, not the family.
+ *
+ * 74 credits is not a round number picked for looks — it is the largest credit
+ * count that satisfies both constraints at once, across the real pack-rate
+ * range (30–40 ₸/credit steady-state; the one-time 25 ₸/credit entry pack is
+ * excluded from this floor the same way scripts/cost-line.mts excludes `once`
+ * packs from the ladder):
+ *   - never above 2,990 ₸: 74 × 40 ₸ = 2,960 ₸, the worst (priciest) pack rate.
+ *   - never below real cost: 74 × 30 ₸ = 2,220 ₸ ≥ 2,184 ₸, the real cost of
+ *     the most expensive combo (15s/720p) — a thin but positive 36 ₸ margin at
+ *     the worst STEADY-STATE rate. (The one-time 25 ₸ entry pack can still dip
+ *     ~334 ₸ under cost on that single most-expensive combo — bounded to once
+ *     per account, and only if the very first purchase is spent entirely on
+ *     the flagship's longest/highest-resolution render.)
+ *
+ * `Math.min` only, same as the sale — this can lower a charge, never raise
+ * one, so every duration that was already cheaper than the ceiling (most of
+ * the range, at any resolution) is untouched.
+ */
+export const FLAGSHIP_CAP_KEY = "seedance";
+export const FLAGSHIP_CAP_CREDITS = 74;
+export const FLAGSHIP_CAP_DISPLAY_KZT = 2990; // rounds UP from the real 2,960 ₸ worst case — never a broken promise
+
+/**
  * Credit charge for a generation given composer options. Video credits scale
  * with the chosen duration (cost is per-second); images and default settings
  * use the fixed `credits`. Kept ≥1 and rounded up so margin never inverts.
@@ -752,6 +780,12 @@ export function priceFor(model: ModelSpec, opts?: GenOpts): number {
   // rather than direct assignment — see the doc comment on SEEDANCE_SALE_MULT.
   if (SEEDANCE_SALE_KEYS.has(model.key) && seedanceSaleActive()) {
     credits = Math.max(1, Math.min(credits, Math.round(credits * SEEDANCE_SALE_MULT)));
+  }
+  // Flagship ceiling — independent of the sale above and outlives it (see the
+  // doc comment on FLAGSHIP_CAP_CREDITS). Applied last so it wins regardless
+  // of what the sale already did to `credits`.
+  if (model.key === FLAGSHIP_CAP_KEY && flagshipCapActive()) {
+    credits = Math.min(credits, FLAGSHIP_CAP_CREDITS);
   }
   return credits;
 }

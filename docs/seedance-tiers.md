@@ -242,6 +242,49 @@ Studio's model row/chip badges the 4 discounted models with "🔥 −50%". The b
 course-lesson copy reads live prices via `priceFor()` rather than the models'
 raw `credits` field, so it never quotes a stale, pre-sale number.
 
+## The flagship ceiling (2026-07-29, permanent)
+
+Owner decision, 2026-07-29: reposition the flagship (`seedance`) as a
+loss-leader "staple" price point, distinct from — and outliving — the
+time-boxed sale above. Unlike the sale, this does not expire on 2026-09-10.
+
+**Mechanism**: `FLAGSHIP_CAP_CREDITS = 74` in `src/models.ts` — applied via
+`Math.min` as the step AFTER the sale multiplier inside `priceFor()`, and only
+to the `seedance` key (not the other 3 Seedance tiers). Gated on
+`flagshipCapActive()` (`src/offer.ts`) — a start timestamp,
+`config.flagshipCapFrom`, defaulting to **2026-07-29T20:00:00+05:00**
+(env: `FLAGSHIP_CAP_FROM`). Once it starts, it never turns back off — there is
+no end-date config, unlike `seedanceSaleUntil`.
+
+**Where 74 credits comes from.** It's the largest credit count that satisfies
+two constraints at once, checked against the real steady-state pack-rate range
+(30–40 ₸/credit — the one-time 25 ₸/credit entry pack is excluded from this
+floor the same way `scripts/cost-line.mts` excludes `once` packs from the
+ladder):
+- **Never above 2,990 ₸**: 74 × 40 ₸ (the priciest recurring pack) = 2,960 ₸.
+- **Never below real cost**: 74 × 30 ₸ (the cheapest recurring pack) = 2,220 ₸,
+  vs. 2,184 ₸ real cost at the most expensive combo (15s/720p) — a thin but
+  positive 36 ₸ margin. (The one-time 25 ₸ entry pack can still dip ~334 ₸
+  under cost on that single combo — bounded to once per account, and only if
+  the very first purchase is spent entirely on the flagship's longest,
+  highest-resolution render.)
+
+Only 10–15s/720p currently exceed the cap (720p at 4–9s and every 480p
+duration already price below it) — so this can only ever lower a charge, never
+raise one, exactly like the sale multiplier it sits next to.
+
+**Why this interacts safely with the sale expiring.** The cap is a pure
+`Math.min(credits, 74)` regardless of how `credits` got computed — whether the
+sale is on (today) or has expired (after 2026-09-10, when steady-state
+per-second pricing resumes and pushes MORE durations above 74 credits), the
+final capped price and its margin against real cost are identical. The two
+mechanisms don't need to know about each other.
+
+Surfacing: `/api/me` exposes `flagshipCeiling: { active, maxKzt, modelKey }`
+(no `endsAt` — it's permanent). The shared "🔥 Seedance" banner in the Studio
+and video composer appends a ceiling sentence once active, independent of
+whether the sale sentence is still showing.
+
 ## Sources
 
 - [Seedance 2.0 vs Fast vs Mini: Is the Cheap One Enough? (2026)](https://pixo.video/blog/seedance-2-0-vs-fast-vs-mini)
