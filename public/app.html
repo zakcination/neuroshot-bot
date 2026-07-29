@@ -4971,7 +4971,14 @@
         renderPromptGallery(b.dataset.gk);
       }));
       const gallerySeeAll = document.getElementById("gallerySeeAll");
-      if (gallerySeeAll) gallerySeeAll.onclick = () => { st.tab = "shoot"; openSheet(); viewPick(); };
+      // "Все ›" has to honour the segment. viewPick branches on st.tab, so
+      // hardcoding "shoot" sent anyone browsing Видео into the photo styles —
+      // the filter said one thing and the full gallery opened on another.
+      if (gallerySeeAll) gallerySeeAll.onclick = () => {
+        st.tab = gallSeg && gallSeg.dataset.k === "video" ? "scenes" : "shoot";
+        openSheet();
+        viewPick();
+      };
       // Roadmap steps are the same entry points as "Что создаём" — either into
       // the studio sheet on a given tab, or the Друзья page for the invite step
       // — plus the completion-bonus claim button (see renderRoadmap for the
