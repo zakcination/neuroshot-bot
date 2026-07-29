@@ -1075,18 +1075,33 @@
       padding: 2px 6px; border-radius: 999px; margin-right: 6px; vertical-align: middle;
     }
 
-    /* Home tab promo banner: a dotted "campaign poster" card with a soft glow
-       bleeding outward from its own center — dark base, dotted texture, warm
-       magenta bloom, distinct from the violet aurora used for entry tiles. */
+    /* Home tab promo banner: a "campaign poster" card — a scrolling strip of
+       genre tiles for movement/energy, dimmed under a magenta-glow + dark
+       gradient scrim so the price/countdown content stays legible on top.
+       Matches the animated marquee background this screen was designed with;
+       the glow/scrim replaces the old flat dot-grid treatment. */
     .promobar {
       position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 10px;
       width: 100%; text-align: left; cursor: pointer; border: 1px solid rgba(255,77,141,.3);
       border-radius: 22px; padding: 18px; margin: 4px 0 2px; color: inherit; font: inherit;
-      background:
-        radial-gradient(62% 75% at 50% 42%, rgba(255,77,141,.32), transparent 72%),
-        radial-gradient(rgba(255,255,255,.09) 1px, transparent 1.3px) 0 0 / 15px 15px,
-        var(--surface);
+      background: var(--surface);
     }
+    .promomarquee { position: absolute; inset: 0; z-index: 0; overflow: hidden; }
+    .promomarquee .mtrack { position: absolute; top: 0; bottom: 0; left: 0; display: flex; gap: 8px; padding: 8px; animation: promoscroll 24s linear infinite; }
+    .promomarquee .mtile {
+      flex: none; width: 88px; border-radius: 12px; display: flex; align-items: flex-end; padding: 8px;
+      font-size: 9.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: rgba(255,255,255,.75);
+    }
+    @keyframes promoscroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+    .promobar::after {
+      content: ""; position: absolute; inset: 0; z-index: 0;
+      background:
+        radial-gradient(62% 75% at 50% 42%, rgba(255,77,141,.28), transparent 72%),
+        linear-gradient(180deg, rgba(8,7,12,.12) 0%, rgba(8,7,12,.68) 55%, rgba(8,7,12,.92) 100%);
+    }
+    /* prefers-reduced-motion: the scroll is decorative texture, not information —
+       freezing it costs nothing a reduced-motion user needs. */
+    @media (prefers-reduced-motion: reduce) { .promomarquee .mtrack { animation: none; } }
     .promotag {
       position: relative; z-index: 1; align-self: flex-start; display: flex; align-items: center; gap: 5px;
       font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap;
@@ -1285,26 +1300,69 @@
     .drop input { display: none; }
     .photo-preview { position: relative; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); }
     .photo-preview img { width: 100%; max-height: 42dvh; object-fit: contain; display: block; background: #000; }
-    /* "More angles" strip: square thumbs + a dashed add tile, horizontally
-       scrollable so a narrow phone never wraps it into a ragged second row. */
-    .xrow { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; -webkit-overflow-scrolling: touch; }
-    .xthumb { position: relative; flex: 0 0 auto; width: 68px; height: 68px; border-radius: var(--radius-s); overflow: hidden; border: 1px solid var(--line); }
-    .xthumb.xfile { display:flex; align-items:center; justify-content:center; padding:0 10px; font-size:12px;
-      background:var(--surface); border:1px solid var(--line); color:var(--text); min-width:66px; }
+    /* Reference-photo grid: a counted N/limit slot grid (filled slots show the
+       photo, empty ones are dashed add-targets) with progressive disclosure
+       past a handful — a 9-wide wall of empty boxes is noise for the common
+       case of adding just one more angle, so only DEFAULT_SHOWN render until
+       "+ Ещё N слотов" is tapped. Matches the counted-slot design reference
+       this Studio screen was rebuilt from. */
+    .refhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .refcount { font-size: 11.5px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+    .refgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+    .refslot { position: relative; aspect-ratio: 1; border-radius: var(--radius-s); overflow: hidden; }
+    .refslot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .refslot.filled { border: 1px solid var(--line); }
+    /* Named .add/.ghost rather than the more obvious ".empty" — that class
+       already exists, unscoped, as the generic "no results" grid placeholder
+       (search this file), and its grid-column: 1/-1 would silently blow a
+       refslot up to full width the moment the two rules' names collided. */
+    .refslot.add {
+      border: 1px dashed var(--violet); background: rgba(124,92,255,.06);
+      display: flex; align-items: center; justify-content: center; color: var(--violet); font-size: 20px; cursor: pointer;
+    }
+    .refslot.ghost { border-color: rgba(255,255,255,.12); background: var(--surface-2); color: var(--muted); cursor: default; }
+    .refslot input { display: none; }
+    .xdel { width: 20px; height: 20px; border: 0; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; font: inherit; font-size: 11px; line-height: 20px; padding: 0; cursor: pointer; }
+    .refslot .xdel { position: absolute; top: 4px; right: 4px; }
+    .refmore {
+      grid-column: 1 / -1; border: 1px dashed var(--line); background: var(--surface); color: var(--ink);
+      border-radius: var(--radius-s); padding: 10px; font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer;
+    }
     .rights { display:flex; gap:8px; align-items:flex-start; margin-top:8px; font-size:12.5px; line-height:1.35;
       color:var(--muted); cursor:pointer; }
     .rights input { margin-top:2px; flex:0 0 auto; width:16px; height:16px; }
-    .xthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-    .xdel { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border: 0; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; font: inherit; font-size: 11px; line-height: 20px; padding: 0; cursor: pointer; }
-    .xadd { flex: 0 0 auto; width: 68px; height: 68px; border-radius: var(--radius-s); border: 1px dashed var(--violet); display: grid; place-items: center; color: var(--violet); font-size: 22px; cursor: pointer; }
-    .xadd input { display: none; }
+    /* Аудио/Референс attach — a fixed 2-col row of prominent cards, distinct
+       from the photo grid above: audio/video refs are rarer, optional, and
+       carry their own rights gate, so burying them as more thumbnails in the
+       same strip hid that they're a different kind of input entirely. */
+    .refactions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+    .refaction {
+      display: flex; align-items: center; gap: 10px; text-align: left; border-radius: var(--radius-s);
+      border: 1px dashed; background: var(--surface); padding: 12px; font: inherit; cursor: pointer;
+    }
+    .refaction.audio { border-color: rgba(124,92,255,.45); }
+    .refaction.video { border-color: rgba(255,77,141,.45); }
+    .refaction .ic { flex: none; width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 15px; }
+    .refaction.audio .ic { background: rgba(124,92,255,.16); }
+    .refaction.video .ic { background: rgba(255,77,141,.16); }
+    .refaction .tx { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .refaction .tx b { font-size: 12.5px; font-weight: 700; }
+    .refaction .tx span { font-size: 10.5px; color: var(--muted); }
+    .refaction.disabled { opacity: .45; cursor: not-allowed; }
+    .refaction input { display: none; }
+    .refchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .refchip {
+      display: flex; align-items: center; gap: 6px; background: var(--surface-2); border: 1px solid var(--line);
+      border-radius: 999px; padding: 5px 6px 5px 10px; font-size: 11.5px; font-weight: 700;
+    }
+    .refchip .xdel { position: static; }
     /* Reference-mode subject toggle (Seedance): decides whether the multi-photo
        input is framed to the model as a face or an object — see referencePrompt
        in src/models.ts. Two plain chips, not a dropdown: it is one decision made
        once per render, and it needs to read at a glance before anyone uploads a
        second photo, not after. */
     .subjtoggle { display: flex; gap: 8px; }
-    .schip { flex: 1 1 0; padding: 9px 10px; border-radius: var(--radius-s); border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; text-align: center; }
+    .schip { flex: 1 1 0; padding: 9px 10px; border-radius: var(--radius-s); border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; text-align: center; }
     .schip.on { border-color: var(--violet); background: rgba(124,92,255,.14); color: var(--violet); }
     .photo-preview .redo { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,.55); backdrop-filter: blur(6px); border: 0; color: #fff; border-radius: 999px; padding: 8px 13px; font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; }
 
@@ -1398,6 +1456,20 @@
       minifilm: { icon: "reel", bg: "minifilm" },
       odyssey: { icon: "compass", bg: "odyssey" },
     };
+
+    // Scrolling background tiles behind the Home promo banner (promoBannerHtml)
+    // — generic style/genre words, not a claim about anything (unlike the
+    // banner's own copy, which stays strictly real), so there's nothing here
+    // that can go stale or need correcting the way a spec or date would.
+    const MARQUEE_TILES = [
+      { label: "танец", bg: "linear-gradient(150deg,#241a44,#5b3fd6 60%,#100c1c)" },
+      { label: "портрет", bg: "linear-gradient(150deg,#3a1c2a,#a83f68 60%,#170d14)" },
+      { label: "трейлер", bg: "linear-gradient(150deg,#1c2a3a,#3f6fa8 60%,#0d1118)" },
+      { label: "город", bg: "linear-gradient(150deg,#2a1f4d,#6b2f7a 60%,#0f0b18)" },
+      { label: "плёнка", bg: "linear-gradient(150deg,#3a2f24,#6b5335 60%,#120f14)" },
+      { label: "товар", bg: "linear-gradient(150deg,#22203f,#4d4a9e 60%,#0f0e1a)" },
+      { label: "закат", bg: "linear-gradient(150deg,#4a3418,#a06a2c 60%,#16110d)" },
+    ];
 
     // Session auth: inside Telegram exchange fresh initData for a Bearer token;
     // outside (installed PWA / browser) reuse the cached token.
@@ -2248,8 +2320,14 @@
       if (!saleOn) return "";
       const n = (d.catalog.news || []).find((x) => x.key === "seedance_fast");
       if (!n) return "";
+      // Tiles are duplicated once so the track can loop seamlessly: animating
+      // translateX(-50%) over [tiles, tiles] always ends exactly where a fresh
+      // copy of the first tile begins, with no visible seam or jump-cut.
+      const tiles = MARQUEE_TILES.concat(MARQUEE_TILES)
+        .map((t) => `<span class="mtile" style="background:${t.bg}">${esc(t.label)}</span>`).join("");
       return `
         <button class="promobar" id="promoBanner">
+          <span class="promomarquee" aria-hidden="true"><span class="mtrack">${tiles}</span></span>
           <span class="promotag">🏷 Ограниченное предложение</span>
           <span class="promotxt">
             <b><em>Seedance дешевле вдвое</em> — успейте, пока акция активна</b>
@@ -2966,6 +3044,10 @@
         // silently shrink a box the user deliberately made taller.
         promptH: prev ? prev.promptH || 104 : 104,
         mq: "", // model-list search filter, reset on every open — not worth persisting
+        // Reference-grid progressive disclosure (extrasBlock) — resets on
+        // every open, same as showAll: a freshly opened composer should never
+        // start pre-expanded just because a previous session left it that way.
+        slotsOpen: false,
       };
       if (!stu.modelKey) stu.modelKey = defaultStudioModel();
       clampStudioOpts();
@@ -3180,15 +3262,36 @@
       const label = isRef && stu.subject === "object" ? "Ещё ракурсы — точнее форма" : "Ещё ракурсы — точнее лицо";
       const hint = isRef && stu.subject === "object" ? "angles_object" : "angles";
       const sub = isRef && stu.subject === "object"
-        ? `Тот же предмет с других сторон — до ${maxInputs} фото. Цена не меняется.`
-        : `Те же черты лица с других сторон — до ${maxInputs} фото. Цена не меняется.`;
+        ? `Тот же предмет с других сторон. Цена не меняется.`
+        : `Те же черты лица с других сторон. Цена не меняется.`;
+      // The primary photo above already fills slot 1 — this grid only ever
+      // needs to offer the REMAINING slots, but the counter reads against the
+      // model's real total so it matches what "до N фото" already promised.
+      const filled = 1 + extras.length;
+      const totalExtraSlots = maxInputs - 1;
+      // Progressive disclosure: a 9-wide grid open by default is a wall of
+      // empty dashed boxes for the common case of adding just one more angle.
+      const DEFAULT_SHOWN = 3;
+      const shown = stu.slotsOpen ? totalExtraSlots : Math.min(DEFAULT_SHOWN, totalExtraSlots);
+      const slotsHtml = Array.from({ length: shown }, (_, i) => {
+        const x = extras[i];
+        if (x) return `<div class="refslot filled"><img src="${x.data}" alt="" /><button class="xdel" data-xi="${i}" aria-label="Убрать">✕</button></div>`;
+        // Every empty slot shares the SAME multi-select file input (via
+        // for="stuExtraFile") — any box is a valid tap target, but choosing
+        // files still fills as many slots at once as the picker returns.
+        if (room > 0) return `<label class="refslot add" for="stuExtraFile"><span>＋</span></label>`;
+        return `<div class="refslot ghost" aria-hidden="true"></div>`;
+      }).join("");
       return `
         <div class="xtra">
-          ${subjectToggle}
-          <div style="margin-top:12px">${qLabel(label, hint)}</div>
-          <div class="xrow">
-            ${extras.map((x, i) => `<div class="xthumb"><img src="${x.data}" alt="" /><button class="xdel" data-xi="${i}" aria-label="Убрать">✕</button></div>`).join("")}
-            ${room > 0 ? `<label class="xadd"><input type="file" accept="image/*" id="stuExtraFile" multiple /><span>＋</span></label>` : ""}
+          <div class="refhead">${qLabel(label, hint)}<span class="refcount">${filled} / ${maxInputs}</span></div>
+          ${subjectToggle ? `<div style="margin-top:8px">${subjectToggle}</div>` : ""}
+          <div class="refgrid">
+            ${slotsHtml}
+            ${room > 0 ? `<input type="file" accept="image/*" id="stuExtraFile" multiple style="display:none" />` : ""}
+            ${totalExtraSlots > DEFAULT_SHOWN
+              ? `<button type="button" class="refmore" id="refMore">${stu.slotsOpen ? "Свернуть слоты" : `+ Ещё ${totalExtraSlots - DEFAULT_SHOWN} слотов`}</button>`
+              : ""}
           </div>
           <div class="sub" style="margin-top:6px">${sub}</div>
         </div>
@@ -3234,7 +3337,11 @@
       const v = stu.refVideo || [];
       const ok = !!stu.refRights;
       const chip = (label, i, sort) =>
-        `<div class="xthumb xfile"><span>${label}</span><button class="xdel" data-rdel="${sort}:${i}" aria-label="Убрать">✕</button></div>`;
+        `<span class="refchip">${label}<button class="xdel" data-rdel="${sort}:${i}" aria-label="Убрать">✕</button></span>`;
+      // Each card IS the file input's label (input lives inside, hidden) — the
+      // whole dashed card is the tap target, same convention as .refslot.add
+      // above and .drop for the primary photo. Omitting the <input> when full
+      // or ungated (ok===false) is what disables the card: no JS toggle needed.
       return `
         <div class="xtra">
           <div style="margin-top:12px">${qLabel("Звук и движение — по вашим файлам", "refmedia")}</div>
@@ -3242,12 +3349,22 @@
             <input type="checkbox" id="stuRights" ${ok ? "checked" : ""} />
             <span>Я имею право использовать эти файлы: это моя запись либо есть согласие людей, чьи голос и лицо на ней. Ответственность за загруженное несёт загрузивший.</span>
           </label>
-          <div class="xrow" style="margin-top:10px">
-            ${a.map((x, i) => chip(`🎵 ${x.seconds}с`, i, "a")).join("")}
-            ${ok && a.length < 3 ? `<label class="xadd"><input type="file" accept="audio/mpeg,audio/wav" id="stuAudioFile" /><span>🎵＋</span></label>` : ""}
-            ${v.map((x, i) => chip(`🎬 ${x.seconds}с`, i, "v")).join("")}
-            ${ok && v.length < 3 ? `<label class="xadd"><input type="file" accept="video/mp4,video/quicktime" id="stuVideoFile" /><span>🎬＋</span></label>` : ""}
+          <div class="refactions">
+            <label class="refaction audio ${ok ? "" : "disabled"}">
+              <span class="ic">🎵</span>
+              <span class="tx"><b>Аудио</b><span>${a.length ? `${a.length} / 3` : "+ трек"}</span></span>
+              ${ok && a.length < 3 ? `<input type="file" accept="audio/mpeg,audio/wav" id="stuAudioFile" />` : ""}
+            </label>
+            <label class="refaction video ${ok ? "" : "disabled"}">
+              <span class="ic">🎬</span>
+              <span class="tx"><b>Референс</b><span>${v.length ? `${v.length} / 3` : "+ видео"}</span></span>
+              ${ok && v.length < 3 ? `<input type="file" accept="video/mp4,video/quicktime" id="stuVideoFile" />` : ""}
+            </label>
           </div>
+          ${a.length || v.length ? `<div class="refchips">
+            ${a.map((x, i) => chip(`🎵 ${x.seconds}с`, i, "a")).join("")}
+            ${v.map((x, i) => chip(`🎬 ${x.seconds}с`, i, "v")).join("")}
+          </div>` : ""}
           <div class="sub" style="margin-top:6px">Аудио — MP3 или WAV до 15 секунд, к нему нужно фото. Видео — MP4 или MOV, 2–15 секунд. Цена не меняется.</div>
         </div>`;
     }
@@ -3547,6 +3664,7 @@
         if (failed) toast(failed === files.length ? "Не получилось прочитать фото" : "Часть фото не удалось прочитать");
         clampStudioOpts(); viewStudio();
       }));
+      bind("#refMore", (el) => (el.onclick = () => { stu.slotsOpen = !stu.slotsOpen; viewStudio(); }));
       // Scoped to [data-xi]: the audio/video reference chips reuse the same .xdel
       // styling, and an unscoped selector would splice their index out of the
       // PHOTO list — deleting a silent third photo when a user removes a sound.
