@@ -2259,7 +2259,7 @@
             ${p.trending && !lock ? `<span class="phot">🔥</span>` : ""}
           </span>
           <span class="pright">
-            ${p.usageCount > 0 ? `<span class="pcount">${formatCount(p.usageCount)}</span>` : ""}
+            ${p.usageCount > 0 && !lock ? `<span class="pcount">${formatCount(p.usageCount)}</span>` : ""}
             ${lock ? `<span class="plock">🔒 ур. ${lock.need}</span>` : ""}
           </span>
         </div>
@@ -2867,7 +2867,13 @@
       const m = studioModel();
       if (!m) return;
       stu.modelKey = m.key;
-      const caps = stu.mode === "video" ? m.video : m.image;
+      // For the Seedance umbrella row, every capability check below (aspect,
+      // resolution, duration) must read the tier actually in effect, not the
+      // umbrella's own Fast-tier defaults — otherwise a future tier whose
+      // schema diverges from Fast could pass a value the active tier would
+      // reject. `activeSeedanceRow` is a no-op for every non-Seedance model.
+      const capRow = activeSeedanceRow(m);
+      const caps = stu.mode === "video" ? capRow.video : capRow.image;
       if (stu.aspect && !((caps && caps.aspectRatios) || []).includes(stu.aspect)) stu.aspect = undefined;
       if (stu.resolution && !((caps && caps.resolutions) || []).some((r) => r.id === stu.resolution)) stu.resolution = undefined;
       // Count (num_images) is images-only — a video model, or an image model
@@ -2891,14 +2897,14 @@
       // server would refuse the request anyway, and carrying them invisibly is
       // how a user ends up wondering why their sound was ignored.
       if (!m.reference) { stu.refAudio = []; stu.refVideo = []; stu.refRights = false; }
-      if (stu.mode === "video" && m.video) {
-        if (!m.video.durations.some((d) => d.seconds === stu.duration)) {
+      if (stu.mode === "video" && capRow.video) {
+        if (!capRow.video.durations.some((d) => d.seconds === stu.duration)) {
           // The model's own default, not the first entry — that is the shortest
           // option now that durations are full ranges.
-          const def = m.video.defaultSeconds;
-          stu.duration = m.video.durations.some((d) => d.seconds === def) ? def : m.video.durations[0].seconds;
+          const def = capRow.video.defaultSeconds;
+          stu.duration = capRow.video.durations.some((d) => d.seconds === def) ? def : capRow.video.durations[0].seconds;
         }
-        if (!activeSeedanceRow(m).video.endFrame) { stu.endPhoto = null; stu.endGenerationId = null; }
+        if (!capRow.video.endFrame) { stu.endPhoto = null; stu.endGenerationId = null; }
       } else { stu.duration = undefined; stu.endPhoto = null; stu.endGenerationId = null; }
     }
     /**
