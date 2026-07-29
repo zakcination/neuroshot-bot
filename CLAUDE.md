@@ -172,6 +172,91 @@ Full walkthroughs: `docs/deploy.md`
 - Check `config.ts` for active seasonal knobs (e.g., `SEEDANCE_SALE_ACTIVE`, `FLAGSHIP_CAP_FROM`)
 - Recalculate `creditPrice` against provider cost in `src/models.ts`
 
+## Dev Process Audit (2026-07-30)
+
+Historical analysis of 86 PRs over 27 days revealed patterns to avoid:
+
+### Critical Issue: Branch Recycling
+
+**The Problem:** One branch (`claude/end-to-end-testing-yax0xv`) was merged **17 times across 8 days** (PRs #67–#78), each PR smaller than batching into a single, focused merge. This fragmentation forced:
+- 17 separate code reviews instead of 1–2
+- Continuous integration friction (same-day merges, no review SLA)
+- Scope defined incrementally, not locked at inception
+- High rework signals: 12–24 commits per PR, 1772–3490 lines added per PR
+
+**Pattern:** When you find yourself repeatedly updating the same branch over days, you're building feature-blob PRs. STOP. Squash commits, batch scope, cut ONE PR.
+
+### PR Quality Metrics
+
+| Metric | Current | Target | Action |
+|--------|---------|--------|--------|
+| **Files per PR** | 63% ≤15 files ✓; 20% 15–30 files; 2 PRs 25–30 files | Max 12 files | Enforce limit; require system breakdown for >15 |
+| **Commits per PR** | Avg 4.85 (median 2); 6 outliers 11–24 commits | <5 commits | Squash before PR if >8 commits |
+| **Merge delay** | 0 days (same-day) | <1 day | Add 24h code-review SLA to prevent rubber-stamp |
+| **Rework risk** | 20% high-rework PRs (11+ commits, low removals) | <10% | Lock scope before coding; squash repetitive edits |
+
+### Three Fixes to Implement Now
+
+**1. Squash-merge on >8 commits (Workflow)**
+```bash
+# .husky/pre-push
+commit_count=$(git rev-list --count main..HEAD)
+if [ $commit_count -gt 8 ]; then
+  echo "⚠️  Branch has $commit_count commits. Squash before PR: git rebase -i main"
+  exit 1
+fi
+```
+*Why:* Prevents incremental-scope PRs. Forces upfront planning before opening.
+
+**2. 12-file PR limit (GitHub Policy)**
+- Add branch protection rule: Require check `files-under-12` OR label `scope:multi-system`
+- Use PR template (`.github/pull_request_template.md`):
+  ```markdown
+  ## Systems Changed
+  - [ ] UI Components
+  - [ ] Backend / API
+  - [ ] State / Config
+  - [ ] Tests
+  
+  *If >15 files: Explain cross-system dependency below*
+  ```
+*Why:* 15+ files = 3+ systems; forces justification before review.
+
+**3. Conventional commits + scope validation (Tooling)**
+```bash
+# .commitlintrc.js
+module.exports = {
+  extends: ['@commitlint/config-conventional'],
+  rules: {
+    'scope-enum': [2, 'always', ['ui', 'api', 'state', 'config', 'test', 'infra']],
+  }
+};
+```
+Install: `npm install commitlint @commitlint/config-conventional husky && npx husky install`
+
+*Why:* Surfaces sprawl at commit time (pre-CI). `git commit -m "feat(ui,api,config): …"` surfaces multi-system work.
+
+### Red Flags in PRs
+
+Don't land PRs with these patterns:
+
+| Flag | Example | Action |
+|------|---------|--------|
+| **>15 files** | PR #68 (30 files), PR #66 (26 files) | Require justification or split |
+| **>8 commits** | PR #68 (24 commits), PR #87 (16 commits) | Squash locally; lock scope before opening |
+| **Bundled features** | "Seedance -50% sale + font pairing + price UI" (18 files) | Split into separate PRs per system |
+| **Branch active >3 days** | end-to-end-testing (8 days, 17 merges) | Merge or abandon; don't park WIP branches |
+| **Same-day merge, >5 commits** | Fast velocity without friction = rubber-stamp review | Add review SLA; require >4h review window |
+
+### When to Break These Rules
+
+Exceptions exist:
+- **Sweeping refactors** (e.g., mass dependency updates): OK to exceed 15 files; document in PR
+- **Multi-system feature** (e.g., "add referral + update pricing + fix UI"): Split into 3 PRs using feature flags in `config.ts`
+- **Test/CI infrastructure**: Large line counts acceptable; keep file count <15
+
+---
+
 ## Before You Hand Off
 
 Update this file if you:
@@ -179,3 +264,4 @@ Update this file if you:
 - Add a new feature gate (new row in the flags table)
 - Hit a blocker or known issue
 - Change test coverage expectations
+- Update dev process guardrails (commit limits, file limits, review SLA)
