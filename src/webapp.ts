@@ -606,7 +606,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
       // above — the card's usage pill needs the cumulative number, the badge
       // needs the recent one. Appended last so the positional destructuring
       // above stays stable.
-      presetTrendingCounts(),
+      presetTrendingCounts(config.trendingWindowDays),
     ]);
   const gates = Object.fromEntries(gateRows.map((g) => [g.preset_id, g.min_level]));
   return {

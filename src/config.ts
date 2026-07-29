@@ -53,6 +53,11 @@ export const config = {
   // One-time gift for completing all 5 "Ваш путь в NeuroShot" roadmap steps —
   // claim-gated like the welcome bonus (see claimRoadmapBonus in db.ts).
   roadmapBonus: Number(process.env.ROADMAP_BONUS ?? 10),
+  // Trailing window the gallery's 🔥 badge ranks on (presetTrendingCounts).
+  // Env-backed because the right length is an empirical question — too short
+  // and the badge chases noise, too long and it stops meaning "now" — and it
+  // should be tunable against real traffic without a deploy.
+  trendingWindowDays: Number(process.env.TRENDING_WINDOW_DAYS ?? 7),
   adminIds: (process.env.ADMIN_IDS ?? "")
     .split(",")
     .map((s) => s.trim())
