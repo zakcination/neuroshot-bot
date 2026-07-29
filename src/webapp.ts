@@ -1579,8 +1579,15 @@ export function createWebApp(): Server {
       // dead poller in a live process. Returning 200 here would keep a broken
       // bot running forever.
       if (url.pathname === "/healthz") {
-        const polling = livenessProbe();
-        return json(res, polling ? 200 : 503, { ok: polling, polling });
+        const healthy = livenessProbe();
+        // `polling` is honest only for role:"bot" — a role:"webapp" deploy
+        // (docs/staging.md) never polls at all, so its liveness probe always
+        // reports healthy regardless, and this field would otherwise read as
+        // "yes, actively polling Telegram" to anyone checking that staging
+        // ISN'T double-polling production's bot token, which is exactly
+        // backwards. `role` makes that unambiguous instead of coincidental.
+        const polling = config.role === "bot" && healthy;
+        return json(res, healthy ? 200 : 503, { ok: healthy, polling, role: config.role });
       }
 
       if (url.pathname === "/" || url.pathname === "/app") {
