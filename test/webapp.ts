@@ -1875,7 +1875,7 @@ await step("POST /api/send delivers a generation into the user's Telegram chat",
 await step("catalog: model news banner + video composer params (durations priced, ratios, story)", async () => {
   const { body } = await apiMe(signInitData(maker));
   const c = body.catalog as unknown as {
-    news: Array<{ key: string; title: string; credits: number; kind: string; freeTrial: boolean }>;
+    news: Array<{ key: string; title: string; credits: number; wasCredits: number; onSale: boolean; kind: string; freeTrial: boolean }>;
     videoModels: Array<{
       key: string;
       video: {
@@ -1897,6 +1897,19 @@ await step("catalog: model news banner + video composer params (durations priced
   // freeTrial is credits ≤ FREE_CREDITS (3 in this env; Seedream @2🔫 is the free-trial anchor).
   for (const n of c.news) assert.equal(n.freeTrial, n.credits <= 3, `${n.key} freeTrial wrong`);
   assert.ok(c.news.some((n) => n.key === "text_to_image" && n.credits === 2 && n.freeTrial), "Seedream free-trial entry missing from news");
+  // wasCredits/onSale (added for the Home tab's hero-carousel strikethrough) —
+  // same triplet every other catalog section already carries. onSale is only
+  // ever true for the Seedance-family keys, and wasCredits === credits
+  // whenever nothing's discounted (so the client only renders a strikethrough
+  // when the two actually differ).
+  for (const n of c.news) {
+    assert.equal(typeof n.wasCredits, "number", `${n.key}: wasCredits missing`);
+    assert.ok(n.wasCredits >= n.credits, `${n.key}: wasCredits must never be cheaper than the live price`);
+    assert.equal(typeof n.onSale, "boolean", `${n.key}: onSale missing`);
+    if (n.onSale) assert.ok(n.key.startsWith("seedance"), `${n.key}: onSale true for a non-Seedance model`);
+  }
+  const seedanceFastNews = c.news.find((n) => n.key === "seedance_fast");
+  assert.ok(seedanceFastNews, "seedance_fast missing from news — the Home tab promo banner reads this entry directly");
   const kling = c.videoModels.find((m) => m.key === "kling3")!;
   // Every second the endpoint accepts, not the two we used to offer. Asserted as
   // a dense ascending range rather than a literal list, so adding a length is a

@@ -138,6 +138,18 @@
     .idbox .nm { font-size: 13.5px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .avatar { width: 30px; height: 30px; border-radius: 50%; flex: none; object-fit: cover; border: 1.5px solid var(--line); }
     .avatar.ph { display: flex; align-items: center; justify-content: center; background: var(--aurora); font-size: 12px; font-weight: 800; color: #fff; }
+    /* Decorative level ring around the avatar — a glance-level echo of the
+       detailed #lvlHost pill next to it, not a replacement for it. */
+    .avatarring {
+      position: relative; flex: none; width: 34px; height: 34px; border-radius: 50%; padding: 2px;
+      background: conic-gradient(var(--violet) 0% var(--pct), rgba(255,255,255,.14) var(--pct) 100%);
+    }
+    .avatarring .avatar, .avatarring .avatar.ph { width: 100%; height: 100%; border: 1.5px solid var(--bg); }
+    .lvlbadge {
+      position: absolute; right: -3px; bottom: -3px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 999px;
+      display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 800; color: #fff;
+      background: linear-gradient(135deg, var(--violet), var(--magenta)); border: 1.5px solid var(--bg);
+    }
     .pillrow { display: flex; gap: 6px; flex: none; }
     .pill.jobs { color: var(--amber); border-color: rgba(245,182,74,.35); }
     /* Balance pill IS the top-up entry point (tap → Патроны) — replaces the old
@@ -949,44 +961,68 @@
       background: linear-gradient(160deg, rgba(124,92,255,.4), rgba(255,77,141,.3)), linear-gradient(180deg, rgba(8,7,12,0) 40%, rgba(8,7,12,.88) 100%);
     }
     .pcard .ptop { position: relative; z-index: 2; display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; margin-bottom: auto; }
+    .pcard .pleft, .pcard .pright { display: flex; align-items: center; gap: 4px; }
     .pcard .pemoji {
       display: none; flex: none; width: 36px; height: 36px; border-radius: 11px; align-items: center; justify-content: center;
       font-size: 17px; background: var(--bg); border: 1px solid rgba(255,255,255,.1); box-shadow: 0 4px 14px rgba(0,0,0,.35);
     }
     .pcard.noart .pemoji { display: flex; }
-    .pcard .ptrend {
-      margin-left: auto; font-size: 9.5px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase;
-      background: var(--amber); color: #08070c; padding: 3px 7px; border-radius: 999px; white-space: nowrap;
+    /* Hot badge — top-left, next to the (usually hidden) no-art emoji tile.
+       Real trending data only (catalog.presets[].trending, top-5 by actual
+       taps) — never shown alongside a lock, which already explains itself. */
+    .pcard .phot {
+      display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 999px;
+      background: rgba(255,77,141,.26); border: 1px solid rgba(255,77,141,.4); font-size: 11px; backdrop-filter: blur(6px);
+    }
+    /* Usage-count pill — top-right, compact formatting (formatCount). */
+    .pcard .pcount {
+      font-size: 10.5px; font-weight: 700; color: var(--ink); background: rgba(0,0,0,.42);
+      border: 1px solid rgba(255,255,255,.14); padding: 3px 8px; border-radius: 999px; white-space: nowrap; backdrop-filter: blur(6px);
     }
     /* A style gated behind an account Level (reward-architecture preset_gating).
        Dimmed but still legible and still tappable — tapping explains what it
        needs rather than doing nothing, so a lock never reads as a broken card. */
     .pcard .plock {
-      margin-left: auto; font-size: 9.5px; font-weight: 800; letter-spacing: .04em;
+      font-size: 9.5px; font-weight: 800; letter-spacing: .04em;
       background: rgba(255,255,255,.14); color: var(--ink); padding: 3px 7px; border-radius: 999px; white-space: nowrap;
     }
     .pcard.locked .pbg { opacity: .32; filter: saturate(.4); }
     .pcard.locked b, .pcard.locked .price { opacity: .6; }
     .pcard b { position: relative; z-index: 2; font-size: 13px; line-height: 1.3; }
     .pcard .prow { position: relative; z-index: 2; display: flex; justify-content: space-between; align-items: baseline; gap: 6px; margin-top: 3px; }
-    .pcard .price { font-size: 12px; color: var(--amber); font-weight: 700; white-space: nowrap; }
-    .pcard .pcount { font-size: 10px; color: var(--muted); }
+    .pcard .price {
+      font-size: 11.5px; font-weight: 700; color: var(--ink); white-space: nowrap;
+      background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.12); padding: 3px 8px; border-radius: 999px;
+    }
 
     /* news banner — sliding model headlines */
     .news { margin: 16px 0 4px; }
     .newsrail { display: grid; grid-auto-flow: column; grid-auto-columns: 86%; gap: 11px; overflow-x: auto; scroll-snap-type: x mandatory; margin: 0 -16px; padding: 0 16px 6px; scrollbar-width: none; }
     .newsrail::-webkit-scrollbar { display: none; }
-    .newscard {
-      scroll-snap-align: center; position: relative; overflow: hidden; cursor: pointer;
-      border-radius: var(--radius); padding: 16px 16px 15px; border: 1px solid rgba(124,92,255,.35);
-      background: radial-gradient(130% 140% at 100% 0%, rgba(255,77,141,.22), transparent 55%), var(--surface);
-      display: flex; flex-direction: column; gap: 8px; min-height: 96px; color: var(--ink); font: inherit; text-align: left;
+    .herocard {
+      scroll-snap-align: center; display: flex; flex-direction: column; gap: 8px;
+      border: 0; background: none; padding: 0; cursor: pointer; color: inherit; font: inherit; text-align: left;
     }
-    .newscard .chiprow { display: flex; align-items: center; gap: 7px; }
-    .newscard .ntag { font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; background: var(--aurora); color: #fff; padding: 3px 8px; border-radius: 999px; }
-    .newscard .free { font-size: 10px; font-weight: 800; letter-spacing: .06em; color: #08070c; background: var(--amber); padding: 3px 8px; border-radius: 999px; }
-    .newscard b { font-size: 15px; line-height: 1.3; }
-    .newscard .go { margin-top: auto; font-size: 12.5px; color: var(--violet); font-weight: 700; }
+    .herofig {
+      position: relative; display: block; width: 100%; aspect-ratio: 16 / 10; border-radius: 18px; overflow: hidden;
+      border: 1px solid var(--line); background: var(--surface) center / cover no-repeat;
+    }
+    .herofig::after {
+      content: ""; position: absolute; inset: 0;
+      background: linear-gradient(180deg, rgba(8,7,12,0) 55%, rgba(8,7,12,.55) 100%);
+    }
+    .herotag {
+      position: absolute; z-index: 1; top: 9px; left: 9px; padding: 4px 8px; border-radius: 7px;
+      background: var(--aurora); color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .08em;
+      text-transform: uppercase; white-space: nowrap;
+    }
+    .herofree {
+      position: absolute; z-index: 1; top: 9px; right: 9px; padding: 4px 8px; border-radius: 7px;
+      background: var(--amber); color: #08070c; font-size: 10px; font-weight: 800; letter-spacing: .06em; white-space: nowrap;
+    }
+    .herotxt { display: block; min-width: 0; }
+    .herotxt b { display: block; font-size: 14px; font-weight: 700; letter-spacing: -.1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .herotxt span { display: block; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .newsdots { display: flex; justify-content: center; gap: 6px; margin-top: 4px; }
     .newsdots i { width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,.2); transition: background .2s, width .2s; }
     .newsdots i.on { width: 16px; border-radius: 3px; background: var(--violet); }
@@ -1009,6 +1045,45 @@
       background: linear-gradient(90deg, #ff8a3d, #ff4d8d); color: #fff;
       padding: 2px 6px; border-radius: 999px; margin-right: 6px; vertical-align: middle;
     }
+
+    /* Home tab promo banner: richer sibling of .salebar (price block + dated
+       chip), same warm-gradient "deal" language kept distinct from the
+       violet aurora used for entry tiles. */
+    .promobar {
+      display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; cursor: pointer;
+      padding: 14px; border-radius: var(--radius); margin: 4px 0 2px; color: inherit; font: inherit; border: 0;
+      background: linear-gradient(100deg, rgba(255,138,61,.22), rgba(255,77,141,.1) 62%, transparent), var(--surface);
+      border: 1px solid rgba(255,138,61,.32);
+    }
+    .promotxt { flex: 1; min-width: 0; display: block; }
+    .promotxt b { display: block; font-size: 16px; font-weight: 800; letter-spacing: -.2px; }
+    .promotxt > span:not(.promocd) { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); }
+    .promocd {
+      display: inline-flex; align-items: center; gap: 5px; margin-top: 7px; padding: 4px 9px; border-radius: 999px;
+      background: rgba(245,182,74,.16); color: var(--amber); font-size: 11px; font-weight: 700; white-space: nowrap;
+    }
+    .promocd i { width: 5px; height: 5px; border-radius: 50%; background: var(--amber); animation: pulse 2.2s ease-in-out infinite; }
+    .promoprice { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+
+    /* 2-tile Фото/Видео entry grid — replaces the 4-item "Что создаём" rail;
+       discovery for text-to-image/product now happens via the gallery below. */
+    .tile2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .tile {
+      position: relative; height: 118px; border-radius: 20px; overflow: hidden; border: 1px solid var(--line);
+      padding: 14px; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-start;
+      text-align: left; color: inherit; font: inherit; cursor: pointer;
+    }
+    .tile-photo { background: linear-gradient(150deg, rgba(255,77,141,.24), rgba(124,92,255,.07) 62%), var(--surface); }
+    .tile-video { background: linear-gradient(150deg, rgba(124,92,255,.3), rgba(180,77,255,.06) 62%), var(--surface); }
+    .tile .em { font-size: 24px; line-height: 1; }
+    .tile b { font-size: 17px; font-weight: 700; letter-spacing: -.2px; }
+    .tile span { font-size: 11px; color: var(--muted); }
+
+    /* Home-gallery-only chrome: "Все ›" link, and the Фото/Видео segment
+       reuses .seg's exact on/off convention (Studio composer mode toggle). */
+    .seeall { border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; padding: 8px 0; }
+    .gallseg { margin: 0 0 10px; }
+    .gallery-sec .pcards { margin-top: 4px; }
 
     /* ————— duration slider —————
        Video length used to be two chips because the registry only offered two
@@ -1198,6 +1273,20 @@
     const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
     const plural = (n, one, few, many) => { const m100 = Math.abs(n) % 100, m10 = Math.abs(n) % 10;
       return m100 >= 11 && m100 <= 14 ? many : m10 === 1 ? one : m10 >= 2 && m10 <= 4 ? few : many; };
+    /** "4100" → "4.1K" for a compact usage-count pill; small counts stay exact. */
+    const formatCount = (n) => (n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "K" : String(n));
+    // Custom icon + background photo per campaign — keyed by real CAMPAIGNS ids
+    // (models.ts), not the emoji in the label (that stays in bot messages
+    // untouched). Falls back to the label's own emoji if a campaign is added
+    // without art yet, so nothing silently disappears. Top-level so both the
+    // hero carousel and the home gallery's Video tab can read it.
+    const CAMP_ART = {
+      skazka: { icon: "book", bg: "skazka" },
+      oldphoto: { icon: "pocketwatch", bg: "oldphoto" },
+      poster: { icon: "ticket", bg: "poster" },
+      minifilm: { icon: "reel", bg: "minifilm" },
+      odyssey: { icon: "compass", bg: "odyssey" },
+    };
 
     // Session auth: inside Telegram exchange fresh initData for a Bearer token;
     // outside (installed PWA / browser) reuse the cached token.
@@ -2035,6 +2124,31 @@
       return `<div class="salebar">🔥 <b>Seedance</b> — ${salePart}${ceilingPart}</div>`;
     }
 
+    /**
+     * The Home tab's promo banner — richer than saleBanner() (a price block +
+     * a dated chip), but same gating and same underlying sale. Copy is
+     * grounded in the REAL Seedance Fast spec (720p max, 4-15s), not the
+     * "1080p, до 12 секунд" line from the design reference this was built
+     * from — that model doesn't exist on our fal endpoint. Returns "" once
+     * the sale ends, so no dead promo card is ever left on the page.
+     */
+    function promoBannerHtml(d) {
+      const saleOn = ME.seedanceSale && ME.seedanceSale.active;
+      if (!saleOn) return "";
+      const n = (d.catalog.news || []).find((x) => x.key === "seedance_fast");
+      if (!n) return "";
+      const until = new Date(ME.seedanceSale.endsAt).toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+      return `
+        <button class="promobar" id="promoBanner">
+          <span class="promotxt">
+            <b>Seedance дешевле вдвое</b>
+            <span>Видео 720p, 4–15 секунд — сейчас за половину цены</span>
+            <span class="promocd"><i></i>до ${until}</span>
+          </span>
+          <span class="promoprice">${priceBlockHtml(n.credits, n.wasCredits)}</span>
+        </button>`;
+    }
+
     /** A section label, with a tap-to-explain "?" when we have something to say. */
     function qLabel(text, hintKey) {
       const hint = hintKey && HINTS[hintKey]
@@ -2123,6 +2237,82 @@
         </div>`;
     }
 
+    /**
+     * One preset card — shared by the full Style Gallery sheet (viewPick)
+     * and the Home tab's inline "Галерея промптов" grid, so the two surfaces
+     * never drift apart. Badge layout: hot (real trending, no fabricated
+     * numbers) top-left next to the no-art emoji fallback, usage-count
+     * pill top-right (formatCount, e.g. "4.1K"), price bottom.
+     */
+    function presetCardHtml(p) {
+      const lock = presetLock(p); // null = open (the default for every style)
+      return `
+      <button class="pcard ${lock ? "locked" : ""}" data-preset="${p.id}">
+        <!-- previewUrl is derived from the id, so a style whose card art
+             hasn't been produced yet 404s. Without this the card shows a
+             broken-image icon; hiding the img falls back to the tile's own
+             gradient, which looks deliberate. -->
+        <img class="pbg" src="${esc(p.previewUrl)}" alt="" loading="lazy" onerror="this.remove()" />
+        <div class="ptop">
+          <span class="pleft">
+            <span class="pemoji">${esc(p.label.split(" ")[0] || "✨")}</span>
+            ${p.trending && !lock ? `<span class="phot">🔥</span>` : ""}
+          </span>
+          <span class="pright">
+            ${p.usageCount > 0 ? `<span class="pcount">${formatCount(p.usageCount)}</span>` : ""}
+            ${lock ? `<span class="plock">🔒 ур. ${lock.need}</span>` : ""}
+          </span>
+        </div>
+        <b>${esc(p.label)}</b>
+        <div class="prow"><span class="price">${p.credits} ${PATRON}</span></div>
+      </button>`;
+    }
+
+    /** One campaign card, same shape as presetCardHtml — no usage/trending
+     *  data exists at the campaign level, so none is shown (never fabricated). */
+    function campaignCardHtml(k) {
+      const art = CAMP_ART[k.id];
+      return `
+      <button class="pcard ${art ? "" : "noart"}" data-camp="${k.id}">
+        ${art ? `<img class="pbg" src="/img/card-${esc(art.bg)}.jpg" alt="" loading="lazy" onerror="this.closest('.pcard').classList.add('noart')" />` : ""}
+        <div class="ptop"><span class="pleft"><span class="pemoji">${esc(k.label.split(" ")[0] || "🎬")}</span></span></div>
+        <b>${esc(k.label.slice(k.label.indexOf(" ") + 1))}</b>
+        <div class="prow"><span class="price">${k.imageCredits} ${PATRON} + видео ${k.videoCredits} ${PATRON}</span></div>
+      </button>`;
+    }
+
+    /** Home tab's inline gallery: Фото = real presets, Видео = real campaigns
+     *  (no "video preset" category exists server-side, see docs/plan — this
+     *  reuses catalog.campaigns rather than inventing one). Named distinctly
+     *  from renderGallery(page) below (the "Мои работы" results pager) —
+     *  same-scope function declarations of the same name silently shadow each
+     *  other in a classic script, which is exactly the bug that shipped here
+     *  the first time this was written. */
+    function renderPromptGallery(kind) {
+      const grid = document.getElementById("galleryGrid");
+      if (!grid) return;
+      const c = ME.catalog;
+      if (kind === "video") {
+        grid.innerHTML = c.campaigns.map(campaignCardHtml).join("");
+        grid.querySelectorAll("[data-camp]").forEach((b) => (b.onclick = () => { st.tab = "scenes"; openSheet(); viewCampaign(b.dataset.camp); }));
+      } else {
+        const list = c.presets.filter((p) => p.category === "photo")
+          .map((p, i) => ({ p, i }))
+          .sort((a, b) => (b.p.usageCount - a.p.usageCount) || (a.i - b.i))
+          .slice(0, 6);
+        grid.innerHTML = list.map(({ p }) => presetCardHtml(p)).join("");
+        grid.querySelectorAll(".pcard .pbg").forEach((img) => (img.onerror = () => img.closest(".pcard").classList.add("noart")));
+        grid.querySelectorAll("[data-preset]").forEach((b) => (b.onclick = () => {
+          const p = c.presets.find((x) => x.id === b.dataset.preset);
+          const lock = presetLock(p);
+          if (lock) { haptic("error"); toast(lockText(lock), { wide: true, ms: 5000 }); return; }
+          const keep = !!(stu && stu.swap);
+          if (stu) stu.swap = false;
+          openStudio({ preset: p, origin: "preset", modelKey: p.model, keep });
+        }));
+      }
+    }
+
     function viewPick() {
       const c = ME.catalog;
       let inner = "";
@@ -2142,27 +2332,7 @@
           .map((p, i) => ({ p, i }))
           .sort((a, b) => (b.p.usageCount - a.p.usageCount) || (a.i - b.i))
           .map(({ p }) => p);
-        inner = `<div class="pcards">${list.map((p) => {
-          const lock = presetLock(p); // null = open (the default for every style)
-          return `
-          <button class="pcard ${lock ? "locked" : ""}" data-preset="${p.id}">
-            <!-- previewUrl is derived from the id, so a style whose card art
-                 hasn't been produced yet 404s. Without this the card shows a
-                 broken-image icon; hiding the img falls back to the tile's own
-                 gradient, which looks deliberate. -->
-            <img class="pbg" src="${esc(p.previewUrl)}" alt="" loading="lazy" onerror="this.remove()" />
-            <div class="ptop">
-              <span class="pemoji">${esc(p.label.split(" ")[0] || "✨")}</span>
-              ${lock ? `<span class="plock">🔒 ур. ${lock.need}</span>`
-                : p.trending ? `<span class="ptrend">🔥 Тренд</span>` : ""}
-            </div>
-            <b>${esc(p.label)}</b>
-            <div class="prow">
-              <span class="price">${p.credits} ${PATRON}</span>
-              ${p.usageCount > 0 ? `<span class="pcount">${p.usageCount}×</span>` : ""}
-            </div>
-          </button>`;
-        }).join("")}</div>`;
+        inner = `<div class="pcards">${list.map(presetCardHtml).join("")}</div>`;
       } else if (st.tab === "scenes") {
         inner = `<div class="choices">${c.campaigns.map((k) =>
           `<button class="choice" data-camp="${k.id}"><b>${esc(k.label)}</b><span class="desc">+ видео за ${k.videoCredits} ${PATRON}</span><span class="price">${k.imageCredits} ${PATRON}</span></button>`).join("")}</div>`;
@@ -3444,20 +3614,70 @@
       openStudio({ mode: n.kind === "image_to_video" ? "video" : "image", modelKey: n.key, origin: "news" });
     }
 
-    /** Sliding model-news banner: cards + auto-advance + dots. */
+    /**
+     * The 3 hero-carousel slots — real data only, no invented content. The
+     * Seedance sale card and one other model highlight come straight off
+     * catalog.news (already priced/discounted server-side); the 3rd slot is
+     * the real, shipped Одиссея campaign (its own cover art), not the
+     * fictional "contest" card from the design mockup this was built from —
+     * there is no contest/leaderboard backend, so it isn't a slot here.
+     */
+    function heroItems() {
+      const news = (ME.catalog && ME.catalog.news) || [];
+      const artFor = (kind) => (kind === "image_to_video" ? "card-video.jpg" : kind === "text_to_image" ? "card-text.jpg" : "card-shoot.jpg");
+      const items = [];
+      const sale = news.find((n) => n.key === "seedance_fast");
+      if (sale) {
+        items.push({
+          img: "/img/" + artFor(sale.kind),
+          tag: sale.onSale ? "🔥 АКЦИЯ" : sale.tag,
+          free: sale.freeTrial,
+          title: sale.title,
+          sub: sale.onSale ? `${sale.credits} ${PATRON} вместо ${sale.wasCredits}` : `от ${sale.credits} ${PATRON}`,
+          go: () => tryModel(sale),
+        });
+      }
+      const rest = news.find((n) => n.key !== "seedance_fast" && !n.key.startsWith("seedance"));
+      if (rest) {
+        items.push({
+          img: "/img/" + artFor(rest.kind),
+          tag: rest.tag,
+          free: rest.freeTrial,
+          title: rest.title,
+          sub: `от ${rest.credits} ${PATRON}`,
+          go: () => tryModel(rest),
+        });
+      }
+      const camp = ((ME.catalog && ME.catalog.campaigns) || []).find((c) => c.id === "odyssey");
+      if (camp) {
+        items.push({
+          img: `/img/card-${CAMP_ART.odyssey.bg}.jpg`,
+          tag: "🌌 ЭПИК",
+          free: false,
+          title: camp.label.slice(camp.label.indexOf(" ") + 1),
+          sub: `${camp.imageCredits} ${PATRON} + видео ${camp.videoCredits} ${PATRON}`,
+          go: () => { st.tab = "scenes"; openSheet(); viewCampaign("odyssey"); },
+        });
+      }
+      return items;
+    }
+
+    /** Hero carousel: cards + auto-advance + dots. */
     function renderNews() {
       const rail = document.getElementById("newsrail"), dots = document.getElementById("newsdots");
-      const news = (ME.catalog && ME.catalog.news) || [];
-      if (!rail || !news.length) { if (rail) rail.closest(".news").style.display = "none"; return; }
+      const items = heroItems();
+      if (!rail || !items.length) { if (rail) rail.closest(".news").style.display = "none"; return; }
       rail.innerHTML = ""; dots.innerHTML = "";
-      news.forEach((n, i) => {
+      items.forEach((n, i) => {
         const card = $(`
-          <button class="newscard" data-i="${i}">
-            <div class="chiprow"><span class="ntag">${esc(n.tag)}</span>${n.freeTrial ? '<span class="free">🎁 БЕСПЛАТНО</span>' : ""}</div>
-            <b>${esc(n.title)}</b>
-            <span class="go">Попробовать · ${n.credits} ${PATRON} →</span>
+          <button class="herocard" data-i="${i}">
+            <span class="herofig" style="background-image:url('${esc(n.img)}')">
+              <span class="herotag">${esc(n.tag)}</span>
+              ${n.free ? '<span class="herofree">🎁 БЕСПЛАТНО</span>' : ""}
+            </span>
+            <span class="herotxt"><b>${esc(n.title)}</b><span>${esc(n.sub)}</span></span>
           </button>`);
-        card.onclick = () => tryModel(n);
+        card.onclick = n.go;
         rail.appendChild(card);
         const dot = $(`<i class="${i === 0 ? "on" : ""}"></i>`);
         dots.appendChild(dot);
@@ -4072,24 +4292,28 @@
 
       const avatarUrl = tg?.initDataUnsafe?.user?.photo_url || "";
       const initial = esc((d.user.first_name || "?").trim().charAt(0).toUpperCase() || "?");
+      // Same pct math as levelMiniHtml (kept separate, not read from it — that
+      // pill has its own live XP-gain animation system tied to its DOM, which
+      // a ring wrapper must not disturb). Purely decorative, so it only ever
+      // needs the value at initial paint; the detailed pill next to it is what
+      // stays live.
+      const avatarPct = d.progress && d.progress.active
+        ? (d.progress.nextAt == null ? 100 : Math.round((d.progress.into / d.progress.span) * 100))
+        : null;
       const ROADMAP_STEPS = roadmapStepsFor(d);
-      // Custom icon + background photo per campaign — keyed by real CAMPAIGNS
-      // ids (models.ts), not the emoji in the label (that stays in bot messages
-      // untouched). Falls back to the label's own emoji if a campaign is added
-      // without art yet, so nothing silently disappears.
-      const CAMP_ART = {
-        skazka: { icon: "book", bg: "skazka" },
-        oldphoto: { icon: "pocketwatch", bg: "oldphoto" },
-        poster: { icon: "ticket", bg: "poster" },
-        minifilm: { icon: "reel", bg: "minifilm" },
-        odyssey: { icon: "compass", bg: "odyssey" },
-      };
 
       root.innerHTML = "";
       root.appendChild($(`<div>
         <div class="top2">
           <div class="idbox">
-            ${avatarUrl ? `<img class="avatar" src="${esc(avatarUrl)}" alt="" />` : `<div class="avatar ph">${initial}</div>`}
+            ${avatarPct == null ? `
+              ${avatarUrl ? `<img class="avatar" src="${esc(avatarUrl)}" alt="" />` : `<div class="avatar ph">${initial}</div>`}
+            ` : `
+              <div class="avatarring" style="--pct:${avatarPct}%">
+                ${avatarUrl ? `<img class="avatar" src="${esc(avatarUrl)}" alt="" />` : `<div class="avatar ph">${initial}</div>`}
+                <span class="lvlbadge">${d.progress.level}</span>
+              </div>
+            `}
             <span class="nm">${esc(d.user.first_name || "друг")}</span>
           </div>
           <span class="pillrow">
@@ -4109,42 +4333,31 @@
             <p class="herosub">Выберите результат — ИИ сделает остальное.</p>
           </div>
 
-          <section class="reveal">
-            <div class="sec-h"><h2>Что создаём</h2></div>
-            <div class="rail">
-              <a class="act" data-studio="shoot" style="background-image:url('/img/card-shoot.jpg')"><span class="em"><img class="appicon" src="/img/ic-camera.png" alt="" /></span><b>AI-фотосессия</b><span>от ${d.catalog.presetCredits} ${PATRON} · прямо здесь</span></a>
-              <!-- Second slot, not last: this is the only card that needs NO
-                   photo, so it's the shortest path to a first result — and the
-                   label has to say that outright. "Из текста" described the
-                   input format, which told a first-time user nothing about what
-                   they'd get. -->
-              <a class="act" data-studio="text" style="background-image:url('/img/card-text.jpg')"><span class="em"><img class="appicon" src="/img/ic-sparkle.png" alt="" /></span><b>Картинка по описанию</b><span>без фото · от ${d.catalog.imageModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} ${PATRON}</span></a>
-              <a class="act" data-studio="video" style="background-image:url('/img/card-video.jpg')"><span class="em"><img class="appicon" src="/img/ic-film.png" alt="" /></span><b>Оживить фото</b><span>видео от ${d.catalog.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} ${PATRON}</span></a>
-              <a class="act" data-studio="product" style="background-image:url('/img/card-product.jpg')"><span class="em"><img class="appicon" src="/img/ic-bag.png" alt="" /></span><b>Карточка товара</b><span>для маркетплейса</span></a>
-            </div>
-          </section>
-
           <div class="news reveal">
             <div class="sec-h"><h2>🆕 Новые модели</h2></div>
             <div class="newsrail" id="newsrail"></div>
             <div class="newsdots" id="newsdots"></div>
           </div>
 
-          <div class="roadmap reveal${roadmapGraduated(d, ROADMAP_STEPS) ? " graduated" : ""}">${roadmapCardInner(d, ROADMAP_STEPS)}</div>
+          ${promoBannerHtml(d)}
 
           <section class="reveal">
-            <div class="sec-h"><h2>Сценарии</h2></div>
-            <div class="rail">
-              ${d.catalog.campaigns.map((k) => {
-                const art = CAMP_ART[k.id];
-                const bgStyle = art ? ` style="background-image:url('/img/card-${art.bg}.jpg')"` : "";
-                const emHtml = art ? `<img class="appicon" src="/img/ic-${art.icon}.png" alt="" />` : esc(k.label.split(" ")[0]);
-                return `
-                <a class="act" data-camp-open="${k.id}"${bgStyle}><span class="em">${emHtml}</span>
-                  <b>${esc(k.label.slice(k.label.indexOf(" ") + 1))}</b><span>${k.imageCredits} ${PATRON} + видео ${k.videoCredits} ${PATRON}</span></a>`;
-              }).join("")}
+            <div class="tile2">
+              <button class="tile tile-photo" data-open="image"><span class="em">📸</span><b>Фото</b><span>Пресет в один тап</span></button>
+              <button class="tile tile-video" data-open="video"><span class="em">🎬</span><b>Видео</b><span>Оживить кадр</span></button>
             </div>
           </section>
+
+          <section class="reveal gallery-sec">
+            <div class="sec-h"><h2>Галерея промптов</h2><button class="seeall" id="gallerySeeAll">Все ›</button></div>
+            <div class="seg gallseg" id="gallSeg">
+              <button class="on" data-gk="photo">Фото</button>
+              <button data-gk="video">Видео</button>
+            </div>
+            <div class="pcards" id="galleryGrid"></div>
+          </section>
+
+          <div class="roadmap reveal${roadmapGraduated(d, ROADMAP_STEPS) ? " graduated" : ""}">${roadmapCardInner(d, ROADMAP_STEPS)}</div>
         </div>
 
         <!-- ===== ПРОФИЛЬ (stats · history · settings) ===== -->
@@ -4355,7 +4568,24 @@
       void loadPartner();
       document.querySelectorAll("[data-buy]").forEach((b) => (b.onclick = () => buyPack(b.dataset.buy, false)));
       document.querySelectorAll("[data-studio]").forEach((a) => (a.onclick = () => studio(a.dataset.studio)));
+      // The 2 quick tiles: straight into the composer, no preset-sheet detour —
+      // the inline gallery right below now does what tapping "Фото" used to
+      // open a whole sheet for.
+      document.querySelectorAll("[data-open]").forEach((b) => (b.onclick = () => { st.pick = null; openStudio({ mode: b.dataset.open }); }));
       document.querySelectorAll("[data-camp-open]").forEach((a) => (a.onclick = () => { st.tab = "scenes"; openSheet(); viewCampaign(a.dataset.campOpen); }));
+      const promoBanner0 = document.getElementById("promoBanner");
+      if (promoBanner0) promoBanner0.onclick = () => {
+        const n = (d.catalog.news || []).find((x) => x.key === "seedance_fast");
+        if (n) tryModel(n);
+      };
+      renderPromptGallery("photo");
+      const gallSeg = document.getElementById("gallSeg");
+      if (gallSeg) gallSeg.querySelectorAll("button").forEach((b) => (b.onclick = () => {
+        gallSeg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+        renderPromptGallery(b.dataset.gk);
+      }));
+      const gallerySeeAll = document.getElementById("gallerySeeAll");
+      if (gallerySeeAll) gallerySeeAll.onclick = () => { st.tab = "shoot"; openSheet(); viewPick(); };
       // Roadmap steps are the same entry points as "Что создаём" — either into
       // the studio sheet on a given tab, or the Друзья page for the invite step
       // — plus the completion-bonus claim button (see renderRoadmap for the

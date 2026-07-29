@@ -554,6 +554,11 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
       // seedance_fast) are sale keys, and the banner is exactly where someone
       // decides whether to try it, so it must never quote a stale price.
       credits: priceFor(MODELS[n.key]),
+      // Same strikethrough pair every other catalog section already carries
+      // (studioModelRow, videoModels) — equal to `credits` whenever nothing's
+      // discounted, so the client only renders a strikethrough when they differ.
+      wasCredits: rawPriceFor(MODELS[n.key]),
+      onSale: SEEDANCE_SALE_KEYS.has(n.key) && seedanceSaleActive(),
       kind: MODELS[n.key].kind,
       freeTrial: priceFor(MODELS[n.key]) <= config.freeCredits,
     })),
