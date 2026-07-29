@@ -2360,11 +2360,18 @@
 
     /**
      * One preset card — shared by the full Style Gallery sheet (viewPick)
-     * and the Home tab's inline "Галерея промптов" grid, so the two surfaces
+     * and the Home tab's inline "Что снимаем?" grid, so the two surfaces
      * never drift apart. Badge layout: hot (real trending, no fabricated
      * numbers) top-left next to the no-art emoji fallback, usage-count
      * pill top-right (formatCount, e.g. "4.1K"), price bottom.
      */
+    /* Below this many uses the count pill is hidden entirely rather than shown
+       small. The pill is social proof, and proof only works in one direction:
+       "4.1K" sells a style, "12" actively says nobody picks this. Suppressing
+       it also protects a genuinely good new preset during its cold start —
+       it competes on its art instead of on a number it cannot yet have. */
+    const PROOF_MIN = 100;
+
     function presetCardHtml(p) {
       const lock = presetLock(p); // null = open (the default for every style)
       return `
@@ -2380,7 +2387,7 @@
             ${p.trending && !lock ? `<span class="phot">🔥</span>` : ""}
           </span>
           <span class="pright">
-            ${p.usageCount > 0 && !lock ? `<span class="pcount">${formatCount(p.usageCount)}</span>` : ""}
+            ${p.usageCount >= PROOF_MIN && !lock ? `<span class="pcount">${formatCount(p.usageCount)}</span>` : ""}
             ${lock ? `<span class="plock">🔒 ур. ${lock.need}</span>` : ""}
           </span>
         </div>
@@ -4719,7 +4726,12 @@
           </section>
 
           <section class="reveal gallery-sec">
-            <div class="sec-h"><h2>Галерея промптов</h2><button class="seeall" id="gallerySeeAll">Все ›</button></div>
+            <!-- "Что снимаем?" rather than "Галерея промптов": "промпт" is
+                 practitioner jargon, and to the user these cards aren't prompts
+                 — they're looks. A question also covers both halves of the
+                 filter, where a noun doesn't: the Фото side is styles, the
+                 Видео side is scenarios. -->
+            <div class="sec-h"><h2>Что снимаем?</h2><button class="seeall" id="gallerySeeAll">Все ›</button></div>
             <div class="seg gallseg" id="gallSeg" data-k="photo">
               <button class="on" data-gk="photo">Фото</button>
               <button data-gk="video">Видео</button>

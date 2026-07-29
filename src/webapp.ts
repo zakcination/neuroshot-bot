@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { achievements, activeXpActions, hasGrantedPack, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, latestPendingOrder, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
+import { achievements, activeXpActions, hasGrantedPack, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, latestPendingOrder, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, presetTrendingCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
 import { enhancePrompt, ENHANCE_COST, ENHANCE_STACK } from "./enhance.js";
 import { latestReleaseId, unseenReleases } from "./changelog.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
@@ -405,20 +405,26 @@ function packsPayload(onceTaken = false): Array<Record<string, unknown>> {
  * pickers. Ids are validated server-side on /api/generate, so the client never
  * supplies prompts for curated flows.
  *
- * `usage` is real per-preset tap counts (db.presetUsageCounts — the events log,
- * see docs/prompt-library.md's "Style Gallery" section) — never fabricated.
- * The most-tapped DECILE (with ≥1 real tap) is flagged `trending`; a fresh
- * deploy with no taps yet simply shows no trending badges, not fake ones.
+ * Two tap signals, both real (db.presetUsageCounts / presetTrendingCounts — the
+ * events log, see docs/prompt-library.md's "Style Gallery" section), never
+ * fabricated:
  *
- * A proportion rather than a fixed top-5: the badge has to stay scarce as the
- * library grows, otherwise 5-of-12 reads as "half of these are hot" and 5-of-80
- * reads as noise. The pool is presets with real taps, not all presets, so early
- * on — when only a handful have ever been used — the badge marks the leader of
- * what people actually tapped instead of nothing at all. Ceil with a floor of 1
- * keeps exactly one winner in that early window.
+ *   `usage`  — all-time counts. Shipped per card as `usageCount`, the social
+ *              proof pill. Cumulative because that is what makes it persuasive.
+ *   `recent` — taps inside a trailing window. Ranks the 🔥 badge, so the badge
+ *              means "what people are picking now" rather than "what happened
+ *              to launch first". All-time ranking ossifies the grid: early
+ *              presets accumulate forever and a better new style can never
+ *              break in, however well it performs this week.
+ *
+ * The badge goes to the most-tapped DECILE of presets with ≥1 tap in the
+ * window — a proportion, not a fixed count, so it stays scarce as the library
+ * grows (5-of-12 reads as "half of these are hot", 5-of-80 reads as noise).
+ * Ceil with a floor of 1 keeps exactly one winner in the early window. A quiet
+ * week, or a fresh deploy, yields no badges rather than fake ones.
  */
-function catalogPayload(usage: Record<string, number>, gates: Record<string, number>, eta: Record<string, number>): Record<string, unknown> {
-  const ranked = PRESETS.map((p) => ({ id: p.id, count: usage[p.id] ?? 0 }))
+function catalogPayload(usage: Record<string, number>, recent: Record<string, number>, gates: Record<string, number>, eta: Record<string, number>): Record<string, unknown> {
+  const ranked = PRESETS.map((p) => ({ id: p.id, count: recent[p.id] ?? 0 }))
     .filter((p) => p.count > 0)
     .sort((a, b) => b.count - a.count);
   const trending = new Set(
@@ -574,7 +580,7 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
 export async function meResponse(user: TgUser): Promise<Record<string, unknown>> {
   await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress, finance, enhanceLeft, awards, certs, partner, seenRelease, openOrder, xpActions, startTaken] =
+  const [dashboard, generations, refCode, row, roadmap, referrals, usage, season, gateRows, eta, progress, finance, enhanceLeft, awards, certs, partner, seenRelease, openOrder, xpActions, startTaken, trendingUsage] =
     await Promise.all([
       userDashboard(user.id),
       recentGenerations(user.id, 30),
@@ -596,6 +602,11 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
       latestPendingOrder(user.id),
       activeXpActions(),
       onceTaken(user.id),
+      // Trailing-window taps for the 🔥 ranking, alongside the all-time counts
+      // above — the card's usage pill needs the cumulative number, the badge
+      // needs the recent one. Appended last so the positional destructuring
+      // above stays stable.
+      presetTrendingCounts(),
     ]);
   const gates = Object.fromEntries(gateRows.map((g) => [g.preset_id, g.min_level]));
   return {
@@ -610,7 +621,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     staging: config.role === "webapp" && config.stagingLabel ? { label: config.stagingLabel } : null,
     // Pack catalog for the app's pricing section — same source as the bot.
     packs: packsPayload(startTaken),
-    catalog: catalogPayload(usage, gates, eta),
+    catalog: catalogPayload(usage, trendingUsage, gates, eta),
     // Combo offer deadline (ms epoch) for the live countdown.
     comboOffer: { endsAt: comboEndsAt() },
     // Seedance sale (docs/seedance-tiers.md § the 2026-07-28 sale): `active`

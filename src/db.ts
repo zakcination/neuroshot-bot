@@ -219,6 +219,11 @@ const SCHEMA: string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_events_user ON events(user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_events_type ON events(type)`,
+  // presetTrendingCounts filters type='preset' AND a created_at window on every
+  // /api/me — the type-only index would leave it scanning every preset tap ever
+  // logged to discard all but the last 7 days. Composite in that order because
+  // type is the equality predicate and created_at the range.
+  `CREATE INDEX IF NOT EXISTS idx_events_type_created ON events(type, created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_generations_user ON generations(user_id)`,
   // Reward-architecture P0 (docs: neuroshot-reward-architecture-v1.md, kept out of
   // this public repo — see the security note in that doc §8). These tables are the
@@ -2593,6 +2598,33 @@ export async function presetUsageCounts(): Promise<Record<string, number>> {
   const rows = await q(
     "SELECT meta AS id, COUNT(*)::int AS c FROM events WHERE type = 'preset' AND meta NOT LIKE '%:%' GROUP BY meta",
     [],
+  );
+  return Object.fromEntries(rows.map((r) => [String(r.id), Number(r.c)]));
+}
+
+/**
+ * The same tap signal as presetUsageCounts, restricted to a trailing window —
+ * the ranking behind the gallery's 🔥 badge.
+ *
+ * Deliberately separate from the all-time count rather than replacing it. The
+ * two answer different questions and the UI uses both: the card's usage pill
+ * is social proof ("lots of people have used this"), which only works on a
+ * cumulative number, while the badge is a merchandising signal ("this is what
+ * people are picking *now*"). Ranking the badge on all-time taps ossifies the
+ * grid — presets that shipped first accumulate forever and a genuinely better
+ * new style can never surface, however well it performs this week.
+ *
+ * A preset with no taps inside the window simply doesn't appear, so a quiet
+ * week yields no badges rather than fabricated ones — same contract as the
+ * all-time query.
+ */
+export async function presetTrendingCounts(days = 7): Promise<Record<string, number>> {
+  const rows = await q(
+    `SELECT meta AS id, COUNT(*)::int AS c FROM events
+      WHERE type = 'preset' AND meta NOT LIKE '%:%'
+        AND created_at >= now() - make_interval(days => $1::int)
+      GROUP BY meta`,
+    [days],
   );
   return Object.fromEntries(rows.map((r) => [String(r.id), Number(r.c)]));
 }
