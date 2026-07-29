@@ -529,22 +529,38 @@ await step("the Seedance chooser lands on one model, cheapest-first, and never o
 
 await step("the video set really covers 3–5 finished videos, and the ladder stays monotonic", async () => {
   const { PACKS, MODELS, priceFor, packById } = await import("../src/models.js");
+  const { config: cfg } = await import("../src/config.js");
 
   // "One good video" = two strong frames + ten seconds of motion. These are the
   // four tiers a buyer can realistically work at; the set is sized so that the
   // promise on the title holds at EVERY one of them, not just the cheapest.
-  const recipes = [
-    { frame: MODELS.nb2_edit, video: MODELS.seedance_fast },
-    { frame: MODELS.nbpro_edit, video: MODELS.seedance_fast },
-    { frame: MODELS.nbpro_edit, video: MODELS.seedance },
-    { frame: MODELS.premium_edit, video: MODELS.seedance },
-  ].map((r) => 2 * priceFor(r.frame) + priceFor(r.video, { duration: 10 }));
+  //
+  // Computed at the STANDING Seedance price, promo off: video_set's "3–5
+  // finished videos" is permanent catalog copy, not a claim scoped to whatever
+  // temporary promo happens to be running (see the Seedance-promo step above).
+  // A live discount can only make this pack over-deliver, never break the
+  // promise — but testing through an active promo would make the invariant's
+  // truth depend on today's date, which is exactly the kind of drift this
+  // suite exists to catch.
+  const promoPctBefore = cfg.seedancePromoPct;
+  cfg.seedancePromoPct = 0;
+  let recipes: number[];
+  try {
+    recipes = [
+      { frame: MODELS.nb2_edit, video: MODELS.seedance_fast },
+      { frame: MODELS.nbpro_edit, video: MODELS.seedance_fast },
+      { frame: MODELS.nbpro_edit, video: MODELS.seedance },
+      { frame: MODELS.premium_edit, video: MODELS.seedance },
+    ].map((r) => 2 * priceFor(r.frame) + priceFor(r.video, { duration: 10 }));
+  } finally {
+    cfg.seedancePromoPct = promoPctBefore;
+  }
 
   const videoSet = packById("video_set")!;
   const counts = recipes.map((cost) => Math.floor(videoSet.credits / cost));
   assert.ok(
     Math.min(...counts) >= 3 && Math.max(...counts) <= 5,
-    `video_set (${videoSet.credits} 🔫) yields ${counts.join("/")} videos — the title promises 3–5`,
+    `video_set (${videoSet.credits} 🔫) yields ${counts.join("/")} videos at the standing price — the title promises 3–5`,
   );
 
   // Bigger pack ⇒ better ₸ per patron, across the whole ladder. The purpose-built
@@ -585,6 +601,52 @@ await step("the video set really covers 3–5 finished videos, and the ladder st
     "the entry pack must mirror a ladder pack's size, or its struck-through price is invented",
   );
   assert.equal(packById("photo_set")!.offer, undefined, "photo_set is a standing tier now, not a countdown offer");
+});
+
+await step("Seedance promo: real discount, but a floor no future depth change can cross unnoticed", async () => {
+  // This is the guardrail the -70% banner sketch never got: the promo depth
+  // is a business decision, but ONCE DECIDED it must never be able to drift
+  // past the point where a real generation loses money. CREDIT_COST_BASIS
+  // makes every patron cost the same ~9.5 ₸ regardless of model, so the worst
+  // case is always the cheapest standing pack rate (30 ₸/🔫, "Студия").
+  const { MODELS, priceFor, costUsdFor } = await import("../src/models.js");
+  const { config: cfg } = await import("../src/config.js");
+  const WORST_CASE_KZT_PER_PATRON = 30;
+  const KZT_PER_USD = 480;
+  const MARGIN_FLOOR = 2; // below this, a real Kaspi fee + refund can flip it negative
+
+  assert.ok(cfg.seedancePromoPct > 0 && cfg.seedancePromoPct < 1, "promo pct must be a real, bounded discount");
+
+  // MODELS satisfies a union of per-key literal shapes rather than a flat
+  // ModelSpec[], so Object.values needs the explicit widen to filter/read
+  // .video uniformly — every Seedance entry declares it (all four are
+  // image_to_video); the length assert right after is what actually guards
+  // against a mis-keyed model silently dropping out of the family.
+  const allModels: import("../src/models.js").ModelSpec[] = Object.values(MODELS);
+  const seedanceModels = allModels.filter((m) => m.key.startsWith("seedance") && m.video);
+  assert.ok(seedanceModels.length >= 3, "the promo should cover the whole Seedance family, not one variant");
+
+  for (const m of seedanceModels) {
+    const dur = m.video!.durations.includes(15) ? 15 : Math.max(...m.video!.durations);
+    const res = (m.video!.resolutions ?? []).some((r) => r.id === "720p") ? "720p" : undefined;
+    const discountedCredits = priceFor(m, { duration: dur, resolution: res });
+    const cogsKzt = costUsdFor(m, { duration: dur }) * KZT_PER_USD;
+    const revenueKzt = discountedCredits * WORST_CASE_KZT_PER_PATRON;
+    const margin = revenueKzt / cogsKzt;
+    assert.ok(
+      margin >= MARGIN_FLOOR,
+      `${m.key} at the promo price is ${margin.toFixed(2)}x margin on the worst-case pack — below the ${MARGIN_FLOOR}x floor`,
+    );
+  }
+
+  // costUsdFor must stay untouched by the promo — it's COGS accounting
+  // (monitor.ts margin digest), not what the buyer is charged. If it ever
+  // moved with the discount, the digest would UNDER-report real spend.
+  const sd = MODELS.seedance;
+  const usdWithPromo = costUsdFor(sd, { duration: 15 });
+  const priceWithPromo = priceFor(sd, { duration: 15, resolution: "720p" });
+  assert.ok(usdWithPromo > 3, "costUsdFor must report real provider cost, unaffected by the promo");
+  assert.ok(priceWithPromo < 228, "priceFor at 15s/720p should be discounted below the pre-promo 228 🔫");
 });
 
 await step("course tiers price their patrons at ladder rates, and state their tuition honestly", async () => {

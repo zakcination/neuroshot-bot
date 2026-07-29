@@ -202,6 +202,41 @@ pack now buys **~5 whole Hailuo scenarios** (12 🔫 each) instead of ~1 Kling
 scenario. Same margin per patron, far better perceived value — the anchor a paid
 social campaign needs.
 
+## Seedance promo (2026-07-29, real and time-limited)
+
+Every Seedance 2.0 variant is **30% cheaper** for `SEEDANCE_PROMO_DAYS` (default
+7) from `SEEDANCE_PROMO_START` (default: process boot) — `src/offer.ts`
+(`seedancePromoActive` / `seedancePromoMult`), applied inside `priceFor()` so
+the discount reaches both the catalog display and the real charge from one
+place. `costUsdFor()` is deliberately untouched — real provider cost doesn't
+move, only what the buyer pays does, so the margin digest still reports true
+COGS.
+
+**30% is not a round number picked for how it sounds — it's the deepest cut
+that still clears a 2× floor on the WORST-CASE standing pack rate** (30 ₸/🔫,
+«Студия»), which is what matters because `CREDIT_COST_BASIS` makes every
+patron cost the same ~9.5 ₸ regardless of which Seedance variant spends it:
+
+| Модель | 15с 720p, полная цена | 15с 720p, −30% | Маржа на «Студии» (30 ₸/🔫) |
+|---|---|---|---|
+| Seedance 2.0 (флагман) | 228 🔫 | 160 🔫 | 2.20× |
+| Seedance Fast | 182 🔫 | 128 🔫 | 2.20× |
+| Seedance Mini | 114 🔫 | 80 🔫 | 2.20× |
+| Seedance по фото (`seedance_ref`) | 114 🔫 | 80 🔫 | 2.20× |
+
+A 36% cut is the mathematical floor (2.0×, no room for a Kaspi fee or a
+refund); 30% leaves real headroom. `test/e2e.ts` pins this — the margin
+floor, that the promo covers the whole family (not one variant), and that
+`costUsdFor` stays real — so a future depth change can't ship past 36%
+without the test failing first. `test/webapp.ts` runs with the promo pinned
+to 0 by default (its `seedance_ref` price-invariance checks hardcode the
+STANDING 38 🔫 base) and has one dedicated step that turns it on and proves
+the discount reaches a real `/api/generate` charge, not just `priceFor()` in
+isolation.
+
+Turn it off entirely with `SEEDANCE_PROMO_PCT=0`; pin an exact end date with
+`SEEDANCE_PROMO_START` the same way the combo offer does.
+
 ## Marketing progression (the campaign funnel)
 
 Built to be poured into a social-media push, each stage feeding the next:

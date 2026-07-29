@@ -96,6 +96,18 @@ export const config = {
   // countdown is ~1 month from deploy; pin COMBO_OFFER_START to fix the date.
   comboOfferDays: Number(process.env.COMBO_OFFER_DAYS ?? 30),
   comboOfferStart: process.env.COMBO_OFFER_START ?? "",
+  // Seedance launch promo: a real, time-limited discount on the Seedance 2.0
+  // family's patron price (src/offer.ts seedancePromoActive/seedancePromoMult,
+  // applied inside priceFor). 30% is the calibrated depth — it holds ≥2.2×
+  // gross margin at the WORST-CASE pack rate (30 ₸/🔫, "Студия") uniformly
+  // across all four Seedance variants, because CREDIT_COST_BASIS makes every
+  // patron cost the same ~$0.02 regardless of which model spends it. See
+  // docs/pricing.md § Seedance promo for the full margin table; test/e2e.ts
+  // pins the floor so a deeper discount can't ship without a matching
+  // deliberate change here AND in the test.
+  seedancePromoPct: Number(process.env.SEEDANCE_PROMO_PCT ?? 0.30),
+  seedancePromoDays: Number(process.env.SEEDANCE_PROMO_DAYS ?? 7),
+  seedancePromoStart: process.env.SEEDANCE_PROMO_START ?? "",
   // --- CEO monitoring (docs/monitoring.md): digest pushed, alerts interrupt ---
   // UTC hour when the daily digest is pushed to admins (6 UTC = 09:00 МСК).
   digestHourUtc: Number(process.env.DIGEST_HOUR_UTC ?? 6),

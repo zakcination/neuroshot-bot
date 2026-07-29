@@ -23,6 +23,13 @@ export interface ReleaseNote {
 
 export const RELEASES: ReleaseNote[] = [
   {
+    id: "2026-07-29",
+    title: "Seedance 2.0 подешевел на 30%",
+    lines: [
+      "🎬 Все варианты Seedance 2.0 — на 30% дешевле, на неделю. Цена уже пересчитана в студии, ничего включать не нужно.",
+    ],
+  },
+  {
     id: "2026-07-28-3",
     title: "Видео по нескольким фото снова работает",
     lines: [

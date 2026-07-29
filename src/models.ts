@@ -7,6 +7,7 @@
  * over hardcoding IDs elsewhere.
  */
 import { config } from "./config.js";
+import { seedancePromoMult } from "./offer.js";
 import { UNIT_EMOJI } from "./text.js";
 
 export type ModelKind = "image_edit" | "text_to_image" | "image_to_video";
@@ -723,6 +724,16 @@ export function priceFor(model: ModelSpec, opts?: GenOpts): number {
   if (maxCount && opts?.numImages && opts.numImages > 1) {
     const n = Math.min(maxCount, Math.floor(opts.numImages));
     credits = Math.max(1, Math.ceil(credits * n));
+  }
+  // Seedance 2.0 launch promo (docs/pricing.md § Seedance promo): a real,
+  // time-limited cut to what the BUYER pays, applied last so it discounts the
+  // final charge rather than compounding oddly with resolution/count scaling.
+  // costUsdFor deliberately does NOT apply this — provider cost is unchanged,
+  // only our margin is; see the calibration note by seedancePromoPct in
+  // config.ts for why 30% is the floor-tested depth, not an arbitrary number.
+  if (model.key.startsWith("seedance")) {
+    const mult = seedancePromoMult();
+    if (mult !== 1) credits = Math.max(1, Math.ceil(credits * mult));
   }
   return credits;
 }

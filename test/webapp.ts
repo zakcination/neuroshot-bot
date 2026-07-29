@@ -35,6 +35,12 @@ process.env.RATE_LIMIT_AUTH_PER_MIN = "100000";
 process.env.RATE_LIMIT_UPLOAD_PER_MIN = "100000";
 process.env.RATE_LIMIT_GENERATE_PER_MIN = "100000";
 process.env.RATE_LIMIT_ENHANCE_PER_MIN = "100000";
+// Seedance launch promo (docs/pricing.md § Seedance promo) defaults ON in prod.
+// Off here: this suite's seedance_ref price-invariance checks hardcode the
+// STANDING credit charge (38 🔫), and a time-boxed promo is exactly the kind
+// of drift those checks exist to be independent of. The promo mechanism
+// itself is exercised directly in test/e2e.ts.
+process.env.SEEDANCE_PROMO_PCT = "0";
 
 const { fal } = await import("@fal-ai/client");
 const { verifyInitData, createWebApp, kaspiCallbackResponse } = await import("../src/webapp.js");
@@ -918,6 +924,33 @@ await step("audio and video references: gated on rights, screened where we can, 
   await pollGen(((await plain.json()) as { id: number }).id);
   assert.ok(!("audio_urls" in falCalls.at(-1)!.input), "empty audio_urls must not be sent");
   assert.ok(!("video_urls" in falCalls.at(-1)!.input), "empty video_urls must not be sent");
+});
+
+await step("Seedance promo: a real /api/generate call is charged the discounted price, end to end", async () => {
+  // Every other seedance_ref step in this file runs with SEEDANCE_PROMO_PCT=0
+  // (see the top of this file) specifically so THEY test the standing price.
+  // This step is the one place that turns the promo on and proves the discount
+  // reaches an actual charge through the real HTTP path — not just priceFor()
+  // in isolation — then restores it so no later step inherits a live promo.
+  const { config: cfg } = await import("../src/config.js");
+  const before = cfg.seedancePromoPct;
+  cfg.seedancePromoPct = 0.3;
+  try {
+    const discounted = Math.ceil(38 * 0.7); // 27 — seedance_ref's 5s base, -30%
+    await addCredits(maker.id, discounted, "admin_grant", "test");
+    const r = await fetch(`${base}/api/generate`, {
+      method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: "model", model: "seedance_ref", image_url: "https://fal.test/storage/u-1.jpg", prompt: "промо",
+      }),
+    });
+    assert.equal(r.status, 200);
+    const d = (await r.json()) as { id: number; credits: number };
+    assert.equal(d.credits, discounted, "the live promo must discount the real charge, not just the catalog display");
+    await pollGen(d.id);
+  } finally {
+    cfg.seedancePromoPct = before;
+  }
 });
 
 await step("the Rewards sheet describes exactly the awards the server has, and only the live ones", async () => {
