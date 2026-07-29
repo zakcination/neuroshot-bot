@@ -473,6 +473,40 @@ export const MODELS = {
     input: (prompt, imageUrl, opts) => ({ prompt: refPrompt(prompt, opts), image_urls: refUrls(imageUrl, opts), resolution: opts?.resolution ?? "2K", ...arParam(opts), ...countParam(4, opts) }),
     image: { aspectRatios: IMAGE_ASPECTS, resolutions: NBPRO_RES, maxCount: 4, maxInputs: 4 },
   },
+  // Grok Imagine (xAI) — the cheapest image in the catalog by a wide margin.
+  // Confirmed 2026-07-29 via fal's own pricing/schema pages (fal.ai rate-limited
+  // direct fetches during research; corroborated through fal.ai/models/xai/
+  // grok-imagine-image/api and /edit/api): $0.02/image output, aspect_ratio is
+  // a real field (default "1:1", accepts every ratio IMAGE_ASPECTS uses plus
+  // more fal doesn't expose here).
+  grok_image: {
+    key: "grok_image",
+    kind: "text_to_image",
+    falEndpoint: "xai/grok-imagine-image",
+    credits: 1,
+    approxCostUsd: 0.02,
+    label: "Grok Imagine",
+    note: "самое дешёвое изображение",
+    input: (prompt, _img, opts) => ({ prompt, ...arParam(opts) }),
+    image: { aspectRatios: IMAGE_ASPECTS },
+  },
+  // Grok Imagine, edit — same family, `image_urls` (plural, up to 3 total:
+  // primary + 2 references), $0.02 out + $0.002 in per image ≈ $0.022.
+  grok_edit: {
+    key: "grok_edit",
+    kind: "image_edit",
+    falEndpoint: "xai/grok-imagine-image/edit",
+    credits: 2,
+    approxCostUsd: 0.022,
+    label: "Grok Imagine",
+    note: "дешёвая правка по фото",
+    input: (prompt, imageUrl, opts) => ({
+      prompt: refPrompt(prompt, opts),
+      image_urls: refUrls(imageUrl, opts),
+      ...arParam(opts),
+    }),
+    image: { aspectRatios: IMAGE_ASPECTS, maxInputs: 3 },
+  },
   // Kling 3.0 Pro — top image→video, $0.168/s audio-on → 5s ≈ $0.84.
   kling3: {
     key: "kling3",
@@ -492,6 +526,32 @@ export const MODELS = {
     }),
     video: {
       perSecondUsd: 0.168,
+      durations: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      defaultSeconds: 5,
+      aspectRatios: ["auto"],
+      endFrame: true,
+    },
+  },
+  // Kling 3.0 Turbo Standard — same family as kling3, cheaper tier, no audio.
+  // Confirmed 2026-07-29: $0.112/s (fal.ai/models/fal-ai/kling-video/v3/turbo/
+  // standard/image-to-video), same start_image_url/duration/end_image_url
+  // contract as kling3 — only the endpoint and rate differ.
+  kling_turbo: {
+    key: "kling_turbo",
+    kind: "image_to_video",
+    falEndpoint: "fal-ai/kling-video/v3/turbo/standard/image-to-video",
+    credits: 28,
+    approxCostUsd: 0.56,
+    label: "Kling 3.0 Turbo",
+    note: "дешевле флагмана, без звука",
+    input: (prompt, imageUrl, opts) => ({
+      prompt,
+      start_image_url: imageUrl,
+      duration: String(opts?.duration ?? 5),
+      ...endParam(opts),
+    }),
+    video: {
+      perSecondUsd: 0.112,
       durations: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
       defaultSeconds: 5,
       aspectRatios: ["auto"],
@@ -678,10 +738,18 @@ export const MODELS = {
  * Default lineup (Jul 2026): fast SOTA image → detailed 2K → premium/GPT for
  * images; the cheap "эконом" video entry leads, then cinematic → epic → audio.
  */
-export const IMAGE_MODEL_PICKER = ["text_to_image", "nb2_image", "nbpro_image", "premium_image"] as const;
+export const IMAGE_MODEL_PICKER = ["text_to_image", "nb2_image", "nbpro_image", "premium_image", "grok_image"] as const;
 // The cheap "эконом" default leads: users keep it until they swap up to a
 // cinematic or physics/audio tier in the composer.
-export const VIDEO_MODEL_PICKER = ["hailuo_fast", "kling3", "animate", "seedance_mini", "seedance_fast", "seedance"] as const;
+//
+// "seedance_mini" and "seedance_fast" are deliberately NOT listed here even
+// though they're real, generable MODELS entries — the Studio collapses the
+// 4 Seedance tiers into one "seedance" row with a cheap/fast/quality toggle
+// (routeSeedance, src/seedance.ts); listing the tiers separately here would
+// put them back in the picker as if they were still independently
+// selectable. seedance_ref was never in this list either (reference mode is
+// reached by attaching photos, not by picking a model).
+export const VIDEO_MODEL_PICKER = ["hailuo_fast", "kling3", "kling_turbo", "animate", "seedance"] as const;
 
 /** Default image→video model for campaign upsells and one-tap animate flows. */
 export const DEFAULT_VIDEO: ModelSpec = MODELS.hailuo_fast;

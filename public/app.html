@@ -2628,6 +2628,9 @@
         duration: undefined, aspect: undefined, resolution: undefined, numImages: undefined,
         showAll: false, mopen: false, editOpen: prev ? prev.editOpen : false, swap: false,
         prevPrompt: null, // pre-enhance prompt, powers the ↩ Вернуть undo
+        // Seedance's Дёшево/Быстро/Качество toggle (routeSeedance, src/seedance.ts)
+        // — "fast" matches the server's own SEEDANCE_TIER_DEFAULT.
+        seedanceTier: prev ? prev.seedanceTier || "fast" : "fast",
       };
       if (!stu.modelKey) stu.modelKey = defaultStudioModel();
       clampStudioOpts();
@@ -2648,6 +2651,24 @@
     function studioList() { return (ME.catalog.studio && ME.catalog.studio[stu.mode]) || []; }
     function studioModel() { return studioList().find((m) => m.key === stu.modelKey) || studioList()[0]; }
     function stuHasSource() { return !!(stu.photo || stu.generationId); }
+    /**
+     * Which of `m.seedanceTiers` (cheap/fast/quality/ref) actually applies
+     * right now — mirrors routeSeedance (src/seedance.ts) exactly, so the
+     * price/duration shown here is never one the server would disagree with.
+     * Reference mode (≥2 photos, or any audio/video attached) always wins
+     * over the toggle, same as server-side.
+     */
+    function activeSeedanceTierKey() {
+      const refCount = (stuHasSource() ? 1 : 0) + (stu.extras || []).length;
+      const hasAvRef = (stu.refAudio || []).length > 0 || (stu.refVideo || []).length > 0;
+      if (refCount >= 2 || hasAvRef) return "ref";
+      return stu.seedanceTier || "fast";
+    }
+    /** `m` itself for any ordinary model; for the Seedance umbrella row, the
+     *  tier sub-row (price/duration table) that's actually in effect. */
+    function activeSeedanceRow(m) {
+      return (m && m.seedanceTiers && m.seedanceTiers[activeSeedanceTierKey()]) || m;
+    }
     function defaultStudioModel() {
       const list = studioList();
       if (!list.length) return null;
@@ -2707,7 +2728,7 @@
           const def = m.video.defaultSeconds;
           stu.duration = m.video.durations.some((d) => d.seconds === def) ? def : m.video.durations[0].seconds;
         }
-        if (!m.video.endFrame) { stu.endPhoto = null; stu.endGenerationId = null; }
+        if (!activeSeedanceRow(m).video.endFrame) { stu.endPhoto = null; stu.endGenerationId = null; }
       } else { stu.duration = undefined; stu.endPhoto = null; stu.endGenerationId = null; }
     }
     /**
@@ -2719,7 +2740,7 @@
      * badge then contradicts.
      */
     function stuDurPrice(seconds) {
-      const m = studioModel();
+      const m = activeSeedanceRow(studioModel());
       if (!m || !m.video) return 0;
       const d = m.video.durations.find((x) => x.seconds === seconds);
       let credits = d ? d.credits : m.credits;
@@ -2730,7 +2751,7 @@
     /** Same shape as stuDurPrice, but the pre-discount price — for the
      * dramatic before/after strikethrough on the duration slider. */
     function stuDurWasPrice(seconds) {
-      const m = studioModel();
+      const m = activeSeedanceRow(studioModel());
       if (!m || !m.video) return 0;
       const d = m.video.durations.find((x) => x.seconds === seconds);
       let credits = d ? d.wasCredits : m.wasCredits;
@@ -2741,8 +2762,9 @@
 
     /** Live patron total — exact client mirror of the server's priceFor. */
     function studioPrice() {
-      const m = studioModel();
-      if (!m) return 0;
+      const m0 = studioModel();
+      if (!m0) return 0;
+      const m = activeSeedanceRow(m0);
       let credits = m.credits;
       if (stu.mode === "video" && m.video) {
         const d = m.video.durations.find((x) => x.seconds === stu.duration);
@@ -2987,6 +3009,16 @@
           ${hidden.length && !stu.showAll ? `<button class="btn ghost" id="stuMore">Показать все модели (${hidden.length}) — нужно фото</button>` : ""}
           ${hidden.length && stu.showAll ? hidden.map(modelRow).join("") : ""}
         </div>` : ""}
+        ${isVideo && m.key === "seedance" ? (() => {
+          const refMode = activeSeedanceTierKey() === "ref";
+          const tiers = [["cheap", "Дёшево"], ["fast", "Быстро"], ["quality", "Качество"]];
+          return `
+            ${qLabel("Уровень качества")}
+            ${refMode
+              ? `<div class="sub">Режим по фото — несколько референсов или аудио/видео фиксируют качество, тумблер недоступен.</div>`
+              : `<div class="chips" id="stuTier">${tiers.map(([id, label]) =>
+                  `<button class="chip ${(stu.seedanceTier || "fast") === id ? "on" : ""}" data-tier="${id}">${label}</button>`).join("")}</div>`}`;
+        })() : ""}
         ${caps && caps.aspectRatios && caps.aspectRatios.length > 1 ? `
           ${qLabel("Формат кадра", "aspect")}
           <div class="chips" id="stuAr">${caps.aspectRatios.map((r) =>
@@ -3007,7 +3039,7 @@
             stuDurPrice,
             stuDurWasPrice,
           )}</div>` : ""}
-        ${isVideo && m.video && m.video.endFrame ? `
+        ${isVideo && m.video && activeSeedanceRow(m).video.endFrame ? `
           ${qLabel("Финальный кадр (необязательно)", "endframe")}
           <div id="stuEndZone">${stu.endPhoto ? `<div class="photo-preview"><img src="${stu.endPhoto}" alt="" /><button class="redo" id="stuEndRedo">✕ Убрать</button></div>`
             : `<label class="drop"><input type="file" accept="image/*" id="stuEndFile" />
@@ -3070,6 +3102,7 @@
       bind("#stuMore", (el) => (el.onclick = () => { stu.showAll = true; viewStudio(); }));
       sheetBody.querySelectorAll("#stuAr .chip").forEach((c) => (c.onclick = () => { stu.aspect = c.dataset.ar; viewStudio(); }));
       sheetBody.querySelectorAll("#stuRes .chip").forEach((c) => (c.onclick = () => { stu.resolution = c.dataset.res; viewStudio(); }));
+      sheetBody.querySelectorAll("#stuTier .chip").forEach((c) => (c.onclick = () => { stu.seedanceTier = c.dataset.tier; viewStudio(); }));
       sheetBody.querySelectorAll("#stuCount .chip").forEach((c) => (c.onclick = () => { stu.numImages = Number(c.dataset.cnt); viewStudio(); }));
       // Live, without a re-render: the studio sheet holds typed prompt text and a
       // scroll position, and rebuilding it on every step of a drag would throw
@@ -3223,6 +3256,7 @@
             options: Object.values(stu.options).length ? Object.values(stu.options) : undefined,
             custom: isVideo ? (stu.custom || "").trim() || undefined : undefined,
             duration: stu.duration || undefined,
+            seedance_tier: stu.modelKey === "seedance" ? (stu.seedanceTier || "fast") : undefined,
             end_image_url, end_generation_id: stu.endGenerationId || undefined, ...opts };
       const { status, data } = await api("/api/generate", { method: "POST", body: JSON.stringify(body) });
       if (status === 402) { viewPaywall(data); return; }

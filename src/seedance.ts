@@ -126,3 +126,34 @@ export function nextSeedanceQuestion(answers: Record<string, boolean>): Seedance
   }
   return null;
 }
+
+/**
+ * The Mini App's Studio collapses the 4 Seedance rows into one — the picker
+ * exposes a single "Seedance" entry plus a 3-way Дёшево/Быстро/Качество
+ * toggle, and this resolves that toggle (+ what the user actually attached)
+ * to the real underlying model. Deliberately NOT the same mechanism as the
+ * quiz above: the quiz is an advisor for people who don't know what they
+ * want (bot-only, unchanged by this); this is a direct, no-questions dispatch
+ * for people who already picked a tradeoff.
+ *
+ * Owner decision, 2026-07-29: the toggle is explicit, not inferred — a user
+ * choosing "Быстро" should always get Fast, not a heuristic guess at Fast.
+ */
+export type SeedanceTier = "cheap" | "fast" | "quality";
+export const SEEDANCE_TIER_DEFAULT: SeedanceTier = "fast";
+
+/**
+ * `refCount` = how many photos are attached in total (primary + extras).
+ * `hasAvRef` = any audio or video reference attached.
+ *
+ * Reference mode wins over the toggle unconditionally: `seedance_ref` is the
+ * ONLY tier with a reference-to-video endpoint, so there is no toggle
+ * position for it to obey — attaching a second photo (or any audio/video)
+ * is itself the choice, same as picking a duration is.
+ */
+export function routeSeedance(tier: SeedanceTier, refCount: number, hasAvRef: boolean): keyof typeof MODELS {
+  if (refCount >= 2 || hasAvRef) return "seedance_ref";
+  if (tier === "cheap") return "seedance_mini";
+  if (tier === "quality") return "seedance";
+  return "seedance_fast";
+}

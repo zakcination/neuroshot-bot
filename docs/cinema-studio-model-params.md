@@ -130,3 +130,31 @@ Verified from the same schemas (2026-07-22). This drives block ③ (Inputs).
 - `premium_image` (`fal-ai/gpt-image-2`) and `premium_edit` (`openai/gpt-image-2/edit`) — not in current fal docs.
 - `hailuo_fast` (`fal-ai/minimax/hailuo-2.3-fast/...`) — not in current fal docs.
 These may still resolve (fal keeps old endpoints alive) but should be checked before we lean on them in the new picker, and their prices re-confirmed. Same caution class as the Kaspi/ElevenLabs "confirm on integration" notes.
+
+---
+
+## 8. New models added 2026-07-29: Grok Imagine + Kling 3.0 Turbo
+
+Anchoring the roster on 4 provider families (Seedance, Kling, Grok, Gemini Omni
+— the last deferred, see below). fal was rate-limiting direct schema fetches
+from this environment throughout research; confirmed via `WebSearch` against
+fal's own pricing/API-reference pages instead of the usual MCP probe.
+
+| model (our key) | fal endpoint | schema confirmed | price |
+|---|---|---|---|
+| `grok_image` | `xai/grok-imagine-image` | `aspect_ratio` Enum (default `1:1`; every ratio our `IMAGE_ASPECTS` uses is in fal's set), `resolution` `1k`/`2k`, `num_images` 1–4 | **$0.02/image** — confirmed; the cheapest image in the catalog by ~2× (Seedream 4.5 was the prior floor at $0.04) |
+| `grok_edit` | `xai/grok-imagine-image/edit` | `image_urls` (plural, **max 3** total — `maxInputs: 3` in our registry) | $0.02 out + $0.002 in ≈ **$0.022/image** |
+| `kling_turbo` | `fal-ai/kling-video/v3/turbo/standard/image-to-video` | same `start_image_url`/`duration`/`end_image_url` contract as `kling3` — only the endpoint and rate differ | **$0.112/s** (vs. `kling3`'s $0.168/s Pro tier) |
+
+**Consequence worth flagging, not yet acted on:** `grok_image` becomes the new
+`cheapestModel("text_to_image")` — it now leads the free-trial banner and the
+daily digest's cheapest-model callout, displacing Seedream 4.5. That's a
+real behavior change from adding the model, not a bug; revisit if the
+free-trial anchor should stay pinned to a specific model instead of always
+floating to the cheapest.
+
+**Deferred:** Gemini Omni Flash (`google/gemini-omni-flash`,
+`google/gemini-omni-flash/reference-to-video`) — owner decision, needs new
+per-model `REF_LIMITS` plumbing (today a single global constant in
+`src/media.ts` sized to Seedance's exact caps) before it can ship safely, and
+its ~$0.13/s token-based pricing is only approximate pending a measured run.
