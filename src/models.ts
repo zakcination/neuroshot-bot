@@ -724,32 +724,42 @@ export const SEEDANCE_SALE_KEYS = new Set(["seedance", "seedance_fast", "seedanc
 export const SEEDANCE_SALE_MULT = 0.5;
 
 /**
- * Flagship price ceiling (owner decision, 2026-07-29 — docs/seedance-tiers.md
- * § flagship ceiling): the flagship model (`seedance`) never charges more than
- * FLAGSHIP_CAP_CREDITS, at ANY duration/resolution — unlike SEEDANCE_SALE_MULT,
- * this is permanent, not tied to seedanceSaleActive, and applies to exactly one
- * model, not the family.
+ * Flagship price CURVE (owner decision, 2026-07-29, revised same day —
+ * docs/seedance-tiers.md § flagship ceiling): the flagship model (`seedance`)
+ * is capped by DURATION, not by one flat number — unlike SEEDANCE_SALE_MULT,
+ * this is permanent, not tied to seedanceSaleActive, and applies to exactly
+ * one model, not the family.
  *
- * 74 credits is not a round number picked for looks — it is the largest credit
- * count that satisfies both constraints at once, across the real pack-rate
- * range (30–40 ₸/credit steady-state; the one-time 25 ₸/credit entry pack is
- * excluded from this floor the same way scripts/cost-line.mts excludes `once`
- * packs from the ladder):
- *   - never above 2,990 ₸: 74 × 40 ₸ = 2,960 ₸, the worst (priciest) pack rate.
- *   - never below real cost: 74 × 30 ₸ = 2,220 ₸ ≥ 2,184 ₸, the real cost of
- *     the most expensive combo (15s/720p) — a thin but positive 36 ₸ margin at
- *     the worst STEADY-STATE rate. (The one-time 25 ₸ entry pack can still dip
- *     ~334 ₸ under cost on that single most-expensive combo — bounded to once
- *     per account, and only if the very first purchase is spent entirely on
- *     the flagship's longest/highest-resolution render.)
+ * The original design (2026-07-29, first cut) was one flat number, 74
+ * credits, so 10s and 15s cost identically once capped — the owner replaced
+ * it same-day with a real per-second curve so price keeps climbing with
+ * length instead of plateauing. The owner named three anchor points directly
+ * (5s→38, 10s→65, 15s→92 credits); those three fall EXACTLY on one line
+ * (slope 5.4 credits/s, intercept 11), so the curve below is that line, not
+ * an approximation — it reproduces the named numbers to the credit.
+ *
+ * IMPORTANT: unlike the flat-74 design, this does NOT hold a strict "never
+ * above N ₸" ceiling across every pack rate — at the priciest recurring pack
+ * (40 ₸/credit), 15s reaches 92 × 40 = 3,680 ₸, above the ~3,000 ₸ figure
+ * discussed when this was scoped. It DOES stay under ~3,000 ₸ at the
+ * cheaper/typical pack rates (30–34 ₸/credit → 2,760–3,128 ₸ at 15s). If a
+ * strict cross-pack ceiling is wanted again, that requires capping the curve
+ * itself (e.g. min(11 + 5.4×duration, 75) for a hard 3,000 ₸/40 ₸ ceiling) —
+ * not done here because the owner's anchor points were given without one.
+ *
+ * Margin holds everywhere in the duration grid, including at the one-time
+ * 25 ₸/credit entry pack (the one case the flat-74 design could dip below
+ * cost on) — worst case is 15s/720p at +116 ₸ margin even there. Real numbers
+ * (720p, KZT_PER_USD=480): see docs/seedance-tiers.md § flagship ceiling.
  *
  * `Math.min` only, same as the sale — this can lower a charge, never raise
- * one, so every duration that was already cheaper than the ceiling (most of
- * the range, at any resolution) is untouched.
+ * one, so every duration where the curve exceeds the sale price (4–5s) is
+ * untouched.
  */
 export const FLAGSHIP_CAP_KEY = "seedance";
-export const FLAGSHIP_CAP_CREDITS = 74;
-export const FLAGSHIP_CAP_DISPLAY_KZT = 2990; // rounds UP from the real 2,960 ₸ worst case — never a broken promise
+export function flagshipCapCredits(durationSeconds: number): number {
+  return Math.max(1, Math.round(11 + 5.4 * durationSeconds));
+}
 
 /**
  * Credit charge for a generation given composer options. Video credits scale
@@ -781,11 +791,15 @@ export function priceFor(model: ModelSpec, opts?: GenOpts): number {
   if (SEEDANCE_SALE_KEYS.has(model.key) && seedanceSaleActive()) {
     credits = Math.max(1, Math.min(credits, Math.round(credits * SEEDANCE_SALE_MULT)));
   }
-  // Flagship ceiling — independent of the sale above and outlives it (see the
-  // doc comment on FLAGSHIP_CAP_CREDITS). Applied last so it wins regardless
-  // of what the sale already did to `credits`.
+  // Flagship curve — independent of the sale above and outlives it (see the
+  // doc comment on flagshipCapCredits). Applied last so it wins regardless of
+  // what the sale already did to `credits`. Duration falls back to
+  // defaultSeconds the same way the duration-scale step above does, so a
+  // no-duration call (the catalogue's base quote) is capped consistently
+  // with an explicit `{ duration: defaultSeconds }` call.
   if (model.key === FLAGSHIP_CAP_KEY && flagshipCapActive()) {
-    credits = Math.min(credits, FLAGSHIP_CAP_CREDITS);
+    const dur = opts?.duration ?? model.video?.defaultSeconds ?? 0;
+    credits = Math.min(credits, flagshipCapCredits(dur));
   }
   return credits;
 }

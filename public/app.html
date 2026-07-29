@@ -2013,7 +2013,11 @@
       const salePart = saleOn ? `Все модели Seedance — цены ниже вдвое, до ${until}.` : "";
       // The ceiling is permanent (no end date), unlike the sale, so it keeps
       // its own sentence even once the sale above has expired.
-      const ceilingPart = ceilingOn ? ` Флагман — никогда не дороже ${ME.flagshipCeiling.maxKzt} ₸, любая длина и качество.` : "";
+      // No fixed "never above N ₸" figure here on purpose — the ceiling is a
+      // per-duration curve now (docs/seedance-tiers.md § flagship ceiling),
+      // not one flat number, so a specific ₸ claim would be true at some pack
+      // rates and false at others (up to 3,680 ₸ at 15s on the priciest pack).
+      const ceilingPart = ceilingOn ? ` Флагман — цена на длинных роликах снижена ещё сильнее.` : "";
       return `<div class="salebar">🔥 <b>Seedance</b> — ${salePart}${ceilingPart}</div>`;
     }
 

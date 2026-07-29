@@ -50,7 +50,6 @@ import {
   PRESET_MODEL,
   SEEDANCE_SALE_KEYS,
   FLAGSHIP_CAP_KEY,
-  FLAGSHIP_CAP_DISPLAY_KZT,
   presetModel,
   PRESETS,
   priceFor,
@@ -544,9 +543,12 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     // <месяц>". Model entries carry their own `onSale` flag (see
     // studioModelsOf/videoModels below) — this block is only the date.
     seedanceSale: { active: seedanceSaleActive(), endsAt: seedanceSaleEndsAt() },
-    // Flagship price ceiling (docs/seedance-tiers.md § flagship ceiling):
-    // permanent once active, no `endsAt` — unlike seedanceSale above.
-    flagshipCeiling: { active: flagshipCapActive(), maxKzt: FLAGSHIP_CAP_DISPLAY_KZT, modelKey: FLAGSHIP_CAP_KEY },
+    // Flagship price curve (docs/seedance-tiers.md § flagship ceiling):
+    // permanent once active, no `endsAt` — unlike seedanceSale above. No
+    // single `maxKzt` — it's a per-duration curve, not one flat number, so
+    // the client shows it via the normal per-duration `credits` it already
+    // reads, not a headline figure here.
+    flagshipCeiling: { active: flagshipCapActive(), modelKey: FLAGSHIP_CAP_KEY },
     // Reward-architecture P4a: null (the normal state) until an admin runs
     // /season_new. No quest/reward data yet — that's P4b, built once this
     // entity exists.

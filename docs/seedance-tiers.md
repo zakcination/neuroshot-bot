@@ -242,48 +242,69 @@ Studio's model row/chip badges the 4 discounted models with "🔥 −50%". The b
 course-lesson copy reads live prices via `priceFor()` rather than the models'
 raw `credits` field, so it never quotes a stale, pre-sale number.
 
-## The flagship ceiling (2026-07-29, permanent)
+## The flagship ceiling (2026-07-29, permanent, revised same day)
 
 Owner decision, 2026-07-29: reposition the flagship (`seedance`) as a
 loss-leader "staple" price point, distinct from — and outliving — the
 time-boxed sale above. Unlike the sale, this does not expire on 2026-09-10.
 
-**Mechanism**: `FLAGSHIP_CAP_CREDITS = 74` in `src/models.ts` — applied via
-`Math.min` as the step AFTER the sale multiplier inside `priceFor()`, and only
-to the `seedance` key (not the other 3 Seedance tiers). Gated on
-`flagshipCapActive()` (`src/offer.ts`) — a start timestamp,
+**First cut vs. shipped version.** The first design was one flat number —
+`FLAGSHIP_CAP_CREDITS = 74`, so 10s and 15s cost identically once capped. The
+owner replaced it same-day with a real per-second CURVE, naming three anchor
+points directly: **5s → 38, 10s → 65, 15s → 92 credits**. Those three fall
+exactly on one line (verified, not approximated): slope 5.4 credits/second,
+intercept 11. `flagshipCapCredits(duration)` in `src/models.ts` is that line —
+`round(11 + 5.4 × duration)` — so it reproduces the named numbers to the
+credit and gives every other duration (4, 6, 7, 8, 9, 11, 12, 13, 14s) a
+sensible, strictly-increasing value in between.
+
+**Mechanism**: applied via `Math.min` as the step AFTER the sale multiplier
+inside `priceFor()`, and only to the `seedance` key (not the other 3 Seedance
+tiers). Gated on `flagshipCapActive()` (`src/offer.ts`) — a start timestamp,
 `config.flagshipCapFrom`, defaulting to **2026-07-29T20:00:00+05:00**
 (env: `FLAGSHIP_CAP_FROM`). Once it starts, it never turns back off — there is
 no end-date config, unlike `seedanceSaleUntil`.
 
-**Where 74 credits comes from.** It's the largest credit count that satisfies
-two constraints at once, checked against the real steady-state pack-rate range
-(30–40 ₸/credit — the one-time 25 ₸/credit entry pack is excluded from this
-floor the same way `scripts/cost-line.mts` excludes `once` packs from the
-ladder):
-- **Never above 2,990 ₸**: 74 × 40 ₸ (the priciest recurring pack) = 2,960 ₸.
-- **Never below real cost**: 74 × 30 ₸ (the cheapest recurring pack) = 2,220 ₸,
-  vs. 2,184 ₸ real cost at the most expensive combo (15s/720p) — a thin but
-  positive 36 ₸ margin. (The one-time 25 ₸ entry pack can still dip ~334 ₸
-  under cost on that single combo — bounded to once per account, and only if
-  the very first purchase is spent entirely on the flagship's longest,
-  highest-resolution render.)
+**This is NOT a strict "never above N ₸" ceiling**, unlike the first design.
+At the priciest recurring pack (40 ₸/credit), 15s reaches 92 × 40 = **3,680 ₸**
+— above the ~3,000 ₸ figure discussed when this was scoped. It stays under
+~3,000 ₸ at the cheaper/typical packs (30–34 ₸/credit → 2,760–3,128 ₸ at 15s).
+If a strict cross-pack ceiling is wanted again, the curve itself needs an
+upper clamp (e.g. `min(round(11 + 5.4×duration), 75)` for a hard 3,000 ₸ cap
+at the 40 ₸ pack) — not done here because the owner's anchor points were given
+without one. The in-app banner deliberately makes no specific ₸ claim for this
+reason (see `saleBanner()` in `public/app.html`).
 
-Only 10–15s/720p currently exceed the cap (720p at 4–9s and every 480p
-duration already price below it) — so this can only ever lower a charge, never
-raise one, exactly like the sale multiplier it sits next to.
+**Margin, full grid (720p, KZT_PER_USD=480), worst case per pack rate:**
+
+| duration | real cost | credits | value @25₸ (one-time) | @30₸ | @40₸ | margin @25₸ |
+|---|---|---|---|---|---|---|
+| 4s | 583 ₸ | 33 | 825 ₸ | 990 ₸ | 1,320 ₸ | +242 ₸ |
+| 5s | 730 ₸ | 38 | 950 ₸ | 1,140 ₸ | 1,520 ₸ | +220 ₸ |
+| 10s | 1,456 ₸ | 65 | 1,625 ₸ | 1,950 ₸ | 2,600 ₸ | +169 ₸ |
+| 15s | 2,184 ₸ | 92 | 2,300 ₸ | 2,760 ₸ | 3,680 ₸ | +116 ₸ |
+
+Margin is positive everywhere in the grid — including, unlike the first flat-74
+design, at the one-time 25 ₸/credit entry pack (worst case +116 ₸ at 15s,
+never negative). The curve binds (produces a lower price than the plain -50%
+sale) from 6s onward; at 4–5s the sale price alone is already cheaper, so
+nothing changes there.
 
 **Why this interacts safely with the sale expiring.** The cap is a pure
-`Math.min(credits, 74)` regardless of how `credits` got computed — whether the
-sale is on (today) or has expired (after 2026-09-10, when steady-state
-per-second pricing resumes and pushes MORE durations above 74 credits), the
-final capped price and its margin against real cost are identical. The two
-mechanisms don't need to know about each other.
+`Math.min(credits, flagshipCapCredits(duration))` regardless of how `credits`
+got computed — whether the sale is on (today) or has expired (after
+2026-09-10, when steady-state per-second pricing resumes and pushes the
+uncapped price further above the curve at every duration), the final capped
+price and its margin against real cost are identical. The two mechanisms
+don't need to know about each other.
 
-Surfacing: `/api/me` exposes `flagshipCeiling: { active, maxKzt, modelKey }`
-(no `endsAt` — it's permanent). The shared "🔥 Seedance" banner in the Studio
-and video composer appends a ceiling sentence once active, independent of
-whether the sale sentence is still showing.
+Surfacing: `/api/me` exposes `flagshipCeiling: { active, modelKey }` (no
+`maxKzt` — there's no single number to show; no `endsAt` — it's permanent).
+The shared "🔥 Seedance" banner in the Studio and video composer appends a
+ceiling sentence (duration-neutral, no specific ₸ figure) once active,
+independent of whether the sale sentence is still showing. The real
+per-duration prices are visible where they always were — the composer's
+duration slider, which reads `priceFor()` directly.
 
 ## Sources
 
