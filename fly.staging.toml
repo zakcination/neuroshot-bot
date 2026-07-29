@@ -65,4 +65,11 @@ kill_timeout = "3m"
 
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "512mb"
+  # Bigger than production's 512mb (fly.toml) on purpose: production talks to
+  # Neon over HTTP, but staging's embedded pglite (docs/staging.md) runs a
+  # whole WASM Postgres INSIDE this same Node process, and the initial schema
+  # bootstrap (initDb() creating every table on a cold, empty pglite) is
+  # memory-hungry. Confirmed by the Fly logs on the first real deploy: node
+  # got OOM-killed at ~364MB RSS against the 512mb limit, right after boot —
+  # a crash loop that made /healthz simply never answer.
+  memory = "1gb"
