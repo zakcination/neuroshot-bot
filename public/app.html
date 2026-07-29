@@ -308,8 +308,17 @@
     .seg button { flex: 1; border: 0; background: transparent; color: var(--muted); font-weight: 700; font-size: 13.5px; padding: 9px 0; border-radius: 999px; cursor: pointer; }
     .seg button.on { background: var(--aurora); color: #fff; }
     .mlist { display: flex; flex-direction: column; gap: 8px; }
+    .mlist.hide { display: none; }
+    .mlistq {
+      width: 100%; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-s);
+      padding: 10px 12px; color: var(--ink); font: inherit; font-size: 14px; margin-bottom: 2px;
+    }
     .mrow { display: flex; justify-content: space-between; align-items: center; gap: 8px; text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 11px 12px; color: var(--ink); cursor: pointer; }
     .mrow.on { border-color: var(--violet); box-shadow: 0 0 0 1px var(--violet); }
+    /* Live drag-scrub preview highlight (wireModelScrub) — distinct from
+       .on (the committed model) since a scrub commits only on release; the
+       hovered row must read as "about to pick this", not "already picked". */
+    .mrow.hover { border-color: rgba(124,92,255,.5); background: rgba(124,92,255,.1); }
     .mrow .price { white-space: nowrap; color: var(--amber); font-weight: 700; font-size: 13px; }
     .mnote { font-size: 11px; color: var(--muted); margin-top: 2px; }
     /* Capability line: measured wait + what this engine can do that others can't. */
@@ -319,7 +328,7 @@
     .mpick {
       display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
       background: var(--surface); border: 1px solid rgba(124,92,255,.35); border-radius: var(--radius-s);
-      padding: 11px 12px; color: var(--ink); cursor: pointer;
+      padding: 11px 12px; color: var(--ink); cursor: pointer; touch-action: none; user-select: none;
     }
     .mpick > span:first-child { flex: 1; }
     .mpick .price { font-size: 12px; color: var(--amber); font-weight: 700; white-space: nowrap; }
@@ -1182,6 +1191,27 @@
       border-radius: 999px; padding: 8px 13px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
     }
     .chip.on { background: var(--aurora); border-color: transparent; color: #fff; }
+    /* Aspect-ratio horizontal reel — a physical drag-scrub strip (wireRatioScrub)
+       for the 3+ option case; visual language borrowed from .durbox (dark
+       track, one clear focal element). A binary choice keeps the plain .chips
+       row instead — a reel is friction for a 2-way choice, not a feature. */
+    .arreel { position: relative; height: 60px; overflow: hidden; border-radius: var(--radius-s); background: var(--surface-2); border: 1px solid var(--line); touch-action: pan-y; cursor: grab; }
+    .arreel:active { cursor: grabbing; }
+    .arwindow {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      width: 68px; height: 44px; border-radius: 12px; background: rgba(124,92,255,.14);
+      border: 1px solid rgba(124,92,255,.45); pointer-events: none;
+    }
+    .artrack { position: absolute; top: 0; bottom: 0; left: 50%; display: flex; align-items: center; }
+    .aritem {
+      flex: 0 0 68px; width: 68px; height: 60px; display: flex; align-items: center; justify-content: center;
+      border: 0; background: none; font: inherit; font-size: 13px; font-weight: 700; color: var(--muted);
+      cursor: pointer; transition: color .2s, transform .2s; user-select: none;
+    }
+    .aritem.on { color: var(--ink); transform: scale(1.05); }
+    .arfade { position: absolute; top: 0; bottom: 0; width: 36px; pointer-events: none; }
+    .arfade.l { left: 0; background: linear-gradient(to right, var(--surface-2), transparent); }
+    .arfade.r { right: 0; background: linear-gradient(to left, var(--surface-2), transparent); }
     input.words {
       width: 100%; background: var(--surface); color: var(--ink); border: 1px solid var(--line);
       border-radius: var(--radius-s); padding: 12px 14px; font: inherit; font-size: 14px; margin-top: 8px;
@@ -1229,11 +1259,23 @@
     .schip.on { border-color: var(--violet); background: rgba(124,92,255,.14); color: var(--violet); }
     .photo-preview .redo { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,.55); backdrop-filter: blur(6px); border: 0; color: #fff; border-radius: 999px; padding: 8px 13px; font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; }
 
+    /* Drag-resize handle above the prompt textarea — a full-width, thumb-sized
+       grab zone rather than the browser's native corner-grip, which is tiny
+       and frequently suppressed entirely inside Telegram's in-app WebView. */
+    .promptwrap { position: relative; margin-top: 12px; }
+    .promptgrip {
+      position: absolute; top: -12px; left: 0; right: 0; height: 22px; z-index: 2;
+      display: flex; align-items: center; justify-content: center; cursor: ns-resize; touch-action: none;
+    }
+    .promptgrip i { width: 34px; height: 4px; border-radius: 999px; background: var(--line); transition: background .15s; }
+    .promptgrip.active i { background: var(--violet); }
     textarea.prompt {
       width: 100%; background: var(--surface); color: var(--ink); border: 1px solid var(--line);
-      border-radius: var(--radius-s); padding: 13px 14px; font: inherit; font-size: 14px; resize: vertical; min-height: 84px;
+      border-radius: var(--radius-s); padding: 18px 14px 13px; font: inherit; font-size: 14px; resize: none; min-height: 76px;
+      transition: border-color .15s;
     }
     textarea.prompt:focus { outline: 2px solid rgba(124,92,255,.5); }
+    textarea.prompt.gripping { border-color: var(--violet); }
 
     .progress { text-align: center; padding: 26px 10px 10px; }
     .orb { width: 74px; height: 74px; margin: 0 auto 18px; border-radius: 26px; background: var(--aurora); box-shadow: 0 0 60px rgba(180,77,255,.5); animation: pulse 1.6s ease-in-out infinite; }
@@ -2831,6 +2873,11 @@
         // Seedance's Дёшево/Быстро/Качество toggle (routeSeedance, src/seedance.ts)
         // — "fast" matches the server's own SEEDANCE_TIER_DEFAULT.
         seedanceTier: prev ? prev.seedanceTier || "fast" : "fast",
+        // Prompt textarea height (drag-resize handle) — survives a re-open the
+        // same way custom/prompt do, so returning to the composer doesn't
+        // silently shrink a box the user deliberately made taller.
+        promptH: prev ? prev.promptH || 104 : 104,
+        mq: "", // model-list search filter, reset on every open — not worth persisting
       };
       if (!stu.modelKey) stu.modelKey = defaultStudioModel();
       clampStudioOpts();
@@ -3156,8 +3203,8 @@
       // One row of the model dropdown. The model's REAL name leads; everything
       // else is metadata the user needs to choose between engines — what it's
       // for, the wait, and the price.
-      const modelRow = (x) => `
-        <button class="mrow ${x.key === stu.modelKey ? "on" : ""}" data-mk="${x.key}">
+      const modelRow = (x, scrubIdx) => `
+        <button class="mrow ${x.key === stu.modelKey ? "on" : ""}" data-mk="${x.key}" data-mname="${esc(x.label.toLowerCase())}"${scrubIdx != null ? ` data-scrub-idx="${scrubIdx}"` : ""}>
           <span><b>${esc(x.label)}</b>
             ${x.note ? `<div class="mnote">${esc(x.note)}</div>` : ""}
             ${modelMeta(x, isVideo)}
@@ -3182,7 +3229,10 @@
         ${!stu.preset || isVideo ? `
           <div class="quiz-q">${isVideo ? "Движение (необязательно)" : "Что нарисовать?"}</div>
           ${!isVideo && !stuHasSource() ? `<div class="sub">Фото не нужно — опишите картинку словами, ИИ нарисует её с нуля.</div>` : ""}
-          <textarea class="prompt" id="stuPrompt" placeholder="${isVideo ? "камера медленно приближается, ветер в волосах…" : "флакон духов на мокром чёрном мраморе…"}">${esc(stu.prompt)}</textarea>
+          <div class="promptwrap">
+            <div class="promptgrip" id="stuPromptGrip"><i></i></div>
+            <textarea class="prompt" id="stuPrompt" style="height:${stu.promptH}px" placeholder="${isVideo ? "камера медленно приближается, ветер в волосах…" : "флакон духов на мокром чёрном мраморе…"}">${esc(stu.prompt)}</textarea>
+          </div>
           <div class="row" style="margin-top:6px">
             <button class="btn ghost" id="stuEnh">${enhLabel()}</button>
             ${stu.prevPrompt != null ? `<button class="btn ghost" id="stuUndo">↩ Вернуть</button>` : ""}
@@ -3210,11 +3260,12 @@
                <span class="price">${priceBlockHtml(m.credits, m.wasCredits, isVideo ? "от " : "")}</span>
                <span class="mchev">▼</span>`}
         </button>
-        ${stu.mopen ? `<div class="mlist">
-          ${primary.map(modelRow).join("")}
+        <div class="mlist ${stu.mopen ? "" : "hide"}" id="stuMlist">
+          ${primary.length > 4 ? `<input class="mlistq" id="stuMq" placeholder="⌕ Поиск модели…" value="${esc(stu.mq || "")}" />` : ""}
+          ${primary.map((x, i) => modelRow(x, i)).join("")}
           ${hidden.length && !stu.showAll ? `<button class="btn ghost" id="stuMore">Показать все модели (${hidden.length}) — нужно фото</button>` : ""}
-          ${hidden.length && stu.showAll ? hidden.map(modelRow).join("") : ""}
-        </div>` : ""}
+          ${hidden.length && stu.showAll ? hidden.map((x) => modelRow(x)).join("") : ""}
+        </div>
         ${isVideo && m.key === "seedance" ? (() => {
           const refMode = activeSeedanceTierKey() === "ref";
           const tiers = [["cheap", "Дёшево"], ["fast", "Быстро"], ["quality", "Качество"]];
@@ -3227,8 +3278,10 @@
         })() : ""}
         ${caps && caps.aspectRatios && caps.aspectRatios.length > 1 ? `
           ${qLabel("Формат кадра", "aspect")}
-          <div class="chips" id="stuAr">${caps.aspectRatios.map((r) =>
-            `<button class="chip ${r === (stu.aspect || caps.aspectRatios[0]) ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>` : ""}
+          ${caps.aspectRatios.length > 2
+            ? arReelHtml(caps.aspectRatios, stu.aspect || caps.aspectRatios[0])
+            : `<div class="chips" id="stuAr">${caps.aspectRatios.map((r) =>
+                `<button class="chip ${r === (stu.aspect || caps.aspectRatios[0]) ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>`}` : ""}
         ${caps && caps.resolutions && caps.resolutions.length ? `
           ${qLabel("Качество", "res")}
           <div class="chips" id="stuRes">${caps.resolutions.map((r) =>
@@ -3274,6 +3327,7 @@
       bind("#stuSwap", (el) => (el.onclick = () => { stu.swap = true; st.tab = stu.preset.category === "product" ? "product" : "shoot"; viewPick(); }));
       bind("#stuCustom", (el) => (el.oninput = () => { stu.custom = el.value; }));
       bind("#stuPrompt", (el) => (el.oninput = () => { stu.prompt = el.value; cta(); }));
+      wirePromptResize(sheetBody);
       // ② Prompt Enhancer loop: first enhance after each render is free, then
       // 1 patron. Provider failure keeps the original prompt + balance intact.
       bind("#stuEnh", (el) => (el.onclick = async () => {
@@ -3301,12 +3355,24 @@
         stu.aspect = undefined; stu.resolution = undefined; stu.duration = undefined; stu.numImages = undefined; stu.showAll = false;
         clampStudioOpts(); viewStudio();
       }));
-      bind("#stuMpick", (el) => (el.onclick = () => { stu.mopen = !stu.mopen; viewStudio(); }));
+      // Dual-mode: a plain tap toggles the list open/closed (unchanged); a
+      // vertical drag instead scrubs live through `primary`, committing only
+      // on release. See wireModelScrub's own comment for why this can't
+      // call viewStudio() mid-gesture.
+      wireModelScrub(sheetBody, primary);
       // Picking collapses the list again — the composer stays short, and the
       // chosen engine is what you see when you come back to it.
       sheetBody.querySelectorAll("[data-mk]").forEach((b) => (b.onclick = () => { stu.modelKey = b.dataset.mk; stu.mopen = false; clampStudioOpts(); viewStudio(); }));
       bind("#stuMore", (el) => (el.onclick = () => { stu.showAll = true; viewStudio(); }));
+      bind("#stuMq", (el) => (el.oninput = () => {
+        stu.mq = el.value;
+        const q = stu.mq.trim().toLowerCase();
+        sheetBody.querySelectorAll("#stuMlist [data-mname]").forEach((row) => {
+          row.style.display = !q || row.dataset.mname.includes(q) ? "" : "none";
+        });
+      }));
       sheetBody.querySelectorAll("#stuAr .chip").forEach((c) => (c.onclick = () => { stu.aspect = c.dataset.ar; viewStudio(); }));
+      wireRatioScrub(sheetBody, caps && caps.aspectRatios);
       sheetBody.querySelectorAll("#stuRes .chip").forEach((c) => (c.onclick = () => { stu.resolution = c.dataset.res; viewStudio(); }));
       sheetBody.querySelectorAll("#stuTier .chip").forEach((c) => (c.onclick = () => { stu.seedanceTier = c.dataset.tier; viewStudio(); }));
       sheetBody.querySelectorAll("#stuCount .chip").forEach((c) => (c.onclick = () => { stu.numImages = Number(c.dataset.cnt); viewStudio(); }));
@@ -4255,6 +4321,165 @@
       };
       input.oninput = apply;
       input.onchange = apply;
+    }
+
+    /**
+     * Drag-resize the prompt textarea from a handle above it — pointer events
+     * cover touch and mouse in one path, same technique as viewBadge()'s
+     * "drag to spin" achievement badge (setPointerCapture keeps every move
+     * event routed here even if the finger slides off the small grip zone).
+     * Writes straight to the textarea's inline height AND stu.promptH on
+     * every move, live, no re-render — a rebuild mid-drag would cost the
+     * cursor position and the in-progress drag itself.
+     */
+    function wirePromptResize(root) {
+      const grip = root.querySelector("#stuPromptGrip");
+      const box = root.querySelector("#stuPrompt");
+      if (!grip || !box) return;
+      const MIN_H = 76, MAX_H = 320;
+      grip.onpointerdown = (e) => {
+        e.preventDefault();
+        grip.setPointerCapture(e.pointerId);
+        grip.classList.add("active");
+        box.classList.add("gripping");
+        const startY = e.clientY;
+        const from = stu.promptH || box.offsetHeight;
+        const move = (ev) => {
+          const h = Math.max(MIN_H, Math.min(MAX_H, from + (ev.clientY - startY)));
+          if (h !== stu.promptH) { stu.promptH = h; box.style.height = h + "px"; }
+        };
+        const up = () => {
+          grip.classList.remove("active");
+          box.classList.remove("gripping");
+          grip.onpointermove = null;
+          grip.onpointerup = null;
+          grip.onpointercancel = null;
+        };
+        grip.onpointermove = move;
+        grip.onpointerup = up;
+        grip.onpointercancel = up;
+      };
+    }
+
+    /**
+     * Dual-mode model picker: a plain tap on #stuMpick still just opens/closes
+     * the list (unchanged). A press-and-drag instead scrubs live through
+     * `primary` — the SAME compatible-models array this render of viewStudio
+     * built — highlighting a preview row, and commits stu.modelKey only on
+     * release. A short (<6px) press-release counts as the tap, not a drag.
+     *
+     * Deliberately does NOT call viewStudio() while the gesture is in
+     * progress — that would replace #stuMpick's own DOM node mid-drag and
+     * silently drop the pointer capture set on it. #stuMlist is always
+     * present in the DOM now (toggled via the .hide CSS class, not by
+     * conditionally rendering it) specifically so opening it during a drag
+     * is a plain class toggle, not a rebuild.
+     */
+    function wireModelScrub(root, primary) {
+      const pick = root.querySelector("#stuMpick");
+      const mlist = root.querySelector("#stuMlist");
+      if (!pick || !mlist || !primary.length) return;
+      const rows = Array.from(mlist.querySelectorAll("[data-scrub-idx]"));
+      pick.onpointerdown = (e) => {
+        pick.setPointerCapture(e.pointerId);
+        const startY = e.clientY;
+        const startIdx = Math.max(0, primary.findIndex((x) => x.key === stu.modelKey));
+        const wasOpen = !mlist.classList.contains("hide");
+        let hoverIdx = startIdx, moved = false, last = null, step = null;
+        // Real row height, not a guessed constant — these rows carry a
+        // capability line the mockup's didn't, so their height isn't fixed.
+        // Read lazily (only once the list is actually laid out): a
+        // display:none row reports 0 for offsetTop/offsetHeight, so measuring
+        // this at pointerdown would silently break the gesture whenever the
+        // picker starts closed.
+        const measureStep = () =>
+          rows.length > 1 ? rows[1].offsetTop - rows[0].offsetTop : rows[0].offsetHeight + 8;
+        const setHover = (i) => {
+          if (i === last) return;
+          rows.forEach((r) => r.classList.remove("hover"));
+          rows[i].classList.add("hover");
+          rows[i].scrollIntoView({ block: "nearest" });
+          if (last != null) hapticTick();
+          last = i;
+        };
+        const move = (ev) => {
+          const dy = ev.clientY - startY;
+          if (Math.abs(dy) > 6) moved = true;
+          if (!moved) return;
+          if (mlist.classList.contains("hide")) { mlist.classList.remove("hide"); pick.setAttribute("aria-expanded", "true"); }
+          if (step == null) { step = measureStep(); setHover(hoverIdx); }
+          hoverIdx = Math.max(0, Math.min(rows.length - 1, startIdx + Math.round(dy / step)));
+          setHover(hoverIdx);
+        };
+        const up = () => {
+          pick.onpointermove = null; pick.onpointerup = null; pick.onpointercancel = null;
+          rows.forEach((r) => r.classList.remove("hover"));
+          if (moved) { stu.modelKey = primary[hoverIdx].key; stu.mopen = false; clampStudioOpts(); viewStudio(); }
+          else { stu.mopen = !wasOpen; viewStudio(); }
+        };
+        pick.onpointermove = move;
+        pick.onpointerup = up;
+        pick.onpointercancel = up;
+      };
+    }
+
+    /**
+     * Aspect-ratio reel markup — a physical horizontal strip behind a fixed
+     * center "selected" window, for the 3+ option case (a binary choice stays
+     * a plain .chips row, see viewStudio). Item width (68px) is hardcoded and
+     * MUST match .aritem's flex-basis in CSS — both the initial transform
+     * here and wireRatioScrub's live version depend on the same constant.
+     */
+    function arReelHtml(ratios, current) {
+      const idx = Math.max(0, ratios.indexOf(current));
+      return `<div class="arreel" id="stuArReel">
+        <span class="arwindow"></span>
+        <div class="artrack" id="stuArTrack" style="transform:translateX(-${idx * 68 + 34}px)">
+          ${ratios.map((r, i) => `<button class="aritem ${i === idx ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}
+        </div>
+        <span class="arfade l"></span><span class="arfade r"></span>
+      </div>`;
+    }
+
+    /**
+     * Wire the reel. Same commit-on-release convention as wireModelScrub, but
+     * simpler: there's no open/closed state (the strip is always visible), so
+     * a tap directly on a visible item (no real drag) just jumps to it —
+     * the container is the drag surface, individual items are still their
+     * own tap targets since e.target on pointerdown tells us which.
+     */
+    function wireRatioScrub(root, ratios) {
+      const reel = root.querySelector("#stuArReel");
+      if (!reel || !ratios || !ratios.length) return;
+      const track = reel.querySelector("#stuArTrack");
+      const items = Array.from(reel.querySelectorAll(".aritem"));
+      const STEP = 68;
+      const setIdx = (i) => {
+        items.forEach((it, k) => it.classList.toggle("on", k === i));
+        track.style.transform = `translateX(-${i * STEP + STEP / 2}px)`;
+      };
+      reel.onpointerdown = (e) => {
+        reel.setPointerCapture(e.pointerId);
+        const tapTarget = e.target.closest(".aritem");
+        const startX = e.clientX;
+        const startIdx = Math.max(0, ratios.indexOf(stu.aspect || ratios[0]));
+        let hoverIdx = startIdx, moved = false, last = startIdx;
+        const move = (ev) => {
+          const dx = ev.clientX - startX;
+          if (Math.abs(dx) > 6) moved = true;
+          if (!moved) return;
+          hoverIdx = Math.max(0, Math.min(ratios.length - 1, startIdx - Math.round(dx / STEP)));
+          if (hoverIdx !== last) { last = hoverIdx; setIdx(hoverIdx); hapticTick(); }
+        };
+        const up = () => {
+          reel.onpointermove = null; reel.onpointerup = null; reel.onpointercancel = null;
+          if (moved) { stu.aspect = ratios[hoverIdx]; viewStudio(); }
+          else if (tapTarget && tapTarget.dataset.ar) { stu.aspect = tapTarget.dataset.ar; viewStudio(); }
+        };
+        reel.onpointermove = move;
+        reel.onpointerup = up;
+        reel.onpointercancel = up;
+      };
     }
 
     // Live combo-offer countdown: ticks the 🔥 badge each second; when the
