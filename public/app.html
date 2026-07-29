@@ -998,7 +998,16 @@
     .pcard.locked .pbg { opacity: .32; filter: saturate(.4); }
     .pcard.locked b, .pcard.locked .price { opacity: .6; }
     .pcard b { position: relative; z-index: 2; font-size: 13px; line-height: 1.3; }
-    .pcard .prow { position: relative; z-index: 2; display: flex; justify-content: space-between; align-items: baseline; gap: 6px; margin-top: 3px; }
+    .pcard .prow { position: relative; z-index: 2; display: flex; justify-content: space-between; align-items: flex-end; gap: 6px; margin-top: 3px; }
+    /* Preset cards put the label and the price on ONE row (name left, price
+       pill right). The label takes the slack and ellipsises so a long style
+       name can never push the price out of the card. Campaign cards keep the
+       label on its own line above — their price is a compound
+       "image + video" string that would leave the name almost no room. */
+    .pcard .prow b {
+      min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      text-shadow: 0 1px 8px rgba(0,0,0,.8);
+    }
     .pcard .price {
       font-size: 11.5px; font-weight: 700; color: var(--ink); white-space: nowrap;
       background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.12); padding: 3px 8px; border-radius: 999px;
@@ -1119,10 +1128,39 @@
     .tile b { font-size: 17px; font-weight: 700; letter-spacing: -.2px; }
     .tile span { font-size: 11px; color: var(--muted); }
 
-    /* Home-gallery-only chrome: "Все ›" link, and the Фото/Видео segment
-       reuses .seg's exact on/off convention (Studio composer mode toggle). */
+    /* Home-gallery-only chrome: "Все ›" link, and the Фото/Видео segment.
+       The segment overrides .seg's fill-the-active-button convention with a
+       sliding indicator: one absolutely-positioned pill animates its `left`
+       between the two halves, so the change reads as a single object moving
+       rather than one button lighting up while the other goes dark. Position
+       comes from [data-k], set in JS rather than inferred with :has(), so it
+       stays deterministic on older Telegram WebViews. */
     .seeall { border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; padding: 8px 0; }
-    .gallseg { margin: 0 0 10px; }
+    .gallseg {
+      position: relative; margin: 0 0 10px; height: 44px; padding: 3px;
+      background: #14111c; border: 1px solid rgba(255,255,255,.07); border-radius: 14px;
+    }
+    .gallseg::before {
+      content: ""; position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc(50% - 3px);
+      border-radius: 11px; background: #1b1726; border: 1px solid rgba(255,255,255,.08);
+      transition: left .24s cubic-bezier(.4,0,.2,1); pointer-events: none;
+    }
+    .gallseg[data-k="video"]::before { left: 50%; }
+    /* Both buttons stay transparent — the indicator behind them is the only
+       fill, so .seg's `background: var(--aurora)` must not win here. */
+    .gallseg button, .gallseg button.on {
+      position: relative; z-index: 1; background: transparent; border-radius: 11px;
+      font-size: 14px; font-weight: 600; padding: 0; transition: color .2s;
+    }
+    .gallseg button { color: var(--muted); }
+    .gallseg button.on { color: var(--ink); }
+    /* The design gives this one section a real title instead of the small-caps
+       eyebrow .sec-h uses elsewhere; scoped so every other section keeps it. */
+    .gallery-sec .sec-h { align-items: center; margin-bottom: 10px; }
+    .gallery-sec .sec-h h2 {
+      font-size: 17px; font-weight: 700; letter-spacing: -.2px;
+      text-transform: none; color: var(--ink);
+    }
     .gallery-sec .pcards { margin-top: 4px; }
 
     /* ————— duration slider —————
@@ -2346,8 +2384,7 @@
             ${lock ? `<span class="plock">🔒 ур. ${lock.need}</span>` : ""}
           </span>
         </div>
-        <b>${esc(p.label)}</b>
-        <div class="prow"><span class="price">${p.credits} ${PATRON}</span></div>
+        <div class="prow"><b>${esc(p.label)}</b><span class="price">${p.credits} ${PATRON}</span></div>
       </button>`;
     }
 
@@ -4680,7 +4717,7 @@
 
           <section class="reveal gallery-sec">
             <div class="sec-h"><h2>Галерея промптов</h2><button class="seeall" id="gallerySeeAll">Все ›</button></div>
-            <div class="seg gallseg" id="gallSeg">
+            <div class="seg gallseg" id="gallSeg" data-k="photo">
               <button class="on" data-gk="photo">Фото</button>
               <button data-gk="video">Видео</button>
             </div>
@@ -4913,6 +4950,9 @@
       const gallSeg = document.getElementById("gallSeg");
       if (gallSeg) gallSeg.querySelectorAll("button").forEach((b) => (b.onclick = () => {
         gallSeg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+        // Drives the sliding indicator's `left` (see .gallseg[data-k]); the
+        // .on class only carries the label colour now.
+        gallSeg.dataset.k = b.dataset.gk;
         renderPromptGallery(b.dataset.gk);
       }));
       const gallerySeeAll = document.getElementById("gallerySeeAll");
