@@ -2,6 +2,24 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Product Context
+
+**What:** One-tap AI photo studio inside Telegram. Send a photo → get studio-quality edit back in chat. No prompts, no model selection, no separate app.
+
+**Who:** Newcomers (not pros). They want **wow**, not control. Default to presets over prompt-writing.
+
+**Strategic thesis:** Anti-VeoSee. VeoSee failed because: (1) prompt complexity → users had to learn, (2) format fatigue → endless similar results, (3) unreliable rendering → users lost credits. We solve all three: one-tap presets kill prompt friction, featured weekly "новинка" refreshes novelty, async + reaper kill reliability debt.
+
+**Key principles:**
+1. **First 30 seconds matter most** — photo in → immediate wow → paywall. Everything else is retention.
+2. **First result free, second paid** — newcomer gets one wow on us before any credit spend.
+3. **Paywall as sales page, not a wall** — outcome-focused ("готовое резюме за 1 минуту"), not a price list.
+4. **Recurring reasons built in** — weekly featured model, gallery re-engagement, seasonal rotation. Don't rely on user discipline.
+
+**NOT in scope:** General-purpose model aggregator. Course/mentoring is learning product (separate biz). Partner program is creator tier, not mainstream.
+
+---
+
 ## Quick Start
 
 ```bash
