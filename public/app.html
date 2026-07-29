@@ -1046,24 +1046,44 @@
       padding: 2px 6px; border-radius: 999px; margin-right: 6px; vertical-align: middle;
     }
 
-    /* Home tab promo banner: richer sibling of .salebar (price block + dated
-       chip), same warm-gradient "deal" language kept distinct from the
-       violet aurora used for entry tiles. */
+    /* Home tab promo banner: a dotted "campaign poster" card with a soft glow
+       bleeding outward from its own center — dark base, dotted texture, warm
+       magenta bloom, distinct from the violet aurora used for entry tiles. */
     .promobar {
-      display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; cursor: pointer;
-      padding: 14px; border-radius: var(--radius); margin: 4px 0 2px; color: inherit; font: inherit; border: 0;
-      background: linear-gradient(100deg, rgba(255,138,61,.22), rgba(255,77,141,.1) 62%, transparent), var(--surface);
-      border: 1px solid rgba(255,138,61,.32);
+      position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 10px;
+      width: 100%; text-align: left; cursor: pointer; border: 1px solid rgba(255,77,141,.3);
+      border-radius: 22px; padding: 18px; margin: 4px 0 2px; color: inherit; font: inherit;
+      background:
+        radial-gradient(62% 75% at 50% 42%, rgba(255,77,141,.32), transparent 72%),
+        radial-gradient(rgba(255,255,255,.09) 1px, transparent 1.3px) 0 0 / 15px 15px,
+        var(--surface);
     }
-    .promotxt { flex: 1; min-width: 0; display: block; }
-    .promotxt b { display: block; font-size: 16px; font-weight: 800; letter-spacing: -.2px; }
-    .promotxt > span:not(.promocd) { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); }
-    .promocd {
-      display: inline-flex; align-items: center; gap: 5px; margin-top: 7px; padding: 4px 9px; border-radius: 999px;
-      background: rgba(245,182,74,.16); color: var(--amber); font-size: 11px; font-weight: 700; white-space: nowrap;
+    .promotag {
+      position: relative; z-index: 1; align-self: flex-start; display: flex; align-items: center; gap: 5px;
+      font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap;
+      background: linear-gradient(100deg, var(--magenta), #ff7fa8); color: #fff; padding: 5px 10px; border-radius: 8px;
     }
-    .promocd i { width: 5px; height: 5px; border-radius: 50%; background: var(--amber); animation: pulse 2.2s ease-in-out infinite; }
+    .promotxt { position: relative; z-index: 1; display: block; }
+    .promotxt b { font-size: 16.5px; font-weight: 800; letter-spacing: -.2px; line-height: 1.3; }
+    .promotxt b em { font-style: normal; color: var(--magenta); }
+    .promotxt > span { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); }
+    .promobtm { position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .promocta {
+      align-self: flex-start; background: #fff; color: #0c0710; font-weight: 800; font-size: 12.5px;
+      padding: 9px 15px; border-radius: 999px; white-space: nowrap;
+    }
     .promoprice { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+    /* Live countdown card, boxed like the reference "Hours/Minutes/Seconds"
+       layout — but in Days/Hours/Minutes, since the real sale window
+       (config.seedanceSaleUntil) runs for weeks, not hours. A ticking
+       hours:minutes:seconds display would silently claim same-day urgency
+       that isn't real. */
+    .promocd { position: relative; z-index: 1; background: rgba(0,0,0,.3); border: 1px solid rgba(255,255,255,.12); border-radius: 16px; padding: 10px 12px; }
+    .promocd .lbl { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+    .promocd .boxes { display: flex; gap: 8px; }
+    .promocd .box { flex: 1; min-width: 46px; text-align: center; background: rgba(255,255,255,.07); border-radius: 10px; padding: 7px 4px; }
+    .promocd .box b { display: block; font-size: 19px; font-weight: 800; line-height: 1.1; }
+    .promocd .box span { display: block; margin-top: 1px; font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
 
     /* 2-tile Фото/Видео entry grid — replaces the 4-item "Что создаём" rail;
        discovery for text-to-image/product now happens via the gallery below. */
@@ -2137,15 +2157,25 @@
       if (!saleOn) return "";
       const n = (d.catalog.news || []).find((x) => x.key === "seedance_fast");
       if (!n) return "";
-      const until = new Date(ME.seedanceSale.endsAt).toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
       return `
         <button class="promobar" id="promoBanner">
+          <span class="promotag">🏷 Ограниченное предложение</span>
           <span class="promotxt">
-            <b>Seedance дешевле вдвое</b>
-            <span>Видео 720p, 4–15 секунд — сейчас за половину цены</span>
-            <span class="promocd"><i></i>до ${until}</span>
+            <b><em>Seedance дешевле вдвое</em> — успейте, пока акция активна</b>
+            <span>Видео 720p, 4–15 секунд, все тарифы Seedance</span>
           </span>
-          <span class="promoprice">${priceBlockHtml(n.credits, n.wasCredits)}</span>
+          <span class="promobtm">
+            <span class="promocta">Попробовать со скидкой →</span>
+            <span class="promoprice">${priceBlockHtml(n.credits, n.wasCredits)}</span>
+          </span>
+          <span class="promocd" id="promoCountdown" data-ends-at="${ME.seedanceSale.endsAt}">
+            <span class="lbl">⏳ Акция закончится через</span>
+            <span class="boxes">
+              <span class="box"><b data-cd-d>—</b><span>дней</span></span>
+              <span class="box"><b data-cd-h>—</b><span>часов</span></span>
+              <span class="box"><b data-cd-m>—</b><span>минут</span></span>
+            </span>
+          </span>
         </button>`;
     }
 
@@ -4249,6 +4279,30 @@
       if (cdTimer) clearInterval(cdTimer);
       cdTimer = setInterval(tickCountdowns, 1000);
     }
+    // Home-tab promo banner's Days/Hours/Minutes boxes. A separate, slower
+    // (30s) ticker rather than reusing tickCountdowns/cdTimer above: that one
+    // only starts once the Патроны page has rendered at least once, and this
+    // display never shows seconds, so per-second ticking would just be wasted
+    // work for a value that visually never changes that often.
+    let promoCdTimer = null;
+    function tickPromoCountdown() {
+      const el = document.getElementById("promoCountdown");
+      if (!el) { if (promoCdTimer) { clearInterval(promoCdTimer); promoCdTimer = null; } return; }
+      const left = Math.max(0, Number(el.dataset.endsAt) - Date.now());
+      const s = Math.floor(left / 1000);
+      const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+      const pad = (n) => String(n).padStart(2, "0");
+      const dEl = el.querySelector("[data-cd-d]"), hEl = el.querySelector("[data-cd-h]"), mEl = el.querySelector("[data-cd-m]");
+      if (dEl) dEl.textContent = pad(d);
+      if (hEl) hEl.textContent = pad(h);
+      if (mEl) mEl.textContent = pad(m);
+      if (left <= 0) { const banner = el.closest(".promobar"); if (banner) banner.remove(); }
+    }
+    function startPromoCountdown() {
+      tickPromoCountdown();
+      if (promoCdTimer) clearInterval(promoCdTimer);
+      promoCdTimer = setInterval(tickPromoCountdown, 30000);
+    }
     // Paginated «Мои работы»: a fixed grid region + a pager. Each page is fetched
     // from /api/generations so the section stays put and long histories stay light.
     var GAL_PAGE = 1, GAL_PAGES = 1;
@@ -4618,6 +4672,7 @@
         if (n) tryModel(n);
       };
       renderPromptGallery("photo");
+      startPromoCountdown();
       const gallSeg = document.getElementById("gallSeg");
       if (gallSeg) gallSeg.querySelectorAll("button").forEach((b) => (b.onclick = () => {
         gallSeg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
