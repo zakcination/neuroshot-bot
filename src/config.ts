@@ -249,6 +249,9 @@ export const config = {
   rateLimitUploadPerMin: Number(process.env.RATE_LIMIT_UPLOAD_PER_MIN ?? 30),
   rateLimitGeneratePerMin: Number(process.env.RATE_LIMIT_GENERATE_PER_MIN ?? 30),
   rateLimitEnhancePerMin: Number(process.env.RATE_LIMIT_ENHANCE_PER_MIN ?? 20),
+
+  // --- UI feature flags (staging tests) ---
+  homepageRedesignEnabled: (process.env.HOMEPAGE_REDESIGN_ENABLED ?? "false") === "true",
 };
 
 /**

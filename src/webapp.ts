@@ -720,6 +720,10 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     // same way as welcomeBonus. amount is always sent so the client can show
     // "закончите путь — получите N 🔫" before every step is done.
     roadmapBonus: { amount: config.roadmapBonus, claimed: row?.roadmapBonusClaimed ?? false },
+    // UI feature flags for staging tests (docs/staging.md).
+    uiFeatures: {
+      homepageRedesign: config.homepageRedesignEnabled,
+    },
   };
 }
 
