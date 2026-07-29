@@ -32,6 +32,14 @@ kill_timeout = "3m"
   WEBAPP_PORT = "8080"
   WEBAPP_URL = "https://neuroshot-bot-staging.fly.dev"
   ROLE = "webapp"
+  # The shared Dockerfile bakes NODE_ENV=production (it's the same image as
+  # production's), and src/db.ts requires DATABASE_URL whenever NODE_ENV is
+  # "production" — without this override staging crash-loops on boot with
+  # "DATABASE_URL is required in production" instead of falling back to
+  # pglite. db.ts deliberately doesn't import config.ts (see its own
+  # comment), so overriding NODE_ENV here — not gating on ROLE in db.ts — is
+  # the fix that doesn't add that coupling.
+  NODE_ENV = "staging"
   # STAGING_LABEL is set per-deploy via `flyctl deploy -e STAGING_LABEL=...`
   # (staging.yml) — never hardcoded here, so the in-app banner always names
   # whichever PR is actually live.
