@@ -762,11 +762,14 @@ export function flagshipCapCredits(durationSeconds: number): number {
 }
 
 /**
- * Credit charge for a generation given composer options. Video credits scale
- * with the chosen duration (cost is per-second); images and default settings
- * use the fixed `credits`. Kept ≥1 and rounded up so margin never inverts.
+ * Credit charge before any promotional discount — duration/resolution/count
+ * scaling only, the real-cost-driven steps every model goes through. This is
+ * what a render would cost with the Seedance sale AND the flagship curve both
+ * off — i.e. the "was" price a dramatic before/after UI compares the current
+ * (discounted) price against (see priceFor below and the client's use of it
+ * for strikethrough pricing in the Studio and video composer).
  */
-export function priceFor(model: ModelSpec, opts?: GenOpts): number {
+export function rawPriceFor(model: ModelSpec, opts?: GenOpts): number {
   let credits = model.credits;
   // Video: scale with the chosen duration (cost is per-second).
   if (model.video && opts?.duration && opts.duration !== model.video.defaultSeconds) {
@@ -786,6 +789,16 @@ export function priceFor(model: ModelSpec, opts?: GenOpts): number {
     const n = Math.min(maxCount, Math.floor(opts.numImages));
     credits = Math.max(1, Math.ceil(credits * n));
   }
+  return credits;
+}
+
+/**
+ * Credit charge for a generation given composer options — rawPriceFor with
+ * whatever promotional discounts are currently active layered on top. Kept
+ * ≥1 and rounded up so margin never inverts.
+ */
+export function priceFor(model: ModelSpec, opts?: GenOpts): number {
+  let credits = rawPriceFor(model, opts);
   // Applied LAST, after every real-cost-driven scale-up above, and via `min`
   // rather than direct assignment — see the doc comment on SEEDANCE_SALE_MULT.
   if (SEEDANCE_SALE_KEYS.has(model.key) && seedanceSaleActive()) {

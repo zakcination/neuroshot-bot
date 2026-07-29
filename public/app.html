@@ -1024,7 +1024,21 @@
     .durbox { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 13px 15px 9px; }
     .durhead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
     .durhead .dursec { font-size: 19px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
-    .durhead .durprice { font-weight: 800; color: var(--amber); font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .durhead .durprice { white-space: nowrap; }
+    /* Dramatic before/after price — reuses the same visual language as
+       .fp-now/.fp-was (first-pack gift box) and .msale (sale pill), so a
+       discount always looks the same everywhere it appears (duration slider,
+       model picker rows). Wrapper (.durprice / .mrow .price / .mpick .price)
+       stacks now-over-was; the pieces themselves are unscoped so any price
+       spot in the app can opt in just by calling priceBlockHtml(). */
+    .durprice, .mrow .price, .mpick .price { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+    .pd-now { font-weight: 800; color: var(--amber); font-size: 15px; font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+    .pd-was { font-size: 11px; color: var(--faint); text-decoration: line-through; font-variant-numeric: tabular-nums; }
+    .pd-badge {
+      display: inline-block; font-size: 10px; font-weight: 800; letter-spacing: .02em;
+      background: linear-gradient(90deg, #ff8a3d, #ff4d8d); color: #fff;
+      padding: 2px 6px; border-radius: 999px;
+    }
     .durbox input[type="range"] {
       -webkit-appearance: none; appearance: none; width: 100%; margin: 12px 0 2px;
       background: transparent; height: 26px; display: block; cursor: pointer;
@@ -2713,6 +2727,17 @@
       if (t && t.mult !== 1) credits = Math.ceil(credits * t.mult);
       return credits;
     }
+    /** Same shape as stuDurPrice, but the pre-discount price — for the
+     * dramatic before/after strikethrough on the duration slider. */
+    function stuDurWasPrice(seconds) {
+      const m = studioModel();
+      if (!m || !m.video) return 0;
+      const d = m.video.durations.find((x) => x.seconds === seconds);
+      let credits = d ? d.wasCredits : m.wasCredits;
+      const t = stu.resolution ? (m.video.resolutions || []).find((r) => r.id === stu.resolution) : null;
+      if (t && t.mult !== 1) credits = Math.ceil(credits * t.mult);
+      return credits;
+    }
 
     /** Live patron total — exact client mirror of the server's priceFor. */
     function studioPrice() {
@@ -2912,7 +2937,7 @@
             ${!isVideo && !has && x.needsImage ? `<div class="mnote">нужно фото</div>` : ""}
             ${stu.preset && x.key === stu.preset.model ? `<div class="mnote">рекомендовано для этого стиля</div>` : ""}
           </span>
-          <span class="price">${x.onSale ? '<span class="msale">🔥 −50%</span>' : ""}${isVideo ? "от " : ""}${x.credits} ${PATRON}</span>
+          <span class="price">${priceBlockHtml(x.credits, x.wasCredits, isVideo ? "от " : "")}</span>
         </button>`;
 
       sheetBody.innerHTML = `
@@ -2954,7 +2979,7 @@
           ${stu.mopen
             ? `<span><b>Выберите модель</b></span><span class="mchev">свернуть ▲</span>`
             : `<span><b>${esc(m.label)}</b>${m.note ? `<div class="mnote">${esc(m.note)}</div>` : ""}</span>
-               <span class="price">${isVideo ? "от " : ""}${m.credits} ${PATRON}</span>
+               <span class="price">${priceBlockHtml(m.credits, m.wasCredits, isVideo ? "от " : "")}</span>
                <span class="mchev">▼</span>`}
         </button>
         ${stu.mopen ? `<div class="mlist">
@@ -2980,6 +3005,7 @@
             m.video.durations.map((d) => d.seconds),
             stu.duration,
             stuDurPrice,
+            stuDurWasPrice,
           )}</div>` : ""}
         ${isVideo && m.video && m.video.endFrame ? `
           ${qLabel("Финальный кадр (необязательно)", "endframe")}
@@ -3052,7 +3078,7 @@
         wireDurationSlider(sheetBody, m.video.durations.map((d) => d.seconds), stuDurPrice, (sec) => {
           stu.duration = sec;
           cta(); // the button carries the total (and flips to "Пополнить" when short)
-        });
+        }, stuDurWasPrice);
       }
       sheetBody.querySelectorAll("[data-story]").forEach((row) => {
         row.querySelectorAll(".chip").forEach((chip) => (chip.onclick = () => {
@@ -3259,6 +3285,7 @@
         return (resList.find((r) => r.id === pick.resolution) || resList[0]).mult;
       };
       const priceOf = (sec) => Math.ceil((durs.find((d) => d.seconds === sec) || durs[0]).credits * resMult());
+      const wasPriceOf = (sec) => Math.ceil((durs.find((d) => d.seconds === sec) || durs[0]).wasCredits * resMult());
 
       sheetBody.innerHTML = `
         <h3>Настройки видео</h3>
@@ -3278,7 +3305,7 @@
         <div class="chips" id="resRow">${resList.map((r) =>
           `<button class="chip ${r.id === pick.resolution ? "on" : ""}" data-res="${r.id}">${esc(r.label)}</button>`).join("")}</div>` : ""}
         ${qLabel("Длительность", "duration")}
-        <div id="durRow">${durationSliderHtml(durs.map((d) => d.seconds), pick.duration, priceOf)}</div>
+        <div id="durRow">${durationSliderHtml(durs.map((d) => d.seconds), pick.duration, priceOf, wasPriceOf)}</div>
         ${hasEnd ? `${qLabel("Финальный кадр — переход к другому фото (необязательно)", "endframe")}
         <div id="endZone">
           <label class="drop"><input type="file" accept="image/*" id="endFile" />
@@ -3332,7 +3359,7 @@
       wireDurationSlider(sheetBody, durs.map((d) => d.seconds), priceOf, (sec) => {
         pick.duration = sec;
         sheetBody.querySelector("#prN").textContent = priceOf(sec);
-      });
+      }, wasPriceOf);
       // Keep typed fields when a control re-renders the composer for fresh prices.
       const preserveRerender = () => {
         const cw = sheetBody.querySelector("#cw"); if (cw) pick.custom = cw.value.trim();
@@ -3833,6 +3860,25 @@
     }
 
     /**
+     * Dramatic before/after price block: strikethrough "was" + bold "now" +
+     * a "-N%" pill, whenever `was` is genuinely higher than `now`. Falls back
+     * to a plain price with no badge when there's nothing to compare (was
+     * missing, or equal — a discount that fully expired, or a model never on
+     * sale to begin with). One function so every price surface in the app
+     * (duration slider, model rows) renders a discount identically.
+     */
+    function priceBlockHtml(now, was, prefix) {
+      // `prefix` ("от " on a video model's collapsed price) lives INSIDE
+      // pd-now, not beside the whole block — the block's parent is a flex
+      // column (stacks now over was), so a sibling text node would land on
+      // its own line above the price instead of reading "от 38 <PATRON>".
+      prefix = prefix || "";
+      if (!was || was <= now) return `<span class="pd-now">${prefix}${now} ${PATRON}</span>`;
+      const pct = Math.round((1 - now / was) * 100);
+      return `<span class="pd-now"><span class="pd-badge">−${pct}%</span>${prefix}${now} ${PATRON}</span><span class="pd-was">${was} ${PATRON}</span>`;
+    }
+
+    /**
      * Video-length slider over the ALLOWED seconds, addressed by index.
      *
      * Index, not seconds: the lists are dense ranges for most models but only
@@ -3841,18 +3887,20 @@
      * that fails on a value we offered. By index every position is legal by
      * construction, whatever the model.
      *
-     * `priceOf(seconds)` is passed in rather than computed here, because the
-     * two composers price differently (one has a resolution multiplier in play,
-     * the other reads a per-length price table) and both must show the number
-     * the SERVER will charge, not a second opinion.
+     * `priceOf(seconds)` / `wasPriceOf(seconds)` are passed in rather than
+     * computed here, because the two composers price differently (one has a
+     * resolution multiplier in play, the other reads a per-length price table)
+     * and both must show the number the SERVER will charge, not a second
+     * opinion. `wasPriceOf` is optional — omit it where there's no pre-discount
+     * price to compare against.
      */
-    function durationSliderHtml(durs, current, priceOf) {
+    function durationSliderHtml(durs, current, priceOf, wasPriceOf) {
       const i = Math.max(0, durs.indexOf(current));
       const fill = durs.length > 1 ? (i / (durs.length - 1)) * 100 : 100;
       return `<div class="durbox" data-dursl style="--fill:${fill}%">
         <div class="durhead">
           <b class="dursec">${durs[i]} сек</b>
-          <span class="durprice">${priceOf(durs[i])} ${PATRON}</span>
+          <span class="durprice">${priceBlockHtml(priceOf(durs[i]), wasPriceOf ? wasPriceOf(durs[i]) : 0)}</span>
         </div>
         <input type="range" min="0" max="${durs.length - 1}" step="1" value="${i}"
                aria-label="Длительность видео, секунд" />
@@ -3865,7 +3913,7 @@
      * tracks the drag rather than waiting for release — the price is the thing
      * being chosen, and a number that only catches up on mouse-up reads as lag.
      */
-    function wireDurationSlider(root, durs, priceOf, onPick) {
+    function wireDurationSlider(root, durs, priceOf, onPick, wasPriceOf) {
       const box = root.querySelector("[data-dursl]");
       if (!box) return;
       const input = box.querySelector("input[type=range]");
@@ -3878,7 +3926,7 @@
         if (sec == null) return;
         box.style.setProperty("--fill", `${durs.length > 1 ? (i / (durs.length - 1)) * 100 : 100}%`);
         secEl.textContent = `${sec} сек`;
-        prEl.textContent = `${priceOf(sec)} ${PATRON}`;
+        prEl.innerHTML = priceBlockHtml(priceOf(sec), wasPriceOf ? wasPriceOf(sec) : 0);
         if (sec !== last) { last = sec; hapticTick(); }
         onPick(sec);
       };

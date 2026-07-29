@@ -53,6 +53,7 @@ import {
   presetModel,
   PRESETS,
   priceFor,
+  rawPriceFor,
   sceneModel,
   styleRefUrl,
   VIDEO_MODEL_PICKER,
@@ -269,6 +270,10 @@ function studioModelsOf(mode: "image" | "video", eta: Record<string, number>): A
       note: m.note ?? "",
       kind: m.kind,
       credits: priceFor(m),
+      // Pre-discount price, for a strikethrough "было X → стало Y" — equal to
+      // `credits` whenever nothing is discounted, so the client only renders
+      // the strikethrough when the two actually differ.
+      wasCredits: rawPriceFor(m),
       // MEASURED median seconds from our own recent runs; 0 = not enough data
       // yet, and the client must then show its coarse copy, not a fake number.
       etaSeconds: eta[m.key] ?? 0,
@@ -309,7 +314,7 @@ function studioModelsOf(mode: "image" | "video", eta: Record<string, number>): A
       reference: !!m.reference,
       video: m.video
         ? {
-            durations: m.video.durations.map((d) => ({ seconds: d, credits: priceFor(m, { duration: d }) })),
+            durations: m.video.durations.map((d) => ({ seconds: d, credits: priceFor(m, { duration: d }), wasCredits: rawPriceFor(m, { duration: d }) })),
             // The length `credits` is quoted for. The client must not fall back
             // to durations[0] — that is now the SHORTEST option, not the
             // default, so a composer opening on it would silently start every
@@ -456,6 +461,7 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
         key: k,
         label: spec.label,
         credits: priceFor(spec),
+        wasCredits: rawPriceFor(spec),
         onSale: SEEDANCE_SALE_KEYS.has(k) && seedanceSaleActive(),
         // Composer capabilities: durations (per-length price), ratios, end-frame, quality.
         video: spec.video
@@ -463,6 +469,7 @@ function catalogPayload(usage: Record<string, number>, gates: Record<string, num
               durations: spec.video.durations.map((d) => ({
                 seconds: d,
                 credits: priceFor(spec, { duration: d }),
+                wasCredits: rawPriceFor(spec, { duration: d }),
               })),
               defaultSeconds: spec.video.defaultSeconds,
               aspectRatios: spec.video.aspectRatios,
