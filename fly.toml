@@ -20,6 +20,20 @@ primary_region = "fra" # Frankfurt — close to RU/KZ users; pick your own (waw/
 # so a routine deploy/recycle delivers or refunds them (matches drainRenders in index.ts).
 kill_timeout = "3m"
 
+# Fly's DEFAULT strategy is "rolling": start the new machine, wait for its
+# health check, THEN stop the old one — a deliberate overlap window so a
+# stateless HTTP service never drops traffic. This process is not stateless:
+# it holds Telegram's long-polling connection, and Telegram allows exactly one
+# getUpdates caller per bot token. Any overlap means both machines' bot.start()
+# hits a 409 Conflict, and index.ts's crash-on-poll-failure exit(1) (deliberate
+# — see its own comment) turns that into a loop: the new machine can never stay
+# up long enough to pass /healthz, so the old one is never released, so the
+# conflict never clears itself. "immediate" stops the old machine BEFORE
+# starting the new one — the ~seconds-long gap in serving is the correct
+# trade for a bot that would otherwise deadlock itself on every deploy.
+[deploy]
+  strategy = "immediate"
+
 [build]
   dockerfile = "Dockerfile"
 
