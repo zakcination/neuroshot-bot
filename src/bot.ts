@@ -881,6 +881,20 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
     });
   });
 
+  // Admin-only door into whatever's currently deployed on the shared staging
+  // app (docs/staging.md) — the SAME bot, SAME chat, so opening it is exactly
+  // the "🌐 Приложение" flow above, just pointed at a different, ephemeral
+  // build. No second bot/token: Telegram signs a Mini App's initData with
+  // whichever bot the user opened it from, and a webApp button works for
+  // ANY https URL regardless of what's registered in BotFather as the
+  // persistent menu button.
+  bot.command("staging", async (ctx) => {
+    if (!ctx.from || !config.adminIds.includes(ctx.from.id)) return;
+    await ctx.reply("🧪 Тестовая сборка — что именно там развёрнуто, покажет баннер внутри.", {
+      reply_markup: new InlineKeyboard().webApp("Открыть тестовую сборку", config.stagingUrl),
+    });
+  });
+
   bot.command("balance", async (ctx) => sendBalance(ctx, (await user(ctx)).credits));
   bot.command("buy", async (ctx) => sendBalance(ctx, (await user(ctx)).credits));
 

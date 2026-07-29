@@ -598,6 +598,10 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     dashboard,
     generations,
     bot_username: config.webappBotUsername,
+    // null on production (the default `role: "bot"` never sets a label) — the
+    // client only renders the "🧪 STAGING" ribbon when this is non-null, so a
+    // real deploy can never accidentally show it. See docs/staging.md.
+    staging: config.role === "webapp" && config.stagingLabel ? { label: config.stagingLabel } : null,
     // Pack catalog for the app's pricing section — same source as the bot.
     packs: packsPayload(startTaken),
     catalog: catalogPayload(usage, gates, eta),
@@ -1575,8 +1579,15 @@ export function createWebApp(): Server {
       // dead poller in a live process. Returning 200 here would keep a broken
       // bot running forever.
       if (url.pathname === "/healthz") {
-        const polling = livenessProbe();
-        return json(res, polling ? 200 : 503, { ok: polling, polling });
+        const healthy = livenessProbe();
+        // `polling` is honest only for role:"bot" — a role:"webapp" deploy
+        // (docs/staging.md) never polls at all, so its liveness probe always
+        // reports healthy regardless, and this field would otherwise read as
+        // "yes, actively polling Telegram" to anyone checking that staging
+        // ISN'T double-polling production's bot token, which is exactly
+        // backwards. `role` makes that unambiguous instead of coincidental.
+        const polling = config.role === "bot" && healthy;
+        return json(res, healthy ? 200 : 503, { ok: healthy, polling, role: config.role });
       }
 
       if (url.pathname === "/" || url.pathname === "/app") {

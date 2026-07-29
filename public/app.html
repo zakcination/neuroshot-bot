@@ -1043,6 +1043,17 @@
        tag on each discounted model's own price. Warm gradient (not the violet
        aurora used for the entry-tile) so the two "look how good this deal is"
        surfaces read as visually distinct campaigns, not one repeated design. */
+    /* Staging build marker (docs/staging.md) — only ever rendered when
+       ME.staging is non-null, which only a role:"webapp" deploy with
+       STAGING_LABEL set ever sends. Loud on purpose (amber, top of page,
+       before anything else): the whole point is that nobody mistakes this
+       build for production while poking at real Kaspi/fal calls on it. */
+    .stagingbar {
+      display: flex; align-items: center; gap: 6px; justify-content: center; text-align: center;
+      font-size: 11.5px; font-weight: 800; letter-spacing: .01em; color: #1a1206;
+      background: linear-gradient(90deg, #f5b64a, #ff8a3d);
+      border-radius: var(--radius-s); padding: 8px 12px; margin-bottom: 12px;
+    }
     .salebar {
       display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700;
       padding: 10px 13px; border-radius: var(--radius-s); margin-bottom: 12px;
@@ -4622,6 +4633,7 @@
 
       root.innerHTML = "";
       root.appendChild($(`<div>
+        ${d.staging ? `<div class="stagingbar">🧪 ${esc(d.staging.label)}</div>` : ""}
         <div class="top2">
           <div class="idbox">
             ${avatarPct == null ? `

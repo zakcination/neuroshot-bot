@@ -167,6 +167,28 @@ export const config = {
   webappUrl: process.env.WEBAPP_URL ?? "",
   webappPort: Number(process.env.WEBAPP_PORT ?? 8080),
   webappBotUsername: process.env.BOT_USERNAME ?? "",
+  // --- Staging (docs/staging.md) ---
+  // "webapp" = this process serves the Mini App/API only and never calls
+  // bot.start() — Telegram allows exactly one getUpdates caller per bot
+  // token (see fly.toml's own note on the production outage this caused
+  // once already), so a second, independently-deployed instance MUST run in
+  // this mode to safely share the real bot token with production. Reusing
+  // the real token (not a second bot) is deliberate: a Mini App's initData
+  // is HMAC-signed with the bot token the user actually opened it from, so
+  // staging can only verify a real Telegram session if it holds that same
+  // token.
+  role: (process.env.ROLE === "webapp" ? "webapp" : "bot") as "bot" | "webapp",
+  // Shown in-app (webapp.ts → app.html banner) on a `role: "webapp"` deploy,
+  // so opening the SAME staging build twice a day never leaves you guessing
+  // which PR you're actually looking at. Set per-deploy by the staging
+  // workflow; blank on production (default role never reads it for display).
+  stagingLabel: process.env.STAGING_LABEL ?? "",
+  // Static — the staging Fly app's hostname never changes between PRs, only
+  // its deployed content does, so this only needs to be set once (and the
+  // default already matches the app this ships with). Used by the PRODUCTION
+  // bot's /staging command to build a webApp button; staging itself never
+  // reads its own URL.
+  stagingUrl: process.env.STAGING_URL ?? "https://neuroshot-bot-staging.fly.dev",
   // --- GenAI course cohort delivery (docs/course/README.md) ---
   // Telegram chat id (e.g. "-100xxxxxxxxxx") of the pre-made PRIVATE channel/group
   // for each course tier's cohort. The bot canNOT create these itself (not a Bot
