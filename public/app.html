@@ -1117,6 +1117,116 @@
     .promocd .box b { display: block; font-size: 19px; font-weight: 800; line-height: 1.1; color: #fff; }
     .promocd .box span { display: block; margin-top: 1px; font-size: 9px; color: rgba(244,242,250,.55); text-transform: uppercase; letter-spacing: .03em; }
 
+    /* Home tab "TV banner": an evergreen (not sale-gated) showcase reel of the
+       best Seedance video generations, styled as an old CRT set — frameless
+       screen, an antenna twisted into a heart, a deck with power/LED/grille
+       below. User-approved wireframe (several rounds: frameless bezel, the
+       antenna reverted from an earlier "neon sign" attempt, the NEUROSHOT
+       brand badge + neuron-mark icon mirroring the ● REC tag). Sits directly
+       under promoBannerHtml() — see promoTv(). --violet/--magenta/--amber
+       below resolve to the app's own :root tokens (no local redefinition
+       needed, unlike the standalone mockup this was ported from); the
+       --shell-hi/--shell/--shell-lo/--bezel/--chrome/--chrome-dk set is new,
+       scoped to .tv only so it can't collide with any other component's
+       custom properties. */
+    .tv {
+      --shell-hi: #e59a44; --shell: #b8621f; --shell-lo: #6b3410;
+      --bezel: #1c130f; --chrome: #e7e1d3; --chrome-dk: #8f8878;
+      all: unset; box-sizing: border-box; cursor: pointer; display: block; width: 100%;
+      position: relative; padding-top: 40px; margin: 18px 0 4px;
+    }
+    .tv * { box-sizing: border-box; }
+    .tv:focus-visible .tv-shell { outline: 2px solid var(--magenta); outline-offset: 3px; }
+    .tv:active .tv-shell { transform: scale(.985); }
+
+    .tv-antenna { position: absolute; top: 0; left: 50%; width: 82px; height: 52px; transform: translateX(-50%); z-index: 2; pointer-events: none; }
+    .antenna-leg, .antenna-heart { fill: none; stroke: var(--chrome); stroke-linecap: round; stroke-linejoin: round; }
+    .antenna-leg { stroke-width: 5.5; filter: drop-shadow(0 1px 1px rgba(0,0,0,.5)); }
+    .antenna-heart { stroke-width: 6; filter: drop-shadow(0 1px 1px rgba(0,0,0,.5)) drop-shadow(0 0 7px rgba(255,77,141,.6)); }
+    @media (prefers-reduced-motion: no-preference) {
+      .tv-antenna { animation: tvSway 6.5s ease-in-out infinite; transform-origin: 50% 96%; }
+    }
+    @keyframes tvSway { 0%, 100% { transform: translateX(-50%) rotate(-1.6deg); } 50% { transform: translateX(-50%) rotate(1.6deg); } }
+
+    .tv-shell {
+      position: relative; z-index: 1; border-radius: 26px 26px 15px 15px; padding: 14px 14px 0;
+      background:
+        radial-gradient(120% 90% at 18% -8%, var(--shell-hi), transparent 55%),
+        linear-gradient(165deg, var(--shell) 0%, var(--shell-lo) 100%);
+      box-shadow:
+        inset 0 2px 0 rgba(255,255,255,.22),
+        inset 0 -20px 26px -20px rgba(0,0,0,.55),
+        0 18px 34px -18px rgba(0,0,0,.65);
+      transition: transform .12s ease;
+    }
+    .tv-grommet {
+      position: absolute; top: 3px; width: 13px; height: 13px; border-radius: 50%; z-index: 3;
+      background: radial-gradient(circle at 35% 30%, var(--chrome), var(--chrome-dk));
+      box-shadow: inset 0 1px 2px rgba(0,0,0,.5), 0 1px 1px rgba(255,255,255,.15);
+    }
+    .tv-grommet.l { left: 21%; } .tv-grommet.r { right: 21%; }
+
+    .tv-screen-frame {
+      border-radius: 13px; padding: 2.5px; margin-top: 8px;
+      background: linear-gradient(160deg, rgba(0,0,0,.65), rgba(0,0,0,.85));
+      box-shadow: 0 2px 8px -3px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.06);
+    }
+    .tv-screen { position: relative; aspect-ratio: 16/10; border-radius: 11px; overflow: hidden; background: #050308; }
+    /* .reel is the graceful placeholder: no curated "best Seedance clips" feed
+       exists server-side yet (checked catalog.news/videoStory, myImages() and
+       /api/generations — those are static news copy or the caller's OWN
+       private gallery, never a cross-user curated list). Drop a real
+       <video autoplay muted loop playsinline src="…"> in .tv-screen right
+       above this div once that endpoint ships, cycling it with .clipdots'
+       active-dot index; until then this cinematic gradient is shown instead
+       of ever leaving the screen looking empty. */
+    .reel {
+      position: absolute; inset: -25%;
+      background:
+        radial-gradient(closest-side, rgba(124,92,255,.85), transparent 70%) 20% 30%/55% 55% no-repeat,
+        radial-gradient(closest-side, rgba(255,77,141,.8), transparent 70%) 75% 60%/60% 60% no-repeat,
+        radial-gradient(closest-side, rgba(245,182,74,.5), transparent 70%) 55% 12%/45% 45% no-repeat,
+        #0c0812;
+      filter: blur(18px) saturate(1.35);
+    }
+    @media (prefers-reduced-motion: no-preference) { .reel { animation: tvDrift 14s ease-in-out infinite alternate; } }
+    @keyframes tvDrift {
+      0% { background-position: 20% 30%, 75% 60%, 55% 12%; }
+      100% { background-position: 35% 55%, 55% 30%, 70% 40%; }
+    }
+    .scanlines { position: absolute; inset: 0; background: repeating-linear-gradient(180deg, rgba(0,0,0,.25) 0 1px, transparent 1px 3px); mix-blend-mode: multiply; opacity: .5; }
+    .vignette { position: absolute; inset: 0; background: radial-gradient(120% 100% at 50% 50%, transparent 55%, rgba(0,0,0,.55) 100%); }
+    .rec { position: absolute; top: 8px; left: 9px; display: flex; align-items: center; gap: 5px; font-family: ui-monospace, monospace; font-size: 9.5px; letter-spacing: .06em; color: #ffb3c8; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+    .rec i { width: 6px; height: 6px; border-radius: 50%; background: #ff4d6a; box-shadow: 0 0 6px #ff4d6a; font-style: normal; }
+    @media (prefers-reduced-motion: no-preference) { .rec i { animation: tvBlink 1.6s ease-in-out infinite; } }
+    @keyframes tvBlink { 50% { opacity: .25; } }
+    .playglyph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 26px; color: rgba(255,255,255,.45); text-shadow: 0 2px 10px rgba(0,0,0,.5); }
+    .neuron-badge { position: absolute; top: 8px; right: 9px; display: flex; align-items: center; gap: 5px; color: var(--ink); }
+    .neuron-mark { width: 15px; height: 15px; flex: none; filter: drop-shadow(0 0 3px rgba(255,255,255,.8)) drop-shadow(0 0 1px #fff); }
+    .neuron-badge b { font-family: ui-monospace, monospace; font-size: 9.5px; font-weight: 600; letter-spacing: .08em; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+    .clipdots { position: absolute; bottom: 7px; left: 0; right: 0; display: flex; gap: 5px; justify-content: center; }
+    .clipdots i { width: 12px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.28); display: block; }
+    .clipdots i.on { width: 20px; background: linear-gradient(90deg, var(--violet), var(--magenta)); }
+
+    .tv-deck { display: flex; align-items: center; gap: 10px; padding: 11px 12px 13px; }
+    .pwr {
+      width: 30px; height: 30px; border-radius: 50%; flex: none; display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(circle at 35% 30%, #2a2016, #120d08);
+      box-shadow: inset 0 1px 1px rgba(255,255,255,.12), inset 0 -2px 4px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.06);
+      color: var(--amber); font-size: 13px;
+    }
+    .plate { flex: 1; min-width: 0; }
+    .plate b { display: block; font-family: ui-monospace, monospace; font-size: 11px; font-weight: 600; letter-spacing: .04em; color: #fbe9cf; opacity: .92; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 1px rgba(0,0,0,.4); }
+    .plate small { display: block; font-size: 10.5px; color: #fbe9cf; opacity: .68; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .deck-right { display: flex; align-items: center; gap: 8px; flex: none; }
+    .led { width: 7px; height: 7px; border-radius: 50%; background: #ff5a4d; box-shadow: 0 0 7px #ff5a4d; display: block; }
+    @media (prefers-reduced-motion: no-preference) { .led { animation: tvPulse 2.1s ease-in-out infinite; } }
+    @keyframes tvPulse { 50% { opacity: .35; box-shadow: 0 0 2px #ff5a4d; } }
+    .grille { width: 34px; height: 20px; border-radius: 4px; background: repeating-linear-gradient(90deg, var(--shell-lo) 0 3px, transparent 3px 6px); opacity: .85; }
+
+    .tv-foot { position: absolute; bottom: -7px; width: 20px; height: 9px; border-radius: 0 0 6px 6px; background: var(--shell-lo); }
+    .tv-foot.l { left: 13%; } .tv-foot.r { right: 13%; }
+
     /* 2-tile Фото/Видео entry grid — replaces the 4-item "Что создаём" rail;
        discovery for text-to-image/product now happens via the gallery below. */
     .tile2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -2332,6 +2442,73 @@
               <span class="box"><b data-cd-m>—</b><span>минут</span></span>
             </span>
           </span>
+        </button>`;
+    }
+
+    /**
+     * The Home tab's "TV banner" — a full-width showcase reel of the best
+     * Seedance video generations, styled as an old CRT set (design: .tv* CSS
+     * above). Unlike promoBannerHtml() this is evergreen, not a time-limited
+     * offer, so it carries none of the sale-gating logic — it always renders.
+     * Tapping it opens Cinema Studio in video mode with Seedance preselected
+     * (#tvBanner's click handler, wired alongside #promoBanner's).
+     */
+    function promoTv() {
+      return `
+        <button class="tv" id="tvBanner" aria-label="Лучшее от Seedance — смотреть подборку">
+          <svg class="tv-antenna" viewBox="0 0 120 76" aria-hidden="true">
+            <path class="antenna-leg" d="M60,50 L25,74" />
+            <path class="antenna-leg" d="M60,50 L95,74" />
+            <path class="antenna-heart" d="M60,50 C40,34 22,28 22,16 C22,6 34,2 46,6 C53,8.5 58,13 60,18 C62,13 67,8.5 74,6 C86,2 98,6 98,16 C98,28 80,34 60,50 Z" />
+          </svg>
+          <div class="tv-shell">
+            <span class="tv-grommet l"></span>
+            <span class="tv-grommet r"></span>
+            <div class="tv-screen-frame">
+              <div class="tv-screen">
+                <!-- Real clip slot: once a curated best-of-Seedance feed exists
+                     server-side, drop <video autoplay muted loop playsinline
+                     src="…"> here (cycling 2-4 clips, syncing .clipdots'
+                     active index) — .reel below is the fallback until then. -->
+                <div class="reel"></div>
+                <div class="scanlines"></div>
+                <div class="vignette"></div>
+                <span class="rec"><i></i>REC</span>
+                <span class="neuron-badge">
+                  <svg class="neuron-mark" viewBox="0 0 100 100" aria-hidden="true">
+                    <g stroke="currentColor" fill="currentColor" stroke-width="7" stroke-linecap="round">
+                      <circle cx="50" cy="50" r="9" stroke="none" />
+                      <g transform="translate(50 50) rotate(0)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                      <g transform="translate(50 50) rotate(40) scale(.82)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                      <g transform="translate(50 50) rotate(80)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                      <g transform="translate(50 50) rotate(120) scale(.82)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                      <g transform="translate(50 50) rotate(160)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                      <g transform="translate(50 50) rotate(200) scale(.82)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                      <g transform="translate(50 50) rotate(240)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                      <g transform="translate(50 50) rotate(280) scale(.82)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                      <g transform="translate(50 50) rotate(320)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                    </g>
+                  </svg>
+                  <b>NEUROSHOT</b>
+                </span>
+                <span class="playglyph">▶</span>
+                <div class="clipdots"><i class="on"></i><i></i><i></i><i></i></div>
+              </div>
+            </div>
+            <div class="tv-deck">
+              <span class="pwr" aria-hidden="true">⏻</span>
+              <div class="plate">
+                <b>SEEDANCE · ЛУЧШЕЕ</b>
+                <small>тапните — снимем в этом стиле</small>
+              </div>
+              <div class="deck-right">
+                <span class="led"></span>
+                <span class="grille"></span>
+              </div>
+            </div>
+            <span class="tv-foot l"></span>
+            <span class="tv-foot r"></span>
+          </div>
         </button>`;
     }
 
@@ -4868,6 +5045,8 @@
 
           ${promoBannerHtml(d)}
 
+          ${promoTv()}
+
           <section class="reveal">
             <div class="tile2">
               <button class="tile tile-photo" data-open="image"><span class="em">📸</span><b>Фото</b><span>Пресет в один тап</span></button>
@@ -5111,6 +5290,14 @@
         const n = (d.catalog.news || []).find((x) => x.key === "seedance_fast");
         if (n) tryModel(n);
       };
+      // TV banner: same openStudio(modelKey) preselect mechanism as tryModel()
+      // above, but with the umbrella "seedance" key directly — studioList()
+      // (catalog.studio.video) carries that key for the actual Дёшево/Быстро/
+      // Качество row; "seedance_fast" (what the promo banner passes) is one of
+      // the 3 tiers folded UNDER it and is hidden from that list server-side
+      // (HIDDEN_SEEDANCE_KEYS, src/webapp.ts), so it wouldn't resolve here.
+      const tvBanner0 = document.getElementById("tvBanner");
+      if (tvBanner0) tvBanner0.onclick = () => openStudio({ mode: "video", modelKey: "seedance", origin: "tv" });
       renderPromptGallery("photo");
       startPromoCountdown();
       const gallSeg = document.getElementById("gallSeg");
