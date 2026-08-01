@@ -15,8 +15,19 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { achievements, activeXpActions, hasGrantedPack, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, latestPendingOrder, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, presetTrendingCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard } from "./db.js";
-import { enhancePrompt, ENHANCE_COST, ENHANCE_STACK } from "./enhance.js";
+import { achievements, activeXpActions, hasGrantedPack, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, latestPendingOrder, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, presetTrendingCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard, type GenerationRow } from "./db.js";
+import {
+  enhancePrompt,
+  splitStoryboard,
+  ENHANCE_COST,
+  ENHANCE_STACK,
+  ENHANCE_CONTEXT_LIMITS,
+  SHOT_TYPES,
+  SHOT_TYPE_IDS,
+  type EnhanceContext,
+  type EnhanceContextEntity,
+  type StoryboardEntity,
+} from "./enhance.js";
 import { latestReleaseId, unseenReleases } from "./changelog.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
 import { assertImageSafe, UnsafeImageError } from "./moderation.js";
@@ -56,6 +67,8 @@ import {
   priceFor,
   rawPriceFor,
   sceneModel,
+  SHEET_MODEL,
+  SHEET_PROMPTS,
   styleRefUrl,
   VIDEO_MODEL_PICKER,
   VIDEO_STORY,
@@ -219,18 +232,101 @@ export function authResponse(headers: Headers): { status: number; body: Record<s
  * They're surfaced only via the bot's dedicated /course command.
  */
 /**
+ * Validate + sanitize ONE Director Mode context entity ({label, description?}).
+ * Returns null on anything malformed — the whole request is then a 400, never
+ * a silent drop (same reject-not-truncate convention as the option validators).
+ */
+function parseContextEntity(raw: unknown, withId: false): EnhanceContextEntity | null;
+function parseContextEntity(raw: unknown, withId: true): StoryboardEntity | null;
+function parseContextEntity(raw: unknown, withId: boolean): (EnhanceContextEntity & { id?: string }) | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const o = raw as Record<string, unknown>;
+  const label = typeof o.label === "string" ? sanitizePrompt(o.label).slice(0, ENHANCE_CONTEXT_LIMITS.label) : "";
+  if (!label) return null;
+  const out: EnhanceContextEntity & { id?: string } = { label };
+  if (o.description != null) {
+    if (typeof o.description !== "string") return null;
+    const d = sanitizePrompt(o.description).slice(0, ENHANCE_CONTEXT_LIMITS.description);
+    if (d) out.description = d;
+  }
+  if (withId) {
+    const id = typeof o.id === "string" ? o.id.trim().slice(0, 64) : "";
+    if (!id) return null;
+    out.id = id;
+  }
+  return out;
+}
+
+/** Parse a characters/locations list with a hard entity cap; null = malformed. */
+function parseEntityList<T>(raw: unknown, max: number, one: (item: unknown) => T | null): T[] | null {
+  if (raw == null) return [];
+  if (!Array.isArray(raw) || raw.length > max) return null;
+  const out: T[] = [];
+  for (const item of raw) {
+    const e = one(item);
+    if (!e) return null;
+    out.push(e);
+  }
+  return out;
+}
+
+/**
+ * The optional Director Mode context on /api/enhance ("Собрать Seedance-промпт",
+ * spec §8 p.4). undefined = absent (the pre-existing plain-prompt call), null =
+ * present but malformed (→ 400).
+ */
+function parseEnhanceContext(raw: unknown): EnhanceContext | null | undefined {
+  if (raw == null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const characters = parseEntityList(o.characters, ENHANCE_CONTEXT_LIMITS.characters, (x) => parseContextEntity(x, false));
+  const locations = parseEntityList(o.locations, ENHANCE_CONTEXT_LIMITS.locations, (x) => parseContextEntity(x, false));
+  if (characters === null || locations === null) return null;
+  const ctx: EnhanceContext = {};
+  if (characters.length) ctx.characters = characters;
+  if (locations.length) ctx.locations = locations;
+  if (o.scenario != null) {
+    if (typeof o.scenario !== "string") return null;
+    const s = sanitizePrompt(o.scenario).slice(0, ENHANCE_CONTEXT_LIMITS.scenario);
+    if (s) ctx.scenario = s;
+  }
+  if (o.shot != null) {
+    if (typeof o.shot !== "object" || Array.isArray(o.shot)) return null;
+    const sh = o.shot as Record<string, unknown>;
+    const type = typeof sh.type === "string" ? sh.type.trim() : "";
+    const momentRu = typeof sh.momentRu === "string" ? sanitizePrompt(sh.momentRu).slice(0, ENHANCE_CONTEXT_LIMITS.shotText) : "";
+    const cameraDirectionEn =
+      typeof sh.cameraDirectionEn === "string" ? sanitizePrompt(sh.cameraDirectionEn).slice(0, ENHANCE_CONTEXT_LIMITS.shotText) : "";
+    // The shot always comes from a storyboard candidate or the manual gallery,
+    // both of which speak the fixed vocabulary — anything else is a probe.
+    if (!SHOT_TYPE_IDS.has(type) || !momentRu || !cameraDirectionEn) return null;
+    ctx.shot = { type, momentRu, cameraDirectionEn };
+  }
+  return ctx;
+}
+
+/**
  * POST /api/enhance — Prompt Enhancer (Cinema Studio ②). First enhance after
  * each generation start is free, then 1 patron; provider failure → 502 with
  * the charge already refunded (src/enhance.ts) and the client keeps its
  * original prompt.
+ *
+ * Director Mode extends the request with an optional `model` (selects the
+ * per-model rewrite style — unknown/absent falls back to the pre-existing
+ * generic style, so old clients see zero change) and an optional structured
+ * `context` (characters/locations/scenario/chosen shot) that the LLM weaves
+ * into the prompt. Response shape is unchanged.
  */
 export async function enhanceResponse(
   userId: number,
   body: Record<string, unknown> | null,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const raw = typeof body?.prompt === "string" ? body.prompt : "";
+  const model = typeof body?.model === "string" ? body.model : undefined;
+  const context = parseEnhanceContext(body?.context);
+  if (context === null) return { status: 400, body: { error: "bad_request" } };
   try {
-    const r = await enhancePrompt(userId, raw);
+    const r = await enhancePrompt(userId, raw, { model, context });
     if (!r.ok) {
       if (r.error === "insufficient") {
         const balance = (await getUser(userId))?.credits ?? 0;
@@ -242,6 +338,43 @@ export async function enhanceResponse(
   } catch (err) {
     console.error("enhance failed:", err);
     return { status: 502, body: { error: "enhance_failed" } };
+  }
+}
+
+/**
+ * POST /api/storyboard — Director Mode "Разбить на кадры" (spec §7): a whole
+ * scenario in the user's own words → 3-4 candidate single-take moments, each
+ * bound to a fixed shot type and to the REAL character/location ids the client
+ * sent, so the UI can show "👤 Аня" and know whose photos to attach.
+ *
+ * Consumes one charge from the SAME enhancer stack as /api/enhance (spec §9
+ * p.7) — same free/paid/402/refund discipline, same events. Unparseable or
+ * invalid LLM output is retried once server-side, then → 502 with any paid
+ * charge already refunded (the client falls back to its manual gallery).
+ */
+export async function storyboardResponse(
+  userId: number,
+  body: Record<string, unknown> | null,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const scenario =
+    typeof body?.scenario === "string" ? sanitizePrompt(body.scenario).slice(0, ENHANCE_CONTEXT_LIMITS.scenario) : "";
+  const characters = parseEntityList(body?.characters, ENHANCE_CONTEXT_LIMITS.characters, (x) => parseContextEntity(x, true));
+  const locations = parseEntityList(body?.locations, ENHANCE_CONTEXT_LIMITS.locations, (x) => parseContextEntity(x, true));
+  if (characters === null || locations === null) return { status: 400, body: { error: "bad_request" } };
+  if (!scenario) return { status: 400, body: { error: "empty" } };
+  try {
+    const r = await splitStoryboard(userId, scenario, characters, locations);
+    if (!r.ok) {
+      const balance = (await getUser(userId))?.credits ?? 0;
+      return { status: 402, body: { error: "insufficient", need: 1, balance, packs: packsPayload() } };
+    }
+    return {
+      status: 200,
+      body: { candidates: r.candidates, charged: r.charged, free: r.free, balance: r.balance, left: r.left },
+    };
+  } catch (err) {
+    console.error("storyboard failed:", err);
+    return { status: 502, body: { error: "storyboard_failed" } };
   }
 }
 
@@ -550,6 +683,11 @@ function catalogPayload(usage: Record<string, number>, recent: Record<string, nu
           : null,
       };
     }),
+    // Director Mode shot-type vocabulary (spec §7): ids + RU labels only — the
+    // English directorial hints stay server-side with the other curated text.
+    // The manual "или выбрать вручную" gallery renders from this list, and the
+    // ids are what /api/storyboard candidates and enhance context speak.
+    shotTypes: SHOT_TYPES.map((s) => ({ id: s.id, label: s.labelRu })),
     // Video story composer (personalize any image→video): ids/labels only.
     videoStory: VIDEO_STORY.map((s) => ({
       id: s.id,
@@ -574,6 +712,36 @@ function catalogPayload(usage: Record<string, number>, recent: Record<string, nu
       kind: MODELS[n.key].kind,
       freeTrial: priceFor(MODELS[n.key]) <= config.freeCredits,
     })),
+  };
+}
+
+/**
+ * The client-safe projection of a generation row — the ONLY generation shape
+ * /api/me and /api/generations ever ship.
+ *
+ * Deliberately drops `prompt`: for preset/campaign/sheet rows that column holds
+ * the full CURATED prompt, which must never reach a client (webapp.ts's own
+ * invariant everywhere else), and legacy rows carry no flag saying whether
+ * their prompt was user-authored — so the raw column is unshippable for ALL
+ * rows. What a client may see is `user_prompt`, written only from text the
+ * user actually typed (see generateResponse). The client never read `g.prompt`
+ * from these payloads, so dropping it is a pure leak fix, not a UI change.
+ */
+function publicGeneration(g: GenerationRow): Record<string, unknown> {
+  return {
+    id: g.id,
+    model: g.model,
+    credits: g.credits,
+    status: g.status,
+    output_url: g.output_url,
+    output_urls: g.output_urls,
+    created_at: g.created_at,
+    finished_at: g.finished_at,
+    source_kind: g.source_kind,
+    source_id: g.source_id,
+    user_prompt: g.user_prompt,
+    opts: g.opts,
+    error_reason: g.error_reason,
   };
 }
 
@@ -613,7 +781,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     // No raw tg id in ref_code — an opaque link the client builds the share URL from.
     user: { id: user.id, username: user.username, first_name: user.first_name, ref_code: refCode },
     dashboard,
-    generations,
+    generations: generations.map(publicGeneration),
     bot_username: config.webappBotUsername,
     // null on production (the default `role: "bot"` never sets a label) — the
     // client only renders the "🧪 STAGING" ribbon when this is non-null, so a
@@ -1023,6 +1191,14 @@ export async function generateResponse(
   // Set only in the `source === "model"` branch, when the client sent the
   // Seedance umbrella key — read further down by the `subject` gate.
   let viaSeedanceUmbrella = false;
+  // ---- Row metadata (Director Mode, spec §10) — persisted on the pending row
+  // so the gallery/detail view can say what a render was without ever needing
+  // the composed prompt. userPrompt is the ONE prompt field a client may see:
+  // set only in the "model" branch, from text the user actually typed.
+  let sourceKind: "preset" | "campaign" | "campaign_video" | "model" | "sheet";
+  let userPrompt: string | undefined;
+  let seedanceTierMeta: string | undefined;
+  let sheetMeta: { sheetType: "character" | "location"; label?: string } | undefined;
 
   // Aspect a preset PINS (marketplace cards must be 3:4) — used as the default
   // ratio below when the user didn't pick one themselves (explicit choice wins).
@@ -1060,6 +1236,7 @@ export async function generateResponse(
     const custom = sanitizePrompt(typeof body?.custom === "string" ? body.custom : "").slice(0, 200);
     if (custom) composed += ` Extra details from the user: ${custom}.`;
     [model, prompt, crafted] = [m, composed, true];
+    sourceKind = "preset";
     presetAspect = p.aspect;
     presetStyleRef = p.styleRef;
     sourceId = p.id;
@@ -1087,6 +1264,7 @@ export async function generateResponse(
     const custom = sanitizePrompt(typeof body?.custom === "string" ? body.custom : "").slice(0, 200);
     if (custom) composed += ` Extra details from the user: ${custom}.`;
     [model, prompt, crafted] = [PRESET_MODEL, composed, true];
+    sourceKind = "campaign";
     presetStyleRef = p.styleRef;
     // Same "camp:preset" shape the bot's cpre: taps log — one convention for the
     // "Ваш путь в NeuroShot" roadmap's scenario signal, whichever surface it came from.
@@ -1123,6 +1301,7 @@ export async function generateResponse(
     const composed = composeVideoStory(base, body);
     if (composed === null) return { status: 400, body: { error: "bad_option" } };
     [model, prompt, crafted] = [vmodel, composed, true];
+    sourceKind = "campaign_video";
   } else if (source === "model") {
     // The WHOLE curated registry is selectable (Cinema Studio: every model
     // visible with its price — docs/cinema-studio-spec.md G2/G5). Validation is
@@ -1149,9 +1328,16 @@ export async function generateResponse(
       const hasAvRef = audioUrls.length > 0 || videoUrls.length > 0;
       m = modelByKey(routeSeedance(tier, refCount, hasAvRef));
       if (!m) return { status: 400, body: { error: "bad_request" } };
+      // Persist the TOGGLE position, not the routed key — the resolved tier is
+      // already the row's `model`; the toggle is what a recreate flow replays.
+      seedanceTierMeta = tier;
     }
     if (m.kind !== "text_to_image" && !imageUrl) return { status: 400, body: { error: "bad_request" } };
     let raw = typeof body?.prompt === "string" ? body.prompt : "";
+    // The user's OWN words, before any curated story fragments are folded in —
+    // the one prompt text that may ever ship back to a client (detail view /
+    // recreate). Sanitized exactly like the render path sanitizes it.
+    userPrompt = sanitizePrompt(raw) || undefined;
     // Video: fold in the composer story/personalization before craft mapping.
     if (m.kind === "image_to_video") {
       const composed = composeVideoStory(raw, body);
@@ -1159,6 +1345,25 @@ export async function generateResponse(
       raw = composed;
     }
     [model, prompt, crafted] = [m, raw, false];
+    sourceKind = "model";
+  } else if (source === "sheet") {
+    // Director Mode character/location sheets (spec §5-§6): the client sends
+    // ONLY the sheet type, its source photos (already validated above through
+    // the same allow-list as every reference photo) and a display label. The
+    // composition prompt is a server-side constant (SHEET_PROMPTS) — curated
+    // text never travels to the client — and the model is pinned server-side
+    // exactly as the campaign branch pins PRESET_MODEL. Charged like any other
+    // render of that model; count stays 1 (no num_images sent), the whole
+    // multi-panel breakdown lives in the prompt.
+    const sheetType = body?.sheetType === "character" || body?.sheetType === "location" ? body.sheetType : null;
+    if (!sheetType || !imageUrl) return { status: 400, body: { error: "bad_request" } };
+    [model, prompt, crafted] = [SHEET_MODEL, SHEET_PROMPTS[sheetType], true];
+    sourceKind = "sheet";
+    const label = typeof body?.label === "string" ? sanitizePrompt(body.label).slice(0, 60) : "";
+    sheetMeta = { sheetType, ...(label ? { label } : {}) };
+    // A reference sheet is a wide multi-panel canvas (the prompt's layout says
+    // so) — pin 16:9 as the default; an explicit client choice still wins.
+    presetAspect = "16:9";
   } else {
     return { status: 400, body: { error: "bad_request" } };
   }
@@ -1188,7 +1393,10 @@ export async function generateResponse(
     aspectRatio: typeof body?.aspect_ratio === "string" ? body.aspect_ratio : presetAspect,
     resolution: typeof body?.resolution === "string" ? body.resolution : undefined,
     endImageUrl,
-    numImages: body?.num_images != null ? Number(body.num_images) : undefined,
+    // A sheet is ONE composed image by product contract (the multi-panel
+    // breakdown lives inside the prompt) — count is pinned to 1 regardless of
+    // what a hand-rolled request asks for.
+    numImages: sourceKind !== "sheet" && body?.num_images != null ? Number(body.num_images) : undefined,
     // `model` here is already the FINAL resolved model (the Seedance router
     // above runs first). Suppressed ONLY when the request came in through the
     // umbrella "seedance" key and resolved to a non-reference tier — the
@@ -1245,7 +1453,12 @@ export async function generateResponse(
     if (videoUrls.length) opts.videoUrls = videoUrls;
   }
 
-  const r = await startWebGeneration(userId, model, prompt, imageUrl, crafted, opts, sourceId);
+  const r = await startWebGeneration(userId, model, prompt, imageUrl, crafted, opts, sourceId, {
+    sourceKind,
+    userPrompt,
+    seedanceTier: seedanceTierMeta,
+    sheet: sheetMeta,
+  });
   if (!r.ok) {
     if (r.error === "insufficient") {
       const balance = (await getUser(userId))?.credits ?? 0;
@@ -1710,7 +1923,25 @@ export function createWebApp(): Server {
         const rl = hit(`enhance:${user.id}`, config.rateLimitEnhancePerMin, 60_000);
         if (rl.limited) return tooManyRequests(res, rl.retryAfterMs);
         await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-        const { status, body } = await enhanceResponse(user.id, await readJsonBody(req, 8 * 1024));
+        // 16 KB (was 8): the Director Mode context — up to 6 characters + 4
+        // locations with descriptions plus a 1000-char scenario, in Cyrillic
+        // (2 bytes/char in UTF-8 JSON) — legitimately clears 8 KB.
+        const { status, body } = await enhanceResponse(user.id, await readJsonBody(req, 16 * 1024));
+        return json(res, status, body);
+      }
+
+      // POST /api/storyboard — Director Mode "Разбить на кадры": scenario +
+      // cast → 3-4 single-take candidates. Shares the enhancer's per-minute
+      // rate config (it is the same class of LLM assist) under its own bucket,
+      // so a storyboard burst can't starve plain enhances and vice versa.
+      if (url.pathname === "/api/storyboard") {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const rl = hit(`storyboard:${user.id}`, config.rateLimitEnhancePerMin, 60_000);
+        if (rl.limited) return tooManyRequests(res, rl.retryAfterMs);
+        await getOrCreateUser(user.id, user.username, null, config.freeCredits);
+        const { status, body } = await storyboardResponse(user.id, await readJsonBody(req, 16 * 1024));
         return json(res, status, body);
       }
 
@@ -1723,7 +1954,7 @@ export function createWebApp(): Server {
         const reqPage = Math.max(1, Math.floor(Number(url.searchParams.get("page")) || 1));
         const { items, total } = await galleryPage(user.id, size, (reqPage - 1) * size);
         const pages = Math.max(1, Math.ceil(total / size));
-        return json(res, 200, { items, total, page: Math.min(reqPage, pages), pageSize: size, pages });
+        return json(res, 200, { items: items.map(publicGeneration), total, page: Math.min(reqPage, pages), pageSize: size, pages });
       }
 
       // GET /api/generations/:id — poll a render's status (owner-scoped).
@@ -1741,6 +1972,10 @@ export function createWebApp(): Server {
           output_urls: g.output_urls,
           model: g.model,
           credits: g.credits,
+          // WHY a failed render failed, as a fixed code (see ErrorReason,
+          // src/generate.ts) — the client maps it onto its own RU copy instead
+          // of the one generic "не получилось" toast. Null unless failed.
+          error_reason: g.error_reason,
         });
       }
 

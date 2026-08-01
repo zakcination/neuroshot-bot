@@ -151,7 +151,7 @@ export async function startDubbing(
       console.error(`dubbing failed (${modelKey}):`, err);
       // Refund ONLY if we win the pending→error CAS — never double-refund, never
       // refund a job that already completed 'ok'. Exactly-once (same as renders).
-      if (await completeGeneration(id, "error", undefined, costUsd)) {
+      if (await completeGeneration(id, "error", undefined, costUsd, undefined, undefined, "provider_error")) {
         await addCredits(userId, credits, "refund", modelKey);
       }
       await logEvent(userId, "dub_error", modelKey).catch(() => {});

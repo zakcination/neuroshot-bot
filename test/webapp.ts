@@ -55,6 +55,14 @@ interface FalCall {
 }
 const falCalls: FalCall[] = [];
 let anyLlmFail = false; // flip to make the enhancer's LLM call blow up (refund path)
+// When set, every fal-ai/any-llm call returns EXACTLY this string — lets the
+// storyboard steps script the LLM's JSON (valid, invalid, junk) per attempt.
+// null = the default echo reply below. Reset to null after each use.
+let anyLlmReply: string | null = null;
+// Flip to make GENERATION models (not the LLM, not the nsfw classifier) throw a
+// plain one-off error — the generic provider failure that must NOT trip the
+// provider-block breaker (unlike providerLocked's 403 below). Reset after use.
+let genFail = false;
 // Flip to make every generation model reject the way a LOCKED PROVIDER ACCOUNT
 // does (403 + "Exhausted balance") — the failure that masquerades as one
 // broken model. Reset to false to simulate the balance being topped up.
@@ -83,8 +91,10 @@ let nsfwCheckCalls = 0;
   }
   if (endpoint === "fal-ai/any-llm") {
     if (anyLlmFail) throw new Error("llm boom");
+    if (anyLlmReply !== null) return { data: { output: anyLlmReply }, requestId: `req-${falCalls.length}` };
     return { data: { output: `Cinematic, richly lit: ${String(opts.input.prompt)}` }, requestId: `req-${falCalls.length}` };
   }
+  if (genFail) throw new Error("model boom");
   if (endpoint.includes("video")) {
     return { data: { video: { url: `https://fal.test/out/${falCalls.length}.mp4` } }, requestId: `req-${falCalls.length}` };
   }
@@ -3959,6 +3969,384 @@ await step("release notes: shown once, never to a newcomer, and only ever moving
     headers: { Authorization: `tma ${signInitData({ id: old, username: "old_user", first_name: "O" })}` },
   })).json()) as { whatsNew: unknown[] };
   assert.deepEqual(after.whatsNew, [], "a read note must not come back");
+});
+
+// ---- Director Mode backend: model-aware enhancer, storyboard, sheets, metadata ----
+
+await step("model-aware enhancer: Seedance style by key, byte-identical fallback, context woven in", async () => {
+  const { ENHANCE_STYLES, ENHANCE_STYLE_DEFAULT } = await import("../src/enhance.js");
+  const du = { id: 990066, username: "director", first_name: "Dir" };
+  await getOrCreateUser(du.id, du.username, null, 0);
+  await addCredits(du.id, 10, "admin_grant", "test");
+  const H = { Authorization: `tma ${signInitData(du)}`, "Content-Type": "application/json" };
+  const call = (body: Record<string, unknown>) =>
+    fetch(`${base}/api/enhance`, { method: "POST", headers: H, body: JSON.stringify(body) });
+  const meLeft = async () =>
+    ((await (await fetch(`${base}/api/me`, { headers: H })).json()) as { enhance: { left: number } }).enhance.left;
+
+  // The umbrella key the client actually sends selects the Seedance style.
+  const r1 = await call({ prompt: "кот в очках", model: "seedance" });
+  assert.equal(r1.status, 200);
+  const c1 = falCalls.at(-1)!;
+  assert.equal(c1.endpoint, "fal-ai/any-llm");
+  assert.equal(c1.input.system_prompt, ENHANCE_STYLES.seedance);
+  assert.match(String(c1.input.system_prompt), /one continuous take/);
+  assert.equal(c1.input.prompt, "кот в очках", "a plain call must send the raw idea untouched");
+
+  // No model → the OLD system prompt, byte-for-byte — an old client that never
+  // sends `model` must be indistinguishable from before this feature existed.
+  await call({ prompt: "кот" });
+  assert.equal(falCalls.at(-1)!.input.system_prompt, ENHANCE_STYLE_DEFAULT);
+
+  // A model WITHOUT its own style entry falls back identically (paid tap — the
+  // free stack of 2 is spent; the charge mechanics are pinned by the earlier
+  // enhancer step, here we only care that the style resolution is unchanged).
+  const r3 = await call({ prompt: "кот", model: "nb2_image" });
+  assert.equal(r3.status, 200);
+  assert.equal(falCalls.at(-1)!.input.system_prompt, ENHANCE_STYLE_DEFAULT);
+
+  // Director Mode context: characters/locations/scenario/shot are serialized
+  // into the USER message (the LLM weaves them) — and with context attached an
+  // empty free-text idea is allowed, because the context IS the idea.
+  const r4 = await call({
+    prompt: "",
+    model: "seedance",
+    context: {
+      characters: [{ label: "Аня", description: "девушка в красном плаще" }],
+      locations: [{ label: "ночной город" }],
+      scenario: "Аня идёт по ночному городу под неоновыми вывесками",
+      shot: { type: "tense_closeup", momentRu: "Аня у витрины", cameraDirectionEn: "slow push-in on the eyes" },
+    },
+  });
+  assert.equal(r4.status, 200);
+  const c4 = falCalls.at(-1)!;
+  assert.equal(c4.input.system_prompt, ENHANCE_STYLES.seedance);
+  const msg = String(c4.input.prompt);
+  assert.match(msg, /Аня — девушка в красном плаще/);
+  assert.match(msg, /ночной город/);
+  assert.match(msg, /slow push-in on the eyes/);
+  assert.match(msg, /Аня у витрины/);
+
+  // Malformed context (a shot type outside the fixed vocabulary) → 400 before
+  // any charge is touched.
+  const leftBefore = await meLeft();
+  const bad = await call({
+    prompt: "x",
+    context: { shot: { type: "vertigo_zoom", momentRu: "x", cameraDirectionEn: "y" } },
+  });
+  assert.equal(bad.status, 400);
+  assert.equal(((await bad.json()) as { error: string }).error, "bad_request");
+  assert.equal(await meLeft(), leftBefore, "a rejected context must not consume a charge");
+
+  // No prompt AND no context is still the pre-existing "empty" refusal.
+  assert.equal((await call({ prompt: "   " })).status, 400);
+});
+
+await step("storyboard split: strict JSON validated, ids filtered, same stack, refund after one retry", async () => {
+  const { parseStoryboard } = await import("../src/enhance.js");
+  const su = { id: 990055, username: "boarder", first_name: "Story" };
+  await getOrCreateUser(su.id, su.username, null, 0);
+  const H = { Authorization: `tma ${signInitData(su)}`, "Content-Type": "application/json" };
+  const post = (body: Record<string, unknown>) =>
+    fetch(`${base}/api/storyboard`, { method: "POST", headers: H, body: JSON.stringify(body) });
+  const req = {
+    scenario: "Аня идёт по ночному городу, останавливается у витрины, оборачивается на звук",
+    characters: [{ id: "c1", label: "Аня", description: "девушка в красном плаще" }],
+    locations: [{ id: "l1", label: "ночной город" }],
+  };
+  const meLeft = async () =>
+    ((await (await fetch(`${base}/api/me`, { headers: H })).json()) as { enhance: { left: number } }).enhance.left;
+
+  // The LLM answers with 3 items: one fully valid, one carrying an id we never
+  // sent (dropped from the array, candidate kept), one with a shot type outside
+  // the fixed list (candidate dropped entirely).
+  anyLlmReply = JSON.stringify([
+    { shotType: "hero_low_angle", momentRu: "Аня выходит из тени у витрины", characterIds: ["c1"], locationIds: ["l1"], cameraDirectionEn: "low angle, camera slowly rises" },
+    { shotType: "wide_quiet", momentRu: "Ночной город замирает", characterIds: [], locationIds: ["l1", "bogus"], cameraDirectionEn: "locked-off wide frame" },
+    { shotType: "vertigo_zoom", momentRu: "Не из словаря", characterIds: ["nope"], locationIds: [], cameraDirectionEn: "dolly zoom" },
+  ]);
+  const r1 = await post(req);
+  assert.equal(r1.status, 200);
+  const d1 = (await r1.json()) as {
+    candidates: Array<{ shotType: string; momentRu: string; characterIds: string[]; locationIds: string[]; cameraDirectionEn: string }>;
+    charged: number; free: boolean; left: number;
+  };
+  assert.equal(d1.candidates.length, 2, "the out-of-vocabulary shot type must be rejected");
+  assert.equal(d1.candidates[0].shotType, "hero_low_angle");
+  assert.deepEqual(d1.candidates[0].characterIds, ["c1"]);
+  assert.deepEqual(d1.candidates[1].locationIds, ["l1"], "an id we never sent must be filtered out");
+  assert.equal(d1.free, true);
+  assert.equal(d1.charged, 0);
+  assert.equal(d1.left, 1, "the storyboard call must consume the SAME enhancer stack");
+  const llmCall = falCalls.at(-1)!;
+  assert.equal(llmCall.endpoint, "fal-ai/any-llm");
+  assert.match(String(llmCall.input.system_prompt), /hero_low_angle/);
+  assert.match(String(llmCall.input.system_prompt), /JSON array/);
+  assert.match(String(llmCall.input.prompt), /id: c1 — Аня/);
+
+  // Second free tap empties the stack; the third hits the SAME 402 paywall
+  // shape as /api/enhance.
+  assert.equal(((await (await post(req)).json()) as { left: number }).left, 0);
+  const pay = await post(req);
+  assert.equal(pay.status, 402);
+  const payBody = (await pay.json()) as { error: string; need: number; packs: unknown[] };
+  assert.equal(payBody.error, "insufficient");
+  assert.equal(payBody.need, 1);
+  assert.ok(payBody.packs.length > 0);
+
+  // 1 patron buys a whole stack, exactly like the enhancer.
+  await addCredits(su.id, 1, "admin_grant", "test");
+  const paid = (await (await post(req)).json()) as { charged: number; free: boolean; balance: number; left: number };
+  assert.equal(paid.free, false);
+  assert.equal(paid.charged, 1);
+  assert.equal(paid.balance, 0);
+  assert.equal(paid.left, 1);
+  assert.equal(((await (await post(req)).json()) as { free: boolean; left: number }).left, 0); // drain
+
+  // Unusable LLM output: retried exactly ONCE, then 502 — with the paid patron
+  // refunded and the stack exactly as before the tap.
+  await addCredits(su.id, 1, "admin_grant", "test");
+  anyLlmReply = "sorry, I can only answer in prose";
+  const callsBefore = falCalls.length;
+  const boom = await post(req);
+  assert.equal(boom.status, 502);
+  assert.equal(((await boom.json()) as { error: string }).error, "storyboard_failed");
+  assert.equal(falCalls.length, callsBefore + 2, "invalid output must be retried exactly once");
+  assert.equal(Number((await query("SELECT credits FROM users WHERE id = $1", [su.id]))[0].credits), 1, "the paid charge must come back");
+  assert.equal(await meLeft(), 0, "a failed split must not consume a charge");
+  anyLlmReply = null;
+
+  // Input guards: no scenario → 400 empty; more characters than the Director
+  // Mode slot limit (6) → 400, both without touching the stack or the wallet.
+  assert.equal(((await (await post({ ...req, scenario: "  " })).json()) as { error: string }).error, "empty");
+  const crowd = { ...req, characters: Array.from({ length: 7 }, (_, i) => ({ id: `c${i}`, label: `Герой ${i}` })) };
+  assert.equal((await post(crowd)).status, 400);
+  assert.equal(Number((await query("SELECT credits FROM users WHERE id = $1", [su.id]))[0].credits), 1);
+
+  // parseStoryboard is the real contract boundary — pin its edges directly:
+  // fenced/prose-wrapped JSON parses; an all-invalid array is a null, not [].
+  const ids = new Set(["c1"]);
+  const fenced = "```json\n[{\"shotType\":\"dutch_angle\",\"momentRu\":\"Тревога\",\"characterIds\":[\"c1\"],\"locationIds\":[],\"cameraDirectionEn\":\"tilted frame\"}]\n```";
+  const parsed = parseStoryboard(fenced, ids, new Set());
+  assert.equal(parsed?.length, 1);
+  assert.equal(parsed![0].shotType, "dutch_angle");
+  assert.equal(parseStoryboard("[{\"shotType\":\"nope\",\"momentRu\":\"x\",\"cameraDirectionEn\":\"y\"}]", ids, new Set()), null);
+  assert.equal(parseStoryboard("no brackets at all", ids, new Set()), null);
+});
+
+await step("sheet generation: pinned model + server-side prompt, charged like a normal render, marked on the row", async () => {
+  const { SHEET_PROMPTS } = await import("../src/models.js");
+  const { sanitizePrompt } = await import("../src/promptcraft.js");
+  const shu = { id: 990044, username: "sheeter", first_name: "Sheet" };
+  await getOrCreateUser(shu.id, shu.username, null, 0);
+  await addCredits(shu.id, 100, "admin_grant", "test");
+  const H = { Authorization: `tma ${signInitData(shu)}`, "Content-Type": "application/json" };
+  const gen = (body: Record<string, unknown>) =>
+    fetch(`${base}/api/generate`, { method: "POST", headers: H, body: JSON.stringify(body) });
+
+  const r = await gen({
+    source: "sheet",
+    sheetType: "character",
+    image_urls: ["https://fal.test/storage/u-10.jpg", "https://fal.test/storage/u-11.jpg"],
+    label: "Аня",
+  });
+  assert.equal(r.status, 200);
+  const d = (await r.json()) as { id: number; credits: number; balance: number };
+  assert.equal(d.credits, 4, "a sheet is charged exactly like a normal nb2_edit render");
+  assert.equal(d.balance, 96);
+  assert.equal((await pollGen(d.id, H)).status, "ok");
+
+  // The provider got the pinned edit model, ALL source photos, the wide canvas,
+  // count 1 (no num_images key) — and the curated composition prompt.
+  const call = falCalls.at(-1)!;
+  assert.equal(call.endpoint, "fal-ai/nano-banana-2/edit");
+  const urls = call.input.image_urls as string[];
+  assert.equal(urls.length, 2);
+  assert.equal(urls[0], "https://fal.test/storage/u-10.jpg", "the first photo must stay the primary");
+  assert.equal(call.input.aspect_ratio, "16:9");
+  assert.equal("num_images" in call.input, false, "a sheet is always ONE composed image");
+  assert.match(String(call.input.prompt), /character reference sheet/);
+  assert.match(String(call.input.prompt), /LEFT BLOCK/);
+
+  // The row is marked for the client: source_kind + the sheet marker and ref
+  // counts inside opts; user_prompt stays NULL (the user typed no prompt — the
+  // label is metadata, not prompt text).
+  const row = (await query("SELECT source_kind, user_prompt, prompt, opts FROM generations WHERE id = $1", [d.id]))[0];
+  assert.equal(row.source_kind, "sheet");
+  assert.equal(row.user_prompt, null);
+  // Curated prompts pass sanitation only (crafted=true skips the craft
+  // mapping); sanitation collapses the layout newlines to single spaces.
+  assert.equal(
+    String(row.prompt),
+    sanitizePrompt(SHEET_PROMPTS.character, Number.POSITIVE_INFINITY),
+    "the curated sheet prompt must be stored with no craft suffix appended",
+  );
+  const opts = JSON.parse(String(row.opts)) as { aspect: string; refs: { photos: number; audio: number; video: number }; sheet: { sheetType: string; label: string } };
+  assert.equal(opts.aspect, "16:9");
+  assert.deepEqual(opts.refs, { photos: 2, audio: 0, video: 0 });
+  assert.deepEqual(opts.sheet, { sheetType: "character", label: "Аня" });
+
+  // …and what the CLIENT sees carries the marker but never the curated text.
+  const me = (await (await fetch(`${base}/api/me`, { headers: H })).json()) as {
+    generations: Array<Record<string, unknown>>;
+  };
+  const shipped = me.generations.find((g) => g.id === d.id)!;
+  assert.equal(shipped.source_kind, "sheet");
+  assert.deepEqual((shipped.opts as { sheet: unknown }).sheet, { sheetType: "character", label: "Аня" });
+  assert.equal("prompt" in shipped, false, "the curated sheet prompt must never reach the payload");
+  assert.equal(shipped.user_prompt, null);
+
+  // The location twin uses its own curated prompt.
+  const rl = await gen({ source: "sheet", sheetType: "location", image_urls: ["https://fal.test/storage/u-12.jpg"] });
+  assert.equal(rl.status, 200);
+  await pollGen(((await rl.json()) as { id: number }).id, H);
+  assert.match(String(falCalls.at(-1)!.input.prompt), /location reference sheet/);
+  assert.match(String(falCalls.at(-1)!.input.prompt), /establishing panel/);
+
+  // Guards: unknown sheetType, missing photos, over the model's input cap —
+  // all refused before any charge.
+  const balBefore = ((await (await fetch(`${base}/api/me`, { headers: H })).json()) as { dashboard: { credits: number } }).dashboard.credits;
+  assert.equal((await gen({ source: "sheet", sheetType: "prop", image_urls: ["https://fal.test/storage/u-10.jpg"] })).status, 400);
+  assert.equal((await gen({ source: "sheet", sheetType: "character" })).status, 400);
+  const over = await gen({
+    source: "sheet", sheetType: "character",
+    image_urls: [10, 11, 12, 13, 14].map((i) => `https://fal.test/storage/u-${i}.jpg`),
+  });
+  assert.equal(over.status, 400);
+  const overBody = (await over.json()) as { error: string; maxInputs: number };
+  assert.equal(overBody.error, "too_many_inputs");
+  assert.equal(overBody.maxInputs, 4);
+  const balAfter = ((await (await fetch(`${base}/api/me`, { headers: H })).json()) as { dashboard: { credits: number } }).dashboard.credits;
+  assert.equal(balAfter, balBefore, "a refused sheet must not charge");
+
+  // count is pinned to 1 by contract: a hand-rolled num_images must neither
+  // multiply the charge nor reach the provider.
+  const pinned = await gen({ source: "sheet", sheetType: "character", image_urls: ["https://fal.test/storage/u-10.jpg"], num_images: 4 });
+  assert.equal(pinned.status, 200);
+  const pd = (await pinned.json()) as { id: number; credits: number };
+  assert.equal(pd.credits, 4, "a sheet must always be charged as ONE image");
+  await pollGen(pd.id, H);
+  assert.equal("num_images" in falCalls.at(-1)!.input, false);
+});
+
+await step("generation metadata: client-shape opts + user_prompt on the row; curated prompts never in a payload", async () => {
+  const mu = { id: 990033, username: "metadata", first_name: "Meta" };
+  await getOrCreateUser(mu.id, mu.username, null, 0);
+  await addCredits(mu.id, 300, "admin_grant", "test");
+  const H = { Authorization: `tma ${signInitData(mu)}`, "Content-Type": "application/json" };
+  const gen = (body: Record<string, unknown>) =>
+    fetch(`${base}/api/generate`, { method: "POST", headers: H, body: JSON.stringify(body) });
+
+  // A model-source render: what the user PICKED lands in opts, what the user
+  // TYPED lands in user_prompt — while the stored `prompt` column (with the
+  // craft suffix appended) stays server-side.
+  const r1 = await gen({ source: "model", model: "text_to_image", prompt: "домик у моря", aspect_ratio: "16:9", num_images: 2 });
+  assert.equal(r1.status, 200);
+  const id1 = ((await r1.json()) as { id: number }).id;
+  await pollGen(id1, H);
+  const row1 = (await query("SELECT source_kind, user_prompt, prompt, opts, finished_at FROM generations WHERE id = $1", [id1]))[0];
+  assert.equal(row1.source_kind, "model");
+  assert.equal(row1.user_prompt, "домик у моря");
+  assert.notEqual(row1.prompt, row1.user_prompt, "the stored prompt carries the craft mapping; user_prompt is the raw idea");
+  assert.deepEqual(JSON.parse(String(row1.opts)), { aspect: "16:9", count: 2 });
+  assert.ok(row1.finished_at, "a terminal row must carry finished_at");
+
+  // A Seedance-umbrella render records the TOGGLE the user set; the resolved
+  // tier is already the row's model key.
+  const r2 = await gen({
+    source: "model", model: "seedance", seedance_tier: "cheap", duration: 4,
+    image_url: "https://fal.test/storage/u-1.jpg", prompt: "медленный наезд",
+  });
+  assert.equal(r2.status, 200);
+  const id2 = ((await r2.json()) as { id: number }).id;
+  await pollGen(id2, H);
+  const row2 = (await query("SELECT model, opts FROM generations WHERE id = $1", [id2]))[0];
+  assert.equal(row2.model, "seedance_mini");
+  const opts2 = JSON.parse(String(row2.opts)) as { tier: string; duration: number; refs: { photos: number; audio: number; video: number } };
+  assert.equal(opts2.tier, "cheap");
+  assert.equal(opts2.duration, 4);
+  assert.deepEqual(opts2.refs, { photos: 1, audio: 0, video: 0 });
+
+  // A preset render: source kind + id, but NO user prompt (the user typed
+  // nothing) — and the curated composed prompt appears in NO payload, on NO
+  // endpoint, for ANY row.
+  const r3 = await gen({ source: "preset", id: "headshot", image_url: "https://fal.test/storage/u-1.jpg" });
+  assert.equal(r3.status, 200);
+  const id3 = ((await r3.json()) as { id: number }).id;
+  await pollGen(id3, H);
+  const row3 = (await query("SELECT source_kind, source_id, user_prompt FROM generations WHERE id = $1", [id3]))[0];
+  assert.equal(row3.source_kind, "preset");
+  assert.equal(row3.source_id, "headshot");
+  assert.equal(row3.user_prompt, null);
+
+  const me = (await (await fetch(`${base}/api/me`, { headers: H })).json()) as { generations: Array<Record<string, unknown>> };
+  for (const g of me.generations) assert.equal("prompt" in g, false, "/api/me must never ship a prompt column");
+  const shipped3 = me.generations.find((g) => g.id === id3)!;
+  assert.equal(shipped3.source_kind, "preset");
+  assert.equal(shipped3.source_id, "headshot");
+  const gal = (await (await fetch(`${base}/api/generations?size=10`, { headers: H })).json()) as { items: Array<Record<string, unknown>> };
+  assert.ok(gal.items.length >= 3);
+  for (const g of gal.items) assert.equal("prompt" in g, false, "the gallery must never ship a prompt column");
+  assert.deepEqual((gal.items.find((g) => g.id === id1) as { opts: unknown }).opts, { aspect: "16:9", count: 2 });
+});
+
+await step("error reasons: a fixed code on the row + poll payload, refund still exactly once", async () => {
+  const { reapStalePending } = await import("../src/db.js");
+  const { resetProviderBlock } = await import("../src/generate.js");
+  const eu = { id: 990022, username: "errcase", first_name: "Err" };
+  await getOrCreateUser(eu.id, eu.username, null, 0);
+  await addCredits(eu.id, 50, "admin_grant", "test");
+  const H = { Authorization: `tma ${signInitData(eu)}`, "Content-Type": "application/json" };
+  const gen = () => fetch(`${base}/api/generate`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ source: "model", model: "text_to_image", prompt: "a cat" }),
+  });
+  const balance = async () =>
+    ((await (await fetch(`${base}/api/me`, { headers: H })).json()) as { dashboard: { credits: number } }).dashboard.credits;
+
+  // A one-off provider failure → 'provider_error', visible on the poll payload
+  // the failure toast reads, and the refund happens exactly once.
+  genFail = true;
+  const r1 = await gen();
+  assert.equal(r1.status, 200);
+  const id1 = ((await r1.json()) as { id: number }).id;
+  const done1 = await pollGen(id1, H);
+  genFail = false;
+  assert.equal(done1.status, "error");
+  const poll1 = (await (await fetch(`${base}/api/generations/${id1}`, { headers: H })).json()) as { error_reason: string };
+  assert.equal(poll1.error_reason, "provider_error");
+  assert.equal(await balance(), 50, "charged then refunded — net zero, exactly once");
+  const refunds = await query("SELECT COUNT(*)::int AS c FROM ledger WHERE user_id = $1 AND reason = 'refund'", [eu.id]);
+  assert.equal(Number(refunds[0].c), 1);
+
+  // An account-level provider block → its own distinct code.
+  providerLocked = true;
+  const r2 = await gen();
+  assert.equal(r2.status, 200);
+  const id2 = ((await r2.json()) as { id: number }).id;
+  assert.equal((await pollGen(id2, H)).status, "error");
+  providerLocked = false;
+  resetProviderBlock(); // the 403 tripped the breaker — clear it for anything after
+  assert.equal(String((await query("SELECT error_reason FROM generations WHERE id = $1", [id2]))[0].error_reason), "provider_blocked");
+  assert.equal(await balance(), 50);
+
+  // A render stuck 'pending' (dead process) reaped → 'timeout'.
+  await query(
+    `INSERT INTO generations (user_id, model, prompt, credits, status, created_at)
+     VALUES ($1, 'text_to_image', 'stuck', 2, 'pending', now() - interval '30 minutes')`,
+    [eu.id],
+  );
+  const reaped = await reapStalePending(20);
+  assert.ok(reaped.some((g) => g.user_id === eu.id));
+  const stale = (await query("SELECT error_reason FROM generations WHERE user_id = $1 ORDER BY id DESC LIMIT 1", [eu.id]))[0];
+  assert.equal(String(stale.error_reason), "timeout");
+
+  // Success rows never carry a reason, and old/NULL rows are shipped as null —
+  // backfill-safe by construction.
+  const okGen = await gen();
+  const okId = ((await okGen.json()) as { id: number }).id;
+  assert.equal((await pollGen(okId, H)).status, "ok");
+  assert.equal((await query("SELECT error_reason FROM generations WHERE id = $1", [okId]))[0].error_reason, null);
 });
 
 await new Promise<void>((r) => server.close(() => r()));

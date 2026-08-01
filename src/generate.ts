@@ -184,6 +184,26 @@ export function resetProviderBlock(): void {
   providerBlockedUntil = 0;
 }
 
+/**
+ * The fixed vocabulary of failure CODES a generation row can carry
+ * (generations.error_reason). Codes, not messages, so nothing internal — stack
+ * traces, vendor detail strings — can ever ride a payload to a client; the
+ * client maps each code onto its own user-safe Russian copy. 'timeout' is
+ * written by the reaper (db.reapStalePending), the other three here.
+ *
+ * Note there is no 'insufficient' code: the charge happens BEFORE the pending
+ * row is created (spendCredits → createPendingGeneration), so a paywall
+ * failure never produces a row at all.
+ */
+export type ErrorReason = "moderation" | "provider_blocked" | "provider_error" | "timeout";
+
+/** Map a render-tail failure onto its error_reason code. */
+export function classifyGenError(err: unknown): ErrorReason {
+  if (err instanceof UnsafeImageError) return "moderation";
+  if (isProviderBlocked(err)) return "provider_blocked";
+  return "provider_error";
+}
+
 /** Log a provider block distinctly so the monitor can alert on the FIRST one. */
 async function noteProviderBlock(userId: number, model: ModelSpec, err: unknown): Promise<void> {
   if (!isProviderBlocked(err)) return;
@@ -214,6 +234,41 @@ async function falRun(
  * mirror the bot path exactly: promptcraft on entry, refund on failure, the
  * same paywall/gen_* analytics events.
  */
+export interface WebGenerationMeta {
+  /** 'preset' | 'campaign' | 'campaign_video' | 'model' | 'sheet'. */
+  sourceKind?: string;
+  /** The user's OWN typed text only — never crafted/curated prompt text. */
+  userPrompt?: string;
+  /** The Seedance toggle position the user picked (umbrella requests only). */
+  seedanceTier?: string;
+  /** Director Mode sheet marker — set only by the "sheet" source branch. */
+  sheet?: { sheetType: "character" | "location"; label?: string };
+}
+
+/**
+ * The client-shape options snapshot persisted on the row (generations.opts) —
+ * what the user PICKED, so a recreate flow can replay it. Reference URLs are
+ * summarized as COUNTS only: the URLs themselves are server-plumbing (and
+ * expire), the counts are what a detail view can honestly display.
+ */
+function storedOpts(imageUrl: string | undefined, opts: GenOpts | undefined, meta: WebGenerationMeta | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (opts?.aspectRatio) out.aspect = opts.aspectRatio;
+  if (opts?.resolution) out.resolution = opts.resolution;
+  if (opts?.duration) out.duration = opts.duration;
+  if (opts?.numImages && opts.numImages > 1) out.count = opts.numImages;
+  if (opts?.subject) out.subject = opts.subject;
+  if (meta?.seedanceTier) out.tier = meta.seedanceTier;
+  const refs = {
+    photos: (imageUrl ? 1 : 0) + (opts?.extraImageUrls?.length ?? 0),
+    audio: opts?.audioUrls?.length ?? 0,
+    video: opts?.videoUrls?.length ?? 0,
+  };
+  if (refs.photos || refs.audio || refs.video) out.refs = refs;
+  if (meta?.sheet) out.sheet = meta.sheet;
+  return out;
+}
+
 export async function startWebGeneration(
   userId: number,
   model: ModelSpec,
@@ -223,6 +278,8 @@ export async function startWebGeneration(
   opts?: GenOpts,
   /** Preset or campaign id this render came from — powers breadth XP. */
   sourceId?: string,
+  /** Row metadata (source kind / user prompt / opts snapshot) — see WebGenerationMeta. */
+  meta?: WebGenerationMeta,
 ): Promise<
   { ok: true; id: number; credits: number } | { ok: false; error: "empty_prompt" | "insufficient" | "provider_down" }
 > {
@@ -237,7 +294,11 @@ export async function startWebGeneration(
     return { ok: false, error: "insufficient" };
   }
   await logEvent(userId, "gen_start", model.key);
-  const id = await createPendingGeneration(userId, model.key, prompt, credits, sourceId);
+  const id = await createPendingGeneration(userId, model.key, prompt, credits, sourceId, {
+    sourceKind: meta?.sourceKind,
+    userPrompt: meta?.userPrompt,
+    opts: storedOpts(imageUrl, opts, meta),
+  });
   void (async () => {
     // Provider metadata hoisted so a failed tail can still record what fal
     // actually billed us (populated only once falRun succeeds).
@@ -262,7 +323,7 @@ export async function startWebGeneration(
       // landed (e.g. this catch was reached by a later throw), the CAS loses and
       // we must NOT refund a successful generation. Persist the provider cost we
       // were billed onto the error row so COGS accounting stays accurate.
-      if (await completeGeneration(id, "error", undefined, costUsd, requestId)) {
+      if (await completeGeneration(id, "error", undefined, costUsd, requestId, undefined, classifyGenError(err))) {
         await addCredits(userId, credits, "refund", model.key);
       }
       await logEvent(userId, "gen_error", model.key).catch(() => {});
@@ -439,7 +500,7 @@ export async function runGeneration(
         // Compensate ONLY if we never delivered, and ONLY if we win the pending→
         // error CAS — so a post-delivery error can't refund a delivered render and
         // the reaper can't double-refund. Exactly-once.
-        if (!delivered && (await completeGeneration(genId, "error", undefined, costUsd, requestId))) {
+        if (!delivered && (await completeGeneration(genId, "error", undefined, costUsd, requestId, undefined, classifyGenError(err)))) {
           if (!free) await addCredits(user.id, model.credits, "refund", model.key);
           else await restoreFreeResult(user.id);
           // A moderation block is not a transient failure — retrying with the
@@ -539,7 +600,7 @@ export async function runFreeScenario(
         await logEvent(user.id, "gen_ok", `free_${scenario.id}`).catch(() => {});
       } catch (err) {
         console.error(`free scenario failed (${scenario.id}):`, err);
-        if (!delivered && (await completeGeneration(genId, "error", undefined, chainCostUsd, providerRequestId))) {
+        if (!delivered && (await completeGeneration(genId, "error", undefined, chainCostUsd, providerRequestId, undefined, classifyGenError(err)))) {
           await restoreFreeScenario(user.id); // return the gift so they can retry
           const text =
             err instanceof UnsafeImageError

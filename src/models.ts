@@ -1083,6 +1083,85 @@ export function presetModel(p: Preset): ModelSpec {
   return p.model ? MODELS[p.model] : PRESET_MODEL;
 }
 
+/**
+ * Director Mode character/location sheets (seedance-director-mode spec §5-§6):
+ * the model that composes a reference sheet from the user's source photos.
+ *
+ * nb2_edit on purpose: the only sub-8-credit edit model with a real resolution
+ * ladder (a 15-panel grid at 1K puts each mosaic cell at ~1/12 of the frame —
+ * headroom matters), takes `aspect_ratio` directly (the sheet wants a wide
+ * canvas) and reads up to 4 input photos. Charged exactly like any other
+ * render of this model — no discount, no markup (spec §9 p.2).
+ */
+export const SHEET_MODEL: ModelSpec = MODELS.nb2_edit;
+
+/**
+ * The curated sheet prompts — SERVER-SIDE ONLY, same invariant as every preset
+ * prompt: the client sends `{source:"sheet", sheetType}` and never sees this
+ * text. `character` is the universal character-sheet prompt from the spec
+ * (§5.1) verbatim; `location` is its twin for places: wide establishing view,
+ * distinctive details, a shooting angle — the model decides what THIS location
+ * is characterized by, no hardcoded "cafe/street/forest" vocabulary.
+ *
+ * Identity/species/costume are deliberately NOT described in words — they
+ * arrive via image_urls; the prompt sets composition only.
+ */
+export const SHEET_PROMPTS: Record<"character" | "location", string> = {
+  character:
+    "Create a single seamless character reference sheet as ONE composed image, using the exact\n" +
+    "character — species, proportions, colors, markings, costume, and design — from the provided\n" +
+    "reference photo(s). Preserve identity and design exactly across every panel, whether the\n" +
+    "character is human or non-human, any gender, realistic or stylized/animated. Neutral studio\n" +
+    "backdrop, soft even lighting, consistent rendering style throughout matching the reference\n" +
+    "(photographic if the reference is photographic, matching illustration/render style if the\n" +
+    "reference is illustrated or animated) — no text, no labels, no panel borders, clean gutters\n" +
+    "only. Wide canvas, left block larger than right block.\n" +
+    "\n" +
+    "LEFT BLOCK — three full-figure panels, equal width, same pose, same full-body crop:\n" +
+    "1. Front view, facing camera.\n" +
+    "2. Side/profile view.\n" +
+    "3. Back view.\n" +
+    "\n" +
+    "RIGHT BLOCK — a 4-row × 3-column mosaic of twelve panels:\n" +
+    "Row 1 (head/face turnaround): front view of the head; profile view of the head; back of\n" +
+    "the head.\n" +
+    "Row 2 (head/face turnaround continued): three-quarter angle; head tilted down; head tilted\n" +
+    "up.\n" +
+    "Row 3 (expressions — this character's emotional range): a joyful/happy expression; a\n" +
+    "neutral/serious expression; a surprised or intense expression.\n" +
+    "Row 4 (distinctive detail close-ups — whatever defines THIS character): a close-up of the\n" +
+    "character's most characteristic surface texture (skin, fur, scales, fabric, metal — match\n" +
+    "whatever the character actually has); a close-up of its single most distinctive feature,\n" +
+    "marking, or accessory; a close-up of the eyes or its most expressive feature.\n" +
+    "\n" +
+    "Every panel shares identical lighting, background, and design — this is one consistent\n" +
+    "character reference sheet capturing ONE character's full range of angles and emotions, not\n" +
+    "a mood board of different characters.",
+  location:
+    "Create a single seamless location reference sheet as ONE composed image, using the exact\n" +
+    "place — architecture, layout, materials, colors, signage, vegetation, and atmosphere — from\n" +
+    "the provided reference photo(s). Preserve the location's identity and design exactly across\n" +
+    "every panel, whether it is real or stylized/illustrated, interior or exterior. Consistent\n" +
+    "lighting and time of day across all panels, consistent rendering style matching the\n" +
+    "reference (photographic if the reference is photographic, matching illustration/render\n" +
+    "style if it is illustrated) — no text, no labels, no panel borders, clean gutters only.\n" +
+    "Wide canvas, left block larger than right block.\n" +
+    "\n" +
+    "LEFT BLOCK — one large wide establishing panel: the whole location in a single wide shot\n" +
+    "that shows its overall geography and mood.\n" +
+    "\n" +
+    "RIGHT BLOCK — a 2-row × 2-column mosaic of four panels:\n" +
+    "Row 1 (alternative shooting angles): the location from a second, clearly different camera\n" +
+    "angle; a low or elevated angle that a director could actually shoot from.\n" +
+    "Row 2 (distinctive detail close-ups — whatever defines THIS location): a close-up of its\n" +
+    "most characteristic surface or material (stone, neon, wood, foliage, metal — match whatever\n" +
+    "the place actually has); a close-up of its single most distinctive feature, object, or\n" +
+    "marking.\n" +
+    "\n" +
+    "Every panel shares identical lighting, weather, and design — this is one consistent\n" +
+    "reference sheet of ONE location from several angles, not a mood board of different places.",
+};
+
 // --- Curated-prompt guards (shared by presets, campaigns and free scenarios) ---
 // Positive phrasing per Higgsfield's prompt guide — "keep exactly", "one single
 // instance" and "exactly once" land better than "don't"/"never" negatives.
