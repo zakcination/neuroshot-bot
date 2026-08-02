@@ -167,25 +167,32 @@
        sheet (or the Друзья page); "done" reflects genuine backend signals
        (roadmapProgress in db.ts), not a fabricated progress bar. */
     .roadmap { background: var(--surface); border: 1px solid rgba(124,92,255,.28); border-radius: var(--radius); padding: 15px 15px 16px; }
-    .roadmap .sec-h { margin-bottom: 11px; }
-    .rsteps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; }
-    .rstep {
-      display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
-      background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-s);
-      padding: 10px 4px 9px; font: inherit; color: var(--ink); cursor: pointer; transition: border-color .15s ease, transform .12s ease;
+    /* H10 redesign (docs/wireframes — home-studio wireframe, version 2): a
+       progress bar + step-pill track replaces the old 5-icon-tile grid — same
+       data (roadmapStepsFor's real steps/done state), just read at a glance
+       instead of needing every label read individually. Pills stay clickable
+       (data-go, same as before) with the label as a11y/hover text via
+       aria-label — the wireframe's plain pill has no room for inline text,
+       but losing the "tap a step to jump straight to it" behavior would be a
+       real regression, not a redesign. "Done" stays the app's established
+       success green (.wgiftbox.received, elsewhere) rather than the
+       wireframe's generic violet demo color — that's a real semantic color
+       (completed/received) used consistently across the app; the wireframe
+       mockup wasn't asserting a new one. */
+    .roadmap .rm-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+    .roadmap .rm-head b { font-size: 13.5px; font-weight: 800; }
+    .roadmap .rm-ct { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .rm-track { height: 5px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+    .rm-fill { display: block; height: 100%; background: var(--aurora); border-radius: 999px; transition: width .3s ease; }
+    .rm-pills { display: flex; gap: 6px; margin-top: 9px; }
+    .rm-pill {
+      flex: 1; height: 26px; border-radius: 8px; padding: 0; appearance: none; cursor: pointer;
+      background: var(--surface-2); border: 1px solid var(--line); transition: border-color .15s ease, transform .12s ease;
     }
-    .rstep:active { transform: scale(.96); }
-    .rstep .rico {
-      width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-      font-size: 13px; background: var(--surface); border: 1px solid var(--line);
-    }
-    .rstep .rlabel { font-size: 9.5px; font-weight: 700; line-height: 1.25; color: var(--muted); }
-    .rstep.done { border-color: rgba(55,201,154,.4); }
-    .rstep.done .rico { background: rgba(55,201,154,.16); border-color: rgba(55,201,154,.4); color: #37c99a; }
-    .rstep.done .rlabel { color: var(--ink); }
-    @media (max-width: 360px) { .rstep .rlabel { font-size: 8.8px; } }
+    .rm-pill:active { transform: scale(.94); }
+    .rm-pill.on { background: rgba(55,201,154,.16); border-color: rgba(55,201,154,.4); }
     /* Reward note (before completion) / claim button (after) — makes the
-       "finish all 5 steps" incentive visible, not a silent progress bar. */
+       "finish all N steps" incentive visible, not a silent progress bar. */
     .rmnote { margin: 11px 0 0; font-size: 12px; line-height: 1.4; color: var(--muted); }
     .rmnote b { color: var(--ink); }
     .rmclaim {
@@ -258,8 +265,8 @@
         linear-gradient(120deg, rgba(124,92,255,.16), rgba(255,77,141,.08));
     }
     /* Solid --bg chip behind the icon — the SAME pattern already used for
-       every other icon in the app (.rstep .rico, .wcost .ic, .lnkrow .ic,
-       .steps3 .s .ic all sit on a solid surface color, never bare). Card
+       every other icon in the app (.wcost .ic, .lnkrow .ic, .steps3 .s .ic
+       all sit on a solid surface color, never bare). Card
        photos are arbitrary/uncontrolled, so a translucent glass icon floating
        directly on one measures ~2.7:1 contrast on average (below WCAG AA's
        3.0) and swings wildly per-photo. --bg as a fixed chip measures >=3.1:1
@@ -850,7 +857,7 @@
     .wgiftbox .gn { font-size: 38px; font-weight: 800; font-variant-numeric: tabular-nums; }
     .wgiftbox .gn span { font-size: 19px; vertical-align: 2px; }
     .wgiftbox .gd { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
-    /* "Already received" state — a green success treatment (matches .rstep.done
+    /* "Already received" state — a green success treatment (matches .rm-pill.on
        elsewhere) instead of a checkmark glyph; the caption reads bold, not muted. */
     .wgiftbox.received { background: rgba(55,201,154,.14); border-color: rgba(55,201,154,.4); }
     .wgiftbox.received .gd { font-weight: 800; color: #37c99a; font-size: 13.5px; }
@@ -1328,6 +1335,30 @@
     }
     .paramscard > .quiz-q:first-child { margin-top: 0; }
     .paramscard > *:last-child { margin-bottom: 0; }
+    /* S5–S7, S16: photo / extra angles / audio-video refs / final frame, one
+       card instead of four scattered blocks (docs/wireframes — home-studio
+       wireframe, version 2). The 4-icon row up top is "what's filled at a
+       glance" — the actual upload widgets underneath (photo picker, extras
+       grid + subject toggle, audio/video rows, end-frame picker) are the
+       SAME functions/ids/handlers as before, just nested in one container
+       instead of standing alone; the slots aren't independently tappable
+       (each already has its own visible widget right below it — a second,
+       separate tap target for the same upload would just be two ways to do
+       one thing). */
+    .inputscard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+    .inputs-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+    .inputs-head b { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+    .inputs-ct { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .inputs-slots { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; margin-bottom: 12px; }
+    .islot {
+      aspect-ratio: 1; border-radius: 9px; background: var(--surface-2); border: 1px dashed var(--line);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--muted);
+    }
+    .islot .iic { font-size: 15px; line-height: 1; }
+    .islot .ilbl { font-size: 8.5px; font-weight: 700; letter-spacing: .02em; }
+    .islot.on { border-style: solid; border-color: rgba(124,92,255,.4); background: rgba(124,92,255,.1); color: var(--violet); }
+    .inputscard .quiz-q:first-of-type { margin-top: 0; }
+    .inputscard > *:last-child { margin-bottom: 0; }
     /* Aspect-ratio horizontal reel — a physical drag-scrub strip (wireRatioScrub)
        for the 3+ option case; visual language borrowed from .durbox (dark
        track, one clear focal element). A binary choice keeps the plain .chips
@@ -4404,21 +4435,38 @@
         </div>
         ${isVideo && !has ? `<div class="sub">Для видео нужно исходное фото — добавьте его ниже или сначала создайте картинку.</div>` : ""}
         ${directorModeHtml()}
-        ${qLabel(`Фото ${!isVideo && !m.needsImage ? "(не используется этой моделью)" : ""}`, "photo")}
-        <div id="stuPhotoZone">
-          ${stu.photo ? `<div class="photo-preview"><img src="${stu.photo}" alt="" /><button class="redo" id="stuRedo">↺ Другое</button></div>`
-            : stu.generationId ? `<div class="photo-preview"><img src="${esc(srcUrl)}" alt="" /><button class="redo" id="stuRedo">↺ Другое</button></div>`
-            : `<label class="drop"><input type="file" accept="image/*" id="stuFile" />
-                 <span class="em">📸</span><b>Выбрать фото</b><span>с устройства или из галереи</span></label>
-               ${works.length ? `<div class="quiz-q">…или из моих работ</div>
-               <div class="mini" id="stuMini">${works.map((g) => `<img src="${esc(g.output_url)}" data-gid="${g.id}" loading="lazy" alt="" />`).join("")}</div>` : ""}`}
-          ${extrasBlock(m, isVideo, has)}
-        </div>
-        ${isVideo && m.video && activeSeedanceRow(m).video.endFrame ? `
-          ${qLabel("Финальный кадр (необязательно)", "endframe")}
-          <div id="stuEndZone">${stu.endPhoto ? `<div class="photo-preview"><img src="${stu.endPhoto}" alt="" /><button class="redo" id="stuEndRedo">✕ Убрать</button></div>`
-            : `<label class="drop"><input type="file" accept="image/*" id="stuEndFile" />
-                 <span class="em">🏁</span><b>Кадр-финал</b><span>видео плавно придёт к нему</span></label>`}</div>` : ""}
+        ${(() => {
+          const showFinal = isVideo && m.video && activeSeedanceRow(m).video.endFrame;
+          const showExtras = has && ((m && m.maxInputs) || 1) >= 2;
+          const showMedia = !!(m && m.reference);
+          const slots = [{ icon: "🖼", label: "источник", filled: stuHasSource() }];
+          if (showExtras) slots.push({ icon: "➕", label: "ракурс", filled: (stu.extras || []).length > 0 });
+          if (showFinal) slots.push({ icon: "🏁", label: "финал", filled: !!(stu.endPhoto || stu.endGenerationId) });
+          if (showMedia) slots.push({ icon: "🎵", label: "аудио", filled: (stu.refAudio || []).length > 0 || (stu.refVideo || []).length > 0 });
+          const filled = slots.filter((s) => s.filled).length;
+          return `
+            <div class="inputscard">
+              <div class="inputs-head"><b>Входные данные${!isVideo && !m.needsImage ? " · не используются этой моделью" : ""}
+                <button class="qhint" type="button" data-hint="photo" aria-label="Что это такое?">?</button></b>
+                <span class="inputs-ct">${filled} из ${slots.length}</span></div>
+              <div class="inputs-slots">${slots.map((s) => `
+                <div class="islot ${s.filled ? "on" : ""}"><span class="iic">${s.icon}</span><span class="ilbl">${esc(s.label)}</span></div>`).join("")}</div>
+              <div id="stuPhotoZone">
+                ${stu.photo ? `<div class="photo-preview"><img src="${stu.photo}" alt="" /><button class="redo" id="stuRedo">↺ Другое</button></div>`
+                  : stu.generationId ? `<div class="photo-preview"><img src="${esc(srcUrl)}" alt="" /><button class="redo" id="stuRedo">↺ Другое</button></div>`
+                  : `<label class="drop"><input type="file" accept="image/*" id="stuFile" />
+                       <span class="em">📸</span><b>Выбрать фото</b><span>с устройства или из галереи</span></label>
+                     ${works.length ? `<div class="quiz-q">…или из моих работ</div>
+                     <div class="mini" id="stuMini">${works.map((g) => `<img src="${esc(g.output_url)}" data-gid="${g.id}" loading="lazy" alt="" />`).join("")}</div>` : ""}`}
+                ${extrasBlock(m, isVideo, has)}
+              </div>
+              ${showFinal ? `
+                ${qLabel("Финальный кадр (необязательно)", "endframe")}
+                <div id="stuEndZone">${stu.endPhoto ? `<div class="photo-preview"><img src="${stu.endPhoto}" alt="" /><button class="redo" id="stuEndRedo">✕ Убрать</button></div>`
+                  : `<label class="drop"><input type="file" accept="image/*" id="stuEndFile" />
+                       <span class="em">🏁</span><b>Кадр-финал</b><span>видео плавно придёт к нему</span></label>`}</div>` : ""}
+            </div>`;
+        })()}
         ${stu.preset ? `
           <div class="ptagrow">
             <span class="ptag"><span>${esc(stu.preset.label)}</span><button type="button" id="stuPresetX" aria-label="Сменить стиль">✕</button></span>
@@ -5244,10 +5292,7 @@
     }
     function roadmapStepsHtml(steps) {
       return steps.map((s) => `
-        <button class="rstep ${s.done ? "done" : ""}" data-go="${s.go}">
-          <span class="rico">${s.done ? "✓" : `<img class="appicon" src="/img/ic-${s.icon}.png" alt="" />`}</span>
-          <span class="rlabel">${esc(s.label)}</span>
-        </button>`).join("");
+        <button class="rm-pill ${s.done ? "on" : ""}" data-go="${s.go}" aria-label="${esc(s.label)}" title="${esc(s.label)}"></button>`).join("");
     }
     /** The reward note/claim button under the checklist — visible before AND
      *  after completion, so the incentive is never a secret. */
@@ -5276,13 +5321,16 @@
             <span class="rgtx">Путь пройден — вы освоили студию<small>Нажмите, чтобы создать ещё</small></span>
           </button>`;
       }
+      const done = steps.filter((s) => s.done).length;
+      const pct = Math.round((done / steps.length) * 100);
       return `
-          <div class="sec-h"><h2>Ваш путь в NeuroShot</h2></div>
-          <div class="rsteps">${roadmapStepsHtml(steps)}</div>
+          <div class="rm-head"><b>Ваш путь в NeuroShot</b><span class="rm-ct">${done} из ${steps.length}</span></div>
+          <div class="rm-track"><span class="rm-fill" style="width:${pct}%"></span></div>
+          <div class="rm-pills">${roadmapStepsHtml(steps)}</div>
           <div id="rmbonus">${roadmapBonusHtml(d, steps)}</div>`;
     }
     function bindRoadmap() {
-      document.querySelectorAll(".rstep[data-go]").forEach((b) => (b.onclick = () => {
+      document.querySelectorAll(".rm-pill[data-go]").forEach((b) => (b.onclick = () => {
         if (b.dataset.go === "friends") showPage("friends"); else studio(b.dataset.go);
       }));
       const grad = document.querySelector(".roadmap .rmgrad");
