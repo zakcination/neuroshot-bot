@@ -12,9 +12,10 @@
 #     from), and Telegram allows exactly one getUpdates caller per token.
 #     Skipping polling here is what makes sharing that token safe at all.
 #   - No DATABASE_URL is set → src/db.ts falls back to embedded, in-memory
-#     Postgres (pglite). Staging state resets on every deploy/restart, which
-#     is exactly right for a "test iteration" box: nobody's real credits or
+#     Postgres (pglite). Staging state resets on every DEPLOY, which is
+#     exactly right for a "test iteration" box: nobody's real credits or
 #     history live here, and there is no separate database to provision.
+#     It must NOT also reset on idle — see min_machines_running below.
 #
 # One-time setup (this repo's CI does the rest automatically thereafter):
 #   fly apps create neuroshot-bot-staging
@@ -48,13 +49,20 @@ kill_timeout = "3m"
 [http_service]
   internal_port = 8080
   force_https = true
-  # Unlike production, this app has no standing connection to keep alive —
-  # let it scale to zero between visits. The Mini App button's first open
-  # after a while eats one cold-start (a few seconds); every open after that
-  # is instant until it idles down again.
-  auto_stop_machines = true
+  # This app must NOT scale to zero, even though it has no standing connection
+  # to keep alive. Its database is pglite running INSIDE this Node process
+  # (see the DATABASE_URL note above), so the machine stopping is the database
+  # being deleted. With min_machines_running = 0 that happened after a few
+  # minutes idle — you'd set up a character, go make coffee, come back to an
+  # empty account and the onboarding again. Worse, every cold start is a fresh
+  # DB, so getOrCreateUser re-grants the welcome bonus, and those patrons buy
+  # renders against the REAL FAL_KEY this app shares with production. One
+  # always-on shared-cpu-1x is the cost of staging state that survives a
+  # coffee break; state still resets on deploy, which is the intended
+  # "test iteration box" behaviour.
+  auto_stop_machines = false
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
 
   [[http_service.checks]]
     grace_period = "20s"
