@@ -3198,7 +3198,12 @@
           return;
         }
         if (Date.now() - job.started > 6 * 60 * 1000) {
-          jobs.delete(job.id); updateJobsPill(); renderGallery(1);
+          // The client gives up here, but the row is still 'pending' server-side
+          // until the reaper (src/monitor.ts, ~15 min) flips it and refunds. That
+          // refund has no other trigger to reach the visible balance — without
+          // this call the pill silently drifts stale until some unrelated action
+          // happens to refresh it.
+          jobs.delete(job.id); updateJobsPill(); refreshMe(); renderGallery(1);
           // A sheet's card owns its own spinner, and giving up on the poll has
           // to clear it — otherwise the entry spins forever, retry stays
           // disabled behind `pending`, and the photos behind it are stranded.
@@ -3379,13 +3384,16 @@
       }[reason] || `Не получилось — ${PATRON} патроны возвращены`;
     }
     /** Short form for tight cards (Director entry rows, the failed strip). */
+    // Codes mirror ErrorReason (src/generate.ts) exactly — no fifth key here,
+    // because the server never emits one. A local-only failure (e.g. a photo
+    // that failed to upload before any request was sent) is never routed
+    // through this map; it gets its own toast at the call site instead.
     function genErrShort(reason) {
       return {
         moderation: "фото не прошло проверку — попробуйте другое",
         provider_blocked: "сервис был недоступен",
         provider_error: "ошибка генерации",
         timeout: "рендер завис и был остановлен",
-        upload: "не удалось загрузить фото",
       }[reason] || "ошибка генерации";
     }
     /** Display name for a model key. Resolved Seedance tier keys (the rows the
@@ -3521,11 +3529,14 @@
       if (!d.includes(id)) d.push(id);
       try { localStorage.setItem(FAIL_DISMISS_KEY, JSON.stringify(d.slice(-60))); } catch (e) { /* private mode */ }
     }
+    // A Director Mode session can fire up to 6 characters + 4 locations in one
+    // batch (ENHANCE_CONTEXT_LIMITS, src/enhance.ts) — 3 was sized before that
+    // existed and would silently hide the 4th failure of a bad batch.
     function failedRows() {
       const dis = dismissedFails();
       return ((ME && ME.generations) || [])
         .filter((g) => g.status === "error" && !dis.includes(g.id) && !jobs.has(g.id))
-        .slice(0, 3);
+        .slice(0, 10);
     }
 
     // ——————————————————————————————————————————————————————————————————
@@ -3704,9 +3715,15 @@
         }));
       } catch (e) {
         // A dropped connection is routine inside a Telegram WebView. Without
-        // this the entry would sit pending forever with no way back.
+        // clearing `pending` here the entry spins forever AND its retry
+        // button stays dead behind `if (entry.pending) return` — the two
+        // together are a permanent, unrecoverable card. We genuinely don't
+        // know whether the POST landed (charged + queued) or never left the
+        // device, so the copy says that rather than asserting a refund that
+        // may not have happened.
+        entry.pending = false;
         entry.error = "нет связи — попробуйте ещё раз";
-        toast("Нет связи с сервером — патроны не списаны.", { wide: true, ms: 4500 });
+        toast("Нет связи с сервером — не знаем, дошёл ли запрос. Если карта спишется, она появится в «Мои работы».", { wide: true, ms: 5500 });
         return "fail";
       }
       if (status === 402) {
@@ -3716,16 +3733,19 @@
         return "paywall";
       }
       if (status === 400 && data && data.error === "too_many_inputs") {
+        entry.pending = false;
         entry.error = `нужно не больше ${data.maxInputs} фото`;
         toast(`Для карты можно взять не больше ${data.maxInputs} фото — уберите лишние`, { wide: true, ms: 5000 });
         return "fail";
       }
       if (status === 503 && data && data.error === "provider_down") {
+        entry.pending = false;
         entry.error = "сервис был недоступен";
         toast("Сервис генерации временно недоступен — патроны не списаны.", { wide: true, ms: 5000 });
         return "fail";
       }
       if (status !== 200) {
+        entry.pending = false;
         entry.error = "не удалось запустить";
         toast("Не получилось запустить карту — патроны не списаны.", { wide: true, ms: 4500 });
         return "fail";
@@ -3981,12 +4001,22 @@
      * Director Mode is the active composer, so nothing here can touch the plain
      * studio, presets, or any non-Seedance model.
      */
-    function dmRenderUrls() {
+    // Each ticked sheet, paired with what it IS — {url, role: {kind,name}} —
+    // so the server can tell Seedance "this one is Аня, this one is the
+    // kitchen" instead of the old undifferentiated "these are all the same
+    // person, repeated" (the single worst line in the pipeline before this;
+    // see docs/ui-rebuild-v2.md §4). Characters before locations, cast order
+    // within each — this order becomes @Image1, @Image2… and MUST match
+    // whatever runStudio actually sends, or a name binds to the wrong picture.
+    function dmRenderImages() {
       if (!stu || !stu.director || stu.mode !== "video") return [];
       const m = studioModel();
       if (!m || m.key !== "seedance") return [];
-      return dmCast("character").concat(dmCast("location")).map((x) => x.sheetUrl).filter(Boolean);
+      const chars = dmCast("character").map((x) => ({ url: x.sheetUrl, role: { kind: "character", name: x.label } }));
+      const locs = dmCast("location").map((x) => ({ url: x.sheetUrl, role: { kind: "location", name: x.label } }));
+      return chars.concat(locs);
     }
+    function dmRenderUrls() { return dmRenderImages().map((x) => x.url); }
     // A ticked sheet counts as an attached photo everywhere a photo counts:
     // it satisfies "нужно исходное фото", it pushes Seedance into reference
     // mode, and it is priced accordingly. Routing this through the SAME two
@@ -4736,14 +4766,19 @@
         const cand = stu.dmCandIdx != null ? stu.dmCands[stu.dmCandIdx] : null;
         if (!cand) { toast("Сначала выберите кадр 🙂"); return; }
         stu.dmAssembling = true; viewStudio();
-        // Only the three fields the server's shot contract declares — the
-        // candidate also carries characterIds/locationIds, which describe the
-        // cast, not the shot, and are sent through characters/locations.
+        // characterIds/locationIds on the shot are what let the server describe
+        // only who's ACTUALLY in this take ("In this shot: …") instead of the
+        // whole ticked cast for every shot — a 1-person close-up used to name
+        // all 4 people who happened to be ticked. The candidate already carries
+        // these from /api/storyboard; forward them as-is.
         const context = {
           characters: dmCast("character").map((c) => ({ id: c.id, label: c.label })),
           locations: dmCast("location").map((l) => ({ id: l.id, label: l.label })),
           scenario: (stu.dmScenario || "").trim() || undefined,
-          shot: { type: cand.shotType, momentRu: cand.momentRu, cameraDirectionEn: cand.cameraDirectionEn },
+          shot: {
+            type: cand.shotType, momentRu: cand.momentRu, cameraDirectionEn: cand.cameraDirectionEn,
+            characterIds: cand.characterIds, locationIds: cand.locationIds,
+          },
         };
         const raw = (stu.prompt || "").trim();
         let status, data;
@@ -4810,24 +4845,45 @@
         if (!end_image_url) { toast("Не удалось загрузить финальный кадр"); viewStudio(); return; }
       }
       // Director Mode: the finished sheets ride along as reference images, in
-      // cast order. They are already uploaded (the sheet render's own output),
-      // so there is nothing to upload here. If the user attached no photo of
-      // their own, the first sheet becomes the source frame — which is the
-      // whole point of having built it. Empty for every non-director render.
-      const sheetUrls = dmRenderUrls();
+      // cast order, each tagged with what it IS via image_roles — "this one is
+      // Аня", "this one is the kitchen" — instead of letting the server assume
+      // every attachment is the same face repeated (the single worst line in
+      // the pipeline before this fix; docs/ui-rebuild-v2.md §4). Already
+      // uploaded (the sheet render's own output), nothing to upload here.
+      //
+      // Canonical order: the anchor first, its own extra angles right after,
+      // then every sheet in cast order. With the user's own photo, the anchor
+      // IS that photo (sent separately via image_url) so extras lead and
+      // sheets follow — unchanged from before roles existed. With no own
+      // photo, the first sheet becomes the anchor — sent through image_urls,
+      // NOT image_url, so the SERVER's existing "promote the first entry to
+      // primary" logic fires and carries that entry's role along with it. A
+      // client-side promotion (setting image_url directly) would bypass that
+      // and the anchor's identity would never reach the model at all.
+      const sheetImages = dmRenderImages();
       const ownSource = !!(stu.photoUrl || stu.generationId);
-      const primary = stu.photoUrl || (!ownSource && sheetUrls.length ? sheetUrls[0] : undefined);
-      const refUrls = extraUrls.concat(ownSource || !sheetUrls.length ? sheetUrls : sheetUrls.slice(1));
+      const extraImages = extraUrls.map((u) => ({ url: u, role: { kind: "angle" } }));
+      const refImages = ownSource ? extraImages.concat(sheetImages) : sheetImages.concat(extraImages);
+      const hasNamedSheet = refImages.some((x) => x.role.kind === "character" || x.role.kind === "location");
       const opts = {
-        image_url: primary || undefined,
-        image_urls: refUrls.length ? refUrls : undefined,
+        image_url: stu.photoUrl || undefined,
+        image_urls: refImages.length ? refImages.map((x) => x.url) : undefined,
+        // Only sent once a Director Mode sheet is actually attached — an
+        // ordinary render with plain extra angles must reproduce today's
+        // exact request shape, so referencePrompt falls back to its original
+        // undifferentiated wording with zero change in behaviour.
+        image_roles: hasNamedSheet ? refImages.map((x) => x.role) : undefined,
         audio_urls: (stu.refAudio || []).length ? stu.refAudio.map((x) => x.url) : undefined,
         video_urls: (stu.refVideo || []).length ? stu.refVideo.map((x) => x.url) : undefined,
         generation_id: stu.generationId || undefined,
         aspect_ratio: stu.aspect && stu.aspect !== "auto" ? stu.aspect : undefined,
         resolution: stu.resolution || undefined,
         num_images: !isVideo && stu.numImages && stu.numImages > 1 ? stu.numImages : undefined,
-        subject: m.reference ? (stu.subject || "person") : undefined,
+        // A named sheet already tells the model what the subject is; forcing
+        // "person" on top of it is what made a LOCATION sheet get "get the
+        // faces right." `subject` stays for the plain reference-mode path
+        // (extra angles, no sheets), where it is still the only signal.
+        subject: m.reference && !hasNamedSheet ? (stu.subject || "person") : undefined,
       };
       const body = stu.preset && !isVideo
         ? { source: "preset", id: stu.preset.id,
@@ -5870,8 +5926,13 @@
       // dismissed for good.
       if (cur === 1) {
         for (const f of failedRows()) {
+          // sourceLabelFor already knows how to name a sheet row ("Карта
+          // персонажа · Марат") — without it every failed sheet reads as the
+          // same anonymous "Не получилось", so a user who fired three at once
+          // can't tell which one to redo.
+          const what = sourceLabelFor(f) || "Не получилось";
           const card = $(`<div class="failcard">
-            <span class="fx"><b>Не получилось</b><small>${esc(genErrShort(f.error_reason))}${f.credits > 0 ? ` · ${PATRON} патроны возвращены` : ""}</small></span>
+            <span class="fx"><b>${esc(what)}</b><small>${esc(genErrShort(f.error_reason))}${f.credits > 0 ? ` · ${PATRON} патроны возвращены` : ""}</small></span>
             ${canRecreate(f) ? `<button type="button" data-fx="retry">↻ Ещё раз</button>` : ""}
             <button class="fdis" type="button" data-fx="hide" aria-label="Скрыть">✕</button>
           </div>`);

@@ -83,9 +83,34 @@ export const ENHANCE_STYLES: Record<string, string> = {
   seedance_ref: SEEDANCE_STYLE,
 };
 
-/** The system prompt for a model key — safe fallback keeps old behavior intact. */
-export function enhanceStyleFor(modelKey?: string): string {
-  return (modelKey && ENHANCE_STYLES[modelKey]) || ENHANCE_STYLE_DEFAULT;
+/**
+ * Director Mode variant of SEEDANCE_STYLE, used only when the request carries
+ * character/location/shot context. The plain style says nothing about
+ * multiple NAMED entities or about the @Image bindings the render itself adds
+ * (models.ts's referencePrompt, built from image_roles) — asked to rewrite a
+ * two-character scene, it could rename someone, invent a third person, or
+ * fabricate its own @Image token that collides with the real one.
+ */
+export const SEEDANCE_DIRECTOR_STYLE =
+  "Rewrite the user's idea into ONE Seedance video-generation prompt: name the subject(s) and setting in one " +
+  "short clause, then describe ONE clear, continuous camera movement (dolly in/out, pan, tilt, tracking, static) " +
+  "using concrete cinematic verbs, then the mood/lighting in a few words. " +
+  "Every character and location given in the context MUST be named in the prompt, using the name EXACTLY as " +
+  "given — no translation, no transliteration, no renaming. Invent no additional people or places beyond what " +
+  "was given. Do NOT write any @Image or @Video tokens — those are added separately by the system, not by you. " +
+  "English, under 50 words (a scene with named characters needs more room than a plain idea does), no scene " +
+  "cuts or multiple shots — Seedance renders one continuous take. Output ONLY the prompt.";
+
+/**
+ * The system prompt for a model key — safe fallback keeps old behavior intact.
+ * `hasDirectorContext` switches Seedance specifically to the stricter
+ * name-exact style above; every other model, and a Seedance call with no
+ * context, are byte-for-byte unaffected.
+ */
+export function enhanceStyleFor(modelKey?: string, hasDirectorContext = false): string {
+  const base = (modelKey && ENHANCE_STYLES[modelKey]) || ENHANCE_STYLE_DEFAULT;
+  if (hasDirectorContext && base === SEEDANCE_STYLE) return SEEDANCE_DIRECTOR_STYLE;
+  return base;
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +161,10 @@ export const ENHANCE_CONTEXT_LIMITS = {
 } as const;
 
 export interface EnhanceContextEntity {
+  /** Optional: present whenever the client can identify the entity (Director
+   *  Mode always sends one). Absent only for a hypothetical caller that never
+   *  needs shot-scoping — entityLine works either way. */
+  id?: string;
   label: string;
   description?: string;
 }
@@ -144,7 +173,17 @@ export interface EnhanceContext {
   characters?: EnhanceContextEntity[];
   locations?: EnhanceContextEntity[];
   scenario?: string;
-  shot?: { type: string; momentRu: string; cameraDirectionEn: string };
+  shot?: {
+    type: string;
+    momentRu: string;
+    cameraDirectionEn: string;
+    /** Who/where is ACTUALLY in this shot, as a subset of `characters`/
+     *  `locations` ids above — what makes shot-scoping possible at all.
+     *  Absent (an older caller, or a shot picked with no cast attached) falls
+     *  back to describing the whole cast, exactly as before this existed. */
+    characterIds?: string[];
+    locationIds?: string[];
+  };
 }
 
 function entityLine(e: EnhanceContextEntity): string {
@@ -155,18 +194,51 @@ function entityLine(e: EnhanceContextEntity): string {
  * Serialize the user's idea + Director Mode context into ONE user message.
  * Plain labelled lines, no JSON: the LLM's job is to weave, and labelled
  * natural-language context is what these models weave best from.
+ *
+ * When the chosen shot names WHO is actually in it (`shot.characterIds`/
+ * `locationIds`), the cast is split into "In this shot" vs "elsewhere in the
+ * story" — describing the ENTIRE ticked cast for a one-person close-up is
+ * what put four people in frame when only one belonged there. Without shot
+ * ids (an older caller, or no shot at all) this reproduces the original
+ * undifferentiated "Characters in the scene" wording byte for byte.
  */
 export function composeEnhanceInput(raw: string, ctx?: EnhanceContext): string {
   if (!ctx) return raw;
   const lines: string[] = [];
   if (raw) lines.push(raw);
   if (ctx.scenario && ctx.scenario !== raw) lines.push(`Scenario: ${ctx.scenario}`);
-  if (ctx.characters?.length) lines.push(`Characters in the scene: ${ctx.characters.map(entityLine).join("; ")}.`);
-  if (ctx.locations?.length) lines.push(`Locations: ${ctx.locations.map(entityLine).join("; ")}.`);
+
+  const chars = ctx.characters ?? [];
+  const locs = ctx.locations ?? [];
+  const shotCharIds = ctx.shot?.characterIds;
+  const shotLocIds = ctx.shot?.locationIds;
+  if (shotCharIds || shotLocIds) {
+    const inShot = chars.filter((c) => c.id && shotCharIds?.includes(c.id));
+    const shotPlaces = locs.filter((l) => l.id && shotLocIds?.includes(l.id));
+    const elsewhere = [
+      ...chars.filter((c) => !c.id || !shotCharIds?.includes(c.id)),
+      ...locs.filter((l) => !l.id || !shotLocIds?.includes(l.id)),
+    ];
+    if (inShot.length) lines.push(`In this shot: ${inShot.map(entityLine).join("; ")}.`);
+    if (shotPlaces.length) lines.push(`Location: ${shotPlaces.map(entityLine).join("; ")}.`);
+    if (elsewhere.length) {
+      lines.push(`Elsewhere in the story (do NOT put these on screen in this shot): ${elsewhere.map(entityLine).join("; ")}.`);
+    }
+  } else {
+    if (chars.length) lines.push(`Characters in the scene: ${chars.map(entityLine).join("; ")}.`);
+    if (locs.length) lines.push(`Locations: ${locs.map(entityLine).join("; ")}.`);
+  }
+
   if (ctx.shot) {
     const t = shotTypeById.get(ctx.shot.type);
     const hint = t ? ` (${t.hintEn})` : "";
-    lines.push(`Chosen shot: ${ctx.shot.momentRu}. Shot style${hint}. Camera: ${ctx.shot.cameraDirectionEn}.`);
+    // cameraDirectionEn is the LLM's own generated move for THIS exact shot —
+    // authoritative. hintEn is background framing only, so it must never read
+    // as competing with the move that was actually chosen.
+    lines.push(
+      `Chosen shot: ${ctx.shot.momentRu}. Shot framing${hint}. ` +
+        `Camera movement (authoritative — follow this exactly): ${ctx.shot.cameraDirectionEn}.`,
+    );
   }
   return lines.join("\n");
 }
@@ -251,7 +323,8 @@ export async function enhancePrompt(
   // context IS the idea. Without it, the pre-existing rule stands.
   const message = composeEnhanceInput(text, req.context).trim();
   if (!message) return { ok: false, error: "empty" };
-  const style = enhanceStyleFor(req.model);
+  const hasDirectorContext = !!(req.context?.characters?.length || req.context?.locations?.length || req.context?.shot);
+  const style = enhanceStyleFor(req.model, hasDirectorContext);
   const r = await runOnEnhanceStack(userId, () => runner(message, style));
   if (!r.ok) return r;
   return { ok: true, prompt: r.value, charged: r.charged, free: r.free, balance: r.balance, left: r.left };
@@ -296,7 +369,9 @@ function storyboardSystemPrompt(): string {
     '"momentRu": "<one short Russian sentence naming who and where, using the given names>", ' +
     '"characterIds": ["<ids of the characters visible in this shot, from the given list only>"], ' +
     '"locationIds": ["<ids of the locations of this shot, from the given list only>"], ' +
-    '"cameraDirectionEn": "<ONE continuous camera movement in English, concrete cinematic verbs, under 20 words>"}. ' +
+    '"cameraDirectionEn": "<ONE continuous camera movement in English, concrete cinematic verbs, under 20 words, ' +
+    "and consistent with the chosen shotType's own meaning below — a hero_low_angle shot rising, not panning; " +
+    'a wide_quiet shot staying still, not tracking fast>"}. ' +
     `Shot-type meanings: ${glossary}. Use only ids that were given; empty arrays are allowed.`
   );
 }

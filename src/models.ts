@@ -12,6 +12,27 @@ import { UNIT_EMOJI } from "./text.js";
 
 export type ModelKind = "image_edit" | "text_to_image" | "image_to_video";
 
+/**
+ * What one attached image actually IS, for the reference block `referencePrompt`
+ * composes (Seedance reference-to-video, the only caller that describes images
+ * individually rather than as one undifferentiated list). "subject"/"angle"
+ * reproduce the original plain-photo wording; "character"/"location" name a
+ * Director Mode reference sheet, so the model is told which sheet is which
+ * person or place instead of the historical "these are all the same subject,
+ * repeated" — which is actively FALSE the moment two attached sheets are two
+ * different people. "style" marks the curated look plate.
+ *
+ * `name` must be the IDENTICAL string used elsewhere in the prompt (the same
+ * `label` the entity was given) — no separate translation or transliteration,
+ * or the reference block and the action line name the same person two ways.
+ */
+export type ImageRole =
+  | { kind: "subject" }
+  | { kind: "angle" }
+  | { kind: "character"; name: string }
+  | { kind: "location"; name: string }
+  | { kind: "style" };
+
 /** Per-generation options the studio composer can set. */
 export interface GenOpts {
   duration?: number; // video length in seconds
@@ -41,6 +62,24 @@ export interface GenOpts {
    * it after validating every entry against the media-host allow-list.
    */
   extraImageUrls?: string[];
+  /**
+   * What each entry in `extraImageUrls` IS — index-aligned, `imageRoles[i]`
+   * describes `extraImageUrls[i]`. SERVER-SET ONLY, same discipline and same
+   * reason as `extraImageUrls`: webapp.ts builds this in lockstep with the URL
+   * array — same dedupe, same promotion of the first extra to primary — so a
+   * role can never end up describing a different picture than the one it
+   * shipped next to. A client-built pair sent separately could not guarantee
+   * that; see `referencePrompt`'s "name stability" note.
+   */
+  imageRoles?: ImageRole[];
+  /**
+   * The role of the PRIMARY image (`imageUrl`), set only when it was PROMOTED
+   * from `extraImageUrls` rather than supplied as the caller's own photo — e.g.
+   * no own photo was attached, so the first Director Mode sheet became the
+   * anchor. Absent whenever the primary genuinely is the user's own photo,
+   * which `refImages` then defaults to `{kind:"subject"}`.
+   */
+  primaryRole?: ImageRole;
   /**
    * Audio and video REFERENCES for Seedance reference mode. SERVER-SET ONLY,
    * exactly like extraImageUrls — normalizeOpts does not copy them, so a client
@@ -190,13 +229,31 @@ export function styleRefUrl(file: string | undefined): string | undefined {
   return `${config.webappUrl.replace(/\/+$/, "")}/img/${file}`;
 }
 /**
- * The model payload's image list: the user's photos, then the optional style
- * reference. Order is load-bearing in both directions — the user's primary
- * photo stays FIRST (it is the identity anchor KEEP_ID refers to) and the style
- * plate stays LAST, which is what refPrompt below tells the model to expect.
+ * Every image this render will attach, in provider order, paired with what
+ * each one IS. `refUrls` (below) and `referencePrompt` are both DERIVED from
+ * this one list — so the flat URL array sent to fal and the prose describing
+ * it can never disagree about which picture is which; a role and a URL built
+ * as two separate arrays could drift the moment either one reorders.
+ *
+ * Order is load-bearing in both directions — the user's primary photo stays
+ * FIRST (it is the identity anchor KEEP_ID/@Image1 refers to) and the style
+ * plate stays LAST, which is what refPrompt/referencePrompt tell the model to
+ * expect. A role is never invented for a URL that has none: the primary
+ * defaults to `subject` and every extra without an explicit role defaults to
+ * `angle` — both reproduce the pre-ImageRole wording exactly.
  */
+function refImages(imageUrl: string | undefined, opts: GenOpts | undefined): { url: string; role: ImageRole }[] {
+  const out: { url: string; role: ImageRole }[] = [];
+  if (imageUrl) out.push({ url: imageUrl, role: opts?.primaryRole ?? { kind: "subject" } });
+  const extras = opts?.extraImageUrls ?? [];
+  const roles = opts?.imageRoles;
+  extras.forEach((url, i) => out.push({ url, role: roles?.[i] ?? { kind: "angle" } }));
+  if (opts?.styleRefUrl) out.push({ url: opts.styleRefUrl, role: { kind: "style" } });
+  return out;
+}
+/** The model payload's flat image list — see `refImages` for the ordering rule. */
 function refUrls(imageUrl: string | undefined, opts: GenOpts | undefined): string[] {
-  return [imageUrl, ...(opts?.extraImageUrls ?? []), opts?.styleRefUrl].filter((u): u is string => !!u);
+  return refImages(imageUrl, opts).map((x) => x.url);
 }
 /**
  * Tells the model what the images after the first one are FOR. Without this the
@@ -270,14 +327,24 @@ const SEEDANCE_RES: ResTier[] = [
  * Reference-mode framing. Seedance's reference endpoint binds attachments by
  * NAME — its own docs say to address them in the prompt as @Image1, @Image2 —
  * and our users write plain Russian, so nothing would ever be addressed. This
- * appends the binding, and says what the images are FOR: several photographs of
- * one subject, not several subjects, and not a collage. Same failure this
- * codebase already fixed for multi-image edits (see refPrompt).
+ * appends the binding, and says what the images are FOR.
  *
- * `subject` picks WHICH framing, because "several angles of one X" wants
- * different downstream instructions depending on what X is. Default "person" —
- * every caller before this field existed was a face, so an absent value must
- * reproduce that wording byte for byte.
+ * `roles[i]` MUST describe `@Image{i+1}` — i.e. this must be called with
+ * exactly the role list `refImages` produced for the same render, never
+ * assembled separately, or a name binds to the wrong picture.
+ *
+ * When NO role is more specific than `subject`/`angle` (the default the whole
+ * product spoke before Director Mode existed), this reproduces the original
+ * "several photographs of one subject" wording BYTE FOR BYTE — a caller that
+ * never names a character or location sees no change at all. The moment one
+ * role IS a character or a location, the block switches to describing each
+ * image individually: claiming a Director Mode sheet for Аня and one for
+ * Марат are "the same subject, repeated" is not a missing nicety, it is an
+ * actively false instruction, and was the single worst line in the Director
+ * Mode pipeline before this (docs/ui-rebuild-v2.md's input-architecture spec).
+ *
+ * `subject` still picks the baseline framing when no sheet is present. Default
+ * "person" — every caller before this field existed was a face.
  *
  * "person": asks the model to lock identity — faces, not just shapes — and
  * warns against the specific failure a face reference is prone to (reading
@@ -289,28 +356,71 @@ const SEEDANCE_RES: ResTier[] = [
  */
 function referencePrompt(
   prompt: string,
-  images: number,
+  roles: ImageRole[],
   audio = 0,
   video = 0,
   subject: "person" | "object" = "person",
 ): string {
-  if (images + audio + video < 1) return prompt;
+  if (roles.length + audio + video < 1) return prompt;
   const list = (name: string, n: number): string =>
     Array.from({ length: n }, (_, i) => `@${name}${i + 1}`).join(", ");
   const parts: string[] = [];
-  if (images) {
+  const named = roles.filter(
+    (r): r is Extract<ImageRole, { kind: "character" | "location" }> => r.kind === "character" || r.kind === "location",
+  );
+  if (roles.length && !named.length) {
     parts.push(
       subject === "object"
-        ? `${list("Image", images)} are reference photographs of the SAME object, shot from different ` +
+        ? `${list("Image", roles.length)} are reference photographs of the SAME object, shot from different ` +
             `angles and in different lighting — read them together to get its shape, materials, colour ` +
             `and proportions right. They show ONE object repeated, NOT several different objects: the ` +
             `video must contain exactly the object that appears in them, nothing added and nothing ` +
             `swapped. Never render a collage, a split screen or a contact sheet — this is one continuous shot.`
-        : `${list("Image", images)} are reference photographs of the SAME subject or subjects, shot from ` +
+        : `${list("Image", roles.length)} are reference photographs of the SAME subject or subjects, shot from ` +
             `different angles and in different lighting — read them together to get the faces right. They ` +
             `show the same people repeated, NOT additional people: the video must contain exactly the ` +
             `people who appear in them, no one added and no one dropped. Never render a collage, a split ` +
             `screen or a contact sheet — this is one continuous shot.`,
+    );
+  } else if (named.length) {
+    // At least one attachment is a Director Mode sheet — describe each image
+    // individually instead of the "all one subject" claim above, which would
+    // be false the instant a second named character or location is present.
+    const lines = roles.map((r, i) => {
+      const tag = `@Image${i + 1}`;
+      if (r.kind === "character") {
+        return (
+          `${tag} — character reference sheet for ${r.name}: several panels of the SAME character ` +
+          `(full-figure turnaround, head angles, expressions, detail close-ups) on a neutral backdrop. ` +
+          `${r.name} in the video must match it exactly: face, hair, build, costume, colours.`
+        );
+      }
+      if (r.kind === "location") {
+        return (
+          `${tag} — location reference sheet for ${r.name}: several panels of the SAME place ` +
+          `(wide establishing view, alternative angles, material close-ups). Stage the shot in this ` +
+          `location: its layout, materials, colours and light.`
+        );
+      }
+      if (r.kind === "style") {
+        return (
+          `${tag} — STYLE REFERENCE ONLY: copy its palette, lighting, materials and mood. Do not copy ` +
+          `any person, face, body or place from it.`
+        );
+      }
+      // subject / angle: an ordinary photo of the render's own subject,
+      // sitting alongside one or more named sheets.
+      return `${tag} — reference photograph of the subject.`;
+    });
+    const charNames = named.filter((r) => r.kind === "character").map((r) => r.name);
+    parts.push(
+      `REFERENCES — the attached images are reference sheets, not frames of this video.\n${lines.join("\n")}\n` +
+        `Each sheet is ONE subject; different sheets are DIFFERENT subjects — do not blend them. Use the ` +
+        `sheets as reference only: never reproduce their panels, grid, gutters or neutral backdrop.` +
+        (charNames.length
+          ? ` Exactly these characters appear on screen — ${charNames.join(", ")} — no one added, no one dropped.`
+          : "") +
+        ` One continuous take, no cuts, no collage, no split screen.`,
     );
   }
   if (video) {
@@ -682,12 +792,18 @@ export const MODELS = {
     label: "Seedance 2.0 Mini · по фото",
     note: "видео по нескольким фото — до 9",
     input: (prompt, imageUrl, opts) => {
-      const urls = refUrls(imageUrl, opts);
+      const images = refImages(imageUrl, opts);
       const audio = opts?.audioUrls ?? [];
       const video = opts?.videoUrls ?? [];
       return {
-        prompt: referencePrompt(prompt, urls.length, audio.length, video.length, opts?.subject),
-        image_urls: urls,
+        prompt: referencePrompt(
+          prompt,
+          images.map((x) => x.role),
+          audio.length,
+          video.length,
+          opts?.subject,
+        ),
+        image_urls: images.map((x) => x.url),
         // Omitted entirely when empty: the endpoint treats an empty array and an
         // absent field the same, and sending [] would put a meaningless key in
         // every request body and in every logged payload.
