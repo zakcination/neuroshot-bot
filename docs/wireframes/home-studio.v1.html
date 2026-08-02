@@ -1,0 +1,367 @@
+<title>NeuroShot — костяк экранов</title>
+<style>
+  :root{
+    --paper:#eaeff4; --paper-card:#ffffff; --ink:#16232b; --ink-dim:#4c5c67;
+    --line:#2e5aac; --line-soft:#93a6c2; --line-soft-bg:#f2f5f9;
+    --flag:#b8531f; --flag-bg:#fbeee3; --flag-line:#b8531f;
+    --radius:10px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --paper:#0f1720; --paper-card:#141f29; --ink:#e7ecef; --ink-dim:#96a6b3;
+      --line:#6ea8ff; --line-soft:#3e5573; --line-soft-bg:#111b24;
+      --flag:#ff9c62; --flag-bg:#2a1c12; --flag-line:#ff9c62;
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#0f1720; --paper-card:#141f29; --ink:#e7ecef; --ink-dim:#96a6b3;
+    --line:#6ea8ff; --line-soft:#3e5573; --line-soft-bg:#111b24;
+    --flag:#ff9c62; --flag-bg:#2a1c12; --flag-line:#ff9c62;
+  }
+  :root[data-theme="light"]{
+    --paper:#eaeff4; --paper-card:#ffffff; --ink:#16232b; --ink-dim:#4c5c67;
+    --line:#2e5aac; --line-soft:#93a6c2; --line-soft-bg:#f2f5f9;
+    --flag:#b8531f; --flag-bg:#fbeee3; --flag-line:#b8531f;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.4;
+  }
+  .tag{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:11px; letter-spacing:.01em;
+  }
+  .wrap{max-width:1180px; margin:0 auto; padding:28px 20px 64px}
+
+  header.top{margin-bottom:22px}
+  header.top h1{
+    font-size:22px; margin:0 0 6px; text-wrap:balance; font-weight:700;
+  }
+  header.top p{margin:0; color:var(--ink-dim); font-size:14px; max-width:62ch}
+
+  .legend{
+    display:flex; flex-wrap:wrap; gap:10px 22px; margin-top:16px; padding:12px 14px;
+    background:var(--paper-card); border:1px solid var(--line-soft); border-radius:var(--radius);
+    font-size:12.5px; color:var(--ink-dim);
+  }
+  .legend .item{display:flex; align-items:center; gap:7px}
+  .swatch{width:15px; height:15px; border-radius:3px; flex:none}
+  .swatch.stable{border:1.5px solid var(--line-soft); background:var(--line-soft-bg)}
+  .swatch.flag{border:1.5px dashed var(--flag-line); background:var(--flag-bg)}
+  .swatch.mock{border:1.5px solid #7c5cff; background:#14111c}
+
+  .frames{
+    display:flex; gap:26px; margin-top:26px; align-items:flex-start;
+    flex-wrap:wrap;
+  }
+  .frame{
+    width:390px; max-width:100%; flex:none;
+  }
+  .frame h2{
+    font-size:15px; margin:0 0 10px; display:flex; align-items:baseline; gap:8px;
+  }
+  .frame h2 .tag{color:var(--ink-dim)}
+  .screen{
+    border:1.5px solid var(--line); border-radius:20px; background:var(--paper-card);
+    padding:14px; display:flex; flex-direction:column; gap:10px;
+    box-shadow:0 1px 0 var(--line-soft) inset;
+  }
+
+  .blk{
+    border:1.5px solid var(--line-soft); background:var(--line-soft-bg);
+    border-radius:8px; padding:9px 11px;
+  }
+  .blk .head{display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:3px}
+  .blk .label{font-size:13px; font-weight:600}
+  .blk .tag{color:var(--ink-dim)}
+  .blk .desc{font-size:12px; color:var(--ink-dim); margin:0}
+
+  .blk.flag{
+    border:1.5px dashed var(--flag-line); background:var(--flag-bg);
+  }
+  .blk.flag .label{color:var(--flag)}
+  .blk.flag .status{
+    font-size:10.5px; font-weight:700; letter-spacing:.03em; text-transform:uppercase;
+    color:var(--flag); border:1px solid var(--flag-line); border-radius:999px;
+    padding:1px 7px; white-space:nowrap;
+  }
+
+  .row2{display:flex; gap:8px}
+  .row2 .blk{flex:1; min-width:0}
+  .chiprow{display:flex; gap:6px; flex-wrap:wrap; margin-top:6px}
+  .chip{
+    font-size:11px; border:1px solid var(--line-soft); border-radius:999px;
+    padding:2px 9px; color:var(--ink-dim); background:var(--paper-card);
+  }
+  .chip.on{background:var(--line); color:#fff; border-color:var(--line); font-weight:600}
+  .btnline{
+    border:1px solid var(--line); border-radius:8px; padding:6px 10px;
+    font-size:12px; text-align:center; color:var(--line); font-weight:600;
+  }
+  .btnline.ghost{border-style:dashed; color:var(--ink-dim); border-color:var(--line-soft); font-weight:500}
+
+  /* ---- "beautiful" polish pass: gallery + roadmap cards ---- */
+  .nicepair{display:flex; flex-direction:column; gap:16px}
+  .gal-card, .road-card{
+    background:var(--paper-card); border:1px solid var(--line-soft); border-radius:14px;
+    padding:12px; box-shadow:0 6px 16px -12px rgba(20,30,40,.35);
+  }
+  .gal-top{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:2px}
+  .gal-top h3{margin:0; font-size:14px; font-weight:700}
+  .seeall{font-size:12px; color:var(--line); font-weight:600; white-space:nowrap}
+  .gal-tiles{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:9px}
+  .gtile{
+    aspect-ratio:4/3; border-radius:10px; display:flex; align-items:flex-end; padding:8px;
+    color:#fff; font-size:12px; font-weight:700; text-shadow:0 1px 4px rgba(0,0,0,.45);
+  }
+  .road-chip{
+    font-size:11px; font-weight:700; color:var(--line); background:var(--line-soft-bg);
+    border:1px solid var(--line-soft); border-radius:999px; padding:2px 9px; white-space:nowrap;
+  }
+  .road-bar{height:8px; border-radius:999px; background:var(--line-soft-bg); border:1px solid var(--line-soft); overflow:hidden; margin-top:9px}
+  .road-bar span{display:block; height:100%; background:linear-gradient(90deg,var(--line),var(--line-soft)); border-radius:999px}
+  .road-note{font-size:12px; color:var(--ink-dim); margin:8px 0 0}
+
+  /* ---- studio merged header (title + mode segment) ---- */
+  .stu-head{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:8px}
+  .stu-title{font-size:16px; font-weight:700}
+  .stu-seg{display:flex; padding:3px; border-radius:11px; background:var(--paper-card); border:1px solid var(--line-soft); gap:2px}
+  .stu-seg button{border:0; background:none; font:inherit; font-size:12px; font-weight:600; padding:5px 12px; border-radius:8px; color:var(--ink-dim)}
+  .stu-seg button.on{background:var(--line-soft-bg); color:var(--ink); border:1px solid var(--line-soft)}
+
+  /* ---- real mockup, promo banner (per uploaded reference image) ---- */
+  .promo-mock{
+    margin-top:9px; border-radius:16px; padding:15px;
+    background:
+      radial-gradient(130% 150% at 100% -10%, rgba(255,55,130,.4), transparent 60%),
+      linear-gradient(165deg,#2b0a1c,#150410 75%);
+    border:1px solid rgba(255,130,180,.28);
+    color:#fbeaf1; display:flex; flex-direction:column; gap:10px;
+  }
+  .promo-tag{
+    align-self:flex-start; font-size:10.5px; font-weight:700; letter-spacing:.04em;
+    text-transform:uppercase; padding:3px 9px; border-radius:999px;
+    background:rgba(255,64,140,.2); border:1px solid rgba(255,130,180,.4); color:#ff8fbb;
+  }
+  .promo-h{font-size:19px; font-weight:800; line-height:1.18; color:#ff6fa8; text-wrap:balance; margin:0}
+  .promo-sub{font-size:12px; color:#dcb7c8; margin:0}
+  .promo-row{display:flex; align-items:center; justify-content:space-between; gap:10px}
+  .promo-cta{border:0; border-radius:10px; padding:9px 14px; background:#fff; color:#2a0a1c; font-size:12.5px; font-weight:700}
+  .promo-price{font-size:14px; font-weight:700; color:#fff; white-space:nowrap}
+  .promo-price s{color:#a9899a; font-weight:500; margin-right:4px}
+  .promo-cd{border-top:1px solid rgba(255,255,255,.14); padding-top:9px; display:flex; flex-direction:column; gap:6px}
+  .promo-cd-lbl{font-size:11px; color:#dcb7c8}
+  .promo-cd-boxes{display:flex; gap:6px}
+  .cdbox{flex:1; background:rgba(0,0,0,.28); border:1px solid rgba(255,255,255,.16); border-radius:8px; padding:6px 0; text-align:center}
+  .cdbox b{display:block; font-size:15px; font-variant-numeric:tabular-nums}
+  .cdbox span{display:block; font-size:9px; color:#dcb7c8; text-transform:uppercase; letter-spacing:.03em}
+
+  /* ---- real mockup, references (per uploaded 1c-studio.html) ---- */
+  .ref-mock{
+    margin-top:9px; border-radius:16px; padding:12px; background:#0d0b13;
+    border:1px solid rgba(255,255,255,.09); display:flex; flex-direction:column; gap:10px;
+    color:#f4f2fa;
+  }
+  .ref-head{display:flex; justify-content:space-between; align-items:baseline}
+  .ref-head span:first-child{font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:#7d7893}
+  .ref-head .cnt{font-size:12px; font-weight:600; color:#b7b2c9}
+  .ref-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:7px}
+  .ref-cell{aspect-ratio:1; border-radius:12px; display:flex; align-items:center; justify-content:center; position:relative; font-size:20px; font-weight:300}
+  .ref-cell.empty{border:1.5px dashed rgba(255,255,255,.18); color:#5e5975}
+  .ref-cell.filled{border:1px solid rgba(124,92,255,.45); background:linear-gradient(150deg,#2c2350,#6b3f66 65%,#14111c)}
+  .ref-cell.filled .rm{
+    position:absolute; top:5px; right:5px; width:19px; height:19px; border-radius:50%;
+    background:rgba(6,5,10,.65); border:1px solid rgba(255,255,255,.2); font-size:10px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .ref-cell.filled .rtag{position:absolute; bottom:5px; left:6px; font-family:ui-monospace,monospace; font-size:9px; letter-spacing:.08em; color:rgba(255,255,255,.6)}
+  .ref-more{border:1px solid rgba(255,255,255,.1); background:#14111c; color:#8f8aa3; border-radius:12px; padding:9px; font-size:12.5px; font-weight:600}
+  .ref-sub{display:flex; flex-direction:column; gap:6px}
+  .ref-sub-head{display:flex; align-items:baseline; justify-content:space-between; font-size:12px; color:#c7c2d9}
+  .ref-sub-head .cnt{color:#8f8aa3; font-weight:600; font-size:11px}
+  .mini-slots{display:grid; grid-template-columns:repeat(3,1fr); gap:6px}
+  .mini-cell{aspect-ratio:1.7; border-radius:10px; display:flex; align-items:center; justify-content:center; position:relative; font-size:15px; font-weight:300}
+  .mini-cell.empty{border:1.5px dashed rgba(255,255,255,.18); color:#5e5975}
+  .mini-cell.filled{border:1px solid rgba(124,92,255,.45); background:linear-gradient(150deg,#2c2350,#6b3f66 65%,#14111c)}
+  .mini-cell.audio.filled{border-color:rgba(124,92,255,.5)}
+  .mini-cell.video.filled{border-color:rgba(255,77,141,.5); background:linear-gradient(150deg,#3a1930,#6b2f4a 65%,#14111c)}
+  .mini-cell.filled .rm{
+    position:absolute; top:3px; right:3px; width:16px; height:16px; border-radius:50%;
+    background:rgba(6,5,10,.7); border:1px solid rgba(255,255,255,.22); font-size:9px;
+    display:flex; align-items:center; justify-content:center;
+  }
+
+  footer{margin-top:34px; font-size:12.5px; color:var(--ink-dim); max-width:70ch}
+  footer p{margin:0 0 8px}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.93em}
+
+  @media (max-width: 860px){
+    .frames{gap:20px}
+  }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <h1>NeuroShot — костяк двух экранов</h1>
+    <p>Структура из кода (<code>public/app.html</code>) плюс два блока, уже собранные по вашим референсам. Остальное — контекст в схематичном виде, ждёт следующего раунда.</p>
+    <div class="legend">
+      <span class="item"><span class="swatch stable"></span>стабильный блок — просто контекст</span>
+      <span class="item"><span class="swatch mock"></span>тёмный макет внутри — по вашему референсу</span>
+    </div>
+  </header>
+
+  <div class="frames">
+
+    <!-- ============ ЭКРАН 1: Главная (вкладка «Студия») ============ -->
+    <section class="frame">
+      <h2>Главная <span class="tag">data-page="studio" (первая вкладка)</span></h2>
+      <div class="screen">
+
+        <div class="blk">
+          <div class="head"><span class="label">Шапка</span><span class="tag">.top2 / .idbox</span></div>
+          <p class="desc">Аватар · имя · уровень-пилюля · баланс 🔫 · счётчик активных генераций</p>
+        </div>
+
+        <div class="blk">
+          <div class="head"><span class="label">🆕 Новые модели</span><span class="tag">#newsrail</span></div>
+        </div>
+
+        <div class="blk">
+          <div class="head">
+            <span class="label">Промо-баннер</span>
+          </div>
+          <p class="desc"><span class="tag">promoBannerHtml()</span> — согласовано, текст сокращён до сути.</p>
+
+          <div class="promo-mock">
+            <span class="promo-tag">🏷 Ограниченное предложение</span>
+            <p class="promo-h">Seedance дешевле вдвое</p>
+            <p class="promo-sub">Видео 720p · 4–15 сек · все тарифы Seedance</p>
+            <div class="promo-row">
+              <button class="promo-cta">Попробовать со скидкой →</button>
+              <span class="promo-price"><s>12</s> 6 🔫</span>
+            </div>
+            <div class="promo-cd">
+              <span class="promo-cd-lbl">⏳ Акция закончится через</span>
+              <div class="promo-cd-boxes">
+                <div class="cdbox"><b>02</b><span>дня</span></div>
+                <div class="cdbox"><b>14</b><span>час</span></div>
+                <div class="cdbox"><b>37</b><span>мин</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row2">
+          <div class="blk"><div class="head"><span class="label">📸 Фото</span></div><p class="desc">«Пресет в один тап»</p></div>
+          <div class="blk"><div class="head"><span class="label">🎬 Видео</span></div><p class="desc">«Оживить кадр»</p></div>
+        </div>
+        <p class="tag" style="color:var(--ink-dim);margin:-4px 0 0">.tile2 — две большие плитки-входа</p>
+
+        <div class="nicepair">
+          <div class="gal-card">
+            <div class="gal-top"><h3>Галерея промптов</h3><span class="seeall">Все ›</span></div>
+            <div class="chiprow" style="margin-top:6px"><span class="chip on">Фото</span><span class="chip">Видео</span></div>
+            <div class="gal-tiles">
+              <div class="gtile" style="background:linear-gradient(140deg,#4a5c8a,#7c93b8)"><b>Студийный портрет</b></div>
+              <div class="gtile" style="background:linear-gradient(140deg,#8a5c4a,#c48f6d)"><b>Товар на мраморе</b></div>
+            </div>
+          </div>
+
+          <div class="road-card">
+            <div class="gal-top"><h3>Ваш путь в NeuroShot</h3><span class="road-chip">3 из 6</span></div>
+            <div class="road-bar"><span style="width:50%"></span></div>
+            <p class="road-note">Ещё немного — и открывается следующая награда</p>
+          </div>
+        </div>
+
+        <div class="blk">
+          <div class="head"><span class="label">Таббар</span><span class="tag">.tabbar</span></div>
+          <p class="desc">Студия · Профиль · Друзья · Патроны · Ещё</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ЭКРАН 2: Студия — создание ============ -->
+    <section class="frame">
+      <h2>Студия — создание <span class="tag">viewStudio()</span></h2>
+      <div class="screen">
+
+        <div class="blk">
+          <div class="head"><span class="label">Заголовок листа + Режим</span><span class="tag">#stuSeg</span></div>
+          <p class="desc">«Студия» + (иногда) баннер акции сверху</p>
+          <div class="stu-head">
+            <span class="stu-title">Студия</span>
+            <div class="stu-seg"><button class="on">Видео</button><button>Фото</button></div>
+          </div>
+        </div>
+
+        <div class="blk">
+          <div class="head">
+            <span class="label">Референсы</span>
+          </div>
+          <p class="desc"><span class="tag">extrasBlock() / refMediaBlock()</span> — согласовано, по макету (1c-studio). Аудио и видео-референсы — до 3 штук каждое.</p>
+
+          <div class="ref-mock">
+            <div class="ref-head"><span>Референсы</span><span class="cnt">2/6</span></div>
+            <div class="ref-grid">
+              <div class="ref-cell filled"><span class="rm">✕</span><span class="rtag">01</span></div>
+              <div class="ref-cell filled"><span class="rm">✕</span><span class="rtag">02</span></div>
+              <div class="ref-cell empty">＋</div>
+              <div class="ref-cell empty">＋</div>
+              <div class="ref-cell empty">＋</div>
+              <div class="ref-cell empty">＋</div>
+            </div>
+            <button class="ref-more">Показать ещё</button>
+
+            <div class="ref-sub">
+              <div class="ref-sub-head"><span>🎵 Аудио</span><span class="cnt">0/3</span></div>
+              <div class="mini-slots">
+                <div class="mini-cell audio empty">＋</div>
+                <div class="mini-cell audio empty">＋</div>
+                <div class="mini-cell audio empty">＋</div>
+              </div>
+            </div>
+
+            <div class="ref-sub">
+              <div class="ref-sub-head"><span>🎞️ Видео-референс</span><span class="cnt">1/3</span></div>
+              <div class="mini-slots">
+                <div class="mini-cell video filled"><span class="rm">✕</span></div>
+                <div class="mini-cell video empty">＋</div>
+                <div class="mini-cell video empty">＋</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="blk">
+          <div class="head"><span class="label">Стиль / промпт</span><span class="tag">.stuchip / textarea#stuPrompt</span></div>
+          <p class="desc">Если выбран пресет — чип со стилем («✎ Изменить», «⇄ Сменить»). Если нет — поле промпта</p>
+        </div>
+
+        <div class="blk">
+          <div class="head"><span class="label">Модель</span><span class="tag">#stuMpick / #stuMlist</span></div>
+          <p class="desc">Свёрнутая кнопка с текущей моделью и ценой → разворачивается в список с поиском</p>
+        </div>
+
+        <div class="blk">
+          <div class="head"><span class="label">Параметры (зависят от модели)</span></div>
+          <p class="desc">Что показывается — решает выбранная модель: уровень качества, формат кадра, разрешение, количество, длительность, финальный кадр, вопросы сюжета</p>
+          <div class="chiprow">
+            <span class="chip">качество</span><span class="chip">формат</span><span class="chip">разрешение</span>
+            <span class="chip">кол-во</span><span class="chip">длительность</span><span class="chip">финал. кадр</span>
+          </div>
+        </div>
+
+        <div class="btnline">Создать — #stuGo</div>
+        <div class="btnline ghost">← Галерея стилей — #stuBack</div>
+      </div>
+    </section>
+
+  </div>
+
+  <footer>
+    <p>Референсы: фото — сетка 6 слотов как было, аудио и видео — отдельные ряды по 3 слота каждый (было по одному). Промо-баннер и остальная структура — как в прошлой версии. Оба блока согласованы — переношу в код (<code>promoBannerHtml()</code>, <code>extrasBlock()/refMediaBlock()</code>) и открываю PR.</p>
+  </footer>
+</div>

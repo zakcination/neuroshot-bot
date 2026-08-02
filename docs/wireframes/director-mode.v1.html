@@ -1,0 +1,340 @@
+<title>NeuroShot — Режиссёрский режим</title>
+<style>
+  :root{
+    --bg:#08070c; --bg-2:#0d0b13; --surface:#14111c; --surface-2:#1b1726;
+    --line:rgba(255,255,255,.09); --ink:#f4f2fa; --muted:#8f8aa3; --faint:#5e5975;
+    --violet:#7c5cff; --magenta:#ff4d8d; --amber:#f5b64a;
+    --aurora:linear-gradient(120deg,#7c5cff,#b44dff 45%,#ff4d8d);
+  }
+  *{box-sizing:border-box}
+  html{color-scheme:dark}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.42;
+  }
+  .wrap{max-width:1180px; margin:0 auto; padding:28px 20px 70px}
+  h1{font-size:21px; margin:0 0 6px; text-wrap:balance}
+  .lede{color:var(--muted); font-size:13.5px; max-width:66ch; margin:0 0 22px}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.92em; color:var(--muted)}
+
+  .layout{display:flex; gap:30px; flex-wrap:wrap; align-items:flex-start}
+  .phone{width:390px; max-width:100%; flex:none; border:1.5px solid var(--line); border-radius:28px; padding:14px; background:var(--bg-2)}
+  .ctx{font-family:ui-monospace,monospace; font-size:10.5px; color:var(--faint); margin:0 0 10px}
+  .sheet{display:flex; flex-direction:column; gap:12px}
+
+  .sec-h{font-size:16px; font-weight:700; margin:0}
+  .row{display:flex; align-items:center; justify-content:space-between; gap:10px}
+
+  /* ---- model row context (unchanged, just for orientation) ---- */
+  .mrow-ctx{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:10px 12px;
+  }
+  .mrow-ctx b{font-size:14px}
+  .mrow-ctx small{display:block; color:var(--muted); font-size:11px; margin-top:1px}
+  .price{font-size:12px; font-weight:700; color:var(--amber)}
+
+  /* ---- iOS-style toggle ---- */
+  .toggle-row{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:12px 12px;
+  }
+  .toggle-row .lbl{font-size:14px; font-weight:600}
+  .toggle-row .lbl small{display:block; color:var(--muted); font-size:11px; font-weight:400; margin-top:1px}
+  .ios-toggle{position:relative; width:46px; height:27px; flex:none}
+  .ios-toggle input{position:absolute; inset:0; opacity:0; margin:0; cursor:pointer; z-index:2}
+  .ios-toggle .track{position:absolute; inset:0; border-radius:999px; background:#3a3a3f; transition:background .18s}
+  .ios-toggle input:checked ~ .track{background:var(--aurora)}
+  .ios-toggle .knob{
+    position:absolute; top:2px; left:2px; width:23px; height:23px; border-radius:50%;
+    background:#fff; box-shadow:0 2px 5px rgba(0,0,0,.4); transition:transform .18s cubic-bezier(.4,0,.2,1);
+  }
+  .ios-toggle input:checked ~ .knob{transform:translateX(19px)}
+  .ios-toggle input:focus-visible ~ .track{outline:2px solid var(--magenta); outline-offset:2px}
+
+  /* ---- accordion sections (persona / location / storyboard) ---- */
+  .acc{background:var(--surface); border:1px solid var(--line); border-radius:16px; overflow:hidden}
+  .acc-head{
+    all:unset; box-sizing:border-box; display:flex; align-items:center; justify-content:space-between;
+    width:100%; padding:13px 14px; cursor:pointer; gap:10px;
+  }
+  .acc-head .t{display:flex; align-items:center; gap:9px; min-width:0}
+  .acc-head .n{
+    width:22px; height:22px; border-radius:7px; background:var(--surface-2); border:1px solid var(--line);
+    display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:var(--muted); flex:none;
+  }
+  .acc-head b{font-size:14px; font-weight:600}
+  .acc-head .state{font-size:11.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .acc-head .chev{color:var(--faint); font-size:11px; flex:none; transition:transform .15s}
+  .acc.open .chev{transform:rotate(180deg)}
+  .acc-body{padding:0 14px 14px; display:flex; flex-direction:column; gap:10px}
+  .acc.collapsed .acc-body{display:none}
+  .acc-hint{font-size:11.5px; color:var(--muted); margin:0}
+
+  /* ---- character/location list: 1 source photo -> generated sheet ---- */
+  .char-list{display:flex; flex-direction:column; gap:8px}
+  .char-card{
+    display:flex; align-items:center; gap:9px; background:var(--surface-2); border:1px solid var(--line);
+    border-radius:13px; padding:9px 10px;
+  }
+  .char-src{
+    width:38px; height:38px; border-radius:9px; flex:none; border:1px solid rgba(124,92,255,.45);
+    background:linear-gradient(150deg,#2c2350,#3a2340 65%,#181225);
+  }
+  .char-arrow{color:var(--faint); font-size:13px; flex:none}
+  .char-sheet{
+    width:48px; height:38px; border-radius:8px; flex:none; position:relative; overflow:hidden;
+    border:1px solid rgba(255,77,141,.4); background:linear-gradient(150deg,#241d3a,#33253f);
+  }
+  .char-sheet .grid{position:absolute; inset:0; display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr}
+  .char-sheet .grid i{display:block; background:linear-gradient(160deg,#2c2350,#3a2340)}
+  .char-sheet .grid i:nth-child(odd){background:linear-gradient(160deg,#332345,#402848)}
+  .char-sheet .grid{gap:1px; background:var(--bg-2)}
+  .char-meta{flex:1; min-width:0}
+  .char-meta b{display:block; font-size:12.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .char-meta small{display:block; font-size:10.5px; color:var(--muted); margin-top:1px}
+  .char-del{
+    all:unset; box-sizing:border-box; width:22px; height:22px; border-radius:50%; background:var(--bg-2);
+    border:1px solid var(--line); color:var(--muted); font-size:10px; display:flex; align-items:center;
+    justify-content:center; flex:none; cursor:pointer;
+  }
+  .char-add-card{display:flex; flex-direction:column; gap:8px; border:1.5px dashed var(--line); border-radius:13px; padding:11px}
+  .char-add-row{display:flex; align-items:center; gap:10px}
+  .char-drop{
+    width:38px; height:38px; border-radius:9px; flex:none; border:1.5px dashed var(--faint);
+    display:flex; align-items:center; justify-content:center; color:var(--faint); font-size:16px; font-weight:300;
+  }
+  .char-add-row b{font-size:12.5px; font-weight:600; display:block}
+  .char-add-row small{font-size:10.5px; color:var(--muted); display:block; margin-top:1px}
+  .char-gen-btn{
+    all:unset; box-sizing:border-box; text-align:center; padding:9px; border-radius:10px;
+    background:rgba(245,182,74,.12); border:1px solid rgba(245,182,74,.4); color:var(--amber);
+    font-size:12px; font-weight:700; cursor:pointer;
+  }
+  .char-alt{all:unset; box-sizing:border-box; text-align:center; font-size:11px; color:var(--muted); cursor:pointer}
+  .cand-refs{font-size:10px; color:var(--muted)}
+
+  /* ---- storyboard template gallery ---- */
+  .scenario-box{background:var(--surface-2); border:1px solid var(--line); border-radius:12px; padding:10px 11px}
+  .scenario-box textarea{width:100%; min-height:50px; resize:none; border:0; background:transparent; color:var(--ink); font:inherit; font-size:12.5px; line-height:1.45; padding:0; outline:none}
+  .split-btn{
+    all:unset; box-sizing:border-box; display:flex; align-items:center; justify-content:center; gap:6px;
+    width:100%; padding:10px; border-radius:11px; border:1px solid rgba(124,92,255,.45);
+    background:rgba(124,92,255,.12); color:#c9bfff; font-size:12.5px; font-weight:700; cursor:pointer;
+  }
+  .cand-list{display:flex; flex-direction:column; gap:7px}
+  .cand-head{display:flex; align-items:baseline; justify-content:space-between; margin:2px 0 0}
+  .cand-head span{font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--muted)}
+  .cand-head small{font-size:10.5px; color:var(--faint)}
+  .cand-card{
+    all:unset; box-sizing:border-box; display:flex; flex-direction:column; gap:5px; width:100%;
+    border:1px solid var(--line); background:var(--surface-2); border-radius:12px; padding:10px 11px; cursor:pointer;
+  }
+  .cand-card b{font-size:12.5px; font-weight:600; line-height:1.35}
+  .cand-tag{
+    align-self:flex-start; font-size:9.5px; font-weight:700; letter-spacing:.03em; text-transform:uppercase;
+    padding:2px 8px; border-radius:999px; background:var(--bg-2); border:1px solid var(--line); color:var(--muted);
+  }
+  .cand-card.on{border-color:var(--magenta); background:linear-gradient(160deg,rgba(124,92,255,.16),rgba(255,77,141,.1))}
+  .cand-card.on .cand-tag{background:var(--aurora); border-color:transparent; color:#fff}
+  .cand-card.on b{color:#fff}
+  .manual-toggle{all:unset; box-sizing:border-box; display:block; width:100%; text-align:center; padding:6px; font-size:11.5px; color:var(--muted); cursor:pointer}
+  .shot-grid{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+  .shot-grid.collapsed{display:none}
+  .shot-card{
+    all:unset; box-sizing:border-box; display:flex; flex-direction:column; gap:4px;
+    border:1px solid var(--line); background:var(--surface-2); border-radius:13px; padding:10px;
+    cursor:pointer;
+  }
+  .shot-card .ico{
+    width:26px; height:26px; border-radius:8px; background:var(--bg-2); display:flex; align-items:center; justify-content:center;
+    font-size:13px; color:var(--muted);
+  }
+  .shot-card b{font-size:12.5px; font-weight:600; margin-top:2px}
+  .shot-card small{font-size:10px; color:var(--muted); line-height:1.25}
+  .shot-card.on{border-color:var(--magenta); background:linear-gradient(160deg,rgba(124,92,255,.16),rgba(255,77,141,.1))}
+  .shot-card.on .ico{background:var(--aurora); color:#fff}
+  .shot-card.on b{color:#fff}
+
+  /* ---- assemble button + resulting prompt ---- */
+  .assemble-btn{
+    all:unset; box-sizing:border-box; display:flex; align-items:center; justify-content:center; gap:7px;
+    width:100%; padding:13px; border-radius:14px; background:var(--aurora); color:#fff;
+    font-size:13.5px; font-weight:700; cursor:pointer; box-shadow:0 10px 24px -12px rgba(124,92,255,.7);
+  }
+
+  .prompt-box{background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:12px}
+  .prompt-box .lbl2{font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); margin:0 0 7px}
+  .prompt-box textarea{
+    width:100%; min-height:76px; resize:none; border:0; background:transparent; color:var(--ink);
+    font:inherit; font-size:13px; line-height:1.5; padding:0; outline:none;
+  }
+  .enh-row{display:flex; gap:8px; margin-top:9px}
+  .enh-btn{
+    all:unset; box-sizing:border-box; flex:1; text-align:center; padding:9px; border-radius:10px;
+    border:1px solid rgba(255,77,141,.35); background:rgba(255,77,141,.08); color:#ff9cc0;
+    font-size:12px; font-weight:700; cursor:pointer;
+  }
+
+  .foot-note{font-size:11.5px; color:var(--muted); margin:2px 0 0}
+
+  /* ---- side notes panel ---- */
+  .notes{flex:1; min-width:280px; display:flex; flex-direction:column; gap:16px}
+  .notes h2{font-size:14px; margin:0 0 4px; color:var(--muted); font-weight:600}
+  .note-card{background:var(--bg-2); border:1px solid var(--line); border-radius:14px; padding:14px 16px}
+  .note-card p{margin:0 0 8px; font-size:13px; color:var(--muted); line-height:1.55}
+  .note-card p:last-child{margin-bottom:0}
+  .note-card b{color:var(--ink)}
+  .note-card code{color:#c9bfff}
+
+  @media (max-width:760px){.layout{gap:22px}}
+</style>
+
+<div class="wrap">
+  <h1>Режиссёрский режим</h1>
+  <p class="lede">Живёт внутри <code>viewStudio()</code>, когда выбран Seedance + видео-режим. Тумблер выключен по умолчанию — обычный быстрый путь (одно поле промпта) не меняется вообще. Включили — раскрылись три секции, всё опционально, всё сворачивается.</p>
+
+  <div class="layout">
+    <div class="phone">
+      <div class="ctx">viewStudio() · модель = Seedance · video mode</div>
+      <div class="sheet">
+
+        <div class="mrow-ctx">
+          <div><b>Seedance</b><small>текущая модель</small></div>
+          <span class="price">от 10 🔫</span>
+        </div>
+
+        <div class="toggle-row">
+          <span class="lbl">Режиссёрский режим<small>персонаж, локация, кадр — по шагам</small></span>
+          <span class="ios-toggle">
+            <input type="checkbox" checked />
+            <span class="track"></span>
+            <span class="knob"></span>
+          </span>
+        </div>
+
+        <!-- Персонажи — открыт, для примера -->
+        <div class="acc open">
+          <button class="acc-head">
+            <span class="t"><span class="n">1</span><b>Персонажи</b></span>
+            <span class="state">Аня · готово</span>
+            <span class="chev">▾</span>
+          </button>
+          <div class="acc-body">
+            <p class="acc-hint">Минимум одно фото персонажа (можно больше — точнее сходство) → мы сами соберём карту: ракурсы + мимика. Работает для человека, животного, персонажа в костюме — кого угодно. Можно добавить несколько персонажей.</p>
+            <div class="char-list">
+              <div class="char-card">
+                <div class="char-src"></div>
+                <span class="char-arrow">→</span>
+                <div class="char-sheet"><div class="grid"><i></i><i></i><i></i><i></i></div></div>
+                <div class="char-meta"><b>Аня</b><small>карта готова · 1 изображение, 4 ракурса</small></div>
+                <button class="char-del">✕</button>
+              </div>
+              <div class="char-add-card">
+                <div class="char-add-row">
+                  <div class="char-drop">＋</div>
+                  <div><b>Добавить персонажа</b><small>минимум 1 фото, можно больше</small></div>
+                </div>
+                <button class="char-gen-btn">🎨 Сгенерировать карту персонажа · цена фото-генерации</button>
+                <button class="char-alt">или ✎ описать словами, без фото</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Локации — свёрнут, для примера паттерна -->
+        <div class="acc collapsed">
+          <button class="acc-head">
+            <span class="t"><span class="n">2</span><b>Локации</b></span>
+            <span class="state">пропущено</span>
+            <span class="chev">▾</span>
+          </button>
+          <div class="acc-body">
+            <p class="acc-hint">Одно фото локации (или текстовое описание) → карта из нескольких ракурсов и деталей. Можно добавить несколько локаций.</p>
+            <div class="char-list">
+              <div class="char-add-card">
+                <div class="char-add-row">
+                  <div class="char-drop">＋</div>
+                  <div><b>Добавить локацию</b><small>1 фото или текст</small></div>
+                </div>
+                <button class="char-gen-btn">🎨 Сгенерировать карту локации · цена фото-генерации</button>
+                <button class="char-alt">или ✎ описать словами, без фото</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Раскадровка — открыт -->
+        <div class="acc open">
+          <button class="acc-head">
+            <span class="t"><span class="n">3</span><b>Кадр</b></span>
+            <span class="state">Наезд-разоблачение</span>
+            <span class="chev">▾</span>
+          </button>
+          <div class="acc-body">
+            <p class="acc-hint">Опишите сценарий целиком, своими словами — ИИ учтёт всех добавленных персонажей и локации выше и предложит, какой момент лучше снять одним кадром (Seedance снимает один непрерывный дубль за раз, 4–15 сек).</p>
+
+            <div class="scenario-box">
+              <textarea placeholder="Например: Аня идёт по ночному городу под неоновыми вывесками, останавливается у витрины, оборачивается на звук…">Аня идёт по ночному городу под неоновыми вывесками, останавливается у витрины кофейни на Абая, оборачивается на звук.</textarea>
+            </div>
+            <button class="split-btn">✨ Разбить на кадры</button>
+
+            <div class="cand-list">
+              <div class="cand-head"><span>Варианты кадра</span><small>сценарий + персонажи + локации</small></div>
+              <button class="cand-card on">
+                <span class="cand-tag">Наезд-разоблачение</span>
+                <b>У витрины — камера медленно открывает лицо Ани в отражении стекла</b>
+                <span class="cand-refs">👤 Аня · 📍 без локации (описана текстом в сценарии)</span>
+              </button>
+              <button class="cand-card">
+                <span class="cand-tag">Голландский угол</span>
+                <b>Аня оборачивается на звук — наклон камеры, тревога</b>
+                <span class="cand-refs">👤 Аня</span>
+              </button>
+              <button class="cand-card">
+                <span class="cand-tag">Параллакс сбоку</span>
+                <b>Аня идёт под вывесками — камера движется мимо неона на переднем плане</b>
+                <span class="cand-refs">👤 Аня</span>
+              </button>
+            </div>
+
+            <button class="manual-toggle">или выбрать вручную из готовых кадров ▾</button>
+            <div class="shot-grid collapsed">
+              <button class="shot-card"><span class="ico">⤒</span><b>Герой снизу</b><small>низкий ракурс, камера медленно поднимается</small></button>
+              <button class="shot-card"><span class="ico">◎</span><b>Напряжённый крупный план</b><small>статично, лёгкий наезд на глаза</small></button>
+              <button class="shot-card"><span class="ico">⟋</span><b>Голландский угол</b><small>наклон камеры, тревога</small></button>
+              <button class="shot-card"><span class="ico">▭</span><b>Дальний план, тишина</b><small>статичная широкая рамка</small></button>
+              <button class="shot-card"><span class="ico">↗</span><b>Наезд-разоблачение</b><small>медленно открывает деталь</small></button>
+              <button class="shot-card"><span class="ico">↔</span><b>Параллакс сбоку</b><small>движение мимо переднего плана</small></button>
+            </div>
+          </div>
+        </div>
+
+        <button class="assemble-btn">✨ Собрать Seedance-промпт</button>
+
+        <div class="prompt-box">
+          <p class="lbl2">Промпт для Seedance</p>
+          <textarea readonly>Young woman, three-quarter portrait, standing in frame — low-angle shot, camera slowly rises to reveal her full figure — dramatic, heroic mood, warm rim light.</textarea>
+          <div class="enh-row">
+            <div class="enh-btn">✨ Улучшить под Seedance · осталось 2 из 2</div>
+          </div>
+        </div>
+
+        <p class="foot-note">Дальше — как сегодня: тариф / формат / длительность → Создать. Патроны списываются только здесь.</p>
+      </div>
+    </div>
+
+    <div class="notes">
+      <h2>Что важно на этом макете</h2>
+      <div class="note-card">
+        <p><b>Тумблер</b> — форма один в один как в iOS (пилюля + кружок, анимация сдвига), но цвет «включено» — фирменный aurora-градиент приложения, а не системный зелёный: чтобы не выглядело чужеродным элементом в тёмном violet/magenta интерфейсе.</p>
+        <p><b>Секции сворачиваются</b> — открыл «Персонажи», у остальных виден только статус («Аня · готово», «пропущено», «Наезд-разоблачение»). Один аккордеон, не постраничный визард — так же устроена вся остальная Студия (по <code>docs/cinema-studio-spec.md</code>: «один скроллящийся композер»), не изобретаю новый паттерн навигации.</p>
+        <p><b>Один или больше входов → готовая карта</b> — пользователь даёт минимум одно своё фото (персонаж) или фото/текст (локация), можно больше, жмёт «Сгенерировать» — и получает на выходе ОДНО изображение-сетку с разбивкой по ракурсам и эмоциям, а не сам заполняет ячейки руками. Технически это уже умеют существующие edit-модели в реестре (<code>image_edit</code>, вход <code>image_urls</code> — см. <code>src/models.ts</code>) — с композиционным промптом «карта персонажа: сетка ракурсов и эмоций, тот же персонаж» вместо обычного «отредактируй фото». Промпт универсален — работает для человека, животного, персонажа в костюме, независимо от пола.</p>
+        <p><b>Список, не один слот</b> — можно добавить несколько персонажей и несколько локаций (карточка + «Добавить ещё»), все они попадают в раскадровку следующим шагом. По цене обычной фото-генерации за карту, как договорились. Библиотеку «Мои персонажи»/«Мои локации» сейчас не строим, но состояние уже структурировано как список самостоятельных объектов — чтобы в v2 «Сохранить» было пристройкой, а не переделкой.</p>
+        <p><b>«Разбить на кадры»</b> — тот же LLM-вызов, что и Enhancer, но с другой задачей и с бо́льшим контекстом: на вход идут не только сценарий, но и ВСЕ уже добавленные персонажи и локации — поэтому кандидаты честно называют, кто и где («Аня у витрины», не «человек у здания»). Каждый кандидат привязан к одному из проверенных типов кадра. Кандидат = единственный выбор, Seedance физически не потянет монтаж. Ручной выбор из библиотеки остаётся как запасной путь, свёрнут по умолчанию.</p>
+        <p><b>«Собрать Seedance-промпт»</b> — жмём: контекст (кто/где/какой кадр) уходит в тот же <code>/api/enhance</code>, но с <code>model: "seedance"</code>, и уже существующий Enhancer, дополненный Seedance-стилем, сплетает всё в связный текст, а не механически склеивает строки. Результат — обычное редактируемое поле, «Улучшить» продолжает работать поверх него как обычно.</p>
+      </div>
+    </div>
+  </div>
+</div>

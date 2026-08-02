@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src test scripts api",
     "check:patron": "node scripts/check-patron-emoji.mjs",
+    "check:dead-css": "node scripts/check-dead-css.mjs",
     "test:e2e": "tsx test/e2e.ts",
     "test:webapp": "tsx test/webapp.ts",
     "test": "npm run test:e2e && npm run test:webapp",
