@@ -3527,235 +3527,327 @@
     // ——————————————————————————————————————————————————————————————————
     // Director Mode (Seedance) — character/location sheets + storyboard
     // ——————————————————————————————————————————————————————————————————
+    // At most this many source photos per sheet. More angles = better likeness
+    // (models.ts:35), but the sheet model reads a bounded set and every extra
+    // photo is an upload the user waits on.
+    const DM_PHOTO_MAX = 6;
+
+    /** The cast list for a kind — the single place that maps kind → state. */
+    function dmList(kind) { return kind === "character" ? stu.dmChars : stu.dmLocs; }
+    /** Entries that are BOTH ticked and actually have a finished sheet — the
+     *  only ones the storyboard and the assembled prompt may speak about. */
+    function dmCast(kind) { return dmList(kind).filter((x) => x.use && x.sheetUrl); }
+    /** The pending "add" form for a kind; create=true materialises it. */
+    function dmDraft(kind, create) {
+      const key = kind === "character" ? "dmDraftChar" : "dmDraftLoc";
+      if (!stu[key] && create) stu[key] = { photos: [], busy: false };
+      return stu[key];
+    }
+    /** A sheet costs a real render — quote the server's own number. 0 means an
+     *  older cached shell is talking to a newer server: quote nothing rather
+     *  than a made-up price, and let the server's 402 be the authority. */
+    function dmSheetPrice() { return ((ME.catalog || {}).sheet || {}).credits || 0; }
+    /** True only while the studio composer itself is the open sheet — a sheet
+     *  render finishing must not yank the user out of a paywall or a viewer. */
+    function dmComposerVisible() {
+      return !!(stu && sheet.classList.contains("on") && sheetBody.querySelector("#stuGo"));
+    }
+    /** RU label for a shot-type id (catalog vocabulary, ids never shown raw). */
+    function dmShotLabel(id) {
+      const hit = ((ME.catalog || {}).shotTypes || []).find((s) => s.id === id);
+      return hit ? hit.label : "кадр";
+    }
+    /** Names of the cast a candidate puts on screen, for the card's refs line. */
+    function dmCandRefs(c) {
+      const names = []
+        .concat((c.characterIds || []).map((id) => (stu.dmChars.find((x) => x.id === id) || {}).label))
+        .concat((c.locationIds || []).map((id) => (stu.dmLocs.find((x) => x.id === id) || {}).label))
+        .filter(Boolean);
+      return names.join(" · ");
+    }
+    /** A removed cast member makes any storyboard built around them stale. */
+    function dmInvalidateShots(removedId) {
+      if (!stu.dmCands) return;
+      const stale = stu.dmCands.some((c) =>
+        (c.characterIds || []).includes(removedId) || (c.locationIds || []).includes(removedId));
+      if (!stale) return;
+      stu.dmCands = null; stu.dmCandIdx = null;
+      toast("Раскадровка сброшена — в ней был удалённый участник", { wide: true, ms: 4000 });
+    }
+
+    /**
+     * Start a sheet render WITHOUT leaving the composer. startJob() takes over
+     * the sheet body with a progress screen, which is right for the main render
+     * and wrong here: a sheet is a side-errand, and the user should keep
+     * filling in the rest of the cast while it cooks. The job still enters the
+     * same `jobs` map, so the pill, the gallery ripple and reload-resume all
+     * behave exactly as they do for any other render.
+     */
+    function startSheetJob(id, kind, entryId) {
+      const job = { id, isVideo: false, campaignId: null, started: Date.now(),
+        etaSec: etaFor(((ME.catalog || {}).sheet || {}).model), dmSheet: { type: kind, entryId } };
+      jobs.set(id, job); updateJobsPill();
+      pollJob(job);
+      renderGallery(1);
+    }
+    function dmSheetEntry(job) {
+      return dmList(job.dmSheet.type).find((x) => x.id === job.dmSheet.entryId);
+    }
     function dmSheetDone(job, data) {
-      const target = job.dmSheet.type === "character" ? stu.dmChars : stu.dmLocs;
-      const idx = target.findIndex((x) => x.id === job.dmSheet.entryId);
-      if (idx >= 0) {
-        target[idx].sheetUrl = data.output_url;
-        target[idx].pending = false;
-        target[idx].genId = job.id;
-      }
-      toast("✓ Карта готова");
-      viewStudio();
+      const entry = dmSheetEntry(job);
+      // The composer may have been closed and reopened without `keep` since the
+      // render started, in which case the entry is gone — the sheet is still in
+      // «Мои работы», so say that rather than nothing.
+      if (!entry) { toast("✨ Карта готова — она в «Мои работы»"); return; }
+      entry.sheetUrl = data.output_url;
+      entry.pending = false; entry.error = null;
+      entry.genId = job.id;
+      toast(`✓ Карта «${entry.label}» готова`);
+      if (dmComposerVisible()) viewStudio();
     }
     function dmSheetFail(job, data) {
-      const target = job.dmSheet.type === "character" ? stu.dmChars : stu.dmLocs;
-      const idx = target.findIndex((x) => x.id === job.dmSheet.entryId);
-      if (idx >= 0) {
-        target[idx].pending = false;
-        target[idx].error = genErrShort(data.error_reason);
+      const entry = dmSheetEntry(job);
+      const why = genErrShort(data.error_reason);
+      if (!entry) { toast(`Карта не получилась — ${why}. ${PATRON} патроны возвращены.`, { wide: true, ms: 5000 }); return; }
+      entry.pending = false;
+      entry.error = why;
+      toast(`Карта «${entry.label}» не получилась — ${why}. ${PATRON} патроны возвращены.`, { wide: true, ms: 5500 });
+      if (dmComposerVisible()) viewStudio();
+    }
+
+    /** Upload the draft's photos and fire the sheet render. */
+    async function dmGenerateSheet(kind) {
+      const draft = dmDraft(kind, false);
+      if (!draft || !draft.photos.length) { toast("Сначала добавьте хотя бы одно фото 🙂"); return; }
+      if (draft.busy) return; // double-tap guard: this spends patrons
+      const price = dmSheetPrice();
+      if (price > 0 && price > ME.dashboard.credits) {
+        viewPaywall({ need: price, balance: ME.dashboard.credits, packs: ME.packs });
+        return;
       }
-      toast("Не получилось — " + (target[idx] ? target[idx].error : "попробуйте ещё раз"));
+      draft.busy = true; viewStudio();
+      const labelEl = sheetBody.querySelector(kind === "character" ? "#dmCharLabel" : "#dmLocLabel");
+      const label = ((labelEl && labelEl.value) || "").trim().slice(0, 60)
+        || (kind === "character" ? `Персонаж ${stu.dmChars.length + 1}` : `Локация ${stu.dmLocs.length + 1}`);
+      const urls = [];
+      for (const p of draft.photos) {
+        if (!p.url || !/^https?:/.test(p.url)) p.url = await uploadData(p.data);
+        if (p.url) urls.push(p.url);
+      }
+      if (!urls.length) {
+        draft.busy = false;
+        toast("Не удалось загрузить фото — патроны не списаны. Попробуйте ещё раз.", { wide: true, ms: 5000 });
+        viewStudio(); return;
+      }
+      stu.dmSeq++;
+      const entry = { id: `${kind === "character" ? "char" : "loc"}_${stu.dmSeq}`, label,
+        photos: draft.photos, urls, sheetUrl: null, genId: null, pending: true, error: null, use: true };
+      dmList(kind).push(entry);
+      const ok = await dmFireSheet(kind, entry);
+      // Only clear the form once the render is actually queued — a failed
+      // request must not eat the photos the user just picked.
+      if (ok) stu[kind === "character" ? "dmDraftChar" : "dmDraftLoc"] = null;
+      else draft.busy = false;
       viewStudio();
     }
+    /** Re-run a failed sheet from the photos already uploaded for that entry. */
+    async function dmRetrySheet(kind, entry) {
+      if (entry.pending) return;
+      const price = dmSheetPrice();
+      if (price > 0 && price > ME.dashboard.credits) {
+        viewPaywall({ need: price, balance: ME.dashboard.credits, packs: ME.packs });
+        return;
+      }
+      entry.pending = true; entry.error = null; viewStudio();
+      const ok = await dmFireSheet(kind, entry);
+      if (!ok) entry.pending = false;
+      viewStudio();
+    }
+    /**
+     * The one place that POSTs a sheet. The composition prompt and the model
+     * are NOT sent — they are server-side constants (SHEET_PROMPTS/SHEET_MODEL,
+     * src/models.ts), exactly like preset prompts. The client says only what
+     * kind of sheet it wants, whose photos to use, and what to call it.
+     */
+    async function dmFireSheet(kind, entry) {
+      const { status, data } = await api("/api/generate", {
+        method: "POST",
+        body: JSON.stringify({
+          source: "sheet",
+          sheetType: kind,
+          label: entry.label,
+          image_url: entry.urls[0],
+          image_urls: entry.urls.length > 1 ? entry.urls.slice(1) : undefined,
+        }),
+      });
+      if (status === 402) { entry.pending = false; viewPaywall(data); return false; }
+      if (status === 503 && data && data.error === "provider_down") {
+        entry.error = "сервис был недоступен";
+        toast("Сервис генерации временно недоступен — патроны не списаны.", { wide: true, ms: 5000 });
+        return false;
+      }
+      if (status !== 200) {
+        entry.error = "не удалось запустить";
+        toast("Не получилось запустить карту — патроны не списаны.", { wide: true, ms: 4500 });
+        return false;
+      }
+      ME.dashboard.credits = data.balance; setBalance(data.balance);
+      startSheetJob(data.id, kind, entry.id);
+      return true;
+    }
+
+    /** The toggle plus, when it's on, the three optional sections. */
     function directorModeHtml() {
-      if (stu.mode !== "video" || (studioModel() && studioModel().key) !== "seedance") return "";
+      const m = studioModel();
+      if (stu.mode !== "video" || !m || m.key !== "seedance") return "";
       return `
         <div class="toggle-row">
-          <div class="lbl">
-            режиссёрский<br/><small>персонажи, локации, раскадровка</small>
-          </div>
+          <div class="lbl">Режиссёрский режим<small>персонажи, локации, раскадровка</small></div>
           <label class="ios-toggle">
-            <input type="checkbox" ${stu.director ? "checked" : ""} id="dmToggle" />
-            <div class="track"></div>
-            <div class="knob"></div>
+            <input type="checkbox" id="dmToggle" ${stu.director ? "checked" : ""} aria-label="Режиссёрский режим" />
+            <span class="track"></span><span class="knob"></span>
           </label>
         </div>
-        ${!stu.director ? "" : `
-          ${dmCharactersAccordion()}
-          ${dmLocationsAccordion()}
+        ${stu.director ? `
+          ${dmCastAccordion("character")}
+          ${dmCastAccordion("location")}
           ${dmShotAccordion()}
-          ${dmAssembleHtml()}
-        `}
-      `;
+          ${dmAssembleHtml()}` : ""}`;
     }
-    function dmCharactersAccordion() {
-      const open = stu.dmSec.chars;
-      const list = stu.dmChars || [];
-      const state = list.length ? `${list.filter((c) => c.use).length}/${list.length}` : "нет";
+
+    const DM_COPY = {
+      character: { n: "①", title: "Персонажи", empty: "нет",
+        hint: "Одно фото и больше — на выходе карта: ракурсы, мимика, детали. Её увидит модель, когда будет снимать вашу сцену.",
+        add: "Добавить персонажа", ph: "Аня, рыжий кот, робот…", em: "📸", none: "Персонаж" },
+      location: { n: "②", title: "Локации", empty: "нет",
+        hint: "То же для места действия — необязательно, но с картой локация не «плывёт» между кадрами.",
+        add: "Добавить локацию", ph: "кухня, лес, ангар…", em: "🏞", none: "Локация" },
+    };
+
+    function dmCastAccordion(kind) {
+      const c = DM_COPY[kind];
+      const secKey = kind === "character" ? "chars" : "locs";
+      const open = !!stu.dmSec[secKey];
+      const list = dmList(kind);
+      const ready = list.filter((x) => x.sheetUrl).length;
+      const state = !list.length ? c.empty
+        : `${dmCast(kind).length} из ${list.length}${ready < list.length ? " · готовится" : ""}`;
       return `
         <div class="acc ${open ? "open" : ""}">
-          <button class="acc-head" data-dm-sec="chars">
-            <div class="t">
-              <div class="n">${list.length}</div>
-              <b>Персонажи</b>
-            </div>
-            <div class="state">${state}</div>
-            <div class="chev">›</div>
+          <button class="acc-head" type="button" data-dm-sec="${secKey}" aria-expanded="${open}">
+            <span class="t"><span class="n">${c.n}</span><b>${c.title}</b></span>
+            <span class="state">${esc(state)}</span><span class="chev">▼</span>
           </button>
-          ${!open ? "" : dmCharBodyHtml()}
-        </div>
-      `;
+          ${open ? `<div class="acc-body">
+            <p class="acc-hint">${esc(c.hint)}</p>
+            ${list.length ? `<div class="char-list">${list.map((x) => dmEntryCardHtml(kind, x)).join("")}</div>` : ""}
+            ${dmAddCardHtml(kind)}
+          </div>` : ""}
+        </div>`;
     }
-    function dmCharBodyHtml() {
-      const list = stu.dmChars || [];
-      const draftPhotos = (stu.dmDraftChar && stu.dmDraftChar.photos) || [];
-      return `
-        <div class="acc-body">
-          <p class="acc-hint">Добавьте 1+ фото каждого персонажа → готовая карта с ракурсами и мимикой. Минимум 1 персонаж.</p>
-          <div class="char-list">${list.map((c) => dmCharCardHtml(c)).join("")}</div>
-          <div class="char-add-card">
-            <div class="char-add-row">
-              <b>Добавить персонажа</b>
-              <small>имя или описание</small>
-            </div>
-            <input type="text" id="dmCharLabel" maxlength="60" placeholder="Аня, Кот, герой…" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;font-size:13px;color:var(--ink);background:var(--bg-2)" />
-            <div class="char-add-row" style="margin-top:8px">
-              <b>Фото персонажа · мин. 1</b>
-            </div>
-            <div class="refgrid" id="dmCharPhotos" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${dmPhotoGridHtml(draftPhotos)}</div>
-            <label class="drop" style="margin-top:8px">
-              <input type="file" accept="image/*" multiple id="dmCharFile" />
-              <span class="em">📸</span><b>Выбрать фото</b><span>одно или несколько</span>
-            </label>
-            <button class="char-gen-btn" id="dmCharGenBtn" ${!(draftPhotos.length > 0) ? "disabled" : ""}>🎬 Сгенерировать карту</button>
-          </div>
-        </div>
-      `;
-    }
-    function dmCharCardHtml(c) {
-      const primary = c.photos && c.photos[0] ? c.photos[0].url : "📸";
-      const hasSheet = !!c.sheetUrl;
+
+    function dmEntryCardHtml(kind, x) {
+      const src = x.photos && x.photos[0] ? `<img src="${esc(x.photos[0].url)}" alt="" />` : DM_COPY[kind].em;
+      const sheetCell = x.sheetUrl
+        ? `<button class="char-sheet" type="button" data-dm-zoom="${esc(x.sheetUrl)}" aria-label="Открыть карту"><img src="${esc(x.sheetUrl)}" alt="" /></button>`
+        : x.pending ? `<span class="char-sheet"><i class="spin"></i></span>`
+        : `<span class="char-sheet">${x.error ? "⚠" : "—"}</span>`;
+      const status = x.pending ? "карта готовится…"
+        : x.error ? esc(x.error)
+        : x.sheetUrl ? `карта готова · ${x.photos.length} фото`
+        : "нет карты";
       return `
         <div class="char-card">
-          <div class="char-src">${typeof primary === "string" && primary.startsWith("http") ? `<img src="${esc(primary)}" alt="" />` : primary}</div>
-          <div class="char-arrow">→</div>
-          ${hasSheet ? `<button class="char-sheet" onclick="dmZoom('${esc(c.sheetUrl)}')"><img src="${esc(c.sheetUrl)}" alt="" /></button>`
-            : c.pending ? `<div class="char-sheet"><div class="spin"></div></div>`
-            : c.error ? `<button class="char-sheet" style="background:rgba(245,182,74,.1);color:var(--amber)">⚠</button>`
-            : `<div class="char-sheet" style="color:var(--faint)">—</div>`}
-          <div class="char-meta">
-            <b>${esc(c.label || "Персонаж")}</b>
-            <small>${c.photos ? c.photos.length + " фото" : ""}${hasSheet ? " · готово" : ""}${c.error ? ` · ${c.error}` : ""}</small>
-            <button class="char-use ${c.use ? "on" : ""}" data-char-id="${c.id}">Использ.</button>
-            <button class="char-del" data-char-id="${c.id}">✕</button>
-          </div>
-        </div>
-      `;
+          <span class="char-src">${src}</span>
+          <span class="char-arrow">→</span>
+          ${sheetCell}
+          <span class="char-meta">
+            <b>${esc(x.label)}</b>
+            <small class="${x.error ? "err" : ""}">${status}</small>
+            <span>
+              ${x.sheetUrl ? `<button class="char-use ${x.use ? "on" : ""}" type="button" data-dm-act="${kind}:use:${esc(x.id)}" aria-pressed="${!!x.use}">${x.use ? "✓ в кадре" : "не в кадре"}</button>` : ""}
+              ${x.error ? `<button class="char-retry" type="button" data-dm-act="${kind}:retry:${esc(x.id)}">↻ Ещё раз${dmSheetPrice() ? ` · ${dmSheetPrice()} ${PATRON}` : ""}</button>` : ""}
+            </span>
+          </span>
+          <button class="char-del" type="button" data-dm-act="${kind}:del:${esc(x.id)}" aria-label="Удалить">✕</button>
+        </div>`;
     }
-    function dmPhotoGridHtml(photos) {
-      return photos.map((p, i) => `<div style="position:relative"><img src="${esc(p.url)}" alt="" style="width:100%;aspect-ratio:1;border-radius:8px;object-fit:cover;border:1px solid var(--line)" /><button style="position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,.6);border:0;color:#fff;cursor:pointer;font-size:10px" data-remove-idx="${i}">✕</button></div>`).join("");
-    }
-    function dmLocationsAccordion() {
-      const open = stu.dmSec.locs;
-      const list = stu.dmLocs || [];
-      const state = list.length ? `${list.filter((l) => l.use).length}/${list.length}` : "нет";
+
+    function dmAddCardHtml(kind) {
+      const c = DM_COPY[kind];
+      const draft = dmDraft(kind, false);
+      const photos = (draft && draft.photos) || [];
+      const busy = !!(draft && draft.busy);
+      const price = dmSheetPrice();
+      const short = price > 0 && price > ME.dashboard.credits;
       return `
-        <div class="acc ${open ? "open" : ""}">
-          <button class="acc-head" data-dm-sec="locs">
-            <div class="t">
-              <div class="n">${list.length}</div>
-              <b>Локации</b>
-            </div>
-            <div class="state">${state}</div>
-            <div class="chev">›</div>
+        <div class="char-add-card">
+          <div class="char-add-row"><b>${esc(c.add)}</b><small>имя — чтобы отличать в раскадровке</small></div>
+          <input class="words" id="dm${kind === "character" ? "Char" : "Loc"}Label" maxlength="60" placeholder="${esc(c.ph)}" />
+          <div class="refgrid">
+            ${photos.map((p, i) => `<div class="refslot filled">
+              <img src="${esc(p.url)}" alt="" />
+              <span class="rf-idx">${String(i + 1).padStart(2, "0")}</span>
+              <button class="xdel" type="button" data-dm-rm="${kind}:${i}" aria-label="Убрать фото">✕</button>
+            </div>`).join("")}
+            ${photos.length < DM_PHOTO_MAX ? `<label class="refslot add">
+              <input type="file" accept="image/*" multiple id="dm${kind === "character" ? "Char" : "Loc"}File" />
+              <span>＋</span>
+            </label>` : ""}
+          </div>
+          <small class="acc-hint">${photos.length ? `${photos.length} из ${DM_PHOTO_MAX} · больше ракурсов — точнее сходство` : "минимум одно фото"}</small>
+          <button class="char-gen-btn" type="button" id="dm${kind === "character" ? "Char" : "Loc"}GenBtn" ${!photos.length || busy ? "disabled" : ""}>
+            ${busy ? "⏳ Отправляю…" : short ? `Пополнить · нужно ${price} ${PATRON}` : `✨ Собрать карту${price ? ` · ${price} ${PATRON}` : ""}`}
           </button>
-          ${!open ? "" : dmLocBodyHtml()}
-        </div>
-      `;
+        </div>`;
     }
-    function dmLocBodyHtml() {
-      const list = stu.dmLocs || [];
-      const draftPhotos = (stu.dmDraftLoc && stu.dmDraftLoc.photos) || [];
-      return `
-        <div class="acc-body">
-          <p class="acc-hint">Добавьте фото локаций → карта с ракурсами. Опционально.</p>
-          <div class="char-list">${list.map((l) => dmLocCardHtml(l)).join("")}</div>
-          <div class="char-add-card">
-            <div class="char-add-row">
-              <b>Добавить локацию</b>
-              <small>название места</small>
-            </div>
-            <input type="text" id="dmLocLabel" maxlength="60" placeholder="офис, лес, космос…" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;font-size:13px;color:var(--ink);background:var(--bg-2)" />
-            <div class="char-add-row" style="margin-top:8px">
-              <b>Фото локации · мин. 1</b>
-            </div>
-            <div class="refgrid" id="dmLocPhotos" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${dmPhotoGridHtml(draftPhotos)}</div>
-            <label class="drop" style="margin-top:8px">
-              <input type="file" accept="image/*" multiple id="dmLocFile" />
-              <span class="em">🏞</span><b>Выбрать фото</b><span>одно или несколько</span>
-            </label>
-            <button class="char-gen-btn" id="dmLocGenBtn" ${!(draftPhotos.length > 0) ? "disabled" : ""}>🎬 Сгенерировать карту</button>
-          </div>
-        </div>
-      `;
-    }
-    function dmLocCardHtml(l) {
-      const primary = l.photos && l.photos[0] ? l.photos[0].url : "🏞";
-      const hasSheet = !!l.sheetUrl;
-      return `
-        <div class="char-card">
-          <div class="char-src">${typeof primary === "string" && primary.startsWith("http") ? `<img src="${esc(primary)}" alt="" />` : primary}</div>
-          <div class="char-arrow">→</div>
-          ${hasSheet ? `<button class="char-sheet" onclick="dmZoom('${esc(l.sheetUrl)}')"><img src="${esc(l.sheetUrl)}" alt="" /></button>`
-            : l.pending ? `<div class="char-sheet"><div class="spin"></div></div>`
-            : l.error ? `<button class="char-sheet" style="background:rgba(245,182,74,.1);color:var(--amber)">⚠</button>`
-            : `<div class="char-sheet" style="color:var(--faint)">—</div>`}
-          <div class="char-meta">
-            <b>${esc(l.label || "Локация")}</b>
-            <small>${l.photos ? l.photos.length + " фото" : ""}${hasSheet ? " · готово" : ""}${l.error ? ` · ${l.error}` : ""}</small>
-            <button class="char-use ${l.use ? "on" : ""}" data-loc-id="${l.id}">Использ.</button>
-            <button class="char-del" data-loc-id="${l.id}">✕</button>
-          </div>
-        </div>
-      `;
-    }
+
     function dmShotAccordion() {
-      const open = stu.dmSec.shot;
-      const hasCands = stu.dmCands && stu.dmCands.length > 0;
-      const selectedIdx = stu.dmCandIdx;
+      const open = !!stu.dmSec.shot;
+      const cands = stu.dmCands || [];
+      const state = stu.dmCandIdx != null ? "кадр выбран" : cands.length ? `${cands.length} ${plural(cands.length, "вариант", "варианта", "вариантов")}` : "нет";
+      const cost = ME.enhance && ME.enhance.left > 0 ? "бесплатно" : `${(ME.enhance && ME.enhance.cost) || 1} ${PATRON}`;
       return `
         <div class="acc ${open ? "open" : ""}">
-          <button class="acc-head" data-dm-sec="shot">
-            <div class="t">
-              <div class="n">3-4</div>
-              <b>Кадр и сториборд</b>
-            </div>
-            <div class="state">${hasCands ? selectedIdx != null ? "выбран" : "варианты" : "готов ввод"}</div>
-            <div class="chev">›</div>
+          <button class="acc-head" type="button" data-dm-sec="shot" aria-expanded="${open}">
+            <span class="t"><span class="n">③</span><b>Кадр</b></span>
+            <span class="state">${esc(state)}</span><span class="chev">▼</span>
           </button>
-          ${!open ? "" : `
-            <div class="acc-body">
-              <p class="acc-hint">Опишите сценарий целиком → 3-4 кадра, персонажи и локации из списков выше.</p>
-              <div class="scenario-box">
-                <textarea id="dmScenario" placeholder="камера приближается, персонаж смотрит в камеру, за спиной закат…">${esc(stu.dmScenario || "")}</textarea>
-              </div>
-              <button class="split-btn" id="dmSplitBtn" ${stu.dmSplitting ? "disabled" : ""}>
-                ${stu.dmSplitting ? "⏳ Разбиваю…" : "🎞 Разбить на кадры"}
-              </button>
-              ${hasCands ? `
-                <div class="cand-head">
-                  <span>Кандидаты</span>
-                  <small>${selectedIdx != null ? "✓ выбран" : "выберите"}</small>
-                </div>
-                <div class="cand-list">${(stu.dmCands || []).map((c, i) => `
-                  <button class="cand-card ${stu.dmCandIdx === i ? "on" : ""}" data-cand-idx="${i}">
-                    <div style="display:flex;gap:8px">
-                      <div class="cand-tag">${esc(c.type || "—")}</div>
-                    </div>
-                    <b>${esc(c.momentRu || "")}</b>
-                  </button>
-                `).join("")}</div>
-              ` : ""}
+          ${open ? `<div class="acc-body">
+            <p class="acc-hint">Опишите сцену целиком, своими словами. Разобьём её на несколько цельных кадров — Seedance снимает один непрерывный дубль, без монтажа.</p>
+            <div class="scenario-box">
+              <textarea id="dmScenario" maxlength="1000" placeholder="Аня выходит на кухню на рассвете, наливает кофе и замирает у окна…">${esc(stu.dmScenario || "")}</textarea>
             </div>
-          `}
-        </div>
-      `;
+            <button class="split-btn" type="button" id="dmSplitBtn" ${stu.dmSplitting || !(stu.dmScenario || "").trim() ? "disabled" : ""}>
+              ${stu.dmSplitting ? "⏳ Разбиваю на кадры…" : `🎞 Разбить на кадры · ${cost}`}
+            </button>
+            ${cands.length ? `
+              <div class="cand-head"><span>Выберите кадр</span><small>${stu.dmCandIdx != null ? "✓ выбран" : "один из " + cands.length}</small></div>
+              <div class="cand-list">${cands.map((c, i) => {
+                const refs = dmCandRefs(c);
+                return `<button class="cand-card ${stu.dmCandIdx === i ? "on" : ""}" type="button" data-cand-idx="${i}" aria-pressed="${stu.dmCandIdx === i}">
+                  <span class="cand-tag">${esc(dmShotLabel(c.type))}</span>
+                  <b>${esc(c.momentRu)}</b>
+                  ${refs ? `<span class="cand-refs">${esc(refs)}</span>` : ""}
+                </button>`;
+              }).join("")}</div>` : ""}
+          </div>` : ""}
+        </div>`;
     }
+
     function dmAssembleHtml() {
-      const canAssemble = stu.dmCandIdx != null;
+      const ready = stu.dmCandIdx != null;
+      const cost = ME.enhance && ME.enhance.left > 0 ? "бесплатно" : `${(ME.enhance && ME.enhance.cost) || 1} ${PATRON}`;
       return `
-        <button class="assemble-btn ${stu.dmAssembling ? "pulse" : ""}" id="dmAssembleBtn" ${!canAssemble ? "disabled" : ""}>
-          Собрать Seedance-промпт
-          ${!canAssemble ? `<small>выберите кадр выше</small>` : ""}
-        </button>
-      `;
+        <button class="assemble-btn ${ready && !stu.dmAssembling ? "pulse" : ""}" type="button" id="dmAssembleBtn" ${!ready || stu.dmAssembling ? "disabled" : ""}>
+          ${stu.dmAssembling ? "⏳ Собираю промпт…" : "④ Собрать Seedance-промпт"}
+          <small>${ready ? `кто, где и какой кадр → в поле «Движение» · ${cost}` : "сначала выберите кадр в ③"}</small>
+        </button>`;
     }
+
     function dmZoom(url) {
-      const z = document.createElement("div");
-      z.className = "dmzoom";
+      const z = $(`<div class="dmzoom"><img src="${esc(url)}" alt="Карта" /></div>`);
       z.onclick = () => z.remove();
-      z.innerHTML = `<img src="${esc(url)}" alt="" />`;
       document.body.appendChild(z);
     }
 
@@ -3817,8 +3909,6 @@
         dmScenario: prev ? prev.dmScenario || "" : "",
         dmCands: prev ? prev.dmCands || null : null, // storyboard candidates from /api/storyboard
         dmCandIdx: prev && prev.dmCandIdx != null ? prev.dmCandIdx : null,
-        dmShotManual: prev ? prev.dmShotManual || null : null,
-        dmManualOpen: false,
         dmSplitting: false, dmAssembling: false,
         dmDraftChar: prev ? prev.dmDraftChar || null : null,
         dmDraftLoc: prev ? prev.dmDraftLoc || null : null,
@@ -4482,163 +4572,116 @@
         stu.dmSec[sec] = !stu.dmSec[sec];
         viewStudio();
       }));
-      bind("#dmCharFile", (el) => (el.onchange = async (e) => {
+      // Draft photo pickers — one handler shape for both casts. A file that
+      // won't decode is reported rather than silently skipped: the user picked
+      // it deliberately and would otherwise just see a short grid.
+      const dmPickPhotos = (sel, kind) => bind(sel, (el) => (el.onchange = async (e) => {
         const files = Array.from(e.target.files || []);
         if (!files.length) return;
-        stu.dmDraftChar = stu.dmDraftChar || { photos: [] };
+        const draft = dmDraft(kind, true);
+        let bad = 0;
         for (const f of files) {
+          if (draft.photos.length >= DM_PHOTO_MAX) break;
           const data = await downscale(f);
-          if (data) stu.dmDraftChar.photos.push({ data, url: data });
+          if (data) draft.photos.push({ data, url: data }); else bad++;
         }
+        if (bad) toast(`Не удалось прочитать ${bad} фото`);
         viewStudio();
       }));
-      bind("#dmCharGenBtn", (el) => (el.onclick = async () => {
-        const label = sheetBody.querySelector("#dmCharLabel")?.value || "Персонаж";
-        if (!stu.dmDraftChar || !stu.dmDraftChar.photos.length) { toast("Добавьте фото"); return; }
-        stu.dmSeq++;
-        const id = "char_" + stu.dmSeq;
-        const char = { id, label, photos: stu.dmDraftChar.photos, sheetUrl: null, genId: null, pending: true, error: null, use: true };
-        stu.dmChars.push(char);
-        const photoUrls = [];
-        for (const p of char.photos) {
-          const url = await uploadData(p.data);
-          if (url) photoUrls.push(url);
-        }
-        if (!photoUrls.length) { char.pending = false; char.error = genErrShort("upload"); viewStudio(); return; }
-        const sheetPrompt = `Create a single seamless character reference sheet as ONE composed image, using the exact character — species, proportions, colors, markings, costume, and design — from the provided reference photo(s). Preserve identity and design exactly across every panel, whether the character is human or non-human, any gender, realistic or stylized/animated. Neutral studio backdrop, soft even lighting, consistent rendering style throughout matching the reference (photographic if the reference is photographic, matching illustration/render style if the reference is illustrated or animated) — no text, no labels, no panel borders, clean gutters only. Wide canvas, left block larger than right block. LEFT BLOCK — three full-figure panels, equal width, same pose, same full-body crop: 1. Front view, facing camera. 2. Side/profile view. 3. Back view. RIGHT BLOCK — a 4-row × 3-column mosaic of twelve panels: Row 1 (head/face turnaround): front view of the head; profile view of the head; back of the head. Row 2 (head angles): 3/4 view; head tilted down; head tilted up. Row 3 (facial expression): happy/smiling; neutral/serious; surprised or intense emotion. Row 4 (signature details): close-up of a key texture or material; close-up of a distinctive marking, accessory or emblem; close-up of the eyes or most expressive feature.`;
-        const { status, data } = await api("/api/generate", {
-          method: "POST",
-          body: JSON.stringify({
-            source: "model", model: "seedream_edit",
-            prompt: sheetPrompt, image_urls: photoUrls,
-            count: 1, sheetsource: true
-          })
-        });
-        if (status !== 200) { char.pending = false; char.error = genErrShort(data && data.error_reason); viewStudio(); return; }
-        startJob(data.id, false, { type: "character", entryId: id });
-        stu.dmDraftChar = null;
+      dmPickPhotos("#dmCharFile", "character");
+      dmPickPhotos("#dmLocFile", "location");
+      sheetBody.querySelectorAll("[data-dm-zoom]").forEach((btn) => (btn.onclick = () => dmZoom(btn.dataset.dmZoom)));
+      sheetBody.querySelectorAll("[data-dm-rm]").forEach((btn) => (btn.onclick = () => {
+        const [kind, i] = btn.dataset.dmRm.split(":");
+        const draft = dmDraft(kind, false);
+        if (draft) draft.photos.splice(Number(i), 1);
         viewStudio();
       }));
-      bind("#dmLocFile", (el) => (el.onchange = async (e) => {
-        const files = Array.from(e.target.files || []);
-        if (!files.length) return;
-        stu.dmDraftLoc = stu.dmDraftLoc || { photos: [] };
-        for (const f of files) {
-          const data = await downscale(f);
-          if (data) stu.dmDraftLoc.photos.push({ data, url: data });
-        }
-        viewStudio();
-      }));
-      bind("#dmLocGenBtn", (el) => (el.onclick = async () => {
-        const label = sheetBody.querySelector("#dmLocLabel")?.value || "Локация";
-        if (!stu.dmDraftLoc || !stu.dmDraftLoc.photos.length) { toast("Добавьте фото"); return; }
-        stu.dmSeq++;
-        const id = "loc_" + stu.dmSeq;
-        const loc = { id, label, photos: stu.dmDraftLoc.photos, sheetUrl: null, genId: null, pending: true, error: null, use: true };
-        stu.dmLocs.push(loc);
-        const photoUrls = [];
-        for (const p of loc.photos) {
-          const url = await uploadData(p.data);
-          if (url) photoUrls.push(url);
-        }
-        if (!photoUrls.length) { loc.pending = false; loc.error = genErrShort("upload"); viewStudio(); return; }
-        const sheetPrompt = `Create a single seamless location reference sheet as ONE composed image showing diverse views and details of a single location. Neutral lighting, consistent rendering style throughout matching the reference (photographic if the reference is photographic, matching illustration/render style if the reference is illustrated or stylized) — no text, no labels, no panel borders, clean gutters only. Wide canvas, left block larger than right block. LEFT BLOCK — three full-location panels, equal width, same perspective: 1. Wide establishing shot of the entire space. 2. Medium-angle view of the space. 3. Detail view of the space. RIGHT BLOCK — a 4-row × 3-column mosaic of twelve panels: Row 1 (camera angles): wide view; medium angle; close-up. Row 2 (perspectives): from above; eye level; from below. Row 3 (lighting): natural daylight; artificial lighting; shadows/mood. Row 4 (signature details): close-up of a key architectural/structural element; close-up of a distinctive texture or material; close-up of a signature prop or landmark.`;
-        const { status, data } = await api("/api/generate", {
-          method: "POST",
-          body: JSON.stringify({
-            source: "model", model: "seedream_edit",
-            prompt: sheetPrompt, image_urls: photoUrls,
-            count: 1, sheetsource: true
-          })
-        });
-        if (status !== 200) { loc.pending = false; loc.error = genErrShort(data && data.error_reason); viewStudio(); return; }
-        startJob(data.id, false, { type: "location", entryId: id });
-        stu.dmDraftLoc = null;
-        viewStudio();
-      }));
-      sheetBody.querySelectorAll("[data-char-id]").forEach((btn) => (btn.onclick = () => {
-        const id = btn.dataset.charId;
-        if (btn.dataset.use === "toggle") {
-          const idx = stu.dmChars.findIndex((c) => c.id === id);
-          if (idx >= 0) stu.dmChars[idx].use = !stu.dmChars[idx].use;
-        } else if (btn.dataset.use === "delete") {
-          stu.dmChars = stu.dmChars.filter((c) => c.id !== id);
-        }
-        viewStudio();
-      }));
-      sheetBody.querySelectorAll("[data-loc-id]").forEach((btn) => (btn.onclick = () => {
-        const id = btn.dataset.locId;
-        if (btn.dataset.use === "toggle") {
-          const idx = stu.dmLocs.findIndex((l) => l.id === id);
-          if (idx >= 0) stu.dmLocs[idx].use = !stu.dmLocs[idx].use;
-        } else if (btn.dataset.use === "delete") {
-          stu.dmLocs = stu.dmLocs.filter((l) => l.id !== id);
-        }
+      bind("#dmCharGenBtn", (el) => (el.onclick = () => dmGenerateSheet("character")));
+      bind("#dmLocGenBtn", (el) => (el.onclick = () => dmGenerateSheet("location")));
+      sheetBody.querySelectorAll("[data-dm-act]").forEach((btn) => (btn.onclick = () => {
+        const [kind, act, id] = btn.dataset.dmAct.split(":");
+        const list = dmList(kind);
+        const entry = list.find((x) => x.id === id);
+        if (!entry) return;
+        if (act === "use") entry.use = !entry.use;
+        else if (act === "del") {
+          // Deleting a cast member invalidates a storyboard that was split
+          // around them — candidates name people by id, so keeping them would
+          // offer shots starring someone who is no longer in the cast.
+          if (kind === "character") stu.dmChars = stu.dmChars.filter((x) => x.id !== id);
+          else stu.dmLocs = stu.dmLocs.filter((x) => x.id !== id);
+          dmInvalidateShots(id);
+        } else if (act === "retry") { dmRetrySheet(kind, entry); return; }
         viewStudio();
       }));
       bind("#dmScenario", (el) => (el.oninput = () => { stu.dmScenario = el.value; }));
       bind("#dmSplitBtn", (el) => (el.onclick = async () => {
-        const scenario = stu.dmScenario.trim();
-        if (!scenario) { toast("Опишите сценарий"); return; }
-        const chars = stu.dmChars.filter((c) => c.use);
-        stu.dmSplitting = true;
-        viewStudio();
+        const scenario = (stu.dmScenario || "").trim();
+        if (!scenario) { toast("Сначала опишите сценарий 🙂"); return; }
+        stu.dmSplitting = true; viewStudio();
         const { status, data } = await api("/api/storyboard", {
           method: "POST",
           body: JSON.stringify({
             scenario,
-            characters: chars.map((c) => ({ id: c.id, label: c.label })),
-            locations: stu.dmLocs.filter((l) => l.use).map((l) => ({ id: l.id, label: l.label }))
-          })
+            characters: dmCast("character").map((c) => ({ id: c.id, label: c.label })),
+            locations: dmCast("location").map((l) => ({ id: l.id, label: l.label })),
+          }),
         });
         stu.dmSplitting = false;
-        if (status !== 200) { toast("Не получилось разбить сценарий"); viewStudio(); return; }
-        stu.dmCands = data.candidates || [];
+        if (status === 402) { viewPaywall(data); return; }
+        if (status !== 200 || !(data.candidates || []).length) {
+          haptic("error");
+          toast("Не получилось разбить сценарий — патроны не списаны. Попробуйте ещё раз или опишите сцену подробнее.", { wide: true, ms: 5000 });
+          viewStudio(); return;
+        }
+        stu.dmCands = data.candidates;
         stu.dmCandIdx = null;
-        if (stu.dmCands.length) stu.dmManualOpen = false;
-        else stu.dmManualOpen = true;
+        ME.dashboard.credits = data.balance; setBalance(data.balance);
+        if (ME.enhance) ME.enhance.left = data.left;
+        haptic("success");
+        toast(data.free ? `🎞 Готово · осталось ${data.left}` : `🎞 Готово · −${data.charged} ${PATRON}`);
         viewStudio();
       }));
       sheetBody.querySelectorAll("[data-cand-idx]").forEach((btn) => (btn.onclick = () => {
         stu.dmCandIdx = Number(btn.dataset.candIdx);
-        stu.dmShotManual = null;
-        viewStudio();
-      }));
-      bind("#dmToggleManual", (el) => (el.onclick = () => {
-        stu.dmManualOpen = !stu.dmManualOpen;
-        viewStudio();
-      }));
-      sheetBody.querySelectorAll("[data-shot-type]").forEach((btn) => (btn.onclick = () => {
-        stu.dmShotManual = { type: btn.dataset.shotType };
-        stu.dmCandIdx = null;
         viewStudio();
       }));
       bind("#dmAssembleBtn", (el) => (el.onclick = async () => {
-        const cand = stu.dmCandIdx != null ? stu.dmCands[stu.dmCandIdx] : stu.dmShotManual;
-        if (!cand) { toast("Выберите кадр"); return; }
-        const chars = stu.dmChars.filter((c) => c.use && c.sheetUrl);
-        const locs = stu.dmLocs.filter((l) => l.use && l.sheetUrl);
-        const userPrompt = (stu.prompt || "").trim();
-        stu.dmAssembling = true;
-        viewStudio();
+        const cand = stu.dmCandIdx != null ? stu.dmCands[stu.dmCandIdx] : null;
+        if (!cand) { toast("Сначала выберите кадр 🙂"); return; }
+        stu.dmAssembling = true; viewStudio();
+        // Only the three fields the server's shot contract declares — the
+        // candidate also carries characterIds/locationIds, which describe the
+        // cast, not the shot, and are sent through characters/locations.
         const context = {
-          characters: chars.map((c) => ({ id: c.id, label: c.label })),
-          locations: locs.map((l) => ({ id: l.id, label: l.label })),
-          scenario: stu.dmScenario,
-          shot: cand
+          characters: dmCast("character").map((c) => ({ id: c.id, label: c.label })),
+          locations: dmCast("location").map((l) => ({ id: l.id, label: l.label })),
+          scenario: (stu.dmScenario || "").trim() || undefined,
+          shot: { type: cand.type, momentRu: cand.momentRu, cameraDirectionEn: cand.cameraDirectionEn },
         };
+        const raw = (stu.prompt || "").trim();
         const { status, data } = await api("/api/enhance", {
           method: "POST",
-          body: JSON.stringify({ prompt: userPrompt || "A cinematic Seedance video", model: "seedance", context })
+          // The chosen moment IS the idea when the user hasn't typed one — an
+          // empty prompt would be rejected as "напишите идею".
+          body: JSON.stringify({ prompt: raw || cand.momentRu, model: "seedance", context }),
         });
         stu.dmAssembling = false;
-        if (status !== 200) { toast("Не получилось собрать промпт"); viewStudio(); return; }
+        if (status === 402) { viewPaywall(data); return; }
+        if (status !== 200) {
+          haptic("error");
+          toast("Не получилось собрать промпт — патроны не списаны. Ваш текст сохранён.", { wide: true, ms: 5000 });
+          viewStudio(); return;
+        }
+        // Same undo affordance the plain enhancer has: ↩ Вернуть restores
+        // whatever was in the box before the assemble overwrote it.
+        stu.prevPrompt = raw;
         stu.prompt = data.prompt;
-        stu.prevPrompt = null;
-        ME.dashboard.credits = data.balance;
-        setBalance(data.balance);
+        ME.dashboard.credits = data.balance; setBalance(data.balance);
         if (ME.enhance) ME.enhance.left = data.left;
         haptic("success");
+        toast(data.free ? `✨ Промпт собран · осталось ${data.left}` : `✨ Промпт собран · −${data.charged} ${PATRON}`);
         viewStudio();
       }));
       goBtn.onclick = () => {
@@ -5717,6 +5760,24 @@
           g.appendChild($(`<div class="shot pending" role="status" aria-label="Генерируется">
             <span class="rip"></span><span class="rip"></span><span class="rip"></span>
             <span class="tag">⏳ ${job.isVideo ? "видео" : "создаётся"}</span></div>`));
+        }
+      }
+      // Recent FAILED renders, above the results and only on page 1. They never
+      // enter the gallery query (it returns finished works only), so the pager
+      // math is untouched — but a burnt attempt that leaves no trace reads as
+      // "it silently ate my patrons". Each says why, offers a retry, and can be
+      // dismissed for good.
+      if (cur === 1) {
+        for (const f of failedRows()) {
+          const card = $(`<div class="failcard">
+            <span class="fx"><b>Не получилось</b><small>${esc(genErrShort(f.error_reason))} · ${PATRON} патроны возвращены</small></span>
+            ${canRecreate(f) ? `<button type="button" data-fx="retry">↻ Ещё раз</button>` : ""}
+            <button class="fdis" type="button" data-fx="hide" aria-label="Скрыть">✕</button>
+          </div>`);
+          const retry = card.querySelector('[data-fx="retry"]');
+          if (retry) retry.onclick = () => { dismissFail(f.id); recreateFrom(f); };
+          card.querySelector('[data-fx="hide"]').onclick = () => { dismissFail(f.id); renderGallery(GAL_PAGE); };
+          g.appendChild(card);
         }
       }
       if (!items.length && !(cur === 1 && jobs.size)) {

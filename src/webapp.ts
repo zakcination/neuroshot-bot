@@ -688,6 +688,12 @@ function catalogPayload(usage: Record<string, number>, recent: Record<string, nu
     // The manual "или выбрать вручную" gallery renders from this list, and the
     // ids are what /api/storyboard candidates and enhance context speak.
     shotTypes: SHOT_TYPES.map((s) => ({ id: s.id, label: s.labelRu })),
+    // What a character/location sheet costs. The model is pinned server-side
+    // (SHEET_MODEL), so its price has to travel with it — otherwise the client
+    // would have to hardcode the registry key to quote a number, and would
+    // quote a stale one the day SHEET_MODEL changes. Same priceFor the sheet
+    // branch is actually charged with.
+    sheet: { model: SHEET_MODEL.key, credits: priceFor(SHEET_MODEL), wasCredits: rawPriceFor(SHEET_MODEL) },
     // Video story composer (personalize any image→video): ids/labels only.
     videoStory: VIDEO_STORY.map((s) => ({
       id: s.id,
