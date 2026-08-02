@@ -48,6 +48,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## Competitive Positioning
+
+**Where we differ from the market:**
+
+| Competitor | Positioning | Why They Win | Why They Lose to neuroshot-bot |
+|---|---|---|---|
+| **Veoseebot** | Telegram bot + Mini App aggregator | Simple, fast API proxy | No curation; cold UX; relies on breadth, not reliability |
+| **Neuroplace** | Web dashboard, 6+ models | Browser video editing, desktop UX | Telegram not primary; high friction; web adoption slower than mobile |
+| **Syntx AI** | Extreme scale (338k+ users), 90+ models | Network effects; many options | Paradox of choice; no preset guidance; complex onboarding |
+| **Higgsfield** | Open-source, sophisticated ($1.3B valuation) | Transparent, trust signal | Self-hosted complexity; not consumer-focused; niche enterprise market |
+| **neuroshot-bot** | Telegram-first, one-tap presets, creator economy | Instant gratification + reliability | Growing; competing against entrenched players |
+
+**Our defensive moat:**
+- **Telegram integration** — Instant notifications, one-tap UX, chat history. Web competitors can't replicate this speed.
+- **One-tap presets** — Anti-prompt-engineering. Users get broadcast-quality results without thinking. Competitors require prompt knowledge.
+- **Creator economy** — Referral + partner tiers. Word-of-mouth scales faster than ads.
+- **Reliability first** — Automatic refunds, async rendering. Competitors optimize for throughput; we optimize for trust.
+
+**Strategic focus:**
+- Stay Telegram-focused (not web-first). The audience is there; web is a secondary surface if needed.
+- Expand preset library (not model count). Curation wins over choice paralysis.
+- Double down on referral mechanics. Creators drive creators.
+- Monitor tier pricing (Seedance). Real per-second pricing curve keeps unit economics tight as models get cheaper.
+
+---
+
 ## Quick Start
 
 ```bash
@@ -264,6 +290,21 @@ support.** A flag nobody reads is worse than no flag:
 `HOMEPAGE_REDESIGN_ENABLED` sat plumbed through `config.ts` and `/api/me` for
 days while `public/app.html` never once read `uiFeatures` — a switch that
 silently did nothing. Delete a flag once its rollout is done.
+
+---
+
+## Before You Push
+
+**Worktree sync check (prevents silent production crashes):**
+1. Run `git diff origin/main -- $(git diff --cached --name-only)` — look for unexpected large `-` (deletion) blocks
+2. If you see >10 lines deleted in a file you edited, investigate: did you accidentally revert a merge?
+   - Fix: `git checkout origin/main -- <file>` then re-commit
+3. Reason: Worktrees can silently lose recent commits (esp. after merges). CI passes (tests run in isolation) but production crashes when files are missing. This has caused 20+ min outages.
+
+**Then proceed to merge:**
+- Ensure CI passes
+- Rebase onto main if needed
+- Open PR, mark ready, merge when approved
 
 ---
 
