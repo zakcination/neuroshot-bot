@@ -1069,6 +1069,29 @@
     /* Home tab promo banner: a dotted "campaign poster" card with a soft glow
        bleeding outward from its own center — dark base, dotted texture, warm
        magenta bloom, distinct from the violet aurora used for entry tiles. */
+    /* Home tab TV video banner: looping promotional video(s) with sound toggle.
+       Plays automatically, muted by default. Multiple videos rotate automatically. */
+    .tvbanner {
+      position: relative; overflow: hidden; width: 100%; border-radius: 22px;
+      border: 1px solid rgba(255,77,141,.3); margin: 4px 0 2px; background: #000;
+      aspect-ratio: 16 / 9;
+    }
+    .tvbanner video {
+      width: 100%; height: 100%; object-fit: cover; display: block;
+    }
+    .tvbanner .soundtoggle {
+      position: absolute; bottom: 12px; right: 12px; z-index: 10;
+      background: rgba(0,0,0,.6); color: #fff; border: 1px solid rgba(255,255,255,.2);
+      border-radius: 8px; padding: 8px 12px; font-size: 12px; font-weight: 600;
+      cursor: pointer; backdrop-filter: blur(8px); transition: all 200ms ease;
+    }
+    .tvbanner .soundtoggle:active { transform: scale(0.95); background: rgba(0,0,0,.8); }
+    .tvbanner .indicator {
+      position: absolute; top: 12px; right: 12px; z-index: 10;
+      background: rgba(0,0,0,.6); color: #fff; border-radius: 8px;
+      padding: 6px 10px; font-size: 11px; font-weight: 600; backdrop-filter: blur(8px);
+    }
+
     .promobar {
       position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 10px;
       width: 100%; text-align: left; cursor: pointer; border: 1px solid rgba(255,77,141,.3);
@@ -2204,26 +2227,14 @@
       if (!saleOn) return "";
       const n = (d.catalog.news || []).find((x) => x.key === "seedance_fast");
       if (!n) return "";
+
+      // TV video banner with auto-rotation and sound toggle
       return `
-        <button class="promobar" id="promoBanner">
-          <span class="promotag">🏷 Ограниченное предложение</span>
-          <span class="promotxt">
-            <b><em>Seedance дешевле вдвое</em> — успейте, пока акция активна</b>
-            <span>Видео 720p, 4–15 секунд, все тарифы Seedance</span>
-          </span>
-          <span class="promobtm">
-            <span class="promocta">Попробовать со скидкой →</span>
-            <span class="promoprice">${priceBlockHtml(n.credits, n.wasCredits)}</span>
-          </span>
-          <span class="promocd" id="promoCountdown" data-ends-at="${ME.seedanceSale.endsAt}">
-            <span class="lbl">⏳ Акция закончится через</span>
-            <span class="boxes">
-              <span class="box"><b data-cd-d>—</b><span>дней</span></span>
-              <span class="box"><b data-cd-h>—</b><span>часов</span></span>
-              <span class="box"><b data-cd-m>—</b><span>минут</span></span>
-            </span>
-          </span>
-        </button>`;
+        <div class="tvbanner" id="tvBanner">
+          <video autoplay muted loop playsinline data-videos='["/assets/tv/banner.mp4"]'></video>
+          <button class="soundtoggle" id="soundToggle">🔇 Без звука</button>
+          <div class="indicator" id="videoIndicator"></div>
+        </div>`;
     }
 
     /** A section label, with a tap-to-explain "?" when we have something to say. */
@@ -4902,6 +4913,39 @@
         const n = (d.catalog.news || []).find((x) => x.key === "seedance_fast");
         if (n) tryModel(n);
       };
+
+      // TV video banner: sound toggle and auto-rotation
+      const tvBanner = document.getElementById("tvBanner");
+      if (tvBanner) {
+        const video = tvBanner.querySelector("video");
+        const soundToggle = document.getElementById("soundToggle");
+        const indicator = document.getElementById("videoIndicator");
+        const videos = JSON.parse(video.dataset.videos || '[]');
+        let currentIndex = 0;
+
+        // Load first video
+        if (videos.length > 0) {
+          video.src = videos[0];
+          if (videos.length > 1) indicator.textContent = `1/${videos.length}`;
+        }
+
+        // Sound toggle
+        soundToggle.onclick = () => {
+          video.muted = !video.muted;
+          soundToggle.textContent = video.muted ? "🔇 Без звука" : "🔊 Со звуком";
+        };
+
+        // Auto-rotate to next video when current ends (if multiple videos)
+        if (videos.length > 1) {
+          video.onended = () => {
+            currentIndex = (currentIndex + 1) % videos.length;
+            video.src = videos[currentIndex];
+            indicator.textContent = `${currentIndex + 1}/${videos.length}`;
+            video.play();
+          };
+        }
+      }
+
       renderPromptGallery("photo");
       startPromoCountdown();
       const gallSeg = document.getElementById("gallSeg");
