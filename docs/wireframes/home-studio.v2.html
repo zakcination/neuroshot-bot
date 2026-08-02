@@ -177,6 +177,14 @@
   .p-prompt .chip { background: rgba(124, 92, 255, .14); border: 1px solid rgba(124, 92, 255, .4); color: #c9bfff; border-radius: 999px; padding: 2px 8px; font-size: 9.5px; font-weight: 650; }
   .p-prompt .ta { min-height: 46px; font-size: 11.5px; color: var(--p-ink); line-height: 1.4; }
   .p-prompt .row { display: flex; gap: 7px; }
+  .p-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+  .p-tags .tag {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 9.5px; font-weight: 650;
+    background: rgba(124, 92, 255, .14); border: 1px solid rgba(124, 92, 255, .42); color: #c9bfff;
+    border-radius: 999px; padding: 3px 8px;
+  }
+  .p-tags .tag i { font-style: normal; opacity: .65; }
+  .p-tags .add { background: transparent; border: 1px dashed var(--p-line); color: var(--p-faint); }
   .p-prompt .row button {
     flex: 1; border: 1px solid var(--p-line); background: var(--p-bg2); color: var(--p-muted);
     border-radius: 9px; padding: 7px; font: inherit; font-size: 10.5px; font-weight: 650; cursor: pointer;
@@ -376,9 +384,14 @@
 
         <div class="blk"><span class="id move">S3 · S4</span>
           <div class="p-prompt">
-            <span class="pl"><span class="chip v2only">Студийный портрет</span><span>Промпт</span></span>
-            <div class="ta">Портрет крупным планом, мягкий студийный свет слева, тёмный фон, взгляд в камеру…</div>
+            <span class="pl"><span>Промпт</span></span>
+            <div class="ta">Аня у окна на рассвете, смотрит в кадр…</div>
+            <div class="p-tags v2only">
+              <span class="tag">Студийный портрет <i>✕</i></span>
+              <span class="tag add">＋ стиль</span>
+            </div>
             <div class="row"><button>✨ Улучшить</button><button>↩ Вернуть</button></div>
+            <div class="v2only" style="font-size:9px;color:var(--p-faint)">Стиль добавляется тегом — промпт остаётся вашим. «Показать промпт стиля» раскрывает его целиком.</div>
           </div>
         </div>
 
@@ -440,23 +453,26 @@
   </div>
 
   <div class="flag" style="border-left-color:var(--new)">
-    <h3>S2 — промпт пресета показываем открыто</h3>
-    <p><b>Решено:</b> отдаём настоящий промпт на клиент, в редактируемое поле,
-    название пресета — меткой рядом. Возражение «это моат, отдать значит
-    опубликовать» снято: в нашем же позиционировании Higgsfield записан как
-    <i>open-source, и это считается их сигналом доверия</i>, а моат там определён
-    как курирование и надёжность — то есть умение собирать и держать библиотеку,
-    а не секретность сорока строк текста. Открытые промпты — норма рынка
-    (Midjourney, Lexica, Civitai построены ровно на этом) и они учат: кто видит
-    хороший промпт, тот генерит больше.</p>
-    <p>Открытым остаётся не «показывать ли», а <b>чем становится генерация после
-    правки</b> — это кормит метаданные из #98 (<code>source_kind</code>,
-    «Повторить», статистика по пресетам). Рекомендую
-    <code>source:"preset"</code> + <code>prompt_override</code>: атрибуция
-    пресета сохраняется, правка пишется в <code>user_prompt</code>, а если
-    промпт не трогали — override не отправляется и работает канонический
-    серверный текст, так что перенастройка пресета по-прежнему доезжает до всех.
-    Подробнее — <code>docs/ui-rebuild-v2.md</code>.</p>
+    <h3>S2 — стиль приходит тегом, промпт остаётся пользовательским</h3>
+    <p><b>Поле промпта одно и всегда пустое под свой текст.</b> Выбранный пресет
+    не занимает его собой, а вешается <b>тегом</b> рядом — видно, что стиль
+    применён, видно какой, и его можно снять одним тапом. Свой текст
+    дописывается сверху, а не вместо.</p>
+    <p>Так снимается противоречие, которое вылезло бы при «вставить промпт
+    пресета в поле»: наш заявленный принцип — <i>one-tap presets, no prompt
+    engineering</i>, а стена английского текста в поле при выборе пресета — это
+    ровно prompt engineering, вывалённый на человека. Тег показывает <i>что</i>
+    делает стиль, не заставляя читать <i>как</i>. Промпт при этом не прячем —
+    «показать промпт стиля» раскрывает его целиком, открыто, как договорились.</p>
+    <p><b>По проводу почти ничего не меняется:</b> <code>{source:"preset", id,
+    custom}</code> — ровно то, что отправляется сегодня.
+    <code>source_kind:"preset"</code> и <code>source_id</code> остаются, значит
+    аналитика по пресетам жива. Единственная правка на сервере:
+    <code>user_prompt</code> сейчас пишется только для <code>source:"model"</code>
+    (<code>webapp.ts:1358</code>) — надо писать и для пресетов, иначе «Повторить»
+    и карточка деталей не покажут, что человек набрал сам. И лимит
+    <code>custom</code> в 200 символов стоит поднять: он писался под «дописку», а
+    теперь это основное поле ввода.</p>
   </div>
 </div>
 

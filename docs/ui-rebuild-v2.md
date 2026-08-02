@@ -105,56 +105,49 @@ everything else.
 
 ---
 
-## S2 — preset prompts become visible and editable
+## S2 / S3 — one prompt box, the preset arrives as a tag
 
-**Decided: ship the real prompt to the client.**
+**The prompt field is always the user's own.** Selecting a preset does not fill
+it — the preset attaches as a **removable tag** beside the box. You can see a
+style is applied, which one it is, and drop it with one tap; your own text is
+written on top of it, not instead of it.
 
-The earlier objection here was that the preset library is a curation moat and
-publishing it hands it to competitors. That was wrong, and it's worth writing
-down why so it doesn't get re-litigated:
+This supersedes the earlier "paste the preset's prompt into the textbox"
+formulation, and it resolves a contradiction that version would have created.
+Our stated value is *instant gratification over control — one-tap presets, no
+prompt engineering* (`CLAUDE.md`). Dumping 200 words of engineered English into
+the box the moment someone picks a preset is prompt engineering, handed to the
+user. A tag says **what** the style does without making them read **how**.
 
-- Our own competitive positioning (`CLAUDE.md`) lists Higgsfield as
-  **open-source, and counts that as their trust signal.** Secrecy isn't what
-  we're selling.
-- The moat there is defined as *curation and reliability* — which is the
-  judgement to pick and maintain a library, not the confidentiality of forty
-  text strings. A competitor who copies the prompts still has no preset
-  mechanic, no credit ledger, no refund discipline, no Telegram integration.
-- Visible prompts are the market norm (Midjourney, Lexica, Civitai are built
-  on exactly this) and they *teach*: a user who sees what a good prompt looks
-  like generates more, not fewer.
+The prompt still isn't hidden — «показать промпт стиля» expands it in full,
+read-only. Open, as agreed; just not in the way of someone who only wanted a
+portrait.
 
-So: the preset's prompt lands in the textarea, editable, with the preset name
-shown beside it.
+### Wire — almost nothing changes
 
-### What that changes on the wire
+`{source:"preset", id, custom}` is exactly what the client sends today. So:
 
-The open part is no longer whether to show the text — it's what a render
-*becomes* once the text has been edited, because that feeds the generation
-metadata shipped in #98 (`source_kind`, `source_id`, `user_prompt`, «Повторить»,
-and the per-preset analytics that tell us which presets are worth keeping).
+- `source_kind:"preset"` and `source_id` are preserved → **per-preset analytics
+  stay intact**, which is what the metadata is for.
+- `custom` is already accepted on the preset branch (`webapp.ts:1254`) and
+  woven in as "Extra details from the user".
+- No `prompt_override`, no new field, no catalog change. The three-option table
+  that used to be here is moot — the tag design keeps option C's properties
+  without needing option C's mechanism.
 
-Three options, and they are not equivalent:
+Two real server-side edits:
 
-| | Wire | Cost |
-|---|---|---|
-| A | keep `source:"preset"`, send the edit as `custom` | wrong — the server would compose the canonical prompt *plus* the edited copy |
-| B | switch to `source:"model"` with the full prompt | loses preset attribution: `source_kind` becomes `model`, the «Стиль: X» label and per-preset stats go dark |
-| **C** | **`source:"preset"` + `prompt_override`** | **recommended** |
+1. **`user_prompt` is only written for `source:"model"`** (`webapp.ts:1358`), so
+   preset rows store `null`. It must also record `custom`, otherwise the detail
+   sheet and «Повторить» can't show what the person actually typed — the exact
+   metadata gap #98 was built to close.
+2. **`custom` is capped at 200 characters** (`webapp.ts:1254`). That limit was
+   written for an afterthought "personal touches" field. It is now the primary
+   prompt input and needs raising — 600 is a reasonable ceiling.
 
-**C** keeps `source_kind:"preset"` and `source_id`, records the override as
-`user_prompt` (which is already defined as "text the user actually typed", so
-it stays truthful), and leaves «Повторить» and `sourceLabelFor` working
-untouched. An untouched prompt sends no override at all, so the canonical
-server-side text still runs — meaning a preset retune keeps reaching everyone
-who didn't edit it.
+### Open
 
-Catalog gains the prompt text per preset; `generateResponse`'s preset branch
-gains an optional `prompt_override` that replaces `p.prompt` after
-`sanitizePrompt`. The moderation and pricing paths are unchanged.
-
-## Also undecided
-
-- **H6** (TV banner) and **H9** (unit hint) — both flagged as outside wireframe
-  v1. H6 was built 1 Aug on explicit request, *after* v1 was drawn, so cutting
-  it on the wireframe rule alone would delete something recently asked for.
+Whether multiple style tags can be applied at once («＋ стиль» in the mockup).
+The server composes one preset prompt today; stacking two would need a defined
+merge order, and two presets can contradict each other. Shown in the wireframe
+as a hint, not specced.
