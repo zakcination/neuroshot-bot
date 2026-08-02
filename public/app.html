@@ -1349,6 +1349,14 @@
       border-radius: var(--radius-s); padding: 12px 14px; font: inherit; font-size: 14px; margin-top: 8px;
     }
     input.words:focus { outline: 2px solid rgba(124,92,255,.5); }
+    /* Per-character/location free-text description (docs/ui-rebuild-v2.md's
+       "character prompt"): woven into the assembled Seedance prompt server-side
+       (enhance.ts entityLine), never sent to the sheet render itself. */
+    textarea.dm-text {
+      width: 100%; min-height: 52px; resize: vertical; background: var(--surface); color: var(--ink);
+      border: 1px solid var(--line); border-radius: var(--radius-s); padding: 10px 12px; font: inherit; font-size: 13px;
+    }
+    textarea.dm-text:focus { outline: 2px solid rgba(124,92,255,.5); }
 
     /* "from my works" source strip */
     .mini { display: grid; grid-auto-flow: column; grid-auto-columns: 74px; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 4px 2px; }
@@ -3631,7 +3639,12 @@
       }
       if (lost) toast(`Не удалось загрузить ${lost} фото — собираем по остальным`);
       stu.dmSeq++;
-      const entry = { id: `${kind === "character" ? "char" : "loc"}_${stu.dmSeq}`, label,
+      // The free-text description (spec: "character prompt") is carried onto
+      // the entry now, but never sent to the SHEET render below — a sheet is a
+      // reference photo, built from photos alone. It reaches the model only
+      // later, woven into the assembled Seedance prompt (entityLine, enhance.ts).
+      const text = (draft.text || "").trim().slice(0, 300);
+      const entry = { id: `${kind === "character" ? "char" : "loc"}_${stu.dmSeq}`, label, text,
         // Only the photos that actually reached storage — the card's "N фото"
         // must not count ones the sheet was never built from.
         photos: draft.photos.filter((p) => p.url), urls, sheetUrl: null, genId: null,
@@ -3747,10 +3760,12 @@
     const DM_COPY = {
       character: { n: "①", title: "Персонажи", empty: "нет",
         hint: "Одно фото и больше — на выходе карта: ракурсы, мимика, детали. Её увидит модель, когда будет снимать вашу сцену.",
-        add: "Добавить персонажа", ph: "Аня, рыжий кот, робот…", em: "📸", none: "Персонаж" },
+        add: "Добавить персонажа", ph: "Аня, рыжий кот, робот…", em: "📸", none: "Персонаж",
+        textPh: "необязательно: характер, поза, стиль одежды — то, что фото не передаёт" },
       location: { n: "②", title: "Локации", empty: "нет",
         hint: "То же для места действия — необязательно, но с картой локация не «плывёт» между кадрами.",
-        add: "Добавить локацию", ph: "кухня, лес, ангар…", em: "🏞", none: "Локация" },
+        add: "Добавить локацию", ph: "кухня, лес, ангар…", em: "🏞", none: "Локация",
+        textPh: "необязательно: время суток, погода, настроение места" },
     };
 
     function dmCastAccordion(kind) {
@@ -3792,6 +3807,7 @@
           ${sheetCell}
           <span class="char-meta">
             <b>${esc(x.label)}</b>
+            ${x.text ? `<small class="char-desc">${esc(x.text)}</small>` : ""}
             <small class="${x.error ? "err" : ""}">${status}</small>
             <span>
               ${x.sheetUrl ? `<button class="char-use ${x.use ? "on" : ""}" type="button" data-dm-act="${kind}:use:${esc(x.id)}" aria-pressed="${!!x.use}">${x.use ? "✓ в кадре" : "не в кадре"}</button>` : ""}
@@ -3813,6 +3829,7 @@
         <div class="char-add-card">
           <div class="char-add-row"><b>${esc(c.add)}</b><small>имя — чтобы отличать в раскадровке</small></div>
           <input class="words" id="dm${kind === "character" ? "Char" : "Loc"}Label" maxlength="60" placeholder="${esc(c.ph)}" value="${esc(draft ? draft.label || "" : "")}" />
+          <textarea class="words dm-text" id="dm${kind === "character" ? "Char" : "Loc"}Text" maxlength="300" placeholder="${esc(c.textPh)}" style="margin-top:6px">${esc(draft ? draft.text || "" : "")}</textarea>
           <div class="refgrid">
             ${photos.map((p, i) => `<div class="refslot filled">
               <img src="${esc(p.url)}" alt="" />
@@ -4679,6 +4696,11 @@
       }));
       dmBindLabel("#dmCharLabel", "character");
       dmBindLabel("#dmLocLabel", "location");
+      const dmBindText = (sel, kind) => bind(sel, (el) => (el.oninput = () => {
+        dmDraft(kind, true).text = el.value;
+      }));
+      dmBindText("#dmCharText", "character");
+      dmBindText("#dmLocText", "location");
       sheetBody.querySelectorAll("[data-dm-zoom]").forEach((btn) => (btn.onclick = () => dmZoom(btn.dataset.dmZoom)));
       sheetBody.querySelectorAll("[data-dm-rm]").forEach((btn) => (btn.onclick = () => {
         const [kind, i] = btn.dataset.dmRm.split(":");
@@ -4715,8 +4737,8 @@
             method: "POST",
             body: JSON.stringify({
               scenario,
-              characters: dmCast("character").map((c) => ({ id: c.id, label: c.label })),
-              locations: dmCast("location").map((l) => ({ id: l.id, label: l.label })),
+              characters: dmCast("character").map((c) => ({ id: c.id, label: c.label, description: c.text || undefined })),
+              locations: dmCast("location").map((l) => ({ id: l.id, label: l.label, description: l.text || undefined })),
             }),
           }));
         } catch (e) {
@@ -4754,8 +4776,8 @@
         // all 4 people who happened to be ticked. The candidate already carries
         // these from /api/storyboard; forward them as-is.
         const context = {
-          characters: dmCast("character").map((c) => ({ id: c.id, label: c.label })),
-          locations: dmCast("location").map((l) => ({ id: l.id, label: l.label })),
+          characters: dmCast("character").map((c) => ({ id: c.id, label: c.label, description: c.text || undefined })),
+          locations: dmCast("location").map((l) => ({ id: l.id, label: l.label, description: l.text || undefined })),
           scenario: (stu.dmScenario || "").trim() || undefined,
           shot: {
             type: cand.shotType, momentRu: cand.momentRu, cameraDirectionEn: cand.cameraDirectionEn,
