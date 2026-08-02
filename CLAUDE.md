@@ -231,6 +231,21 @@ Full walkthroughs: `docs/deploy.md`
 
 ---
 
+## Before You Push
+
+**Worktree sync check (prevents silent production crashes):**
+1. Run `git diff origin/main -- $(git diff --cached --name-only)` — look for unexpected large `-` (deletion) blocks
+2. If you see >10 lines deleted in a file you edited, investigate: did you accidentally revert a merge?
+   - Fix: `git checkout origin/main -- <file>` then re-commit
+3. Reason: Worktrees can silently lose recent commits (esp. after merges). CI passes (tests run in isolation) but production crashes when files are missing. This has caused 20+ min outages.
+
+**Then proceed to merge:**
+- Ensure CI passes
+- Rebase onto main if needed
+- Open PR, mark ready, merge when approved
+
+---
+
 ## Before You Hand Off
 
 Update this file if you:
