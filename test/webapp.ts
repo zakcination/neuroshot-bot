@@ -859,6 +859,33 @@ await step("image_roles: named sheets are described individually, not as one rep
   assert.match(prompt, /Exactly these characters appear on screen — Аня, Марат/);
   assert.doesNotMatch(prompt, /кухня — no one added/, "a location must not be listed among on-screen characters");
 
+  // A render with a NAMED reference (Director Mode's cast) must be
+  // distinguishable, after the fact, from one with only plain extra angles —
+  // otherwise there is no way to ever measure whether Director Mode's own
+  // complexity (character/location sheets, storyboard split, shot pick) gets
+  // used, versus generated a card, and then never actually attached to a render.
+  const dmRow = (await query("SELECT opts FROM generations WHERE id = $1", [d.id]))[0];
+  assert.equal(JSON.parse(String(dmRow.opts)).directorMode, true);
+
+  // The negative case: plain extra angles (role "angle", never named) must
+  // NOT be counted as Director Mode usage.
+  await addCredits(maker.id, 38, "admin_grant", "test");
+  const rAngle = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref",
+      image_urls: ["https://fal.test/storage/anya-sheet.jpg", "https://fal.test/storage/anya-2.jpg"],
+      image_roles: [{ kind: "angle" }, { kind: "angle" }],
+      prompt: "просто ракурсы",
+    }),
+  });
+  assert.equal(rAngle.status, 200);
+  const dAngle = (await rAngle.json()) as { id: number };
+  await pollGen(dAngle.id);
+  const angleRow = (await query("SELECT opts FROM generations WHERE id = $1", [dAngle.id]))[0];
+  assert.equal(JSON.parse(String(angleRow.opts)).directorMode, undefined, "plain angles must not read as Director Mode usage");
+
   // Malformed / mismatched-length image_roles must 400, not silently ignore.
   const badLen = await fetch(`${base}/api/generate`, {
     method: "POST",
@@ -4471,10 +4498,24 @@ await step("generation metadata: client-shape opts + user_prompt on the row; cur
   await pollGen(id2, H);
   const row2 = (await query("SELECT model, opts FROM generations WHERE id = $1", [id2]))[0];
   assert.equal(row2.model, "seedance_mini");
-  const opts2 = JSON.parse(String(row2.opts)) as { tier: string; duration: number; refs: { photos: number; audio: number; video: number } };
+  const opts2 = JSON.parse(String(row2.opts)) as { tier: string; duration: number; refs: { photos: number; audio: number; video: number }; endFrame?: boolean };
   assert.equal(opts2.tier, "cheap");
   assert.equal(opts2.duration, 4);
   assert.deepEqual(opts2.refs, { photos: 1, audio: 0, video: 0 });
+  assert.equal(opts2.endFrame, undefined, "no end frame was sent — must not appear");
+
+  // An end frame attached at all — regardless of how it resolves — must be
+  // recorded: endImageUrl reaches every model's .input() builder already, but
+  // nothing persisted whether it was actually used until now.
+  const rEnd = await gen({
+    source: "model", model: "seedance", end_image_url: "https://fal.test/storage/end-frame.jpg",
+    image_url: "https://fal.test/storage/u-1.jpg", prompt: "переход к финальному кадру",
+  });
+  assert.equal(rEnd.status, 200);
+  const idEnd = ((await rEnd.json()) as { id: number }).id;
+  await pollGen(idEnd, H);
+  const rowEnd = (await query("SELECT opts FROM generations WHERE id = $1", [idEnd]))[0];
+  assert.equal(JSON.parse(String(rowEnd.opts)).endFrame, true);
 
   // A preset render: source kind + id, but NO user prompt (the user typed
   // nothing) — and the curated composed prompt appears in NO payload, on NO

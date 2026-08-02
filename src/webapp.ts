@@ -1291,6 +1291,12 @@ export async function generateResponse(
     imageUrl = promoted.url;
     primaryRole = promoted.role;
   }
+  // A NAMED role specifically — not just "image_roles was present at all" —
+  // is what "Director Mode was used" actually means. rolesProvided alone
+  // would also be true for a raw API call sending plain angle/subject/style
+  // roles, which every real client can already do without Director Mode.
+  const isNamedRole = (r: ImageRole | undefined) => r?.kind === "character" || r?.kind === "location";
+  const hasNamedSheet = isNamedRole(primaryRole) || extraImages.some((x) => isNamedRole(x.role));
   const extraImageUrls = extraImages.map((x) => x.url);
   // Audio / video references. Accepted ONLY as URLs we issued (the same
   // allow-list the photos pass), so the sole way in is our own screened upload
@@ -1592,6 +1598,8 @@ export async function generateResponse(
     userPrompt,
     seedanceTier: seedanceTierMeta,
     sheet: sheetMeta,
+    // See WebGenerationMeta.directorMode's own comment for why this is recorded.
+    directorMode: hasNamedSheet,
   });
   if (!r.ok) {
     if (r.error === "insufficient") {

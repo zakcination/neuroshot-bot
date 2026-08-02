@@ -243,6 +243,15 @@ export interface WebGenerationMeta {
   seedanceTier?: string;
   /** Director Mode sheet marker — set only by the "sheet" source branch. */
   sheet?: { sheetType: "character" | "location"; label?: string };
+  /** True only when a NAMED (character/location) reference was actually
+   *  attached to this render — i.e. Director Mode's cast was used, not just
+   *  plain extra angles. webapp.ts's own `hasNamedSheet` checks the actual
+   *  role kind, specifically so a raw API call sending plain angle/subject/
+   *  style roles (which needs no Director Mode at all) can't read as one.
+   *  Was previously computed and then dropped on the floor —
+   *  the only way to tell whether Director Mode's own complexity pays for
+   *  itself is to know how often a render actually used it. */
+  directorMode?: boolean;
 }
 
 /**
@@ -266,6 +275,11 @@ function storedOpts(imageUrl: string | undefined, opts: GenOpts | undefined, met
   };
   if (refs.photos || refs.audio || refs.video) out.refs = refs;
   if (meta?.sheet) out.sheet = meta.sheet;
+  // Same "was this actually used" gap as directorMode above — endImageUrl
+  // reaches every model's .input() builder but was never persisted, so
+  // there was no way to tell whether the end-frame feature gets used at all.
+  if (opts?.endImageUrl) out.endFrame = true;
+  if (meta?.directorMode) out.directorMode = true;
   return out;
 }
 

@@ -2062,6 +2062,7 @@
       endframe: "Финальный кадр — необязательно. Если добавить, видео плавно придёт от вашего фото к этому кадру.",
       angles: "Несколько фото ОДНОГО человека с разных сторон — модель лучше понимает лицо и точнее его сохраняет. Не добавляйте сюда других людей: получится смесь. Дополнительные фото не стоят патронов.",
       angles_object: "Несколько фото ОДНОГО предмета с разных сторон и ракурсов — модель лучше понимает форму и точнее её сохраняет в видео. Не добавляйте сюда другие предметы: получится смесь. Дополнительные фото не стоят патронов.",
+      refroles: "Ракурс — ещё одно фото того же человека или предмета, без имени. Персонаж и Локация — с именем: их можно называть в сценарии («Аня заходит на кухню»), для этого включится Режиссёрский режим.",
     };
     /**
      * The progression card — the mobile-game read of "what level am I, how much
@@ -4247,6 +4248,24 @@
       const sub = isRef && stu.subject === "object"
         ? `Тот же предмет с других сторон. Цена не меняется.`
         : `Те же черты лица с других сторон. Цена не меняется.`;
+      // Extra angles (this grid) and Director Mode's named cast (directorModeHtml,
+      // dmCastAccordion) are the SAME underlying thing server-side — both end up
+      // as {url, role} entries in image_roles (viewStudio's submit body) — but
+      // until now they were two disconnected UIs with no shared entry point. Only
+      // the Seedance umbrella row ever has both available at once (its catalog
+      // row borrows maxInputs/reference from seedance_ref specifically so this
+      // grid is reachable — webapp.ts studioModelsOf), so this only needs to
+      // exist there. Одна кнопка «+», один вопрос — "кто на фото": обычный
+      // ракурс идёт прямо в эту сетку; именованная роль включает Режиссёрский
+      // режим и открывает его карточку — та же оплачиваемая генерация карты,
+      // никакой новой механики.
+      const roleAddRow = m.key === "seedance" ? `
+        <div class="quiz-q">Ссылочные фото <button class="qhint" type="button" data-hint="refroles" aria-label="Что это такое?">?</button></div>
+        <div class="chips" id="refRoleAdd">
+          <button type="button" class="chip" data-refrole="angle" ${room > 0 ? "" : "disabled"}>🙂 Ракурс</button>
+          <button type="button" class="chip" data-refrole="character">👤 Персонаж</button>
+          <button type="button" class="chip" data-refrole="location">🏞 Локация</button>
+        </div>` : "";
       // The primary photo above already fills slot 1 — this grid only ever
       // needs to offer the REMAINING slots, but the counter reads against the
       // model's real total so it matches what "до N фото" already promised.
@@ -4270,6 +4289,7 @@
       }).join("");
       return `
         <div class="xtra">
+          ${roleAddRow}
           <div class="refhead">${qLabel(label, hint)}<span class="refcount">${filled} / ${maxInputs}</span></div>
           ${subjectToggle ? `<div style="margin-top:8px">${subjectToggle}</div>` : ""}
           <div class="refgrid">
@@ -4712,6 +4732,19 @@
         clampStudioOpts(); viewStudio();
       }));
       bind("#refMore", (el) => (el.onclick = () => { stu.slotsOpen = !stu.slotsOpen; viewStudio(); }));
+      // One add point, one role question — see extrasBlock's roleAddRow comment.
+      // "Ракурс" reuses the plain file input as-is; a named role turns on
+      // Director Mode (if it wasn't already) and opens straight to that
+      // accordion's add form — same dmGenerateSheet flow, no new mechanics.
+      sheetBody.querySelectorAll("[data-refrole]").forEach((b) => (b.onclick = () => {
+        const role = b.dataset.refrole;
+        if (role === "angle") { const f = document.getElementById("stuExtraFile"); if (f) f.click(); return; }
+        stu.director = true;
+        stu.dmSec[role === "character" ? "chars" : "locs"] = true;
+        viewStudio();
+        const target = sheetBody.querySelector(role === "character" ? "#dmCharLabel" : "#dmLocLabel");
+        if (target) { target.scrollIntoView({ block: "center" }); target.focus(); }
+      }));
       // Scoped to [data-xi]: the audio/video reference chips reuse the same .xdel
       // styling, and an unscoped selector would splice their index out of the
       // PHOTO list — deleting a silent third photo when a user removes a sound.
