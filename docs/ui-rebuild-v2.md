@@ -105,30 +105,53 @@ everything else.
 
 ---
 
-## Open question — S2 breaks a standing invariant
+## S2 — preset prompts become visible and editable
 
-Pasting a preset's prompt into an editable textbox requires **sending curated
-prompt text to the client**, which the codebase deliberately never does:
-`publicGeneration` strips the `prompt` column, presets are submitted as
-`{source:"preset", id}`, and the sheet prompts added yesterday were put
-server-side for exactly this reason. The preset library is the product's
-curation moat — shipping it to the client publishes it to anyone who opens
-devtools.
+**Decided: ship the real prompt to the client.**
 
-Three ways to get the UX without giving that away:
+The earlier objection here was that the preset library is a curation moat and
+publishing it hands it to competitors. That was wrong, and it's worth writing
+down why so it doesn't get re-litigated:
 
-1. **Ship the real prompt.** Simplest, matches the request literally. Accepts
-   that every preset prompt becomes public and copyable.
-2. **Show a display prompt.** A short, human-readable paraphrase per preset,
-   shipped to the client and editable; the real engineered prompt stays on the
-   server and is still what runs. The user sees and edits intent, not
-   implementation. *Recommended.*
-3. **Keep the chip, show the user's own additions only.** Closest to today —
-   the textarea holds `custom` text appended to the preset. Least change, least
-   like what was asked for.
+- Our own competitive positioning (`CLAUDE.md`) lists Higgsfield as
+  **open-source, and counts that as their trust signal.** Secrecy isn't what
+  we're selling.
+- The moat there is defined as *curation and reliability* — which is the
+  judgement to pick and maintain a library, not the confidentiality of forty
+  text strings. A competitor who copies the prompts still has no preset
+  mechanic, no credit ledger, no refund discipline, no Telegram integration.
+- Visible prompts are the market norm (Midjourney, Lexica, Civitai are built
+  on exactly this) and they *teach*: a user who sees what a good prompt looks
+  like generates more, not fewer.
 
-Not decided. Nothing in v2 depends on which one wins — the layout is identical;
-only the source of the text differs.
+So: the preset's prompt lands in the textarea, editable, with the preset name
+shown beside it.
+
+### What that changes on the wire
+
+The open part is no longer whether to show the text — it's what a render
+*becomes* once the text has been edited, because that feeds the generation
+metadata shipped in #98 (`source_kind`, `source_id`, `user_prompt`, «Повторить»,
+and the per-preset analytics that tell us which presets are worth keeping).
+
+Three options, and they are not equivalent:
+
+| | Wire | Cost |
+|---|---|---|
+| A | keep `source:"preset"`, send the edit as `custom` | wrong — the server would compose the canonical prompt *plus* the edited copy |
+| B | switch to `source:"model"` with the full prompt | loses preset attribution: `source_kind` becomes `model`, the «Стиль: X» label and per-preset stats go dark |
+| **C** | **`source:"preset"` + `prompt_override`** | **recommended** |
+
+**C** keeps `source_kind:"preset"` and `source_id`, records the override as
+`user_prompt` (which is already defined as "text the user actually typed", so
+it stays truthful), and leaves «Повторить» and `sourceLabelFor` working
+untouched. An untouched prompt sends no override at all, so the canonical
+server-side text still runs — meaning a preset retune keeps reaching everyone
+who didn't edit it.
+
+Catalog gains the prompt text per preset; `generateResponse`'s preset branch
+gains an optional `prompt_override` that replaces `p.prompt` after
+`sanitizePrompt`. The moderation and pricing paths are unchanged.
 
 ## Also undecided
 
