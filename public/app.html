@@ -234,12 +234,6 @@
     .btn[disabled] { opacity: .55; pointer-events: none; }
 
     section { margin-top: 30px; }
-    /* Outcome-led hero at the top of the studio — sells the result, not the tool. */
-    .hero { margin: 2px 0 18px; }
-    .heroh { margin: 0; font-size: 25px; line-height: 1.12; font-weight: 700; }
-    .herosub { margin: 6px 0 0; font-size: 13.5px; line-height: 1.45; color: var(--muted); }
-    /* The wedge rail is the hero content, so it hugs the headline (no big top gap). */
-    .hero + section { margin-top: 14px; }
     .sec-h { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 13px; }
     .sec-h h2 { margin: 0; font-size: 11.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); font-weight: 800; }
 
@@ -1012,38 +1006,6 @@
       font-size: 11.5px; font-weight: 700; color: var(--ink); white-space: nowrap;
       background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.12); padding: 3px 8px; border-radius: 999px;
     }
-
-    /* news banner — sliding model headlines */
-    .news { margin: 16px 0 4px; }
-    .newsrail { display: grid; grid-auto-flow: column; grid-auto-columns: 86%; gap: 11px; overflow-x: auto; scroll-snap-type: x mandatory; margin: 0 -16px; padding: 0 16px 6px; scrollbar-width: none; }
-    .newsrail::-webkit-scrollbar { display: none; }
-    .herocard {
-      scroll-snap-align: center; display: flex; flex-direction: column; gap: 8px;
-      border: 0; background: none; padding: 0; cursor: pointer; color: inherit; font: inherit; text-align: left;
-    }
-    .herofig {
-      position: relative; display: block; width: 100%; aspect-ratio: 16 / 10; border-radius: 18px; overflow: hidden;
-      border: 1px solid var(--line); background: var(--surface) center / cover no-repeat;
-    }
-    .herofig::after {
-      content: ""; position: absolute; inset: 0;
-      background: linear-gradient(180deg, rgba(8,7,12,0) 55%, rgba(8,7,12,.55) 100%);
-    }
-    .herotag {
-      position: absolute; z-index: 1; top: 9px; left: 9px; padding: 4px 8px; border-radius: 7px;
-      background: var(--aurora); color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .08em;
-      text-transform: uppercase; white-space: nowrap;
-    }
-    .herofree {
-      position: absolute; z-index: 1; top: 9px; right: 9px; padding: 4px 8px; border-radius: 7px;
-      background: var(--amber); color: #08070c; font-size: 10px; font-weight: 800; letter-spacing: .06em; white-space: nowrap;
-    }
-    .herotxt { display: block; min-width: 0; }
-    .herotxt b { display: block; font-size: 14px; font-weight: 700; letter-spacing: -.1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .herotxt span { display: block; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .newsdots { display: flex; justify-content: center; gap: 6px; margin-top: 4px; }
-    .newsdots i { width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,.2); transition: background .2s, width .2s; }
-    .newsdots i.on { width: 16px; border-radius: 3px; background: var(--violet); }
 
     /* live price badge in the composer */
     .priceBadge { display: inline-flex; align-items: center; gap: 6px; font-weight: 800; color: var(--amber); font-size: 15px; font-variant-numeric: tabular-nums; }
@@ -5082,124 +5044,6 @@
       openStudio({ mode: n.kind === "image_to_video" ? "video" : "image", modelKey: n.key, origin: "news" });
     }
 
-    /**
-     * The 3 hero-carousel slots — real data only, no invented content. The
-     * Seedance sale card and one other model highlight come straight off
-     * catalog.news (already priced/discounted server-side); the 3rd slot is
-     * the real, shipped Одиссея campaign (its own cover art), not the
-     * fictional "contest" card from the design mockup this was built from —
-     * there is no contest/leaderboard backend, so it isn't a slot here.
-     */
-    function heroItems() {
-      const news = (ME.catalog && ME.catalog.news) || [];
-      const artFor = (kind) => (kind === "image_to_video" ? "card-video.jpg" : kind === "text_to_image" ? "card-text.jpg" : "card-shoot.jpg");
-      const items = [];
-      const sale = news.find((n) => n.key === "seedance_fast");
-      if (sale) {
-        items.push({
-          img: "/img/" + artFor(sale.kind),
-          tag: sale.onSale ? "🔥 АКЦИЯ" : sale.tag,
-          free: sale.freeTrial,
-          title: sale.title,
-          sub: sale.onSale ? `${sale.credits} ${PATRON} вместо ${sale.wasCredits}` : `от ${sale.credits} ${PATRON}`,
-          go: () => tryModel(sale),
-        });
-      }
-      // Prefer a different KIND from the sale card first — artFor buckets by
-      // kind, and two image_to_video entries back to back (e.g. Hailuo right
-      // after the Seedance sale) would render the exact same background photo
-      // twice in a row. Falls back to any non-Seedance entry if every other
-      // entry happens to share the sale's kind.
-      const rest = news.find((n) => n.key !== "seedance_fast" && !n.key.startsWith("seedance") && n.kind !== (sale && sale.kind))
-        || news.find((n) => n.key !== "seedance_fast" && !n.key.startsWith("seedance"));
-      if (rest) {
-        items.push({
-          img: "/img/" + artFor(rest.kind),
-          tag: rest.tag,
-          free: rest.freeTrial,
-          title: rest.title,
-          sub: `от ${rest.credits} ${PATRON}`,
-          go: () => tryModel(rest),
-        });
-      }
-      const camp = ((ME.catalog && ME.catalog.campaigns) || []).find((c) => c.id === "odyssey");
-      if (camp) {
-        items.push({
-          img: `/img/card-${CAMP_ART.odyssey.bg}.jpg`,
-          tag: "🌌 ЭПИК",
-          free: false,
-          title: camp.label.slice(camp.label.indexOf(" ") + 1),
-          sub: `${camp.imageCredits} ${PATRON} + видео ${camp.videoCredits} ${PATRON}`,
-          go: () => { st.tab = "scenes"; openSheet(); viewCampaign("odyssey"); },
-        });
-      }
-      // Referral share: percent read from ME.referral (server-computed off
-      // config.referralPercent) — never hardcoded, so a future retune of the
-      // rate can't leave a stale number sitting in this card.
-      if (ME.referral) {
-        items.push({
-          img: "/img/card-referral.jpg",
-          tag: "🎁 РЕФЕРАЛКА",
-          free: false,
-          title: "Приведи друга — получи бонус",
-          sub: `${ME.referral.percent}% пожизненно с его покупок`,
-          go: () => showPage("friends"),
-        });
-      }
-      // Creator/partner collaboration: base and ceiling both read from
-      // ME.partner (server-computed off config.partnerPercent/PARTNER_TIERS) —
-      // this is the SAME "напишите нам" touchpoint already on the Друзья page
-      // (renderPartnerBlock), not a new signup flow.
-      if (ME.partner) {
-        items.push({
-          img: "/img/card-creators.jpg",
-          tag: "🤝 КРИЭЙТОРАМ",
-          free: false,
-          title: "Открыты к коллаборациям",
-          sub: `Свой код и до ${ME.partner.topPercent}% с продаж`,
-          go: () => showPage("friends"),
-        });
-      }
-      return items;
-    }
-
-    /** Hero carousel: cards + auto-advance + dots. */
-    function renderNews() {
-      const rail = document.getElementById("newsrail"), dots = document.getElementById("newsdots");
-      const items = heroItems();
-      if (!rail || !items.length) { if (rail) rail.closest(".news").style.display = "none"; return; }
-      rail.innerHTML = ""; dots.innerHTML = "";
-      items.forEach((n, i) => {
-        const card = $(`
-          <button class="herocard" data-i="${i}">
-            <span class="herofig" style="background-image:url('${esc(n.img)}')">
-              <span class="herotag">${esc(n.tag)}</span>
-              ${n.free ? '<span class="herofree">🎁 БЕСПЛАТНО</span>' : ""}
-            </span>
-            <span class="herotxt"><b>${esc(n.title)}</b><span>${esc(n.sub)}</span></span>
-          </button>`);
-        card.onclick = n.go;
-        rail.appendChild(card);
-        const dot = $(`<i class="${i === 0 ? "on" : ""}"></i>`);
-        dots.appendChild(dot);
-      });
-      // reflect scroll position in dots; gentle auto-advance every 4s.
-      const cards = [...rail.children];
-      const setDot = () => {
-        const i = Math.round(rail.scrollLeft / (rail.scrollWidth / cards.length));
-        [...dots.children].forEach((d, k) => d.classList.toggle("on", k === Math.min(i, cards.length - 1)));
-      };
-      rail.addEventListener("scroll", setDot, { passive: true });
-      if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
-        let i = 0;
-        setInterval(() => {
-          if (!document.body.contains(rail)) return;
-          i = (i + 1) % cards.length;
-          rail.scrollTo({ left: cards[i].offsetLeft - rail.offsetLeft, behavior: "smooth" });
-        }, 4000);
-      }
-    }
-
     // ————— paywall: buy patron packs WITHOUT leaving the app —————
     // Exit-offer shown at most once per app session (growth doctrine #683: the
     // moment the paywall is dismissed is the highest-intent instant to make the
@@ -6033,20 +5877,6 @@
 
         <!-- ===== СТУДИЯ (create) ===== -->
         <div class="page on" data-page="studio">
-          <!-- Outcome-led hero: lead with the RESULT and the one-tap wedges. The
-               onboarding roadmap is demoted below the actionable content (it's
-               scaffolding for new users, not the draw for returning ones). -->
-          <div class="hero reveal">
-            <h1 class="heroh">Одно фото — целая студия</h1>
-            <p class="herosub">Выберите результат — ИИ сделает остальное.</p>
-          </div>
-
-          <div class="news reveal">
-            <div class="sec-h"><h2>🆕 Новые модели</h2></div>
-            <div class="newsrail" id="newsrail"></div>
-            <div class="newsdots" id="newsdots"></div>
-          </div>
-
           ${promoBannerHtml(d)}
 
           ${promoTv()}
@@ -6212,7 +6042,6 @@
 
       resumePending(); // re-hydrate in-flight renders BEFORE the first gallery paint
       renderGallery();
-      renderNews();
 
       const p = document.getElementById("p");
       // Offer packs (the limited-time combo) lead with a live countdown badge;
