@@ -776,6 +776,94 @@ await step("reference video: several photos of one subject build one clip", asyn
   assert.equal(((await tooMany.json()) as { error: string }).error, "too_many_inputs");
 });
 
+
+await step("image_roles: named sheets are described individually, not as one repeated subject", async () => {
+  // The bug this guards: referencePrompt used to tell Seedance every attached
+  // image was "the SAME subject... repeated, NOT additional people" no matter
+  // what was actually attached. Two Director Mode character sheets for two
+  // DIFFERENT people would have gone out with that claim attached. This test
+  // fails loudly if that regresses.
+  await addCredits(maker.id, 38, "admin_grant", "test");
+  const r = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model",
+      model: "seedance_ref",
+      image_urls: [
+        "https://fal.test/storage/anya-sheet.jpg",
+        "https://fal.test/storage/marat-sheet.jpg",
+        "https://fal.test/storage/kitchen-sheet.jpg",
+      ],
+      image_roles: [
+        { kind: "character", name: "Аня" },
+        { kind: "character", name: "Марат" },
+        { kind: "location", name: "кухня" },
+      ],
+      prompt: "Аня и Марат встречаются взглядом через стол",
+    }),
+  });
+  assert.equal(r.status, 200);
+  const d = (await r.json()) as { id: number };
+  await pollGen(d.id);
+
+  const call = falCalls.at(-1)!;
+  // The first image_urls entry has no explicit role and none was sent for it
+  // separately — it was promoted to the primary/subject slot by the same
+  // shift() the plain-URL path uses, carrying its role (character: Аня) along.
+  assert.deepEqual(call.input.image_urls, [
+    "https://fal.test/storage/anya-sheet.jpg",
+    "https://fal.test/storage/marat-sheet.jpg",
+    "https://fal.test/storage/kitchen-sheet.jpg",
+  ]);
+  const prompt = call.input.prompt as string;
+  assert.doesNotMatch(prompt, /SAME subject/, "must not claim two different named people are the same subject");
+  assert.doesNotMatch(prompt, /NOT additional people/, "must not use the undifferentiated-repeat wording once names are known");
+  assert.match(prompt, /@Image1 — character reference sheet for Аня/);
+  assert.match(prompt, /@Image2 — character reference sheet for Марат/);
+  assert.match(prompt, /@Image3 — location reference sheet for кухня/);
+  assert.match(prompt, /DIFFERENT subjects/);
+  assert.match(prompt, /Exactly these characters appear on screen — Аня, Марат/);
+  assert.doesNotMatch(prompt, /кухня — no one added/, "a location must not be listed among on-screen characters");
+
+  // Malformed / mismatched-length image_roles must 400, not silently ignore.
+  const badLen = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref",
+      image_urls: ["https://fal.test/storage/anya-sheet.jpg", "https://fal.test/storage/marat-sheet.jpg"],
+      image_roles: [{ kind: "character", name: "Аня" }],
+      prompt: "тест",
+    }),
+  });
+  assert.equal(badLen.status, 400);
+
+  const badKind = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref",
+      image_urls: ["https://fal.test/storage/anya-sheet.jpg"],
+      image_roles: [{ kind: "wizard" }],
+      prompt: "тест",
+    }),
+  });
+  assert.equal(badKind.status, 400);
+
+  const emptyName = await fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: "model", model: "seedance_ref",
+      image_urls: ["https://fal.test/storage/anya-sheet.jpg"],
+      image_roles: [{ kind: "character", name: "" }],
+      prompt: "тест",
+    }),
+  });
+  assert.equal(emptyName.status, 400);
+});
+
 await step("reference subject: person vs object picks the framing, and the field means nothing outside reference mode", async () => {
   const { MODELS, priceFor } = await import("../src/models.js");
 
@@ -3974,7 +4062,7 @@ await step("release notes: shown once, never to a newcomer, and only ever moving
 // ---- Director Mode backend: model-aware enhancer, storyboard, sheets, metadata ----
 
 await step("model-aware enhancer: Seedance style by key, byte-identical fallback, context woven in", async () => {
-  const { ENHANCE_STYLES, ENHANCE_STYLE_DEFAULT } = await import("../src/enhance.js");
+  const { ENHANCE_STYLES, ENHANCE_STYLE_DEFAULT, SEEDANCE_DIRECTOR_STYLE } = await import("../src/enhance.js");
   const du = { id: 990066, username: "director", first_name: "Dir" };
   await getOrCreateUser(du.id, du.username, null, 0);
   await addCredits(du.id, 10, "admin_grant", "test");
@@ -4008,6 +4096,9 @@ await step("model-aware enhancer: Seedance style by key, byte-identical fallback
   // Director Mode context: characters/locations/scenario/shot are serialized
   // into the USER message (the LLM weaves them) — and with context attached an
   // empty free-text idea is allowed, because the context IS the idea.
+  //
+  // No shot.characterIds/locationIds here (an older-shape shot) — must fall
+  // back to describing the WHOLE cast under the pre-existing wording.
   const r4 = await call({
     prompt: "",
     model: "seedance",
@@ -4020,12 +4111,53 @@ await step("model-aware enhancer: Seedance style by key, byte-identical fallback
   });
   assert.equal(r4.status, 200);
   const c4 = falCalls.at(-1)!;
-  assert.equal(c4.input.system_prompt, ENHANCE_STYLES.seedance);
+  // Any Director Mode context switches Seedance to the stricter, name-exact
+  // style — verbatim names, no invented cast, no @Image tokens of its own.
+  assert.equal(c4.input.system_prompt, SEEDANCE_DIRECTOR_STYLE);
+  assert.match(String(c4.input.system_prompt), /EXACTLY as/);
+  assert.match(String(c4.input.system_prompt), /Do NOT write any @Image/);
   const msg = String(c4.input.prompt);
-  assert.match(msg, /Аня — девушка в красном плаще/);
+  assert.match(msg, /Characters in the scene:.*Аня — девушка в красном плаще/, "no shot ids → whole cast, old wording");
   assert.match(msg, /ночной город/);
   assert.match(msg, /slow push-in on the eyes/);
   assert.match(msg, /Аня у витрины/);
+
+  // Now WITH shot.characterIds/locationIds — the two-character, one-location
+  // case that motivated this: only the shot's own cast is "in this shot",
+  // everyone else is explicitly kept off screen.
+  const r5 = await call({
+    prompt: "",
+    model: "seedance",
+    context: {
+      characters: [
+        { id: "c1", label: "Аня" },
+        { id: "c2", label: "Марат" },
+      ],
+      locations: [{ id: "l1", label: "кухня" }],
+      shot: {
+        type: "tense_closeup", momentRu: "Аня и Марат за столом", cameraDirectionEn: "slow push-in",
+        characterIds: ["c1"], locationIds: ["l1"],
+      },
+    },
+  });
+  assert.equal(r5.status, 200);
+  const msg5 = String(falCalls.at(-1)!.input.prompt);
+  assert.match(msg5, /In this shot: Аня\./);
+  assert.match(msg5, /Location: кухня\./);
+  assert.match(msg5, /Elsewhere in the story \(do NOT put these on screen in this shot\): Марат\./);
+  assert.doesNotMatch(msg5, /Characters in the scene:/, "shot-scoped and whole-cast wording must not both appear");
+
+  // An id in shot.characterIds that was never in `characters` is a probe or a
+  // stale reference — reject the whole request rather than silently drop it.
+  const badShotId = await call({
+    prompt: "x",
+    model: "seedance",
+    context: {
+      characters: [{ id: "c1", label: "Аня" }],
+      shot: { type: "tense_closeup", momentRu: "x", cameraDirectionEn: "y", characterIds: ["ghost"] },
+    },
+  });
+  assert.equal(badShotId.status, 400);
 
   // Malformed context (a shot type outside the fixed vocabulary) → 400 before
   // any charge is touched.

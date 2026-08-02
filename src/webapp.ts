@@ -73,6 +73,7 @@ import {
   VIDEO_MODEL_PICKER,
   VIDEO_STORY,
   type GenOpts,
+  type ImageRole,
   type ModelSpec,
 } from "./models.js";
 
@@ -232,27 +233,75 @@ export function authResponse(headers: Headers): { status: number; body: Record<s
  * They're surfaced only via the bot's dedicated /course command.
  */
 /**
+ * Validate + sanitize ONE entry of `/api/generate`'s optional `image_roles`.
+ * Prose-only (like `subject`, models.ts) — it changes what the reference block
+ * SAYS about an attachment, never which URL gets fetched — so unlike
+ * `image_urls` itself, taking this straight from the client is safe. Returns
+ * null on anything malformed; the caller rejects the whole request rather than
+ * silently treating a bad entry as "no role" (reject-not-truncate, the same
+ * convention `parseContextEntity` below uses).
+ */
+function parseImageRole(raw: unknown): ImageRole | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  if (o.kind === "subject" || o.kind === "angle" || o.kind === "style") return { kind: o.kind };
+  if (o.kind === "character" || o.kind === "location") {
+    const name = typeof o.name === "string" ? sanitizePrompt(o.name).slice(0, ENHANCE_CONTEXT_LIMITS.label) : "";
+    if (!name) return null;
+    return { kind: o.kind, name };
+  }
+  return null;
+}
+
+/**
  * Validate + sanitize ONE Director Mode context entity ({label, description?}).
  * Returns null on anything malformed — the whole request is then a 400, never
  * a silent drop (same reject-not-truncate convention as the option validators).
+ *
+ * `idMode` — "none": id never read (kept for a hypothetical caller with no use
+ * for one). "optional": id captured WHEN the client sends one, but its absence
+ * doesn't invalidate the entity — this is /api/enhance's mode, since shot-
+ * scoping (composeEnhanceInput, enhance.ts) needs ids to filter by, but an
+ * older/simpler caller that never names a shot's cast must keep working.
+ * "required": id is mandatory — /api/storyboard's mode, where every candidate
+ * MUST reference a real id or "who's in this shot" is meaningless.
  */
-function parseContextEntity(raw: unknown, withId: false): EnhanceContextEntity | null;
-function parseContextEntity(raw: unknown, withId: true): StoryboardEntity | null;
-function parseContextEntity(raw: unknown, withId: boolean): (EnhanceContextEntity & { id?: string }) | null {
+function parseContextEntity(raw: unknown, idMode: "none" | "optional"): EnhanceContextEntity | null;
+function parseContextEntity(raw: unknown, idMode: "required"): StoryboardEntity | null;
+function parseContextEntity(raw: unknown, idMode: "none" | "optional" | "required"): EnhanceContextEntity | null {
   if (typeof raw !== "object" || raw === null) return null;
   const o = raw as Record<string, unknown>;
   const label = typeof o.label === "string" ? sanitizePrompt(o.label).slice(0, ENHANCE_CONTEXT_LIMITS.label) : "";
   if (!label) return null;
-  const out: EnhanceContextEntity & { id?: string } = { label };
+  const out: EnhanceContextEntity = { label };
   if (o.description != null) {
     if (typeof o.description !== "string") return null;
     const d = sanitizePrompt(o.description).slice(0, ENHANCE_CONTEXT_LIMITS.description);
     if (d) out.description = d;
   }
-  if (withId) {
+  if (idMode !== "none") {
     const id = typeof o.id === "string" ? o.id.trim().slice(0, 64) : "";
-    if (!id) return null;
-    out.id = id;
+    if (idMode === "required" && !id) return null;
+    if (id) out.id = id;
+  }
+  return out;
+}
+
+/**
+ * Validate a client-supplied id array against a set of ids already accepted
+ * IN THE SAME REQUEST (e.g. a shot's characterIds against the characters list
+ * beside it). Unlike enhance.ts's LLM-output idList (which drops unknowns —
+ * the model is untrusted, not malicious), this REJECTS on any unknown id: it
+ * validates a request, and an id that names no supplied entity is a bug or a
+ * probe, not noise to silently tolerate.
+ */
+function idListOf(raw: unknown, known: ReadonlySet<string>): string[] | null {
+  if (raw == null) return [];
+  if (!Array.isArray(raw)) return null;
+  const out: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== "string" || !known.has(item)) return null;
+    if (!out.includes(item)) out.push(item);
   }
   return out;
 }
@@ -279,8 +328,8 @@ function parseEnhanceContext(raw: unknown): EnhanceContext | null | undefined {
   if (raw == null) return undefined;
   if (typeof raw !== "object" || Array.isArray(raw)) return null;
   const o = raw as Record<string, unknown>;
-  const characters = parseEntityList(o.characters, ENHANCE_CONTEXT_LIMITS.characters, (x) => parseContextEntity(x, false));
-  const locations = parseEntityList(o.locations, ENHANCE_CONTEXT_LIMITS.locations, (x) => parseContextEntity(x, false));
+  const characters = parseEntityList(o.characters, ENHANCE_CONTEXT_LIMITS.characters, (x) => parseContextEntity(x, "optional"));
+  const locations = parseEntityList(o.locations, ENHANCE_CONTEXT_LIMITS.locations, (x) => parseContextEntity(x, "optional"));
   if (characters === null || locations === null) return null;
   const ctx: EnhanceContext = {};
   if (characters.length) ctx.characters = characters;
@@ -301,6 +350,17 @@ function parseEnhanceContext(raw: unknown): EnhanceContext | null | undefined {
     // both of which speak the fixed vocabulary — anything else is a probe.
     if (!SHOT_TYPE_IDS.has(type) || !momentRu || !cameraDirectionEn) return null;
     ctx.shot = { type, momentRu, cameraDirectionEn };
+    // Who's actually IN this shot — a subset of the characters/locations ids
+    // supplied above. What makes composeEnhanceInput's shot-scoping possible
+    // at all: without this the LLM is handed the WHOLE ticked cast for every
+    // shot, including a one-person close-up (docs/ui-rebuild-v2.md §4).
+    const knownChars = new Set(characters.map((c) => c.id).filter((x): x is string => !!x));
+    const knownLocs = new Set(locations.map((l) => l.id).filter((x): x is string => !!x));
+    const shotCharIds = idListOf(sh.characterIds, knownChars);
+    const shotLocIds = idListOf(sh.locationIds, knownLocs);
+    if (shotCharIds === null || shotLocIds === null) return null;
+    if (shotCharIds.length) ctx.shot.characterIds = shotCharIds;
+    if (shotLocIds.length) ctx.shot.locationIds = shotLocIds;
   }
   return ctx;
 }
@@ -358,8 +418,8 @@ export async function storyboardResponse(
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const scenario =
     typeof body?.scenario === "string" ? sanitizePrompt(body.scenario).slice(0, ENHANCE_CONTEXT_LIMITS.scenario) : "";
-  const characters = parseEntityList(body?.characters, ENHANCE_CONTEXT_LIMITS.characters, (x) => parseContextEntity(x, true));
-  const locations = parseEntityList(body?.locations, ENHANCE_CONTEXT_LIMITS.locations, (x) => parseContextEntity(x, true));
+  const characters = parseEntityList(body?.characters, ENHANCE_CONTEXT_LIMITS.characters, (x) => parseContextEntity(x, "required"));
+  const locations = parseEntityList(body?.locations, ENHANCE_CONTEXT_LIMITS.locations, (x) => parseContextEntity(x, "required"));
   if (characters === null || locations === null) return { status: 400, body: { error: "bad_request" } };
   if (!scenario) return { status: 400, body: { error: "empty" } };
   try {
@@ -1176,21 +1236,62 @@ export async function generateResponse(
   // cheapest way to improve likeness, and it costs nothing extra — the providers
   // composite the references into one output. Validated exactly like the primary
   // photo; the per-model cap is applied further down, once the model is known.
-  const extraImageUrls: string[] = [];
+  //
+  // image_roles (optional): parallel to image_urls, tells the model what each
+  // EXTRA image actually IS — "this is Аня", "this is the kitchen" — instead of
+  // referencePrompt's historical "these are all the same person, repeated",
+  // which is actively FALSE the instant two attached Director Mode sheets are
+  // two different people (docs/ui-rebuild-v2.md). Built through the IDENTICAL
+  // skip/dedupe/promotion the urls go through below — a role kept in a
+  // separate array could silently drift out of alignment the moment either
+  // array reorders, binding a name to the wrong picture. Omitting image_roles
+  // entirely reproduces today's exact wording, so no existing caller has to
+  // change to keep working.
+  const extraImages: { url: string; role?: ImageRole }[] = [];
+  // True only when the client actually sent image_roles — the authoritative
+  // signal for "every entry below has a role", since parseImageRole 400s the
+  // whole request rather than leaving any entry's role unset.
+  let rolesProvided = false;
   if (body?.image_urls != null) {
     if (!Array.isArray(body.image_urls)) return { status: 400, body: { error: "bad_source" } };
     // 16 is a hard parse-time ceiling so a huge array can't be walked at all;
     // the real, much smaller limit is the model's maxInputs, checked below.
     if (body.image_urls.length > 16) return { status: 400, body: { error: "bad_source" } };
-    for (const u of body.image_urls) {
+    let rawRoles: unknown[] | undefined;
+    if (body?.image_roles != null) {
+      if (!Array.isArray(body.image_roles) || body.image_roles.length !== body.image_urls.length) {
+        return { status: 400, body: { error: "bad_source" } };
+      }
+      rawRoles = body.image_roles;
+      rolesProvided = true;
+    }
+    const seen = new Set<string>();
+    for (let i = 0; i < body.image_urls.length; i++) {
+      const u = body.image_urls[i];
       if (!isMediaUrl(u) || isVideoFile(u)) return { status: 400, body: { error: "bad_source" } };
       // The primary photo may legitimately repeat in the list the client keeps;
       // sending the same URL twice only wastes provider context.
-      if (u !== imageUrl && !extraImageUrls.includes(u)) extraImageUrls.push(u);
+      if (u === imageUrl || seen.has(u)) continue;
+      seen.add(u);
+      let role: ImageRole | undefined;
+      if (rawRoles) {
+        const parsed = parseImageRole(rawRoles[i]);
+        if (!parsed) return { status: 400, body: { error: "bad_source" } };
+        role = parsed;
+      }
+      extraImages.push({ url: u, role });
     }
-    // Whole request was extras and no primary — promote the first one.
-    if (!imageUrl && extraImageUrls.length) imageUrl = extraImageUrls.shift();
   }
+  // Whole request was extras and no primary — promote the first one, ROLE
+  // included: that image's role becomes the SUBJECT's, not an extra's (e.g. no
+  // own photo attached, so the first Director Mode sheet anchors the shot).
+  let primaryRole: ImageRole | undefined;
+  if (!imageUrl && extraImages.length) {
+    const promoted = extraImages.shift()!;
+    imageUrl = promoted.url;
+    primaryRole = promoted.role;
+  }
+  const extraImageUrls = extraImages.map((x) => x.url);
   // Audio / video references. Accepted ONLY as URLs we issued (the same
   // allow-list the photos pass), so the sole way in is our own screened upload
   // endpoint — a client cannot name a URL for us to fetch on its behalf.
@@ -1448,7 +1549,15 @@ export async function generateResponse(
       return { status: 400, body: { error: "too_many_inputs", maxInputs } };
     }
     opts.extraImageUrls = extraImageUrls;
+    // rolesProvided is what guarantees every remaining entry's `role` is set
+    // (parseImageRole never leaves one undefined without 400ing the request) —
+    // the `!` below is asserting exactly that invariant, not bypassing it.
+    if (rolesProvided) opts.imageRoles = extraImages.map((x) => x.role!);
   }
+  // Independent of extraImageUrls.length: a cast of exactly one sheet and no
+  // own photo empties extraImages via the promotion above, but the promoted
+  // image's role must still reach referencePrompt as the SUBJECT's role.
+  if (primaryRole) opts.primaryRole = primaryRole;
 
   // Audio / video references (Seedance reference mode). Same discipline as the
   // photos: validated here against the media-host allow-list, then assigned —
