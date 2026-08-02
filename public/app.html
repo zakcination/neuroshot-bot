@@ -1475,6 +1475,166 @@
     .subjtoggle { display: flex; gap: 8px; }
     .schip { flex: 1 1 0; padding: 9px 10px; border-radius: var(--radius-s); border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; text-align: center; }
     .schip.on { border-color: var(--violet); background: rgba(124,92,255,.14); color: var(--violet); }
+
+    /* ————— Director Mode (Seedance) — iOS-style toggle on the aurora gradient,
+       three optional accordions (Персонажи / Локации / Кадр), storyboard
+       candidate cards and the assemble CTA. Ported from the approved
+       director-mode wireframe, recolored onto the app's own tokens. ————— */
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s);
+      padding: 12px; margin-top: 14px;
+    }
+    .toggle-row .lbl { font-size: 14px; font-weight: 700; }
+    .toggle-row .lbl small { display: block; color: var(--muted); font-size: 11px; font-weight: 400; margin-top: 1px; }
+    .ios-toggle { position: relative; width: 46px; height: 27px; flex: none; }
+    .ios-toggle input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 2; }
+    .ios-toggle .track { position: absolute; inset: 0; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); transition: background .18s; }
+    .ios-toggle input:checked ~ .track { background: var(--aurora); border-color: transparent; }
+    .ios-toggle .knob {
+      position: absolute; top: 2px; left: 2px; width: 23px; height: 23px; border-radius: 50%;
+      background: #fff; box-shadow: 0 2px 5px rgba(0,0,0,.4); transition: transform .18s cubic-bezier(.4,0,.2,1);
+    }
+    .ios-toggle input:checked ~ .knob { transform: translateX(19px); }
+    .ios-toggle input:focus-visible ~ .track { outline: 2px solid var(--magenta); outline-offset: 2px; }
+    .acc { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; margin-top: 10px; }
+    .acc-head {
+      display: flex; align-items: center; justify-content: space-between; width: 100%;
+      padding: 13px 14px; cursor: pointer; gap: 10px; border: 0; background: none; color: var(--ink); font: inherit; text-align: left;
+    }
+    .acc-head .t { display: flex; align-items: center; gap: 9px; min-width: 0; }
+    .acc-head .n {
+      width: 22px; height: 22px; border-radius: 7px; background: var(--surface-2); border: 1px solid var(--line);
+      display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: var(--muted); flex: none;
+    }
+    .acc-head b { font-size: 14px; font-weight: 700; white-space: nowrap; }
+    .acc-head .state { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-left: auto; }
+    .acc-head .chev { color: var(--faint); font-size: 11px; flex: none; transition: transform .15s; }
+    .acc.open .chev { transform: rotate(180deg); }
+    .acc-body { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+    .acc-hint { font-size: 11.5px; color: var(--muted); margin: 0; line-height: 1.45; }
+    .char-list { display: flex; flex-direction: column; gap: 8px; }
+    .char-card {
+      display: flex; align-items: center; gap: 9px; background: var(--surface-2); border: 1px solid var(--line);
+      border-radius: 13px; padding: 9px 10px;
+    }
+    .char-src {
+      width: 38px; height: 38px; border-radius: 9px; flex: none; overflow: hidden;
+      border: 1px solid rgba(124, 92, 255, .45); background: var(--bg-2);
+      display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 15px;
+    }
+    .char-src img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .char-arrow { color: var(--faint); font-size: 13px; flex: none; }
+    .char-sheet {
+      width: 48px; height: 38px; border-radius: 8px; flex: none; overflow: hidden; padding: 0;
+      border: 1px solid rgba(255, 77, 141, .4); background: var(--bg-2); cursor: pointer; font: inherit;
+      display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px;
+    }
+    .char-sheet img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .char-sheet .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--violet); border-top-color: transparent; animation: dmspin 1s linear infinite; }
+    @keyframes dmspin { to { transform: rotate(360deg); } }
+    .char-meta { flex: 1; min-width: 0; }
+    .char-meta b { display: block; font-size: 12.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .char-meta small { display: block; font-size: 10.5px; color: var(--muted); margin-top: 1px; }
+    .char-meta small.err { color: var(--amber); }
+    .char-use {
+      border: 1px solid var(--line); background: var(--bg-2); color: var(--muted); border-radius: 999px;
+      padding: 3px 9px; margin-top: 5px; font: inherit; font-size: 10.5px; font-weight: 700; cursor: pointer;
+    }
+    .char-use.on { border-color: rgba(124, 92, 255, .5); color: var(--violet); background: rgba(124, 92, 255, .1); }
+    .char-retry {
+      border: 1px solid rgba(245, 182, 74, .4); background: rgba(245, 182, 74, .1); color: var(--amber); border-radius: 999px;
+      padding: 3px 9px; margin: 5px 0 0 6px; font: inherit; font-size: 10.5px; font-weight: 700; cursor: pointer;
+    }
+    .char-del {
+      width: 22px; height: 22px; border-radius: 50%; background: var(--bg-2); border: 1px solid var(--line);
+      color: var(--muted); font: inherit; font-size: 10px; line-height: 1; display: flex; align-items: center;
+      justify-content: center; flex: none; cursor: pointer; padding: 0;
+    }
+    .char-add-card { display: flex; flex-direction: column; gap: 8px; border: 1.5px dashed var(--line); border-radius: 13px; padding: 11px; }
+    .char-add-row b { font-size: 12.5px; font-weight: 700; display: block; }
+    .char-add-row small { font-size: 10.5px; color: var(--muted); display: block; margin-top: 1px; }
+    .char-add-card .refgrid { margin-top: 0; }
+    .char-gen-btn {
+      text-align: center; padding: 10px; border-radius: 10px; border: 1px solid rgba(245, 182, 74, .4);
+      background: rgba(245, 182, 74, .12); color: var(--amber); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+    }
+    .char-gen-btn:disabled { opacity: .55; cursor: default; }
+    .char-alt { border: 0; background: none; text-align: center; font: inherit; font-size: 11px; color: var(--muted); cursor: pointer; padding: 2px; }
+    .scenario-box { background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 11px; }
+    .scenario-box textarea {
+      width: 100%; min-height: 64px; resize: none; border: 0; background: transparent; color: var(--ink);
+      font: inherit; font-size: 13px; line-height: 1.45; padding: 0; outline: none; display: block;
+    }
+    .split-btn {
+      display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; padding: 11px;
+      border-radius: 11px; border: 1px solid rgba(124, 92, 255, .45); background: rgba(124, 92, 255, .12);
+      color: #c9bfff; font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer;
+    }
+    .split-btn:disabled { opacity: .55; cursor: default; }
+    .cand-list { display: flex; flex-direction: column; gap: 7px; }
+    .cand-head { display: flex; align-items: baseline; justify-content: space-between; margin: 2px 0 0; }
+    .cand-head span { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+    .cand-head small { font-size: 10.5px; color: var(--faint); }
+    .cand-card {
+      display: flex; flex-direction: column; gap: 5px; width: 100%; text-align: left;
+      border: 1px solid var(--line); background: var(--surface-2); border-radius: 12px; padding: 10px 11px;
+      cursor: pointer; font: inherit; color: var(--ink);
+    }
+    .cand-card b { font-size: 12.5px; font-weight: 600; line-height: 1.35; }
+    .cand-tag {
+      align-self: flex-start; font-size: 9.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+      padding: 2px 8px; border-radius: 999px; background: var(--bg-2); border: 1px solid var(--line); color: var(--muted);
+    }
+    .cand-refs { font-size: 10px; color: var(--muted); }
+    .cand-card.on { border-color: var(--magenta); background: linear-gradient(160deg, rgba(124, 92, 255, .16), rgba(255, 77, 141, .1)); }
+    .cand-card.on .cand-tag { background: var(--aurora); border-color: transparent; color: #fff; }
+    .manual-toggle { border: 0; background: none; display: block; width: 100%; text-align: center; padding: 6px; font: inherit; font-size: 11.5px; color: var(--muted); cursor: pointer; }
+    .shot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .shot-card {
+      display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--line); background: var(--surface-2);
+      border-radius: 13px; padding: 10px; cursor: pointer; font: inherit; color: var(--ink); text-align: left;
+    }
+    .shot-card .ico { width: 26px; height: 26px; border-radius: 8px; background: var(--bg-2); display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--muted); }
+    .shot-card b { font-size: 12.5px; font-weight: 600; margin-top: 2px; }
+    .shot-card small { font-size: 10px; color: var(--muted); line-height: 1.25; }
+    .shot-card.on { border-color: var(--magenta); background: linear-gradient(160deg, rgba(124, 92, 255, .16), rgba(255, 77, 141, .1)); }
+    .shot-card.on .ico { background: var(--aurora); color: #fff; }
+    .assemble-btn {
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; width: 100%;
+      padding: 12px; margin-top: 12px; border: 0; border-radius: var(--radius-s); background: var(--aurora); color: #fff;
+      font: inherit; font-size: 13.5px; font-weight: 800; cursor: pointer; box-shadow: 0 10px 24px -12px rgba(124, 92, 255, .7);
+    }
+    .assemble-btn small { font-size: 10.5px; font-weight: 600; opacity: .85; }
+    .assemble-btn:disabled { opacity: .6; cursor: default; }
+    .assemble-btn.pulse { animation: dmpulse 2.2s ease-in-out infinite; }
+    @keyframes dmpulse { 50% { box-shadow: 0 10px 34px -8px rgba(255, 77, 141, .8); transform: scale(1.015); } }
+    .dmzoom { position: fixed; inset: 0; z-index: 80; background: rgba(0, 0, 0, .88); display: flex; align-items: center; justify-content: center; padding: 18px; cursor: zoom-out; }
+    .dmzoom img { max-width: 100%; max-height: 100%; border-radius: 12px; }
+
+    /* Generation detail rows (openViewer) + the failed-render strip in «Мои работы». */
+    .gmeta { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 2px 13px; margin-top: 12px; }
+    .gmeta .mr { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+    .gmeta .mr:last-child { border-bottom: 0; }
+    .gmeta .mr span { color: var(--muted); flex: none; }
+    .gmeta .mr b { font-weight: 600; text-align: right; min-width: 0; overflow-wrap: anywhere; }
+    .gbadge {
+      display: inline-block; font-size: 10px; font-weight: 800; letter-spacing: .03em;
+      background: rgba(124, 92, 255, .16); border: 1px solid rgba(124, 92, 255, .45); color: #c9bfff;
+      padding: 2px 8px; border-radius: 999px; vertical-align: 2px;
+    }
+    .failcard {
+      grid-column: 1 / -1; display: flex; align-items: center; gap: 10px;
+      background: var(--surface); border: 1px solid rgba(245, 182, 74, .35); border-radius: var(--radius-s); padding: 10px 12px;
+    }
+    .failcard .fx { flex: 1; min-width: 0; }
+    .failcard .fx b { display: block; font-size: 12.5px; }
+    .failcard .fx small { display: block; color: var(--muted); font-size: 11px; margin-top: 1px; }
+    .failcard button {
+      border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); border-radius: 999px;
+      padding: 7px 12px; font: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer; flex: none;
+    }
+    .failcard .fdis { width: 26px; height: 26px; padding: 0; border-radius: 50%; color: var(--muted); }
     .photo-preview .redo { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,.55); backdrop-filter: blur(6px); border: 0; color: #fff; border-radius: 999px; padding: 8px 13px; font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; }
 
     /* Drag-resize handle above the prompt textarea — a full-width, thumb-sized
@@ -1520,7 +1680,7 @@
     .toast.wide { border-radius: 16px; text-align: left; font-weight: 500; line-height: 1.45; width: min(92vw, 420px); }
 
     @media (prefers-reduced-motion: reduce) {
-      .sky i, .orb, .shot.pending .rip { animation: none; }
+      .sky i, .orb, .shot.pending .rip, .assemble-btn.pulse, .char-sheet .spin { animation: none; }
       .shot.pending .rip { opacity: .5; transform: scale(1.6); } /* static ring instead of ripple */
       .reveal { opacity: 1; transform: none; transition: none; }
       .btn, .act, .shot, .pack, .sheet, .sheet-bg, .pcard { transition: none; }
@@ -3026,13 +3186,20 @@
           xpOrigin = (viewedJob === job.id && sheet.classList.contains("on"))
             ? sheetBody : document.getElementById("jobsPill");
           refreshMe(); renderGallery(1); haptic("success");
+          // A Director Mode sheet render lands on its entry card in the
+          // composer, not in the result view — the studio stays where it was.
+          if (job.dmSheet) { dmSheetDone(job, data); return; }
           if (viewedJob === job.id && sheet.classList.contains("on")) viewResult(data, job);
           else toast("✨ Готово! Работа уже в «Мои работы»");
           return;
         }
         if (status === 200 && data.status === "error") {
           jobs.delete(job.id); updateJobsPill(); refreshMe(); renderGallery(1); haptic("error");
-          toast(`Не получилось — ${PATRON} патроны возвращены`);
+          if (job.dmSheet) { dmSheetFail(job, data); return; }
+          // The server now says WHY (error_reason code) — map it to copy a
+          // person can act on; a legacy null keeps today's generic line.
+          if (data.error_reason) toast(genErrText(data.error_reason), { wide: true, ms: 5500 });
+          else toast(`Не получилось — ${PATRON} патроны возвращены`);
           if (viewedJob === job.id && sheet.classList.contains("on")) viewPick();
           return;
         }
@@ -3075,6 +3242,9 @@
             ${multi ? "" : `<a class="btn ghost" href="${esc(g.output_url)}" target="_blank" rel="noopener noreferrer">↗ Открыть</a>`}
             <button class="btn ghost" id="moreBtn">➕ Ещё</button>
           </div>
+          <div class="row" style="margin-top:0">
+            <button class="btn ghost" id="detBtn">ℹ️ Детали и повтор</button>
+          </div>
         </div>`;
       // Upsells reference the generation by ID — the server resolves the file,
       // so chains survive app restarts and never depend on client state. When
@@ -3095,6 +3265,10 @@
       };
       sheetBody.querySelector("#chatBtn").onclick = () => sendToChat(g.id);
       sheetBody.querySelector("#moreBtn").onclick = () => { st.pick = null; viewPick(); };
+      // The poll payload is a thin projection — the freshly refreshed /api/me
+      // row carries the full metadata (source/opts/user_prompt) when present.
+      sheetBody.querySelector("#detBtn").onclick = () =>
+        openViewer((ME.generations || []).find((x) => x.id === g.id) || g);
     }
 
     /**
@@ -3126,21 +3300,34 @@
       else toast("Не удалось отправить — попробуйте позже");
     }
 
-    /** Gallery item viewer: save / send to chat / cross-sale into video. */
+    /**
+     * Gallery item viewer + detail sheet: the media, then everything the row's
+     * public metadata can honestly say (model, source kind, the user's OWN
+     * prompt when one exists — never curated text, which the server no longer
+     * ships at all), and the actions: recreate / use-as-reference / save /
+     * send to chat / animate. Legacy rows with all-null metadata degrade to
+     * exactly the old viewer plus a model/price/date card.
+     */
     function openViewer(item) {
       openSheet(); viewedJob = null;
       const isVideo = /\.(mp4|webm|mov)(\?|$)/i.test(item.output_url || "");
       const multi = !isVideo && item.output_urls && item.output_urls.length > 1 ? item.output_urls : null;
+      const isSheet = item.source_kind === "sheet" || !!(item.opts && item.opts.sheet);
       sheetBody.innerHTML = `
-        <h3>Моя работа${multi ? ` · ${multi.length} варианта` : ""}</h3>
+        <h3>Моя работа${multi ? ` · ${multi.length} варианта` : ""}${isSheet ? ` <span class="gbadge">🗂 карта</span>` : ""}</h3>
         <div class="result-media"${multi ? ` style="display:grid;grid-template-columns:1fr 1fr;gap:8px"` : ""}>${
           multi ? multi.map((u) => `<img src="${esc(u)}" alt="" style="border-radius:12px" />`).join("")
           : isVideo
             ? `<video src="${esc(item.output_url)}" controls autoplay muted loop playsinline></video>`
             : `<img src="${esc(item.output_url)}" alt="" />`
         }</div>
+        ${genMetaHtml(item)}
         <div class="stack">
           ${!isVideo ? `<button class="btn primary" id="vAnim">🎬 Оживить в видео · от ${ME.catalog.videoModels.reduce((a, m) => Math.min(a, m.credits), 1e9)} ${PATRON}</button>` : ""}
+          ${canRecreate(item) || !isVideo ? `<div class="row" style="margin-top:0">
+            ${canRecreate(item) ? `<button class="btn ghost" id="vRepeat">↻ Повторить</button>` : ""}
+            ${!isVideo ? `<button class="btn ghost" id="vRef">🖼 Как референс</button>` : ""}
+          </div>` : ""}
           <div class="row" style="margin-top:0">
             <button class="btn ghost" id="vSave">📥 Скачать${multi ? " всё" : ""}</button>
             <button class="btn ghost" id="vChat">💬 В чат</button>
@@ -3152,6 +3339,12 @@
         </div>`;
       const vAnim = sheetBody.querySelector("#vAnim");
       if (vAnim) vAnim.onclick = () => viewAnimateFrom(item);
+      const vRepeat = sheetBody.querySelector("#vRepeat");
+      if (vRepeat) vRepeat.onclick = () => recreateFrom(item);
+      // The output as a SOURCE for a new image render — the same owner-scoped
+      // generation_id mechanism «Оживить» already uses, image mode instead.
+      const vRef = sheetBody.querySelector("#vRef");
+      if (vRef) vRef.onclick = () => openStudio({ mode: "image", generationId: item.id, srcPreview: item.output_url });
       sheetBody.querySelector("#vSave").onclick = () => {
         if (multi) multi.forEach((u, i) => saveMedia(u, `${item.id}-${i}`));
         else saveMedia(item.output_url, item.id);
@@ -3164,6 +3357,406 @@
     /** Animate a previous work: straight into the Studio, video mode, source = gen id. */
     function viewAnimateFrom(item) {
       openStudio({ mode: "video", generationId: item.id, srcPreview: item.output_url });
+    }
+
+    // ——————————————————————————————————————————————————————————————————
+    // Generation metadata: labels, error reasons, recreate — shared by the
+    // detail sheet (openViewer), the failed strip in «Мои работы» and the
+    // Director Mode entry cards.
+    // ——————————————————————————————————————————————————————————————————
+    /** Human RU copy for a generation error_reason CODE (the server sends
+     *  codes, the client owns the wording). null/unknown → generic line. */
+    function genErrText(reason) {
+      return {
+        moderation: "Это фото не подходит для обработки — патроны возвращены. Загрузите другое фото.",
+        provider_blocked: "Сервис генерации временно недоступен — патроны возвращены. Попробуйте позже.",
+        provider_error: "Не получилось — патроны автоматически возвращены. Попробуйте ещё раз.",
+        timeout: "Рендер завис и был остановлен — патроны возвращены.",
+      }[reason] || `Не получилось — ${PATRON} патроны возвращены`;
+    }
+    /** Short form for tight cards (Director entry rows, the failed strip). */
+    function genErrShort(reason) {
+      return {
+        moderation: "фото не прошло проверку — попробуйте другое",
+        provider_blocked: "сервис был недоступен",
+        provider_error: "ошибка генерации",
+        timeout: "рендер завис и был остановлен",
+        upload: "не удалось загрузить фото",
+      }[reason] || "ошибка генерации";
+    }
+    /** Display name for a model key. Resolved Seedance tier keys (the rows the
+     *  server writes) have no picker row of their own — map them back onto the
+     *  umbrella label plus the tier word a user actually picked. */
+    function modelLabelFor(key) {
+      const c = (ME && ME.catalog) || {};
+      const all = [...(((c.studio || {}).image) || []), ...(((c.studio || {}).video) || [])];
+      const hit = all.find((m) => m.key === key) || (c.videoModels || []).find((m) => m.key === key);
+      if (hit) return hit.label;
+      if (/^seedance/.test(key || "")) {
+        const umb = (((c.studio || {}).video) || []).find((m) => m.key === "seedance");
+        const tier = key === "seedance_mini" ? "Дёшево" : key === "seedance_fast" ? "Быстро" : key === "seedance_ref" ? "По референсам" : "Качество";
+        return `${umb ? umb.label : "Seedance"} · ${tier}`;
+      }
+      return key || "—";
+    }
+    /** What made this row — catalog labels only, NEVER stored prompt text. */
+    function sourceLabelFor(g) {
+      const k = g.source_kind;
+      const c = (ME && ME.catalog) || {};
+      if (k === "preset") {
+        const p = (c.presets || []).find((x) => x.id === g.source_id);
+        return p ? `Стиль: ${p.label}` : "Готовый стиль";
+      }
+      if (k === "campaign" || k === "campaign_video") {
+        const camp = (c.campaigns || []).find((x) => x.id === String(g.source_id || "").split(":")[0]);
+        return camp ? `Сценарий: ${camp.label}` : "Сценарий";
+      }
+      if (k === "sheet") {
+        const s = (g.opts && g.opts.sheet) || {};
+        return `${s.sheetType === "location" ? "Карта локации" : "Карта персонажа"}${s.label ? ` · ${s.label}` : ""}`;
+      }
+      if (k === "model") return "Своя идея";
+      return null; // legacy/bot rows: unknown — say nothing rather than guess
+    }
+    /** Detail rows — only fields the payload actually carries, so legacy
+     *  rows degrade to model/price/date without empty placeholders. */
+    function genMetaHtml(g) {
+      const rows = [];
+      if (g.model) rows.push(["Модель", modelLabelFor(g.model)]);
+      const src = sourceLabelFor(g);
+      if (src) rows.push(["Источник", src]);
+      const o = g.opts || {};
+      const bits = [];
+      if (o.aspect) bits.push(o.aspect);
+      if (o.resolution) bits.push(o.resolution);
+      if (o.duration) bits.push(`${o.duration} сек`);
+      if (o.count) bits.push(`${o.count} шт`);
+      if (o.tier) bits.push({ cheap: "тариф «Дёшево»", fast: "тариф «Быстро»", quality: "тариф «Качество»" }[o.tier] || o.tier);
+      if (bits.length) rows.push(["Параметры", bits.join(" · ")]);
+      if (o.refs && (o.refs.photos || o.refs.audio || o.refs.video)) {
+        const r = [];
+        if (o.refs.photos) r.push(`${o.refs.photos} фото`);
+        if (o.refs.audio) r.push(`${o.refs.audio} аудио`);
+        if (o.refs.video) r.push(`${o.refs.video} видео`);
+        rows.push(["Референсы", r.join(" · ")]);
+      }
+      if (g.credits != null) rows.push(["Цена", g.credits > 0 ? `${g.credits} ${PATRON}` : "бесплатно"]);
+      if (g.created_at) {
+        const d = new Date(g.created_at);
+        if (!isNaN(d.getTime())) rows.push(["Дата", d.toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })]);
+      }
+      if (g.created_at && g.finished_at) {
+        const sec = Math.round((Date.parse(g.finished_at) - Date.parse(g.created_at)) / 1000);
+        if (sec > 0 && sec < 3600) rows.push(["Рендер", sec < 90 ? `${sec} сек` : `≈${Math.round(sec / 60)} мин`]);
+      }
+      const up = g.user_prompt ? `<div class="mr"><span>Промпт</span><b>${esc(g.user_prompt)}</b></div>` : "";
+      if (!rows.length && !up) return "";
+      return `<div class="gmeta">${rows.map(([k, v]) => `<div class="mr"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}${up}</div>`;
+    }
+    function isVideoModelKey(key) {
+      if (/^seedance|^dub_/.test(key || "")) return true;
+      const c = (ME && ME.catalog) || {};
+      return (((c.studio || {}).video) || []).some((m) => m.key === key) || (c.videoModels || []).some((m) => m.key === key);
+    }
+    /** Can «Повторить» honestly replay this row? Sheets can't (their source
+     *  photos are not stored); catalog entries must still exist. */
+    function canRecreate(g) {
+      const k = g.source_kind;
+      if (k === "sheet") return false;
+      if (k === "preset") return (ME.catalog.presets || []).some((p) => p.id === g.source_id);
+      if (k === "campaign" || k === "campaign_video") {
+        return (ME.catalog.campaigns || []).some((c) => c.id === String(g.source_id || "").split(":")[0]);
+      }
+      // "model" rows replay fully; legacy null-kind rows at least reopen the
+      // studio on the same engine — better than a dead end.
+      return !!g.model;
+    }
+    /** «Повторить» — reopen the flow that made this row, prefilled with the
+     *  stored user prompt + opts. Reference photos are never stored (they are
+     *  counts in opts.refs), so those are asked for again, and we say so. */
+    function recreateFrom(g) {
+      const k = g.source_kind;
+      if (k === "preset") {
+        const p = (ME.catalog.presets || []).find((x) => x.id === g.source_id);
+        if (p) {
+          const lock = presetLock(p);
+          if (lock) { haptic("error"); toast(lockText(lock), { wide: true, ms: 5000 }); return; }
+          openStudio({ preset: p, origin: "preset", modelKey: p.model });
+          return;
+        }
+      }
+      if (k === "campaign" || k === "campaign_video") {
+        const campId = String(g.source_id || "").split(":")[0];
+        if ((ME.catalog.campaigns || []).some((c) => c.id === campId)) {
+          st.tab = "scenes"; openSheet(); viewCampaign(campId);
+          return;
+        }
+      }
+      const o = g.opts || {};
+      const seed = /^seedance/.test(g.model || "");
+      openStudio({ mode: isVideoModelKey(g.model) ? "video" : "image", modelKey: seed ? "seedance" : g.model });
+      stu.prompt = g.user_prompt || stu.prompt || "";
+      if (seed) stu.seedanceTier = o.tier || (g.model === "seedance_mini" ? "cheap" : g.model === "seedance" ? "quality" : "fast");
+      if (o.aspect) stu.aspect = o.aspect;
+      if (o.resolution) stu.resolution = o.resolution;
+      if (o.duration) stu.duration = o.duration;
+      if (o.count) stu.numImages = o.count;
+      if (o.subject) stu.subject = o.subject;
+      clampStudioOpts(); viewStudio();
+      if (o.refs && o.refs.photos) toast("Фото-референсы не сохраняются — добавьте фото заново", { wide: true, ms: 4500 });
+    }
+    // Failed renders surfaced in «Мои работы» — sourced from /api/me's last-30
+    // rows (failed rows never enter the paginated gallery query, so page math
+    // is untouched). Dismissals live client-side, capped like the window.
+    const FAIL_DISMISS_KEY = "neuroshot_failed_dismissed";
+    function dismissedFails() {
+      try { return JSON.parse(localStorage.getItem(FAIL_DISMISS_KEY) || "[]"); } catch (e) { return []; }
+    }
+    function dismissFail(id) {
+      const d = dismissedFails();
+      if (!d.includes(id)) d.push(id);
+      try { localStorage.setItem(FAIL_DISMISS_KEY, JSON.stringify(d.slice(-60))); } catch (e) { /* private mode */ }
+    }
+    function failedRows() {
+      const dis = dismissedFails();
+      return ((ME && ME.generations) || [])
+        .filter((g) => g.status === "error" && !dis.includes(g.id) && !jobs.has(g.id))
+        .slice(0, 3);
+    }
+
+    // ——————————————————————————————————————————————————————————————————
+    // Director Mode (Seedance) — character/location sheets + storyboard
+    // ——————————————————————————————————————————————————————————————————
+    function dmSheetDone(job, data) {
+      const target = job.dmSheet.type === "character" ? stu.dmChars : stu.dmLocs;
+      const idx = target.findIndex((x) => x.id === job.dmSheet.entryId);
+      if (idx >= 0) {
+        target[idx].sheetUrl = data.output_url;
+        target[idx].pending = false;
+        target[idx].genId = job.id;
+      }
+      toast("✓ Карта готова");
+      viewStudio();
+    }
+    function dmSheetFail(job, data) {
+      const target = job.dmSheet.type === "character" ? stu.dmChars : stu.dmLocs;
+      const idx = target.findIndex((x) => x.id === job.dmSheet.entryId);
+      if (idx >= 0) {
+        target[idx].pending = false;
+        target[idx].error = genErrShort(data.error_reason);
+      }
+      toast("Не получилось — " + (target[idx] ? target[idx].error : "попробуйте ещё раз"));
+      viewStudio();
+    }
+    function directorModeHtml() {
+      if (stu.mode !== "video" || (studioModel() && studioModel().key) !== "seedance") return "";
+      return `
+        <div class="toggle-row">
+          <div class="lbl">
+            режиссёрский<br/><small>персонажи, локации, раскадровка</small>
+          </div>
+          <label class="ios-toggle">
+            <input type="checkbox" ${stu.director ? "checked" : ""} id="dmToggle" />
+            <div class="track"></div>
+            <div class="knob"></div>
+          </label>
+        </div>
+        ${!stu.director ? "" : `
+          ${dmCharactersAccordion()}
+          ${dmLocationsAccordion()}
+          ${dmShotAccordion()}
+          ${dmAssembleHtml()}
+        `}
+      `;
+    }
+    function dmCharactersAccordion() {
+      const open = stu.dmSec.chars;
+      const list = stu.dmChars || [];
+      const state = list.length ? `${list.filter((c) => c.use).length}/${list.length}` : "нет";
+      return `
+        <div class="acc ${open ? "open" : ""}">
+          <button class="acc-head" data-dm-sec="chars">
+            <div class="t">
+              <div class="n">${list.length}</div>
+              <b>Персонажи</b>
+            </div>
+            <div class="state">${state}</div>
+            <div class="chev">›</div>
+          </button>
+          ${!open ? "" : dmCharBodyHtml()}
+        </div>
+      `;
+    }
+    function dmCharBodyHtml() {
+      const list = stu.dmChars || [];
+      const draftPhotos = (stu.dmDraftChar && stu.dmDraftChar.photos) || [];
+      return `
+        <div class="acc-body">
+          <p class="acc-hint">Добавьте 1+ фото каждого персонажа → готовая карта с ракурсами и мимикой. Минимум 1 персонаж.</p>
+          <div class="char-list">${list.map((c) => dmCharCardHtml(c)).join("")}</div>
+          <div class="char-add-card">
+            <div class="char-add-row">
+              <b>Добавить персонажа</b>
+              <small>имя или описание</small>
+            </div>
+            <input type="text" id="dmCharLabel" maxlength="60" placeholder="Аня, Кот, герой…" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;font-size:13px;color:var(--ink);background:var(--bg-2)" />
+            <div class="char-add-row" style="margin-top:8px">
+              <b>Фото персонажа · мин. 1</b>
+            </div>
+            <div class="refgrid" id="dmCharPhotos" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${dmPhotoGridHtml(draftPhotos)}</div>
+            <label class="drop" style="margin-top:8px">
+              <input type="file" accept="image/*" multiple id="dmCharFile" />
+              <span class="em">📸</span><b>Выбрать фото</b><span>одно или несколько</span>
+            </label>
+            <button class="char-gen-btn" id="dmCharGenBtn" ${!(draftPhotos.length > 0) ? "disabled" : ""}>🎬 Сгенерировать карту</button>
+          </div>
+        </div>
+      `;
+    }
+    function dmCharCardHtml(c) {
+      const primary = c.photos && c.photos[0] ? c.photos[0].url : "📸";
+      const hasSheet = !!c.sheetUrl;
+      return `
+        <div class="char-card">
+          <div class="char-src">${typeof primary === "string" && primary.startsWith("http") ? `<img src="${esc(primary)}" alt="" />` : primary}</div>
+          <div class="char-arrow">→</div>
+          ${hasSheet ? `<button class="char-sheet" onclick="dmZoom('${esc(c.sheetUrl)}')"><img src="${esc(c.sheetUrl)}" alt="" /></button>`
+            : c.pending ? `<div class="char-sheet"><div class="spin"></div></div>`
+            : c.error ? `<button class="char-sheet" style="background:rgba(245,182,74,.1);color:var(--amber)">⚠</button>`
+            : `<div class="char-sheet" style="color:var(--faint)">—</div>`}
+          <div class="char-meta">
+            <b>${esc(c.label || "Персонаж")}</b>
+            <small>${c.photos ? c.photos.length + " фото" : ""}${hasSheet ? " · готово" : ""}${c.error ? ` · ${c.error}` : ""}</small>
+            <button class="char-use ${c.use ? "on" : ""}" data-char-id="${c.id}">Использ.</button>
+            <button class="char-del" data-char-id="${c.id}">✕</button>
+          </div>
+        </div>
+      `;
+    }
+    function dmPhotoGridHtml(photos) {
+      return photos.map((p, i) => `<div style="position:relative"><img src="${esc(p.url)}" alt="" style="width:100%;aspect-ratio:1;border-radius:8px;object-fit:cover;border:1px solid var(--line)" /><button style="position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,.6);border:0;color:#fff;cursor:pointer;font-size:10px" data-remove-idx="${i}">✕</button></div>`).join("");
+    }
+    function dmLocationsAccordion() {
+      const open = stu.dmSec.locs;
+      const list = stu.dmLocs || [];
+      const state = list.length ? `${list.filter((l) => l.use).length}/${list.length}` : "нет";
+      return `
+        <div class="acc ${open ? "open" : ""}">
+          <button class="acc-head" data-dm-sec="locs">
+            <div class="t">
+              <div class="n">${list.length}</div>
+              <b>Локации</b>
+            </div>
+            <div class="state">${state}</div>
+            <div class="chev">›</div>
+          </button>
+          ${!open ? "" : dmLocBodyHtml()}
+        </div>
+      `;
+    }
+    function dmLocBodyHtml() {
+      const list = stu.dmLocs || [];
+      const draftPhotos = (stu.dmDraftLoc && stu.dmDraftLoc.photos) || [];
+      return `
+        <div class="acc-body">
+          <p class="acc-hint">Добавьте фото локаций → карта с ракурсами. Опционально.</p>
+          <div class="char-list">${list.map((l) => dmLocCardHtml(l)).join("")}</div>
+          <div class="char-add-card">
+            <div class="char-add-row">
+              <b>Добавить локацию</b>
+              <small>название места</small>
+            </div>
+            <input type="text" id="dmLocLabel" maxlength="60" placeholder="офис, лес, космос…" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;font-size:13px;color:var(--ink);background:var(--bg-2)" />
+            <div class="char-add-row" style="margin-top:8px">
+              <b>Фото локации · мин. 1</b>
+            </div>
+            <div class="refgrid" id="dmLocPhotos" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${dmPhotoGridHtml(draftPhotos)}</div>
+            <label class="drop" style="margin-top:8px">
+              <input type="file" accept="image/*" multiple id="dmLocFile" />
+              <span class="em">🏞</span><b>Выбрать фото</b><span>одно или несколько</span>
+            </label>
+            <button class="char-gen-btn" id="dmLocGenBtn" ${!(draftPhotos.length > 0) ? "disabled" : ""}>🎬 Сгенерировать карту</button>
+          </div>
+        </div>
+      `;
+    }
+    function dmLocCardHtml(l) {
+      const primary = l.photos && l.photos[0] ? l.photos[0].url : "🏞";
+      const hasSheet = !!l.sheetUrl;
+      return `
+        <div class="char-card">
+          <div class="char-src">${typeof primary === "string" && primary.startsWith("http") ? `<img src="${esc(primary)}" alt="" />` : primary}</div>
+          <div class="char-arrow">→</div>
+          ${hasSheet ? `<button class="char-sheet" onclick="dmZoom('${esc(l.sheetUrl)}')"><img src="${esc(l.sheetUrl)}" alt="" /></button>`
+            : l.pending ? `<div class="char-sheet"><div class="spin"></div></div>`
+            : l.error ? `<button class="char-sheet" style="background:rgba(245,182,74,.1);color:var(--amber)">⚠</button>`
+            : `<div class="char-sheet" style="color:var(--faint)">—</div>`}
+          <div class="char-meta">
+            <b>${esc(l.label || "Локация")}</b>
+            <small>${l.photos ? l.photos.length + " фото" : ""}${hasSheet ? " · готово" : ""}${l.error ? ` · ${l.error}` : ""}</small>
+            <button class="char-use ${l.use ? "on" : ""}" data-loc-id="${l.id}">Использ.</button>
+            <button class="char-del" data-loc-id="${l.id}">✕</button>
+          </div>
+        </div>
+      `;
+    }
+    function dmShotAccordion() {
+      const open = stu.dmSec.shot;
+      const hasCands = stu.dmCands && stu.dmCands.length > 0;
+      const selectedIdx = stu.dmCandIdx;
+      return `
+        <div class="acc ${open ? "open" : ""}">
+          <button class="acc-head" data-dm-sec="shot">
+            <div class="t">
+              <div class="n">3-4</div>
+              <b>Кадр и сториборд</b>
+            </div>
+            <div class="state">${hasCands ? selectedIdx != null ? "выбран" : "варианты" : "готов ввод"}</div>
+            <div class="chev">›</div>
+          </button>
+          ${!open ? "" : `
+            <div class="acc-body">
+              <p class="acc-hint">Опишите сценарий целиком → 3-4 кадра, персонажи и локации из списков выше.</p>
+              <div class="scenario-box">
+                <textarea id="dmScenario" placeholder="камера приближается, персонаж смотрит в камеру, за спиной закат…">${esc(stu.dmScenario || "")}</textarea>
+              </div>
+              <button class="split-btn" id="dmSplitBtn" ${stu.dmSplitting ? "disabled" : ""}>
+                ${stu.dmSplitting ? "⏳ Разбиваю…" : "🎞 Разбить на кадры"}
+              </button>
+              ${hasCands ? `
+                <div class="cand-head">
+                  <span>Кандидаты</span>
+                  <small>${selectedIdx != null ? "✓ выбран" : "выберите"}</small>
+                </div>
+                <div class="cand-list">${(stu.dmCands || []).map((c, i) => `
+                  <button class="cand-card ${stu.dmCandIdx === i ? "on" : ""}" data-cand-idx="${i}">
+                    <div style="display:flex;gap:8px">
+                      <div class="cand-tag">${esc(c.type || "—")}</div>
+                    </div>
+                    <b>${esc(c.momentRu || "")}</b>
+                  </button>
+                `).join("")}</div>
+              ` : ""}
+            </div>
+          `}
+        </div>
+      `;
+    }
+    function dmAssembleHtml() {
+      const canAssemble = stu.dmCandIdx != null;
+      return `
+        <button class="assemble-btn ${stu.dmAssembling ? "pulse" : ""}" id="dmAssembleBtn" ${!canAssemble ? "disabled" : ""}>
+          Собрать Seedance-промпт
+          ${!canAssemble ? `<small>выберите кадр выше</small>` : ""}
+        </button>
+      `;
+    }
+    function dmZoom(url) {
+      const z = document.createElement("div");
+      z.className = "dmzoom";
+      z.onclick = () => z.remove();
+      z.innerHTML = `<img src="${esc(url)}" alt="" />`;
+      document.body.appendChild(z);
     }
 
     const RATIO_LABEL = { auto: "Как фото", "9:16": "9:16 ↕", "16:9": "16:9 ↔", "1:1": "1:1 ◻", "4:3": "4:3 ▭", "3:4": "3:4 ▯" };
@@ -3212,7 +3805,28 @@
         // every open, same as showAll: a freshly opened composer should never
         // start pre-expanded just because a previous session left it that way.
         slotsOpen: false,
+        // ——— Director Mode (Seedance) — spec: seedance-director-mode ———
+        // Off by default so the fast path stays exactly today's studio. The
+        // cast/locations/scenario survive a keep-reopen the same way photos
+        // do — re-uploading a whole cast is the most expensive re-ask there is.
+        director: prev ? !!prev.director : false,
+        dmChars: prev ? prev.dmChars || [] : [], // [{id,label,photos:[{data,url}],text,sheetUrl,genId,pending,error,use}]
+        dmLocs: prev ? prev.dmLocs || [] : [],
+        dmSeq: prev ? prev.dmSeq || 0 : 0, // entry-id counter — ids feed /api/storyboard
+        dmSec: prev ? prev.dmSec || { chars: true, locs: false, shot: false } : { chars: true, locs: false, shot: false },
+        dmScenario: prev ? prev.dmScenario || "" : "",
+        dmCands: prev ? prev.dmCands || null : null, // storyboard candidates from /api/storyboard
+        dmCandIdx: prev && prev.dmCandIdx != null ? prev.dmCandIdx : null,
+        dmShotManual: prev ? prev.dmShotManual || null : null,
+        dmManualOpen: false,
+        dmSplitting: false, dmAssembling: false,
+        dmDraftChar: prev ? prev.dmDraftChar || null : null,
+        dmDraftLoc: prev ? prev.dmDraftLoc || null : null,
       };
+      // A draft carried across a reopen must never arrive still "busy" — the
+      // in-flight handler that set it died with the previous render.
+      if (stu.dmDraftChar) stu.dmDraftChar.busy = false;
+      if (stu.dmDraftLoc) stu.dmDraftLoc.busy = false;
       if (!stu.modelKey) stu.modelKey = defaultStudioModel();
       clampStudioOpts();
       openSheet(); viewStudio();
@@ -3660,6 +4274,7 @@
               : `<div class="chips" id="stuTier">${tiers.map(([id, label]) =>
                   `<button class="chip ${(stu.seedanceTier || "fast") === id ? "on" : ""}" data-tier="${id}">${label}</button>`).join("")}</div>`}`;
         })() : ""}
+        ${directorModeHtml()}
         ${caps && caps.aspectRatios && caps.aspectRatios.length > 1 ? `
           ${qLabel("Формат кадра", "aspect")}
           ${caps.aspectRatios.length > 2
@@ -3860,6 +4475,172 @@
         if (data) { stu.endPhoto = data; viewStudio(); }
       }));
       bind("#stuEndRedo", (el) => (el.onclick = () => { stu.endPhoto = null; stu.endGenerationId = null; viewStudio(); }));
+      // ——— Director Mode event handlers ———
+      bind("#dmToggle", (el) => (el.onchange = (e) => { stu.director = !!e.target.checked; viewStudio(); }));
+      sheetBody.querySelectorAll("[data-dm-sec]").forEach((btn) => (btn.onclick = () => {
+        const sec = btn.dataset.dmSec;
+        stu.dmSec[sec] = !stu.dmSec[sec];
+        viewStudio();
+      }));
+      bind("#dmCharFile", (el) => (el.onchange = async (e) => {
+        const files = Array.from(e.target.files || []);
+        if (!files.length) return;
+        stu.dmDraftChar = stu.dmDraftChar || { photos: [] };
+        for (const f of files) {
+          const data = await downscale(f);
+          if (data) stu.dmDraftChar.photos.push({ data, url: data });
+        }
+        viewStudio();
+      }));
+      bind("#dmCharGenBtn", (el) => (el.onclick = async () => {
+        const label = sheetBody.querySelector("#dmCharLabel")?.value || "Персонаж";
+        if (!stu.dmDraftChar || !stu.dmDraftChar.photos.length) { toast("Добавьте фото"); return; }
+        stu.dmSeq++;
+        const id = "char_" + stu.dmSeq;
+        const char = { id, label, photos: stu.dmDraftChar.photos, sheetUrl: null, genId: null, pending: true, error: null, use: true };
+        stu.dmChars.push(char);
+        const photoUrls = [];
+        for (const p of char.photos) {
+          const url = await uploadData(p.data);
+          if (url) photoUrls.push(url);
+        }
+        if (!photoUrls.length) { char.pending = false; char.error = genErrShort("upload"); viewStudio(); return; }
+        const sheetPrompt = `Create a single seamless character reference sheet as ONE composed image, using the exact character — species, proportions, colors, markings, costume, and design — from the provided reference photo(s). Preserve identity and design exactly across every panel, whether the character is human or non-human, any gender, realistic or stylized/animated. Neutral studio backdrop, soft even lighting, consistent rendering style throughout matching the reference (photographic if the reference is photographic, matching illustration/render style if the reference is illustrated or animated) — no text, no labels, no panel borders, clean gutters only. Wide canvas, left block larger than right block. LEFT BLOCK — three full-figure panels, equal width, same pose, same full-body crop: 1. Front view, facing camera. 2. Side/profile view. 3. Back view. RIGHT BLOCK — a 4-row × 3-column mosaic of twelve panels: Row 1 (head/face turnaround): front view of the head; profile view of the head; back of the head. Row 2 (head angles): 3/4 view; head tilted down; head tilted up. Row 3 (facial expression): happy/smiling; neutral/serious; surprised or intense emotion. Row 4 (signature details): close-up of a key texture or material; close-up of a distinctive marking, accessory or emblem; close-up of the eyes or most expressive feature.`;
+        const { status, data } = await api("/api/generate", {
+          method: "POST",
+          body: JSON.stringify({
+            source: "model", model: "seedream_edit",
+            prompt: sheetPrompt, image_urls: photoUrls,
+            count: 1, sheetsource: true
+          })
+        });
+        if (status !== 200) { char.pending = false; char.error = genErrShort(data && data.error_reason); viewStudio(); return; }
+        startJob(data.id, false, { type: "character", entryId: id });
+        stu.dmDraftChar = null;
+        viewStudio();
+      }));
+      bind("#dmLocFile", (el) => (el.onchange = async (e) => {
+        const files = Array.from(e.target.files || []);
+        if (!files.length) return;
+        stu.dmDraftLoc = stu.dmDraftLoc || { photos: [] };
+        for (const f of files) {
+          const data = await downscale(f);
+          if (data) stu.dmDraftLoc.photos.push({ data, url: data });
+        }
+        viewStudio();
+      }));
+      bind("#dmLocGenBtn", (el) => (el.onclick = async () => {
+        const label = sheetBody.querySelector("#dmLocLabel")?.value || "Локация";
+        if (!stu.dmDraftLoc || !stu.dmDraftLoc.photos.length) { toast("Добавьте фото"); return; }
+        stu.dmSeq++;
+        const id = "loc_" + stu.dmSeq;
+        const loc = { id, label, photos: stu.dmDraftLoc.photos, sheetUrl: null, genId: null, pending: true, error: null, use: true };
+        stu.dmLocs.push(loc);
+        const photoUrls = [];
+        for (const p of loc.photos) {
+          const url = await uploadData(p.data);
+          if (url) photoUrls.push(url);
+        }
+        if (!photoUrls.length) { loc.pending = false; loc.error = genErrShort("upload"); viewStudio(); return; }
+        const sheetPrompt = `Create a single seamless location reference sheet as ONE composed image showing diverse views and details of a single location. Neutral lighting, consistent rendering style throughout matching the reference (photographic if the reference is photographic, matching illustration/render style if the reference is illustrated or stylized) — no text, no labels, no panel borders, clean gutters only. Wide canvas, left block larger than right block. LEFT BLOCK — three full-location panels, equal width, same perspective: 1. Wide establishing shot of the entire space. 2. Medium-angle view of the space. 3. Detail view of the space. RIGHT BLOCK — a 4-row × 3-column mosaic of twelve panels: Row 1 (camera angles): wide view; medium angle; close-up. Row 2 (perspectives): from above; eye level; from below. Row 3 (lighting): natural daylight; artificial lighting; shadows/mood. Row 4 (signature details): close-up of a key architectural/structural element; close-up of a distinctive texture or material; close-up of a signature prop or landmark.`;
+        const { status, data } = await api("/api/generate", {
+          method: "POST",
+          body: JSON.stringify({
+            source: "model", model: "seedream_edit",
+            prompt: sheetPrompt, image_urls: photoUrls,
+            count: 1, sheetsource: true
+          })
+        });
+        if (status !== 200) { loc.pending = false; loc.error = genErrShort(data && data.error_reason); viewStudio(); return; }
+        startJob(data.id, false, { type: "location", entryId: id });
+        stu.dmDraftLoc = null;
+        viewStudio();
+      }));
+      sheetBody.querySelectorAll("[data-char-id]").forEach((btn) => (btn.onclick = () => {
+        const id = btn.dataset.charId;
+        if (btn.dataset.use === "toggle") {
+          const idx = stu.dmChars.findIndex((c) => c.id === id);
+          if (idx >= 0) stu.dmChars[idx].use = !stu.dmChars[idx].use;
+        } else if (btn.dataset.use === "delete") {
+          stu.dmChars = stu.dmChars.filter((c) => c.id !== id);
+        }
+        viewStudio();
+      }));
+      sheetBody.querySelectorAll("[data-loc-id]").forEach((btn) => (btn.onclick = () => {
+        const id = btn.dataset.locId;
+        if (btn.dataset.use === "toggle") {
+          const idx = stu.dmLocs.findIndex((l) => l.id === id);
+          if (idx >= 0) stu.dmLocs[idx].use = !stu.dmLocs[idx].use;
+        } else if (btn.dataset.use === "delete") {
+          stu.dmLocs = stu.dmLocs.filter((l) => l.id !== id);
+        }
+        viewStudio();
+      }));
+      bind("#dmScenario", (el) => (el.oninput = () => { stu.dmScenario = el.value; }));
+      bind("#dmSplitBtn", (el) => (el.onclick = async () => {
+        const scenario = stu.dmScenario.trim();
+        if (!scenario) { toast("Опишите сценарий"); return; }
+        const chars = stu.dmChars.filter((c) => c.use);
+        stu.dmSplitting = true;
+        viewStudio();
+        const { status, data } = await api("/api/storyboard", {
+          method: "POST",
+          body: JSON.stringify({
+            scenario,
+            characters: chars.map((c) => ({ id: c.id, label: c.label })),
+            locations: stu.dmLocs.filter((l) => l.use).map((l) => ({ id: l.id, label: l.label }))
+          })
+        });
+        stu.dmSplitting = false;
+        if (status !== 200) { toast("Не получилось разбить сценарий"); viewStudio(); return; }
+        stu.dmCands = data.candidates || [];
+        stu.dmCandIdx = null;
+        if (stu.dmCands.length) stu.dmManualOpen = false;
+        else stu.dmManualOpen = true;
+        viewStudio();
+      }));
+      sheetBody.querySelectorAll("[data-cand-idx]").forEach((btn) => (btn.onclick = () => {
+        stu.dmCandIdx = Number(btn.dataset.candIdx);
+        stu.dmShotManual = null;
+        viewStudio();
+      }));
+      bind("#dmToggleManual", (el) => (el.onclick = () => {
+        stu.dmManualOpen = !stu.dmManualOpen;
+        viewStudio();
+      }));
+      sheetBody.querySelectorAll("[data-shot-type]").forEach((btn) => (btn.onclick = () => {
+        stu.dmShotManual = { type: btn.dataset.shotType };
+        stu.dmCandIdx = null;
+        viewStudio();
+      }));
+      bind("#dmAssembleBtn", (el) => (el.onclick = async () => {
+        const cand = stu.dmCandIdx != null ? stu.dmCands[stu.dmCandIdx] : stu.dmShotManual;
+        if (!cand) { toast("Выберите кадр"); return; }
+        const chars = stu.dmChars.filter((c) => c.use && c.sheetUrl);
+        const locs = stu.dmLocs.filter((l) => l.use && l.sheetUrl);
+        const userPrompt = (stu.prompt || "").trim();
+        stu.dmAssembling = true;
+        viewStudio();
+        const context = {
+          characters: chars.map((c) => ({ id: c.id, label: c.label })),
+          locations: locs.map((l) => ({ id: l.id, label: l.label })),
+          scenario: stu.dmScenario,
+          shot: cand
+        };
+        const { status, data } = await api("/api/enhance", {
+          method: "POST",
+          body: JSON.stringify({ prompt: userPrompt || "A cinematic Seedance video", model: "seedance", context })
+        });
+        stu.dmAssembling = false;
+        if (status !== 200) { toast("Не получилось собрать промпт"); viewStudio(); return; }
+        stu.prompt = data.prompt;
+        stu.prevPrompt = null;
+        ME.dashboard.credits = data.balance;
+        setBalance(data.balance);
+        if (ME.enhance) ME.enhance.left = data.left;
+        haptic("success");
+        viewStudio();
+      }));
       goBtn.onclick = () => {
         const p = studioPrice();
         // E1: never fire a doomed request — the CTA itself becomes the top-up path.
