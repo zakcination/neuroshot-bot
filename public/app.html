@@ -1316,6 +1316,18 @@
       border-radius: 999px; padding: 8px 13px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
     }
     .chip.on { background: var(--aurora); border-color: transparent; color: #fff; }
+    /* S12–S15: render params pinned as one card directly above the CTA (docs/
+       wireframes — home-studio wireframe, version 2) — aspect/quality/count/
+       duration, same widgets as before, grouped so "what you're spending on"
+       reads as one unit right before the button that spends it. First/last
+       child margins are killed so the card's own padding is the only gap at
+       its edges. */
+    .paramscard {
+      background: var(--surface-2); border: 1px solid rgba(124,92,255,.28); border-radius: var(--radius-s);
+      padding: 12px 14px 14px; margin: 16px 0 0;
+    }
+    .paramscard > .quiz-q:first-child { margin-top: 0; }
+    .paramscard > *:last-child { margin-bottom: 0; }
     /* Aspect-ratio horizontal reel — a physical drag-scrub strip (wireRatioScrub)
        for the 3+ option case; visual language borrowed from .durbox (dark
        track, one clear focal element). A binary choice keeps the plain .chips
@@ -4446,32 +4458,42 @@
               : `<div class="chips" id="stuTier">${tiers.map(([id, label]) =>
                   `<button class="chip ${(stu.seedanceTier || "fast") === id ? "on" : ""}" data-tier="${id}">${label}</button>`).join("")}</div>`}`;
         })() : ""}
-        ${caps && caps.aspectRatios && caps.aspectRatios.length > 1 ? `
-          ${qLabel("Формат кадра", "aspect")}
-          ${caps.aspectRatios.length > 2
-            ? arReelHtml(caps.aspectRatios, stu.aspect || caps.aspectRatios[0])
-            : `<div class="chips" id="stuAr">${caps.aspectRatios.map((r) =>
-                `<button class="chip ${r === (stu.aspect || caps.aspectRatios[0]) ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>`}` : ""}
-        ${caps && caps.resolutions && caps.resolutions.length ? `
-          ${qLabel("Качество", "res")}
-          <div class="chips" id="stuRes">${caps.resolutions.map((r) =>
-            `<button class="chip ${r.id === (stu.resolution || caps.resolutions[0].id) ? "on" : ""}" data-res="${r.id}">${esc(r.label)} · ${r.credits} ${PATRON}</button>`).join("")}</div>` : ""}
-        ${!isVideo && caps && caps.maxCount ? `
-          ${qLabel("Количество", "count")}
-          <div class="chips" id="stuCount">${stuCountOptions(m, caps).map((c) =>
-            `<button class="chip ${c.n === (stu.numImages || 1) ? "on" : ""}" data-cnt="${c.n}">${c.n} шт${c.n > 1 ? ` · ${c.credits} ${PATRON}` : ""}</button>`).join("")}</div>` : ""}
-        ${isVideo && m.video ? `
-          ${qLabel("Длительность", "duration")}
-          <div id="stuDur">${durationSliderHtml(
-            m.video.durations.map((d) => d.seconds),
-            stu.duration,
-            stuDurPrice,
-            stuDurWasPrice,
-          )}</div>` : ""}
         ${story.length ? `${story.map((s) => `
           <div class="quiz-q">${esc(s.question)}</div>
           <div class="chips" data-story="${s.id}">${s.options.map((o) =>
             `<button class="chip ${stu.options[s.id] === o.id ? "on" : ""}" data-opt="${o.id}">${esc(o.label)}</button>`).join("")}</div>`).join("")}` : ""}
+        ${(() => {
+          // S12–S15: render params pinned as one card directly above the CTA —
+          // last thing you see before spending patrons, "тратим — видим на что"
+          // (docs/wireframes/home-studio.v2.html). Same fields as before, same
+          // ids, same wiring below — only WHERE they render changed. Works for
+          // both modes: video sees aspect/resolution/duration, image sees
+          // aspect/resolution/count — whichever this model actually declares.
+          const aspectHtml = caps && caps.aspectRatios && caps.aspectRatios.length > 1 ? `
+            ${qLabel("Формат кадра", "aspect")}
+            ${caps.aspectRatios.length > 2
+              ? arReelHtml(caps.aspectRatios, stu.aspect || caps.aspectRatios[0])
+              : `<div class="chips" id="stuAr">${caps.aspectRatios.map((r) =>
+                  `<button class="chip ${r === (stu.aspect || caps.aspectRatios[0]) ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>`}` : "";
+          const resHtml = caps && caps.resolutions && caps.resolutions.length ? `
+            ${qLabel("Качество", "res")}
+            <div class="chips" id="stuRes">${caps.resolutions.map((r) =>
+              `<button class="chip ${r.id === (stu.resolution || caps.resolutions[0].id) ? "on" : ""}" data-res="${r.id}">${esc(r.label)} · ${r.credits} ${PATRON}</button>`).join("")}</div>` : "";
+          const countHtml = !isVideo && caps && caps.maxCount ? `
+            ${qLabel("Количество", "count")}
+            <div class="chips" id="stuCount">${stuCountOptions(m, caps).map((c) =>
+              `<button class="chip ${c.n === (stu.numImages || 1) ? "on" : ""}" data-cnt="${c.n}">${c.n} шт${c.n > 1 ? ` · ${c.credits} ${PATRON}` : ""}</button>`).join("")}</div>` : "";
+          const durHtml = isVideo && m.video ? `
+            ${qLabel("Длительность", "duration")}
+            <div id="stuDur">${durationSliderHtml(
+              m.video.durations.map((d) => d.seconds),
+              stu.duration,
+              stuDurPrice,
+              stuDurWasPrice,
+            )}</div>` : "";
+          const body = aspectHtml + resHtml + countHtml + durHtml;
+          return body ? `<div class="paramscard">${body}</div>` : "";
+        })()}
         <div class="stack">
           <button class="btn primary" id="stuGo"></button>
           <button class="btn ghost" id="stuBack">← Галерея стилей</button>
