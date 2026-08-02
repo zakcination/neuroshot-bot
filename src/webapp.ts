@@ -1995,6 +1995,51 @@ export function createWebApp(): Server {
         }
       }
 
+      // GET /assets/tv/<name> — Home tab TV banner clips (public/assets/tv/,
+      // promoTv() in app.html), same allowlist-and-long-cache treatment as
+      // /img/<name>: content-addressed by deploy, never user-editable.
+      //
+      // Unlike /img/<name>, this is video: a <video> element range-probes its
+      // source before it will play at all, and Chromium ABORTS the request
+      // outright (readyState stays 0) if the response has no Content-Length —
+      // res.end(buf) alone sends chunked transfer-encoding, which looks
+      // unseekable. Range support (206 + Content-Range) is what makes seeking
+      // in a long clip cheap later, but the plain Content-Length + Accept-Ranges
+      // advertisement is what makes autoplay work AT ALL today.
+      const tvMatch = /^\/assets\/tv\/([a-z0-9][a-z0-9._-]{0,63}\.mp4)$/i.exec(url.pathname);
+      if (tvMatch) {
+        let buf: Buffer;
+        try {
+          buf = readFileSync(join(PUBLIC_DIR, "assets", "tv", tvMatch[1]));
+        } catch {
+          return json(res, 404, { error: "not_found" });
+        }
+        const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? "");
+        if (range) {
+          const start = range[1] ? Number(range[1]) : 0;
+          const end = range[2] ? Number(range[2]) : buf.length - 1;
+          if (!Number.isInteger(start) || !Number.isInteger(end) || start > end || end >= buf.length) {
+            res.writeHead(416, { "Content-Range": `bytes */${buf.length}` });
+            return res.end();
+          }
+          res.writeHead(206, {
+            "Content-Type": "video/mp4",
+            "Content-Range": `bytes ${start}-${end}/${buf.length}`,
+            "Content-Length": end - start + 1,
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "public, max-age=604800, immutable",
+          });
+          return res.end(buf.subarray(start, end + 1));
+        }
+        res.writeHead(200, {
+          "Content-Type": "video/mp4",
+          "Content-Length": buf.length,
+          "Accept-Ranges": "bytes",
+          "Cache-Control": "public, max-age=604800, immutable",
+        });
+        return res.end(buf);
+      }
+
       // POST /api/auth — initData → session token (client-agnostic).
       if (url.pathname === "/api/auth") {
         if (!methodIs(res, req.method, "POST")) return;

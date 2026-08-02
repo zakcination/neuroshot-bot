@@ -1142,14 +1142,11 @@
       box-shadow: 0 2px 8px -3px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.06);
     }
     .tv-screen { position: relative; aspect-ratio: 16/10; border-radius: 11px; overflow: hidden; background: #050308; }
-    /* .reel is the graceful placeholder: no curated "best Seedance clips" feed
-       exists server-side yet (checked catalog.news/videoStory, myImages() and
-       /api/generations — those are static news copy or the caller's OWN
-       private gallery, never a cross-user curated list). Drop a real
-       <video autoplay muted loop playsinline src="…"> in .tv-screen right
-       above this div once that endpoint ships, cycling it with .clipdots'
-       active-dot index; until then this cinematic gradient is shown instead
-       of ever leaving the screen looking empty. */
+    /* .tv-clip: the real banner.mp4 loop, layered above .reel by z-index so
+       ordering in the markup doesn't matter. .reel stays as the backdrop that
+       shows through before the video has decoded a first frame, and is what
+       renders if the browser can't play the file at all. */
+    .tv-clip { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: cover; }
     .reel {
       position: absolute; inset: -25%;
       background:
@@ -1164,19 +1161,15 @@
       0% { background-position: 20% 30%, 75% 60%, 55% 12%; }
       100% { background-position: 35% 55%, 55% 30%, 70% 40%; }
     }
-    .scanlines { position: absolute; inset: 0; background: repeating-linear-gradient(180deg, rgba(0,0,0,.25) 0 1px, transparent 1px 3px); mix-blend-mode: multiply; opacity: .5; }
-    .vignette { position: absolute; inset: 0; background: radial-gradient(120% 100% at 50% 50%, transparent 55%, rgba(0,0,0,.55) 100%); }
-    .rec { position: absolute; top: 8px; left: 9px; display: flex; align-items: center; gap: 5px; font-family: ui-monospace, monospace; font-size: 9.5px; letter-spacing: .06em; color: #ffb3c8; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+    .scanlines { position: absolute; inset: 0; z-index: 2; background: repeating-linear-gradient(180deg, rgba(0,0,0,.25) 0 1px, transparent 1px 3px); mix-blend-mode: multiply; opacity: .5; }
+    .vignette { position: absolute; inset: 0; z-index: 2; background: radial-gradient(120% 100% at 50% 50%, transparent 55%, rgba(0,0,0,.55) 100%); }
+    .rec { position: absolute; z-index: 3; top: 8px; left: 9px; display: flex; align-items: center; gap: 5px; font-family: ui-monospace, monospace; font-size: 9.5px; letter-spacing: .06em; color: #ffb3c8; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
     .rec i { width: 6px; height: 6px; border-radius: 50%; background: #ff4d6a; box-shadow: 0 0 6px #ff4d6a; font-style: normal; }
     @media (prefers-reduced-motion: no-preference) { .rec i { animation: tvBlink 1.6s ease-in-out infinite; } }
     @keyframes tvBlink { 50% { opacity: .25; } }
-    .playglyph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 26px; color: rgba(255,255,255,.45); text-shadow: 0 2px 10px rgba(0,0,0,.5); }
-    .neuron-badge { position: absolute; top: 8px; right: 9px; display: flex; align-items: center; gap: 5px; color: var(--ink); }
+    .neuron-badge { position: absolute; z-index: 3; top: 8px; right: 9px; display: flex; align-items: center; gap: 5px; color: var(--ink); }
     .neuron-mark { width: 15px; height: 15px; flex: none; filter: drop-shadow(0 0 3px rgba(255,255,255,.8)) drop-shadow(0 0 1px #fff); }
     .neuron-badge b { font-family: ui-monospace, monospace; font-size: 9.5px; font-weight: 600; letter-spacing: .08em; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
-    .clipdots { position: absolute; bottom: 7px; left: 0; right: 0; display: flex; gap: 5px; justify-content: center; }
-    .clipdots i { width: 12px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.28); display: block; }
-    .clipdots i.on { width: 20px; background: linear-gradient(90deg, var(--violet), var(--magenta)); }
 
     .tv-deck { display: flex; align-items: center; gap: 10px; padding: 11px 12px 13px; }
     .pwr {
@@ -2578,12 +2571,19 @@
     }
 
     /**
-     * The Home tab's "TV banner" — a full-width showcase reel of the best
-     * Seedance video generations, styled as an old CRT set (design: .tv* CSS
-     * above). Unlike promoBannerHtml() this is evergreen, not a time-limited
-     * offer, so it carries none of the sale-gating logic — it always renders.
-     * Tapping it opens Cinema Studio in video mode with Seedance preselected
-     * (#tvBanner's click handler, wired alongside #promoBanner's).
+     * The Home tab's "TV banner" — a single looping showcase clip
+     * (public/assets/tv/banner.mp4), styled as an old CRT set (design: .tv*
+     * CSS above). Unlike promoBannerHtml() this is evergreen, not a
+     * time-limited offer, so it carries none of the sale-gating logic — it
+     * always renders. Tapping it opens Cinema Studio in video mode with
+     * Seedance preselected (#tvBanner's click handler, wired alongside
+     * #promoBanner's).
+     *
+     * Muted + autoplay + loop: a mobile WebView will refuse autoplay WITH
+     * sound, so this stays silent by design rather than adding a toggle for
+     * a feature that would fail on first render. `.reel`'s gradient still
+     * renders underneath (z-index) — the fallback for a browser that can't
+     * decode the file at all, not something that needs its own empty state.
      */
     function promoTv() {
       return `
@@ -2598,11 +2598,8 @@
             <span class="tv-grommet r"></span>
             <div class="tv-screen-frame">
               <div class="tv-screen">
-                <!-- Real clip slot: once a curated best-of-Seedance feed exists
-                     server-side, drop <video autoplay muted loop playsinline
-                     src="…"> here (cycling 2-4 clips, syncing .clipdots'
-                     active index) — .reel below is the fallback until then. -->
                 <div class="reel"></div>
+                <video class="tv-clip" autoplay muted loop playsinline src="/assets/tv/banner.mp4"></video>
                 <div class="scanlines"></div>
                 <div class="vignette"></div>
                 <span class="rec"><i></i>REC</span>
@@ -2623,8 +2620,6 @@
                   </svg>
                   <b>NEUROSHOT</b>
                 </span>
-                <span class="playglyph">▶</span>
-                <div class="clipdots"><i class="on"></i><i></i><i></i><i></i></div>
               </div>
             </div>
             <div class="tv-deck">

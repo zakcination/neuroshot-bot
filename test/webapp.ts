@@ -455,6 +455,39 @@ await step("GET /fonts/<name>: serves self-hosted webfonts, long-cached; rejects
   assert.notEqual(badExt2.status, 200);
 });
 
+await step("GET /assets/tv/<name>: serves the Home tab TV banner clip, long-cached; rejects traversal/unknown", async () => {
+  const ok = await fetch(`${base}/assets/tv/banner.mp4`);
+  assert.equal(ok.status, 200);
+  assert.match(ok.headers.get("content-type") ?? "", /video\/mp4/);
+  assert.match(ok.headers.get("cache-control") ?? "", /immutable/);
+
+  const missing = await fetch(`${base}/assets/tv/does-not-exist.mp4`);
+  assert.equal(missing.status, 404);
+
+  const traversal = await fetch(`${base}/assets/tv/..%2F..%2Fpackage.json`);
+  assert.notEqual(traversal.status, 200);
+  const badExt = await fetch(`${base}/assets/tv/app.html`);
+  assert.notEqual(badExt.status, 200);
+
+  // A <video> element range-probes its source before it will play at all —
+  // Content-Length on the plain request and real 206 support here are both
+  // load-bearing, not just a nice-to-have (verified against a real browser:
+  // Chromium aborts the request outright, readyState stuck at 0, without
+  // Content-Length on the 200 response).
+  assert.ok(ok.headers.get("content-length"), "video/mp4 response must carry Content-Length or <video> won't play it");
+  const full = await ok.arrayBuffer();
+  const partial = await fetch(`${base}/assets/tv/banner.mp4`, { headers: { Range: "bytes=0-99" } });
+  assert.equal(partial.status, 206);
+  assert.equal(partial.headers.get("content-length"), "100");
+  assert.equal(partial.headers.get("content-range"), `bytes 0-99/${full.byteLength}`);
+  const partialBuf = Buffer.from(await partial.arrayBuffer());
+  assert.equal(partialBuf.length, 100);
+  assert.deepEqual(partialBuf, Buffer.from(full).subarray(0, 100));
+
+  const badRange = await fetch(`${base}/assets/tv/banner.mp4`, { headers: { Range: `bytes=0-${full.byteLength + 10}` } });
+  assert.equal(badRange.status, 416);
+});
+
 await step("method gating: /api/auth is POST-only, /api/me is GET-only (405 otherwise)", async () => {
   const getAuth = await fetch(`${base}/api/auth`); // GET
   assert.equal(getAuth.status, 405);
