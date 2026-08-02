@@ -630,6 +630,14 @@ async function showPresets(ctx: Context, category: Preset["category"], header: s
 // Menu-level media (hero, per-flow examples) shipped in the repo.
 const MENU_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "assets", "menu");
 
+/** Check if error is "bot was blocked by user" — user-initiated, safe to suppress. */
+function isUserBlocked(err: unknown): boolean {
+  if (err instanceof GrammyError) {
+    return err.error_code === 403 && err.description.includes("blocked");
+  }
+  return false;
+}
+
 /** Main menu with the hero image (if shipped) carrying the caption + keyboard. */
 async function sendMainMenu(
   ctx: Context,
@@ -646,6 +654,10 @@ async function sendMainMenu(
       });
       return;
     } catch (e) {
+      if (isUserBlocked(e)) {
+        logEvent(ctx.from?.id ?? 0, "user_blocked_bot");
+        return; // silent: user revoked bot access
+      }
       console.error("hero image failed:", e);
     }
   }
@@ -659,6 +671,10 @@ async function sendMenuVideo(ctx: Context, name: string): Promise<void> {
   try {
     await ctx.replyWithVideo(new InputFile(file));
   } catch (e) {
+    if (isUserBlocked(e)) {
+      logEvent(ctx.from?.id ?? 0, "user_blocked_bot");
+      return; // silent: user revoked bot access
+    }
     console.error(`menu video ${name} failed:`, e);
   }
 }
@@ -670,6 +686,10 @@ async function sendMenuAlbum(ctx: Context, names: string[]): Promise<void> {
   try {
     await ctx.replyWithMediaGroup(files.map((f) => InputMediaBuilder.photo(new InputFile(f))));
   } catch (e) {
+    if (isUserBlocked(e)) {
+      logEvent(ctx.from?.id ?? 0, "user_blocked_bot");
+      return; // silent: user revoked bot access
+    }
     console.error("menu album failed:", e);
   }
 }
@@ -2580,8 +2600,13 @@ export function createBot(botInfo?: UserFromGetMe): Bot {
 
   bot.catch((err) => {
     const e = err.error;
-    if (e instanceof GrammyError) console.error("telegram error:", e.description);
-    else if (e instanceof HttpError) console.error("network error:", e);
+    if (e instanceof GrammyError) {
+      if (isUserBlocked(e)) {
+        // User revoked bot access — expected, don't spam logs
+        return;
+      }
+      console.error("telegram error:", e.description);
+    } else if (e instanceof HttpError) console.error("network error:", e);
     else console.error("unhandled error:", e);
   });
 
