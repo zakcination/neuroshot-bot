@@ -3205,6 +3205,16 @@
         }
         if (Date.now() - job.started > 6 * 60 * 1000) {
           jobs.delete(job.id); updateJobsPill(); renderGallery(1);
+          // A sheet's card owns its own spinner, and giving up on the poll has
+          // to clear it — otherwise the entry spins forever, retry stays
+          // disabled behind `pending`, and the photos behind it are stranded.
+          if (job.dmSheet) {
+            const entry = dmSheetEntry(job);
+            if (entry) { entry.pending = false; entry.error = "рендер идёт дольше обычного"; }
+            toast("Карта готовится дольше обычного — она появится в «Мои работы»", { wide: true, ms: 5000 });
+            if (dmComposerVisible()) viewStudio();
+            return;
+          }
           toast("Долгий рендер — результат появится в «Мои работы»");
           if (viewedJob === job.id && sheet.classList.contains("on")) closeSheet();
           return;
@@ -3527,10 +3537,15 @@
     // ——————————————————————————————————————————————————————————————————
     // Director Mode (Seedance) — character/location sheets + storyboard
     // ——————————————————————————————————————————————————————————————————
-    // At most this many source photos per sheet. More angles = better likeness
-    // (models.ts:35), but the sheet model reads a bounded set and every extra
-    // photo is an upload the user waits on.
-    const DM_PHOTO_MAX = 6;
+    /**
+     * How many source photos one sheet may carry. This is NOT a taste call —
+     * the sheet model declares a hard `maxInputs` and the server rejects the
+     * whole render with `too_many_inputs` above it, so offering more slots than
+     * the server accepts would build an entry that can never succeed, retry
+     * included. Read the server's own number; 4 only as a floor if an older
+     * cached shell is talking to a newer server.
+     */
+    function dmPhotoMax() { return ((ME.catalog || {}).sheet || {}).maxInputs || 4; }
 
     /** The cast list for a kind — the single place that maps kind → state. */
     function dmList(kind) { return kind === "character" ? stu.dmChars : stu.dmLocs; }
@@ -3626,29 +3641,35 @@
         return;
       }
       draft.busy = true; viewStudio();
-      const labelEl = sheetBody.querySelector(kind === "character" ? "#dmCharLabel" : "#dmLocLabel");
-      const label = ((labelEl && labelEl.value) || "").trim().slice(0, 60)
+      const label = (draft.label || "").trim().slice(0, 60)
         || (kind === "character" ? `Персонаж ${stu.dmChars.length + 1}` : `Локация ${stu.dmLocs.length + 1}`);
       const urls = [];
+      let lost = 0;
       for (const p of draft.photos) {
         if (!p.url || !/^https?:/.test(p.url)) p.url = await uploadData(p.data);
-        if (p.url) urls.push(p.url);
+        if (p.url) urls.push(p.url); else lost++;
       }
       if (!urls.length) {
         draft.busy = false;
         toast("Не удалось загрузить фото — патроны не списаны. Попробуйте ещё раз.", { wide: true, ms: 5000 });
         viewStudio(); return;
       }
+      if (lost) toast(`Не удалось загрузить ${lost} фото — собираем по остальным`);
       stu.dmSeq++;
       const entry = { id: `${kind === "character" ? "char" : "loc"}_${stu.dmSeq}`, label,
-        photos: draft.photos, urls, sheetUrl: null, genId: null, pending: true, error: null, use: true };
+        // Only the photos that actually reached storage — the card's "N фото"
+        // must not count ones the sheet was never built from.
+        photos: draft.photos.filter((p) => p.url), urls, sheetUrl: null, genId: null,
+        pending: true, error: null, use: true };
       dmList(kind).push(entry);
-      const ok = await dmFireSheet(kind, entry);
+      const r = await dmFireSheet(kind, entry);
       // Only clear the form once the render is actually queued — a failed
       // request must not eat the photos the user just picked.
-      if (ok) stu[kind === "character" ? "dmDraftChar" : "dmDraftLoc"] = null;
+      if (r === "ok") stu[kind === "character" ? "dmDraftChar" : "dmDraftLoc"] = null;
       else draft.busy = false;
-      viewStudio();
+      // "paywall" means dmFireSheet already painted the paywall over the sheet
+      // body; re-rendering the composer here would erase it in the same tick.
+      if (r !== "paywall") viewStudio();
     }
     /** Re-run a failed sheet from the photos already uploaded for that entry. */
     async function dmRetrySheet(kind, entry) {
@@ -3659,41 +3680,65 @@
         return;
       }
       entry.pending = true; entry.error = null; viewStudio();
-      const ok = await dmFireSheet(kind, entry);
-      if (!ok) entry.pending = false;
-      viewStudio();
+      const r = await dmFireSheet(kind, entry);
+      if (r !== "ok") entry.pending = false;
+      if (r !== "paywall") viewStudio();
     }
     /**
      * The one place that POSTs a sheet. The composition prompt and the model
      * are NOT sent — they are server-side constants (SHEET_PROMPTS/SHEET_MODEL,
      * src/models.ts), exactly like preset prompts. The client says only what
      * kind of sheet it wants, whose photos to use, and what to call it.
+     *
+     * Returns "ok" | "paywall" | "fail". Every non-ok path leaves `entry.error`
+     * set, which is what makes the ↻ retry button appear — an entry that is
+     * neither pending, nor finished, nor failed renders no controls at all and
+     * strands the photos behind it.
      */
     async function dmFireSheet(kind, entry) {
-      const { status, data } = await api("/api/generate", {
-        method: "POST",
-        body: JSON.stringify({
-          source: "sheet",
-          sheetType: kind,
-          label: entry.label,
-          image_url: entry.urls[0],
-          image_urls: entry.urls.length > 1 ? entry.urls.slice(1) : undefined,
-        }),
-      });
-      if (status === 402) { entry.pending = false; viewPaywall(data); return false; }
+      let status, data;
+      try {
+        ({ status, data } = await api("/api/generate", {
+          method: "POST",
+          body: JSON.stringify({
+            source: "sheet",
+            sheetType: kind,
+            label: entry.label,
+            image_url: entry.urls[0],
+            image_urls: entry.urls.length > 1 ? entry.urls.slice(1) : undefined,
+          }),
+        }));
+      } catch (e) {
+        // A dropped connection is routine inside a Telegram WebView. Without
+        // this the entry would sit pending forever with no way back.
+        entry.error = "нет связи — попробуйте ещё раз";
+        toast("Нет связи с сервером — патроны не списаны.", { wide: true, ms: 4500 });
+        return "fail";
+      }
+      if (status === 402) {
+        entry.pending = false;
+        entry.error = "не хватило патронов";
+        viewPaywall(data);
+        return "paywall";
+      }
+      if (status === 400 && data && data.error === "too_many_inputs") {
+        entry.error = `нужно не больше ${data.maxInputs} фото`;
+        toast(`Для карты можно взять не больше ${data.maxInputs} фото — уберите лишние`, { wide: true, ms: 5000 });
+        return "fail";
+      }
       if (status === 503 && data && data.error === "provider_down") {
         entry.error = "сервис был недоступен";
         toast("Сервис генерации временно недоступен — патроны не списаны.", { wide: true, ms: 5000 });
-        return false;
+        return "fail";
       }
       if (status !== 200) {
         entry.error = "не удалось запустить";
         toast("Не получилось запустить карту — патроны не списаны.", { wide: true, ms: 4500 });
-        return false;
+        return "fail";
       }
       ME.dashboard.credits = data.balance; setBalance(data.balance);
       startSheetJob(data.id, kind, entry.id);
-      return true;
+      return "ok";
     }
 
     /** The toggle plus, when it's on, the three optional sections. */
@@ -3783,19 +3828,19 @@
       return `
         <div class="char-add-card">
           <div class="char-add-row"><b>${esc(c.add)}</b><small>имя — чтобы отличать в раскадровке</small></div>
-          <input class="words" id="dm${kind === "character" ? "Char" : "Loc"}Label" maxlength="60" placeholder="${esc(c.ph)}" />
+          <input class="words" id="dm${kind === "character" ? "Char" : "Loc"}Label" maxlength="60" placeholder="${esc(c.ph)}" value="${esc(draft ? draft.label || "" : "")}" />
           <div class="refgrid">
             ${photos.map((p, i) => `<div class="refslot filled">
               <img src="${esc(p.url)}" alt="" />
               <span class="rf-idx">${String(i + 1).padStart(2, "0")}</span>
               <button class="xdel" type="button" data-dm-rm="${kind}:${i}" aria-label="Убрать фото">✕</button>
             </div>`).join("")}
-            ${photos.length < DM_PHOTO_MAX ? `<label class="refslot add">
+            ${photos.length < dmPhotoMax() ? `<label class="refslot add">
               <input type="file" accept="image/*" multiple id="dm${kind === "character" ? "Char" : "Loc"}File" />
               <span>＋</span>
             </label>` : ""}
           </div>
-          <small class="acc-hint">${photos.length ? `${photos.length} из ${DM_PHOTO_MAX} · больше ракурсов — точнее сходство` : "минимум одно фото"}</small>
+          <small class="acc-hint">${photos.length ? `${photos.length} из ${dmPhotoMax()} · больше ракурсов — точнее сходство` : "минимум одно фото"}</small>
           <button class="char-gen-btn" type="button" id="dm${kind === "character" ? "Char" : "Loc"}GenBtn" ${!photos.length || busy ? "disabled" : ""}>
             ${busy ? "⏳ Отправляю…" : short ? `Пополнить · нужно ${price} ${PATRON}` : `✨ Собрать карту${price ? ` · ${price} ${PATRON}` : ""}`}
           </button>
@@ -3826,7 +3871,7 @@
               <div class="cand-list">${cands.map((c, i) => {
                 const refs = dmCandRefs(c);
                 return `<button class="cand-card ${stu.dmCandIdx === i ? "on" : ""}" type="button" data-cand-idx="${i}" aria-pressed="${stu.dmCandIdx === i}">
-                  <span class="cand-tag">${esc(dmShotLabel(c.type))}</span>
+                  <span class="cand-tag">${esc(dmShotLabel(c.shotType))}</span>
                   <b>${esc(c.momentRu)}</b>
                   ${refs ? `<span class="cand-refs">${esc(refs)}</span>` : ""}
                 </button>`;
@@ -3935,7 +3980,25 @@
 
     function studioList() { return (ME.catalog.studio && ME.catalog.studio[stu.mode]) || []; }
     function studioModel() { return studioList().find((m) => m.key === stu.modelKey) || studioList()[0]; }
-    function stuHasSource() { return !!(stu.photo || stu.generationId); }
+    /**
+     * The finished sheets that will be attached to the NEXT render, in cast
+     * order. This is what makes a sheet worth paying for: it is a reference
+     * image the video model actually sees, not a gallery keepsake. Empty unless
+     * Director Mode is the active composer, so nothing here can touch the plain
+     * studio, presets, or any non-Seedance model.
+     */
+    function dmRenderUrls() {
+      if (!stu || !stu.director || stu.mode !== "video") return [];
+      const m = studioModel();
+      if (!m || m.key !== "seedance") return [];
+      return dmCast("character").concat(dmCast("location")).map((x) => x.sheetUrl).filter(Boolean);
+    }
+    // A ticked sheet counts as an attached photo everywhere a photo counts:
+    // it satisfies "нужно исходное фото", it pushes Seedance into reference
+    // mode, and it is priced accordingly. Routing this through the SAME two
+    // functions the manual reference grid already feeds is what keeps the
+    // quoted price equal to the charged one.
+    function stuHasSource() { return !!(stu.photo || stu.generationId || dmRenderUrls().length); }
     /**
      * Which of `m.seedanceTiers` (cheap/fast/quality/ref) actually applies
      * right now — mirrors routeSeedance (src/seedance.ts) exactly, so the
@@ -3944,7 +4007,10 @@
      * over the toggle, same as server-side.
      */
     function activeSeedanceTierKey() {
-      const refCount = (stuHasSource() ? 1 : 0) + (stu.extras || []).length;
+      // Sheets beyond the first are extra references exactly like extra angles
+      // are — the first one is already counted by stuHasSource().
+      const sheetExtras = Math.max(0, dmRenderUrls().length - (stu.photo || stu.generationId ? 0 : 1));
+      const refCount = (stuHasSource() ? 1 : 0) + (stu.extras || []).length + sheetExtras;
       const hasAvRef = (stu.refAudio || []).length > 0 || (stu.refVideo || []).length > 0;
       if (refCount >= 2 || hasAvRef) return "ref";
       return stu.seedanceTier || "fast";
@@ -4406,6 +4472,15 @@
         const p = studioPrice();
         if ((isVideo || m.needsImage) && !stuHasSource()) { goBtn.textContent = "Добавьте фото ↑"; goBtn.disabled = true; return; }
         if (!isVideo && !stu.preset && !(stu.prompt || "").trim()) { goBtn.textContent = "Опишите, что нарисовать ↑"; goBtn.disabled = true; return; }
+        // A big cast can carry more sheets than the engine reads. The server
+        // would refuse the whole render (without charging) — say so here, while
+        // unticking someone is still an obvious one-tap fix.
+        const inputCap = activeSeedanceRow(m).maxInputs || m.maxInputs || 0;
+        const inputCount = dmRenderUrls().length + (stu.extras || []).length + (stu.photo || stu.generationId ? 1 : 0);
+        if (inputCap && inputCount > inputCap) {
+          goBtn.textContent = `Слишком много фото — не больше ${inputCap} ↑`;
+          goBtn.disabled = true; return;
+        }
         goBtn.disabled = false;
         goBtn.textContent = p > ME.dashboard.credits ? `Пополнить · нужно ${p} ${PATRON}` : `Создать за ${p} ${PATRON}`;
       };
@@ -4581,7 +4656,7 @@
         const draft = dmDraft(kind, true);
         let bad = 0;
         for (const f of files) {
-          if (draft.photos.length >= DM_PHOTO_MAX) break;
+          if (draft.photos.length >= dmPhotoMax()) break;
           const data = await downscale(f);
           if (data) draft.photos.push({ data, url: data }); else bad++;
         }
@@ -4590,6 +4665,14 @@
       }));
       dmPickPhotos("#dmCharFile", "character");
       dmPickPhotos("#dmLocFile", "location");
+      // The name has to live in state, not in the DOM: adding a photo, another
+      // sheet finishing, or toggling any accordion all re-render the composer,
+      // and an unbound input would silently lose whatever was typed.
+      const dmBindLabel = (sel, kind) => bind(sel, (el) => (el.oninput = () => {
+        dmDraft(kind, true).label = el.value;
+      }));
+      dmBindLabel("#dmCharLabel", "character");
+      dmBindLabel("#dmLocLabel", "location");
       sheetBody.querySelectorAll("[data-dm-zoom]").forEach((btn) => (btn.onclick = () => dmZoom(btn.dataset.dmZoom)));
       sheetBody.querySelectorAll("[data-dm-rm]").forEach((btn) => (btn.onclick = () => {
         const [kind, i] = btn.dataset.dmRm.split(":");
@@ -4620,16 +4703,24 @@
         const scenario = (stu.dmScenario || "").trim();
         if (!scenario) { toast("Сначала опишите сценарий 🙂"); return; }
         stu.dmSplitting = true; viewStudio();
-        const { status, data } = await api("/api/storyboard", {
-          method: "POST",
-          body: JSON.stringify({
-            scenario,
-            characters: dmCast("character").map((c) => ({ id: c.id, label: c.label })),
-            locations: dmCast("location").map((l) => ({ id: l.id, label: l.label })),
-          }),
-        });
+        let status, data;
+        try {
+          ({ status, data } = await api("/api/storyboard", {
+            method: "POST",
+            body: JSON.stringify({
+              scenario,
+              characters: dmCast("character").map((c) => ({ id: c.id, label: c.label })),
+              locations: dmCast("location").map((l) => ({ id: l.id, label: l.label })),
+            }),
+          }));
+        } catch (e) {
+          // Without this the button stays disabled behind dmSplitting forever.
+          stu.dmSplitting = false;
+          toast("Нет связи с сервером — патроны не списаны.", { wide: true, ms: 4500 });
+          viewStudio(); return;
+        }
         stu.dmSplitting = false;
-        if (status === 402) { viewPaywall(data); return; }
+        if (status === 402) { viewPaywall(data); return; } // paywall owns the sheet body now
         if (status !== 200 || !(data.candidates || []).length) {
           haptic("error");
           toast("Не получилось разбить сценарий — патроны не списаны. Попробуйте ещё раз или опишите сцену подробнее.", { wide: true, ms: 5000 });
@@ -4658,15 +4749,22 @@
           characters: dmCast("character").map((c) => ({ id: c.id, label: c.label })),
           locations: dmCast("location").map((l) => ({ id: l.id, label: l.label })),
           scenario: (stu.dmScenario || "").trim() || undefined,
-          shot: { type: cand.type, momentRu: cand.momentRu, cameraDirectionEn: cand.cameraDirectionEn },
+          shot: { type: cand.shotType, momentRu: cand.momentRu, cameraDirectionEn: cand.cameraDirectionEn },
         };
         const raw = (stu.prompt || "").trim();
-        const { status, data } = await api("/api/enhance", {
-          method: "POST",
-          // The chosen moment IS the idea when the user hasn't typed one — an
-          // empty prompt would be rejected as "напишите идею".
-          body: JSON.stringify({ prompt: raw || cand.momentRu, model: "seedance", context }),
-        });
+        let status, data;
+        try {
+          ({ status, data } = await api("/api/enhance", {
+            method: "POST",
+            // The chosen moment IS the idea when the user hasn't typed one — an
+            // empty prompt would be rejected as "напишите идею".
+            body: JSON.stringify({ prompt: raw || cand.momentRu, model: "seedance", context }),
+          }));
+        } catch (e) {
+          stu.dmAssembling = false;
+          toast("Нет связи с сервером — патроны не списаны. Ваш текст сохранён.", { wide: true, ms: 4500 });
+          viewStudio(); return;
+        }
         stu.dmAssembling = false;
         if (status === 402) { viewPaywall(data); return; }
         if (status !== 200) {
@@ -4717,9 +4815,18 @@
         end_image_url = await uploadData(stu.endPhoto);
         if (!end_image_url) { toast("Не удалось загрузить финальный кадр"); viewStudio(); return; }
       }
+      // Director Mode: the finished sheets ride along as reference images, in
+      // cast order. They are already uploaded (the sheet render's own output),
+      // so there is nothing to upload here. If the user attached no photo of
+      // their own, the first sheet becomes the source frame — which is the
+      // whole point of having built it. Empty for every non-director render.
+      const sheetUrls = dmRenderUrls();
+      const ownSource = !!(stu.photoUrl || stu.generationId);
+      const primary = stu.photoUrl || (!ownSource && sheetUrls.length ? sheetUrls[0] : undefined);
+      const refUrls = extraUrls.concat(ownSource || !sheetUrls.length ? sheetUrls : sheetUrls.slice(1));
       const opts = {
-        image_url: stu.photoUrl || undefined,
-        image_urls: extraUrls.length ? extraUrls : undefined,
+        image_url: primary || undefined,
+        image_urls: refUrls.length ? refUrls : undefined,
         audio_urls: (stu.refAudio || []).length ? stu.refAudio.map((x) => x.url) : undefined,
         video_urls: (stu.refVideo || []).length ? stu.refVideo.map((x) => x.url) : undefined,
         generation_id: stu.generationId || undefined,
@@ -5770,7 +5877,7 @@
       if (cur === 1) {
         for (const f of failedRows()) {
           const card = $(`<div class="failcard">
-            <span class="fx"><b>Не получилось</b><small>${esc(genErrShort(f.error_reason))} · ${PATRON} патроны возвращены</small></span>
+            <span class="fx"><b>Не получилось</b><small>${esc(genErrShort(f.error_reason))}${f.credits > 0 ? ` · ${PATRON} патроны возвращены` : ""}</small></span>
             ${canRecreate(f) ? `<button type="button" data-fx="retry">↻ Ещё раз</button>` : ""}
             <button class="fdis" type="button" data-fx="hide" aria-label="Скрыть">✕</button>
           </div>`);
@@ -5780,7 +5887,7 @@
           g.appendChild(card);
         }
       }
-      if (!items.length && !(cur === 1 && jobs.size)) {
+      if (!items.length && !(cur === 1 && (jobs.size || g.childElementCount))) {
         g.appendChild($(`<div class="empty">Пока пусто.<br>Создайте первую работу — она появится здесь ✨</div>`));
       }
       for (const item of items) {

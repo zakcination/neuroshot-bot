@@ -693,7 +693,15 @@ function catalogPayload(usage: Record<string, number>, recent: Record<string, nu
     // would have to hardcode the registry key to quote a number, and would
     // quote a stale one the day SHEET_MODEL changes. Same priceFor the sheet
     // branch is actually charged with.
-    sheet: { model: SHEET_MODEL.key, credits: priceFor(SHEET_MODEL), wasCredits: rawPriceFor(SHEET_MODEL) },
+    sheet: {
+      model: SHEET_MODEL.key,
+      credits: priceFor(SHEET_MODEL),
+      wasCredits: rawPriceFor(SHEET_MODEL),
+      // How many source photos the client may offer per sheet. Above this the
+      // render is rejected outright (too_many_inputs), so the picker has to
+      // stop at the same number the sheet branch will actually accept.
+      maxInputs: SHEET_MODEL.image?.maxInputs ?? 1,
+    },
     // Video story composer (personalize any image→video): ids/labels only.
     videoStory: VIDEO_STORY.map((s) => ({
       id: s.id,

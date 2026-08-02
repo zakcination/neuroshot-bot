@@ -4134,6 +4134,50 @@ await step("storyboard split: strict JSON validated, ids filtered, same stack, r
   assert.equal(parseStoryboard("no brackets at all", ids, new Set()), null);
 });
 
+await step("a storyboard candidate is accepted verbatim as enhance's shot context", async () => {
+  // The seam between the two Director Mode endpoints. /api/storyboard emits
+  // candidates and /api/enhance consumes the chosen one as `context.shot`; the
+  // client only forwards it. Nothing pinned that the shape one produces is the
+  // shape the other takes, and it silently wasn't: the field is `shotType` on
+  // the way out and `type` on the way in, so a straight passthrough 400s and
+  // the final step of the flow can never complete. Pin both directions here so
+  // renaming either side fails loudly instead of at the last tap.
+  const cu = { id: 990066, username: "seam", first_name: "Seam" };
+  await getOrCreateUser(cu.id, cu.username, null, 50);
+  const H = { Authorization: `tma ${signInitData(cu)}`, "Content-Type": "application/json" };
+  const characters = [{ id: "c1", label: "Аня" }];
+  const locations = [{ id: "l1", label: "ночной город" }];
+
+  anyLlmReply = JSON.stringify([
+    { shotType: "reveal_push_in", momentRu: "Аня оборачивается у витрины", characterIds: ["c1"], locationIds: ["l1"], cameraDirectionEn: "slow push-in revealing her face" },
+  ]);
+  const board = await fetch(`${base}/api/storyboard`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ scenario: "Аня идёт по ночному городу и оборачивается", characters, locations }),
+  });
+  assert.equal(board.status, 200);
+  const cand = ((await board.json()) as { candidates: Array<Record<string, string>> }).candidates[0];
+
+  // Exactly the mapping the client performs — every field taken off the
+  // candidate by the name the candidate actually uses.
+  anyLlmReply = null;
+  const shot = { type: cand.shotType, momentRu: cand.momentRu, cameraDirectionEn: cand.cameraDirectionEn };
+  for (const [k, v] of Object.entries(shot)) assert.ok(v, `candidate is missing ${k} — the client would send undefined`);
+
+  const enh = await fetch(`${base}/api/enhance`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ prompt: cand.momentRu, model: "seedance", context: { characters, locations, shot } }),
+  });
+  assert.equal(enh.status, 200, "a real candidate must be a valid shot context");
+
+  // And the negative: the pre-fix client read `cand.type`, which is undefined.
+  const broken = await fetch(`${base}/api/enhance`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ prompt: cand.momentRu, model: "seedance", context: { characters, locations, shot: { ...shot, type: undefined } } }),
+  });
+  assert.equal(broken.status, 400, "a shot without a type must be refused, not silently rendered");
+});
+
 await step("sheet generation: pinned model + server-side prompt, charged like a normal render, marked on the row", async () => {
   const { SHEET_PROMPTS } = await import("../src/models.js");
   const { sanitizePrompt } = await import("../src/promptcraft.js");
