@@ -655,7 +655,7 @@ async function sendMainMenu(
       return;
     } catch (e) {
       if (isUserBlocked(e)) {
-        logEvent(ctx.from?.id ?? 0, "user_blocked_bot");
+        await logEvent(ctx.from?.id ?? 0, "user_blocked_bot");
         return; // silent: user revoked bot access
       }
       console.error("hero image failed:", e);
@@ -672,7 +672,7 @@ async function sendMenuVideo(ctx: Context, name: string): Promise<void> {
     await ctx.replyWithVideo(new InputFile(file));
   } catch (e) {
     if (isUserBlocked(e)) {
-      logEvent(ctx.from?.id ?? 0, "user_blocked_bot");
+      await logEvent(ctx.from?.id ?? 0, "user_blocked_bot");
       return; // silent: user revoked bot access
     }
     console.error(`menu video ${name} failed:`, e);
@@ -687,7 +687,7 @@ async function sendMenuAlbum(ctx: Context, names: string[]): Promise<void> {
     await ctx.replyWithMediaGroup(files.map((f) => InputMediaBuilder.photo(new InputFile(f))));
   } catch (e) {
     if (isUserBlocked(e)) {
-      logEvent(ctx.from?.id ?? 0, "user_blocked_bot");
+      await logEvent(ctx.from?.id ?? 0, "user_blocked_bot");
       return; // silent: user revoked bot access
     }
     console.error("menu album failed:", e);
