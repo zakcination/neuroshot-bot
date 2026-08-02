@@ -70,7 +70,7 @@ happened to be built.
 | id | Block | Decision |
 |---|---|---|
 | **S1** | sale banner | **remove.** Later returns as an **image** banner with a finished design — not the text block it is now. Out of scope until that design exists |
-| **S2** | preset chip | **change** — the preset's prompt is pasted into the prompt textarea (editable), with the preset name shown small beside it. ⚠️ see *Open question* below |
+| **S2** | preset chip | **change** — the preset becomes a removable **tag** on the prompt box; the box itself stays the user's own text. See below |
 | **S3** | prompt block | **move** below the inputs |
 | **S4** | ✨ Улучшить промпт | **move** — sits next to the prompt box |
 | S5–S7 | photo zone · references · audio/video | **keep, unify** — see below |
