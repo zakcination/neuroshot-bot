@@ -209,6 +209,33 @@ const SCHEMA: string[] = [
   // anything still pending, so the ETA query simply has less to average until
   // real traffic fills it in.
   `ALTER TABLE generations ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ`,
+  // ---- Director Mode metadata (seedance-director-mode spec) ----
+  // WHAT KIND of thing launched this render: 'preset' | 'campaign' |
+  // 'campaign_video' | 'model' | 'sheet'. Distinct from source_id (which holds
+  // the preset/campaign id): source_id NULL never implied user-authored (bot
+  // renders and campaign_video rows are crafted with NULL source_id), so a
+  // client-facing "is this prompt safe to show/recreate" question needs this
+  // explicit column. NULL on every pre-existing row — consumers must render
+  // NULL as "unknown", never guess.
+  `ALTER TABLE generations ADD COLUMN IF NOT EXISTS source_kind TEXT`,
+  // The text the USER actually typed, and ONLY that — never the crafted
+  // preset/campaign/sheet prompt (those stay server-side; the `prompt` column
+  // keeps the full composed text for ops/debug but is stripped from client
+  // payloads — see webapp.ts publicGeneration). This is the one column a
+  // detail view / "recreate" flow may show verbatim.
+  `ALTER TABLE generations ADD COLUMN IF NOT EXISTS user_prompt TEXT`,
+  // Client-shape composer options as JSON ({aspect, resolution, duration,
+  // count, tier, subject, refs:{photos,audio,video}, sheet:{sheetType,label}})
+  // — what the user PICKED, never server-resolved internals like style-ref or
+  // reference URLs. Powers "recreate with the same settings" and the gallery
+  // detail view. NULL on old rows and on rows with all-default settings.
+  `ALTER TABLE generations ADD COLUMN IF NOT EXISTS opts TEXT`,
+  // WHY a row is status='error', as a small fixed code the client maps to a
+  // user-safe Russian string: 'moderation' | 'provider_blocked' |
+  // 'provider_error' | 'timeout'. Codes, not raw messages, so a stack trace or
+  // vendor detail can never leak into a payload. NULL on old rows and on rows
+  // that never failed.
+  `ALTER TABLE generations ADD COLUMN IF NOT EXISTS error_reason TEXT`,
   `CREATE TABLE IF NOT EXISTS events (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
@@ -516,7 +543,9 @@ export async function deleteUserData(userId: number): Promise<DeletionResult | n
     [userId],
   );
   if (!rows.length) return null; // lost a race with a concurrent deletion request
-  await q("UPDATE generations SET prompt = NULL, output_url = NULL WHERE user_id = $1", [userId]);
+  // user_prompt/opts scrubbed alongside prompt/output_url: both carry text the
+  // user typed (their idea, a sheet label) — content, not aggregate metadata.
+  await q("UPDATE generations SET prompt = NULL, output_url = NULL, user_prompt = NULL, opts = NULL WHERE user_id = $1", [userId]);
   await q("UPDATE partner_codes SET active = false WHERE user_id = $1", [userId]);
   return { forfeitedCredits: Number(before[0].credits) };
 }
@@ -2161,6 +2190,18 @@ export interface GenerationRow {
   /** All output URLs when a render produced more than one (num_images > 1); null otherwise. */
   output_urls: string[] | null;
   created_at: string;
+  /** When the render reached a terminal state; null on old/pending rows. */
+  finished_at: string | null;
+  /** Preset id / "camp:preset" this render came from; null otherwise. */
+  source_id: string | null;
+  /** 'preset' | 'campaign' | 'campaign_video' | 'model' | 'sheet'; null on old rows. */
+  source_kind: string | null;
+  /** The user's OWN typed text only — never crafted/curated prompt text. */
+  user_prompt: string | null;
+  /** Client-shape composer options (parsed JSON); null on old/default rows. */
+  opts: Record<string, unknown> | null;
+  /** Failure code ('moderation'|'provider_blocked'|'provider_error'|'timeout'); null unless failed. */
+  error_reason: string | null;
 }
 
 function mapGeneration(r: Row): GenerationRow {
@@ -2173,6 +2214,17 @@ function mapGeneration(r: Row): GenerationRow {
       outputUrls = null; // corrupt/legacy value — degrade to the single output_url
     }
   }
+  let opts: Record<string, unknown> | null = null;
+  if (typeof r.opts === "string") {
+    try {
+      const parsed: unknown = JSON.parse(r.opts);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        opts = parsed as Record<string, unknown>;
+      }
+    } catch {
+      opts = null; // corrupt/legacy value — the row still renders, just without metadata
+    }
+  }
   return {
     id: Number(r.id),
     model: r.model as string,
@@ -2182,8 +2234,18 @@ function mapGeneration(r: Row): GenerationRow {
     output_url: (r.output_url as string | null) ?? null,
     output_urls: outputUrls,
     created_at: String(r.created_at),
+    finished_at: r.finished_at == null ? null : String(r.finished_at),
+    source_id: (r.source_id as string | null) ?? null,
+    source_kind: (r.source_kind as string | null) ?? null,
+    user_prompt: (r.user_prompt as string | null) ?? null,
+    opts,
+    error_reason: (r.error_reason as string | null) ?? null,
   };
 }
+
+/** The generation columns every row reader selects — one list, no drift. */
+const GENERATION_COLUMNS =
+  "id, model, prompt, credits, status, output_url, output_urls, created_at, finished_at, source_id, source_kind, user_prompt, opts, error_reason";
 
 /**
  * Web-flow generations run async (HTTP returns immediately, the client polls):
@@ -2196,10 +2258,22 @@ export async function createPendingGeneration(
   credits: number,
   /** Preset or campaign id this render came from, for breadth XP + analytics. */
   sourceId?: string,
+  /** Director Mode metadata — see the generations column comments in SCHEMA. */
+  meta?: { sourceKind?: string; userPrompt?: string; opts?: Record<string, unknown> },
 ): Promise<number> {
   const rows = await q(
-    "INSERT INTO generations (user_id, model, prompt, credits, status, source_id) VALUES ($1, $2, $3, $4, 'pending', $5) RETURNING id",
-    [userId, model, prompt, credits, sourceId ?? null],
+    `INSERT INTO generations (user_id, model, prompt, credits, status, source_id, source_kind, user_prompt, opts)
+     VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, $8) RETURNING id`,
+    [
+      userId,
+      model,
+      prompt,
+      credits,
+      sourceId ?? null,
+      meta?.sourceKind ?? null,
+      meta?.userPrompt ?? null,
+      meta?.opts && Object.keys(meta.opts).length ? JSON.stringify(meta.opts) : null,
+    ],
   );
   return Number(rows[0].id);
 }
@@ -2218,10 +2292,12 @@ export async function completeGeneration(
   costUsd?: number,
   providerRequestId?: string,
   outputUrls?: string[],
+  /** Failure code for status='error' rows — see the error_reason column comment. */
+  errorReason?: string,
 ): Promise<boolean> {
   const rows = await q(
     `UPDATE generations SET status = $1, output_url = $2, cost_usd = $3, provider_request_id = $4,
-            output_urls = $6, finished_at = now()
+            output_urls = $6, error_reason = $7, finished_at = now()
      WHERE id = $5 AND status = 'pending' RETURNING id`,
     [
       status,
@@ -2230,6 +2306,7 @@ export async function completeGeneration(
       providerRequestId ?? null,
       id,
       outputUrls && outputUrls.length > 1 ? JSON.stringify(outputUrls) : null,
+      status === "error" ? (errorReason ?? null) : null,
     ],
   );
   return rows.length > 0;
@@ -2333,7 +2410,7 @@ export interface StaleGeneration {
  */
 export async function reapStalePending(minutes: number): Promise<StaleGeneration[]> {
   const rows = await q(
-    `UPDATE generations SET status = 'error'
+    `UPDATE generations SET status = 'error', error_reason = 'timeout'
      WHERE status = 'pending' AND created_at < now() - ($1 || ' minutes')::interval
      RETURNING id, user_id, model, credits`,
     [String(Math.max(1, Math.floor(minutes)))],
@@ -2349,7 +2426,7 @@ export async function reapStalePending(minutes: number): Promise<StaleGeneration
 /** One generation, scoped to its owner — powers the web app's status polling. */
 export async function getGeneration(id: number, userId: number): Promise<GenerationRow | undefined> {
   const rows = await q(
-    "SELECT id, model, prompt, credits, status, output_url, output_urls, created_at FROM generations WHERE id = $1 AND user_id = $2",
+    `SELECT ${GENERATION_COLUMNS} FROM generations WHERE id = $1 AND user_id = $2`,
     [id, userId],
   );
   return rows[0] ? mapGeneration(rows[0]) : undefined;
@@ -2358,7 +2435,7 @@ export async function getGeneration(id: number, userId: number): Promise<Generat
 /** A user's recent generations (newest first) — powers the web-app gallery. */
 export async function recentGenerations(userId: number, limit = 30): Promise<GenerationRow[]> {
   const rows = await q(
-    `SELECT id, model, prompt, credits, status, output_url, output_urls, created_at
+    `SELECT ${GENERATION_COLUMNS}
      FROM generations WHERE user_id = $1 ORDER BY id DESC LIMIT $2`,
     [userId, limit],
   );
@@ -2376,7 +2453,7 @@ export async function galleryPage(
   offset: number,
 ): Promise<{ items: GenerationRow[]; total: number }> {
   const items = await q(
-    `SELECT id, model, prompt, credits, status, output_url, output_urls, created_at
+    `SELECT ${GENERATION_COLUMNS}
      FROM generations
      WHERE user_id = $1 AND status = 'ok' AND output_url IS NOT NULL
      ORDER BY id DESC LIMIT $2 OFFSET $3`,

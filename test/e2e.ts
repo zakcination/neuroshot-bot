@@ -830,8 +830,11 @@ await step("provider failure: 🔫 auto-refunded, error logged", async () => {
   assert.match(lastText(), /🔫 патроны автоматически возвращены/);
   assert.equal(await credits(alice.id), 182);
   assert.equal(await ledgerCount("refund"), 1);
-  const gen = await query("SELECT status FROM generations ORDER BY id DESC LIMIT 1");
+  const gen = await query("SELECT status, error_reason FROM generations ORDER BY id DESC LIMIT 1");
   assert.equal(gen[0].status, "error");
+  // WHY it failed survives on the row as a fixed code — a generic provider
+  // outage is distinguishable from moderation/timeout after the fact.
+  assert.equal(gen[0].error_reason, "provider_error");
 });
 
 await step("error completion persists provider cost + request id (provider billed, delivery failed)", async () => {
@@ -2061,7 +2064,9 @@ await step("reaper: a render stuck 'pending' is failed and refunded, idempotentl
   const reaped = await runReaper(() => Promise.resolve());
   assert.ok(reaped >= 1, "reaper did not sweep the stale render");
   assert.equal((await query("SELECT credits FROM users WHERE id = $1", [dan]))[0].credits, 10); // refunded
-  assert.equal((await query("SELECT status FROM generations WHERE user_id = $1", [dan]))[0].status, "error");
+  const reapedRow = (await query("SELECT status, error_reason FROM generations WHERE user_id = $1", [dan]))[0];
+  assert.equal(reapedRow.status, "error");
+  assert.equal(reapedRow.error_reason, "timeout", "a reaped render must be distinguishable from a provider failure");
   // Idempotent: a second sweep does not double-refund (the row is already terminal).
   await runReaper(() => Promise.resolve());
   assert.equal((await query("SELECT credits FROM users WHERE id = $1", [dan]))[0].credits, 10);
@@ -2445,6 +2450,10 @@ await step("content moderation: a flagged photo is blocked BEFORE generation, re
   assert.equal(await credits(mod.id), 3); // charged then refunded — net zero
   const evt = await query("SELECT type FROM events WHERE user_id = $1 ORDER BY id DESC LIMIT 1", [mod.id]);
   assert.equal(evt[0].type, "moderation_blocked");
+  // The generation row itself says WHY: 'moderation', not the generic provider code.
+  const modRow = (await query("SELECT status, error_reason FROM generations WHERE user_id = $1 ORDER BY id DESC LIMIT 1", [mod.id]))[0];
+  assert.equal(modRow.status, "error");
+  assert.equal(modRow.error_reason, "moderation");
 });
 
 console.log(`\nAll ${passed} steps passed. ✨  (db: ${process.env.DATABASE_URL || "embedded (pglite)"})`);
