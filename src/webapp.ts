@@ -1350,10 +1350,17 @@ export async function generateResponse(
     }
     // Studio ① (D1): a personalization layer on top of the curated prompt —
     // same sanitized free-words treatment as the campaign story builder. The
-    // curated prompt itself still never leaves the server.
+    // curated prompt itself still never leaves the server. 600, not 200: the
+    // wireframe v2 rework (docs/ui-rebuild-v2.md § S2) makes this box the
+    // Studio's ONLY visible prompt field for a preset render, not a "dopiska"
+    // appended to one the user never sees — 200 was sized for the latter.
     let composed = p.prompt;
-    const custom = sanitizePrompt(typeof body?.custom === "string" ? body.custom : "").slice(0, 200);
+    const custom = sanitizePrompt(typeof body?.custom === "string" ? body.custom : "").slice(0, 600);
     if (custom) composed += ` Extra details from the user: ${custom}.`;
+    // Same field as the "model" branch's userPrompt below: text the user
+    // actually typed, never the curated prompt — so «Повторить» and the
+    // detail view can show what a preset render's own words were.
+    userPrompt = custom || undefined;
     [model, prompt, crafted] = [m, composed, true];
     sourceKind = "preset";
     presetAspect = p.aspect;

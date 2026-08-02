@@ -328,9 +328,17 @@
     .mpick .price { font-size: 12px; color: var(--amber); font-weight: 700; white-space: nowrap; }
     .mpick .mchev { color: var(--muted); font-size: 10px; }
     .mpick + .mlist { margin-top: 8px; }
-    .stublock { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 10px 12px; margin-bottom: 4px; }
-    .stuchip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .stuchip > span { font-weight: 700; }
+    /* S2: the preset arrives as a removable tag beside the prompt box, not a
+       textbox fill (docs/wireframes — home-studio wireframe, version 2). */
+    .ptagrow { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+    .ptag {
+      display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; color: var(--ink);
+      background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 6px 6px 6px 13px;
+    }
+    .ptag button {
+      display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;
+      border: 0; border-radius: 50%; background: var(--surface-2); color: var(--muted); font: 700 11px/1 inherit; cursor: pointer;
+    }
     .empty {
       grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 34px 18px;
       border: 1px dashed rgba(255,255,255,.14); border-radius: var(--radius-s); font-size: 13.5px; line-height: 1.6;
@@ -3904,7 +3912,7 @@
         srcPreview: ctx.srcPreview || (prev ? prev.srcPreview : null),
         endPhoto: null, endGenerationId: null,
         duration: undefined, aspect: undefined, resolution: undefined, numImages: undefined,
-        showAll: false, mopen: false, editOpen: prev ? prev.editOpen : false, swap: false,
+        showAll: false, mopen: false, swap: false,
         prevPrompt: null, // pre-enhance prompt, powers the ↩ Вернуть undo
         // Seedance's Дёшево/Быстро/Качество toggle (routeSeedance, src/seedance.ts)
         // — "fast" matches the server's own SEEDANCE_TIER_DEFAULT.
@@ -4355,28 +4363,23 @@
           <span class="price">${priceBlockHtml(x.credits, x.wasCredits, isVideo ? "от " : "")}</span>
         </button>`;
 
+      // S2 (docs/wireframes/home-studio.v2.html): the preset arrives as a
+      // removable TAG, not a textbox fill — the visible prompt box always
+      // holds the user's OWN words. For an image+preset render that's still
+      // wired as `custom` (curated prompt stays server-side, unchanged); for
+      // video, or no preset at all, it's the same `prompt` field as always.
+      const usesCustomField = !!stu.preset && !isVideo;
+      const activePromptText = () => (usesCustomField ? stu.custom : stu.prompt);
+      const promptVal = activePromptText();
+
       sheetBody.innerHTML = `
         <h3>Студия</h3>
-        ${isVideo && ((ME.seedanceSale && ME.seedanceSale.active) || (ME.flagshipCeiling && ME.flagshipCeiling.active)) ? saleBanner() : ""}
-        ${stu.preset && !isVideo ? `
-          <div class="stublock"><div class="stuchip">
-            <span>${esc(stu.preset.label)}</span>
-            <button class="chip ${stu.editOpen ? "on" : ""}" id="stuEdit">✎ Изменить</button>
-            <button class="chip" id="stuSwap">⇄ Сменить стиль</button>
-          </div>
-          ${stu.editOpen ? `<input class="words" id="stuCustom" maxlength="200" placeholder="допишите детали: имя, цвет, настроение…" value="${esc(stu.custom)}" style="margin-top:8px" />` : ""}</div>` : ""}
-        ${stu.preset && isVideo ? `<div class="sub">Стиль применяется к фото. Для видео опишите движение ниже.</div>` : ""}
-        ${!stu.preset || isVideo ? `
-          <div class="quiz-q">${isVideo ? "Движение (необязательно)" : "Что нарисовать?"}</div>
-          ${!isVideo && !stuHasSource() ? `<div class="sub">Фото не нужно — опишите картинку словами, ИИ нарисует её с нуля.</div>` : ""}
-          <div class="promptwrap">
-            <div class="promptgrip" id="stuPromptGrip"><i></i></div>
-            <textarea class="prompt" id="stuPrompt" style="height:${stu.promptH}px" placeholder="${isVideo ? "камера медленно приближается, ветер в волосах…" : "флакон духов на мокром чёрном мраморе…"}">${esc(stu.prompt)}</textarea>
-          </div>
-          <div class="row" style="margin-top:6px">
-            <button class="btn ghost" id="stuEnh">${enhLabel()}</button>
-            ${stu.prevPrompt != null ? `<button class="btn ghost" id="stuUndo">↩ Вернуть</button>` : ""}
-          </div>` : ""}
+        <div class="seg" id="stuSeg">
+          <button data-md="image" class="${!isVideo ? "on" : ""}">🖼 Фото</button>
+          <button data-md="video" class="${isVideo ? "on" : ""}">🎬 Видео</button>
+        </div>
+        ${isVideo && !has ? `<div class="sub">Для видео нужно исходное фото — добавьте его ниже или сначала создайте картинку.</div>` : ""}
+        ${directorModeHtml()}
         ${qLabel(`Фото ${!isVideo && !m.needsImage ? "(не используется этой моделью)" : ""}`, "photo")}
         <div id="stuPhotoZone">
           ${stu.photo ? `<div class="photo-preview"><img src="${stu.photo}" alt="" /><button class="redo" id="stuRedo">↺ Другое</button></div>`
@@ -4387,11 +4390,26 @@
                <div class="mini" id="stuMini">${works.map((g) => `<img src="${esc(g.output_url)}" data-gid="${g.id}" loading="lazy" alt="" />`).join("")}</div>` : ""}`}
           ${extrasBlock(m, isVideo, has)}
         </div>
-        <div class="seg" id="stuSeg">
-          <button data-md="image" class="${!isVideo ? "on" : ""}">🖼 Фото</button>
-          <button data-md="video" class="${isVideo ? "on" : ""}">🎬 Видео</button>
+        ${isVideo && m.video && activeSeedanceRow(m).video.endFrame ? `
+          ${qLabel("Финальный кадр (необязательно)", "endframe")}
+          <div id="stuEndZone">${stu.endPhoto ? `<div class="photo-preview"><img src="${stu.endPhoto}" alt="" /><button class="redo" id="stuEndRedo">✕ Убрать</button></div>`
+            : `<label class="drop"><input type="file" accept="image/*" id="stuEndFile" />
+                 <span class="em">🏁</span><b>Кадр-финал</b><span>видео плавно придёт к нему</span></label>`}</div>` : ""}
+        ${stu.preset ? `
+          <div class="ptagrow">
+            <span class="ptag"><span>${esc(stu.preset.label)}</span><button type="button" id="stuPresetX" aria-label="Сменить стиль">✕</button></span>
+          </div>
+          ${isVideo ? `<div class="sub">Стиль применяется к фото. Опишите движение ниже.</div>` : ""}` : ""}
+        ${qLabel(isVideo ? "Движение (необязательно)" : stu.preset ? "Промпт" : "Что нарисовать?")}
+        ${!isVideo && !stu.preset && !stuHasSource() ? `<div class="sub">Фото не нужно — опишите картинку словами, ИИ нарисует её с нуля.</div>` : ""}
+        <div class="promptwrap">
+          <div class="promptgrip" id="stuPromptGrip"><i></i></div>
+          <textarea class="prompt" id="stuPrompt" style="height:${stu.promptH}px" placeholder="${isVideo ? "камера медленно приближается, ветер в волосах…" : stu.preset ? "допишите детали: имя, цвет, настроение…" : "флакон духов на мокром чёрном мраморе…"}">${esc(promptVal)}</textarea>
         </div>
-        ${isVideo && !has ? `<div class="sub">Для видео нужно исходное фото — добавьте его выше или сначала создайте картинку.</div>` : ""}
+        <div class="row" style="margin-top:6px">
+          <button class="btn ghost" id="stuEnh">${enhLabel()}</button>
+          ${stu.prevPrompt != null ? `<button class="btn ghost" id="stuUndo">↩ Вернуть</button>` : ""}
+        </div>
         ${qLabel("Модель", "model")}
         <button class="mpick" id="stuMpick" aria-expanded="${stu.mopen ? "true" : "false"}">
           ${stu.mopen
@@ -4416,7 +4434,6 @@
               : `<div class="chips" id="stuTier">${tiers.map(([id, label]) =>
                   `<button class="chip ${(stu.seedanceTier || "fast") === id ? "on" : ""}" data-tier="${id}">${label}</button>`).join("")}</div>`}`;
         })() : ""}
-        ${directorModeHtml()}
         ${caps && caps.aspectRatios && caps.aspectRatios.length > 1 ? `
           ${qLabel("Формат кадра", "aspect")}
           ${caps.aspectRatios.length > 2
@@ -4439,11 +4456,6 @@
             stuDurPrice,
             stuDurWasPrice,
           )}</div>` : ""}
-        ${isVideo && m.video && activeSeedanceRow(m).video.endFrame ? `
-          ${qLabel("Финальный кадр (необязательно)", "endframe")}
-          <div id="stuEndZone">${stu.endPhoto ? `<div class="photo-preview"><img src="${stu.endPhoto}" alt="" /><button class="redo" id="stuEndRedo">✕ Убрать</button></div>`
-            : `<label class="drop"><input type="file" accept="image/*" id="stuEndFile" />
-                 <span class="em">🏁</span><b>Кадр-финал</b><span>видео плавно придёт к нему</span></label>`}</div>` : ""}
         ${story.length ? `${story.map((s) => `
           <div class="quiz-q">${esc(s.question)}</div>
           <div class="chips" data-story="${s.id}">${s.options.map((o) =>
@@ -4457,7 +4469,7 @@
       const cta = () => {
         const p = studioPrice();
         if ((isVideo || m.needsImage) && !stuHasSource()) { goBtn.textContent = "Добавьте фото ↑"; goBtn.disabled = true; return; }
-        if (!isVideo && !stu.preset && !(stu.prompt || "").trim()) { goBtn.textContent = "Опишите, что нарисовать ↑"; goBtn.disabled = true; return; }
+        if (!isVideo && !stu.preset && !(activePromptText() || "").trim()) { goBtn.textContent = "Опишите, что нарисовать ↑"; goBtn.disabled = true; return; }
         // A big cast can carry more sheets than the engine reads. The server
         // would refuse the whole render (without charging) — say so here, while
         // unticking someone is still an obvious one-tap fix.
@@ -4473,21 +4485,26 @@
       cta();
       const bind = (sel, fn) => { const el = sheetBody.querySelector(sel); if (el) fn(el); };
       bind("#stuBack", (el) => (el.onclick = () => { st.tab = stu.preset && stu.preset.category === "product" ? "product" : "shoot"; viewPick(); }));
-      bind("#stuEdit", (el) => (el.onclick = () => { stu.editOpen = !stu.editOpen; viewStudio(); }));
-      bind("#stuSwap", (el) => (el.onclick = () => { stu.swap = true; st.tab = stu.preset.category === "product" ? "product" : "shoot"; viewPick(); }));
-      bind("#stuCustom", (el) => (el.oninput = () => { stu.custom = el.value; }));
-      bind("#stuPrompt", (el) => (el.oninput = () => { stu.prompt = el.value; cta(); }));
+      // The preset tag's ✕: same "swap the style" trip the old ⇄ button made —
+      // Studio has no notion of "preset render with no preset", so dropping the
+      // tag re-enters the style gallery rather than trying to fake a bare model.
+      bind("#stuPresetX", (el) => (el.onclick = () => { stu.swap = true; st.tab = stu.preset.category === "product" ? "product" : "shoot"; viewPick(); }));
+      bind("#stuPrompt", (el) => (el.oninput = () => {
+        if (usesCustomField) stu.custom = el.value; else stu.prompt = el.value;
+        cta();
+      }));
       wirePromptResize(sheetBody);
       // ② Prompt Enhancer loop: first enhance after each render is free, then
       // 1 patron. Provider failure keeps the original prompt + balance intact.
       bind("#stuEnh", (el) => (el.onclick = async () => {
-        const raw = (stu.prompt || "").trim();
+        const raw = (activePromptText() || "").trim();
         if (!raw) { toast("Сначала напишите идею 🙂"); return; }
         el.disabled = true; el.textContent = "✨ Улучшаю…";
         const { status, data } = await api("/api/enhance", { method: "POST", body: JSON.stringify({ prompt: raw }) });
         if (status === 402) { viewPaywall(data); return; }
         if (status !== 200) { toast("Не получилось улучшить — попробуйте ещё раз"); viewStudio(); return; }
-        stu.prevPrompt = raw; stu.prompt = data.prompt;
+        stu.prevPrompt = raw;
+        if (usesCustomField) stu.custom = data.prompt; else stu.prompt = data.prompt;
         ME.dashboard.credits = data.balance; setBalance(data.balance);
         // Server-authoritative remaining count — the label must never be a
         // client-side guess about what the user is entitled to.
@@ -4498,7 +4515,10 @@
           : `✨ Улучшено · −${ME.enhance ? ME.enhance.cost : 1} ${PATRON}, ещё ${data.left} в запасе`);
         viewStudio();
       }));
-      bind("#stuUndo", (el) => (el.onclick = () => { stu.prompt = stu.prevPrompt; stu.prevPrompt = null; viewStudio(); }));
+      bind("#stuUndo", (el) => (el.onclick = () => {
+        if (usesCustomField) stu.custom = stu.prevPrompt; else stu.prompt = stu.prevPrompt;
+        stu.prevPrompt = null; viewStudio();
+      }));
       sheetBody.querySelectorAll("#stuSeg button").forEach((b) => (b.onclick = () => {
         if (b.dataset.md === stu.mode) return;
         stu.mode = b.dataset.md; stu.modelKey = defaultStudioModel();

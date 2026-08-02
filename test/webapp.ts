@@ -4455,6 +4455,16 @@ await step("generation metadata: client-shape opts + user_prompt on the row; cur
   assert.equal(row3.source_id, "headshot");
   assert.equal(row3.user_prompt, null);
 
+  // Studio v2 (docs/ui-rebuild-v2.md § S2): the preset's box is now the ONLY
+  // visible prompt field, so what the user typed there must be recorded —
+  // «Повторить» and the detail view have nothing else to show it was theirs.
+  const r4 = await gen({ source: "preset", id: "headshot", image_url: "https://fal.test/storage/u-1.jpg", custom: "с рыжим котом на руках" });
+  assert.equal(r4.status, 200);
+  const id4 = ((await r4.json()) as { id: number }).id;
+  await pollGen(id4, H);
+  const row4 = (await query("SELECT user_prompt FROM generations WHERE id = $1", [id4]))[0];
+  assert.equal(row4.user_prompt, "с рыжим котом на руках");
+
   const me = (await (await fetch(`${base}/api/me`, { headers: H })).json()) as { generations: Array<Record<string, unknown>> };
   for (const g of me.generations) assert.equal("prompt" in g, false, "/api/me must never ship a prompt column");
   const shipped3 = me.generations.find((g) => g.id === id3)!;
