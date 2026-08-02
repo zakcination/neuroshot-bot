@@ -1,86 +1,214 @@
 name: Staging
 
-# One shared staging app (docs/staging.md), redeployed with whichever PR's
-# latest commit pushed last — not a preview-per-PR fleet (that's real Fly
-# cost/complexity this project doesn't need yet). The in-app "🧪 STAGING"
-# banner and this workflow's PR comment both name the PR that's actually
-# live, so "which build am I looking at" is never a guess. If two PRs are
-# open at once, staging always reflects whichever pushed most recently.
+# ONE shared Fly app (docs/staging.md) that is a PRE-PROD, not a preview fleet:
+# by default it tracks `main`, so "open staging" has a stable, unambiguous
+# answer — the code that is live for users right now.
+#
+# A PR can BORROW the box on demand (workflow_dispatch with a pr_number). While
+# it holds it, that PR carries the `staging` label — one label, at most one PR,
+# so "which PR is on staging" is visible from the PR list instead of guessed
+# from timestamps. The box returns to `main` automatically when that PR closes,
+# or the moment anything lands on main.
+#
+# This deliberately replaced auto-deploy on every PR push. That was last-push-
+# wins across every open PR: with a stack of PRs open, each one's "🧪 this PR is
+# now live" comment stayed up forever while at most one of them could be true.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-  # Manual re-run without needing a new commit — e.g. to redeploy the same
-  # PR after fixing staging infra itself. Requires the PR number since a
-  # workflow_dispatch run has no pull_request event to read one from.
+  # main is the resting state — every merge puts staging back in sync with it.
+  push:
+    branches: [main]
+  # Borrow the box for a PR, or hand it straight back (empty pr_number).
   workflow_dispatch:
     inputs:
       pr_number:
-        description: "PR number to deploy to staging"
-        required: true
+        description: "PR to show on staging (leave empty to return staging to main)"
+        required: false
+  # A PR that holds the box must not keep it after it closes.
+  pull_request:
+    types: [closed]
 
 permissions:
   contents: read
   pull-requests: write
+  issues: write
+
+concurrency:
+  group: fly-deploy-staging
+  # NOT cancel-in-progress (production's ci.yml doesn't either, for its own
+  # reasons). A cancelled run here would abort between the deploy and the
+  # label/comment bookkeeping that records who owns the box, leaving the label
+  # pointing at a build that is no longer deployed — the exact ambiguity this
+  # workflow exists to remove. Staging deploys are now infrequent (merges and
+  # explicit borrows), so queueing costs nothing.
+  cancel-in-progress: false
 
 jobs:
-  deploy-staging:
+  staging:
     runs-on: ubuntu-latest
-    concurrency:
-      group: fly-deploy-staging
-      # A newer push (to this PR or a different one) should win outright —
-      # finishing an old deploy just to have the next one overwrite it
-      # seconds later wastes the run for no benefit, unlike production's
-      # deploy (see ci.yml), which never cancels one in flight.
-      cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v4
+      # Work out WHAT to deploy and WHAT to call it, before touching Fly.
+      # Every value that ends up in a shell command is passed through step
+      # outputs and then `env:` — never interpolated into a `run:` block. A PR
+      # title and a commit subject are attacker-controlled text, and this job
+      # holds a Fly deploy token.
+      - name: Decide what staging should show
+        id: plan
+        uses: actions/github-script@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha || format('refs/pull/{0}/head', inputs.pr_number) }}
+          script: |
+            const LABEL = "staging";
+            const repo = { owner: context.repo.owner, repo: context.repo.repo };
+            const base = context.payload.repository?.default_branch || "main";
+            const out = (o) => { for (const [k, v] of Object.entries(o)) core.setOutput(k, v); };
+
+            // Every PR carrying the label. Normally exactly one; if a previous
+            // run died between its deploy and its bookkeeping there could be
+            // more, and releasing ALL of them is what heals that — a stale
+            // label is precisely the "which PR is on staging" lie this
+            // workflow exists to prevent. `state: all` on purpose: a closed PR
+            // that kept the label needs clearing too.
+            const tagged = await github.paginate(github.rest.issues.listForRepo, {
+              ...repo, labels: LABEL, state: "all", per_page: 100,
+            });
+            const holders = tagged.filter((i) => i.pull_request).map((i) => i.number);
+
+            // Resolved from the API, not from the event: a pull_request event
+            // carries no head_commit, and context.sha on a dispatch is the ref
+            // the workflow ran from — neither reliably describes what main is
+            // about to be deployed at.
+            const mainLabel = async () => {
+              const { data: c } = await github.rest.repos.getCommit({ ...repo, ref: base });
+              const subject = (c.commit.message || "").split("\n")[0];
+              return `${base} · ${c.sha.slice(0, 7)}${subject ? ` · ${subject}` : ""}`.slice(0, 120);
+            };
+
+            // A MERGED pr closing is already covered by the push to main that
+            // the merge produced — deploying twice would just race itself.
+            if (context.eventName === "pull_request") {
+              const pr = context.payload.pull_request;
+              if (pr.merged) return out({ run: "false", reason: "merged — the push to main handles it" });
+              if (!holders.includes(pr.number)) return out({ run: "false", reason: "this PR does not hold staging" });
+              return out({
+                run: "true", mode: "main", ref: `refs/heads/${base}`,
+                release: holders.join(","), label: await mainLabel(),
+              });
+            }
+
+            const asked = context.payload.inputs?.pr_number;
+            if (context.eventName === "workflow_dispatch" && asked) {
+              const n = Number(asked);
+              if (!Number.isInteger(n) || n <= 0) {
+                core.setFailed(`pr_number must be a positive integer, got "${asked}"`);
+                return;
+              }
+              const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: n });
+              if (pr.state !== "open") {
+                core.setFailed(`PR #${n} is ${pr.state} — staging only borrows the box for open PRs`);
+                return;
+              }
+              return out({
+                run: "true", mode: "pr", claim: String(n),
+                release: holders.filter((h) => h !== n).join(","),
+                ref: pr.head.sha,
+                label: `PR #${n} · ${pr.title}`.slice(0, 120),
+              });
+            }
+
+            // push to main, or a dispatch with no pr_number: back to baseline.
+            return out({
+              run: "true", mode: "main", ref: `refs/heads/${base}`,
+              release: holders.join(","), label: await mainLabel(),
+            });
+
+      - uses: actions/checkout@v4
+        if: steps.plan.outputs.run == 'true'
+        with:
+          ref: ${{ steps.plan.outputs.ref }}
 
       - uses: superfly/flyctl-actions/setup-flyctl@master
+        if: steps.plan.outputs.run == 'true'
 
       # Idempotent: fails harmlessly ("already exists", or "unauthorized" if
-      # FLY_STAGING_API_TOKEN is a per-app deploy token rather than an
-      # org-wide one — either way harmless once the app already exists,
-      # which is the normal steady state after the one-time bootstrap in
-      # docs/staging.md) on every run after the first.
+      # FLY_STAGING_API_TOKEN is a per-app deploy token rather than an org-wide
+      # one — either way harmless once the app exists, which is the steady
+      # state after the one-time bootstrap in docs/staging.md).
       - name: Ensure the staging app exists
+        if: steps.plan.outputs.run == 'true'
         run: flyctl apps create neuroshot-bot-staging --org personal || true
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_STAGING_API_TOKEN }}
 
-      - name: Deploy PR HEAD to staging
+      - name: Deploy to staging
+        if: steps.plan.outputs.run == 'true'
+        # STAGING_LABEL arrives as an env var, not as text spliced into the
+        # command — see the note on the plan step.
         run: |
-          PR_NUMBER="${{ github.event.pull_request.number || inputs.pr_number }}"
-          PR_TITLE="${{ github.event.pull_request.title }}"
-          LABEL="PR #${PR_NUMBER}"
-          if [ -n "$PR_TITLE" ]; then LABEL="PR #${PR_NUMBER} · ${PR_TITLE}"; fi
           flyctl deploy -c fly.staging.toml -a neuroshot-bot-staging --remote-only \
-            -e "STAGING_LABEL=${LABEL}"
+            -e "STAGING_LABEL=${STAGING_LABEL}"
         env:
-          # Deliberately a SEPARATE secret from production's FLY_API_TOKEN
-          # (used by ci.yml's `deploy` job): Fly deploy tokens are scoped to
-          # one app, so the token that can push to production cannot also
-          # push here — see docs/staging.md's bootstrap step for how to mint
-          # this one (`fly tokens create deploy -a neuroshot-bot-staging`).
           FLY_API_TOKEN: ${{ secrets.FLY_STAGING_API_TOKEN }}
+          STAGING_LABEL: ${{ steps.plan.outputs.label }}
 
-      - name: Comment the staging link on the PR
-        if: github.event.pull_request.number
+      # Bookkeeping LAST, so the label and the comments only ever describe a
+      # deploy that actually succeeded.
+      - name: Record who owns staging
+        if: steps.plan.outputs.run == 'true'
         uses: actions/github-script@v7
+        env:
+          MODE: ${{ steps.plan.outputs.mode }}
+          CLAIM: ${{ steps.plan.outputs.claim }}
+          RELEASE: ${{ steps.plan.outputs.release }}
+          LABEL_TEXT: ${{ steps.plan.outputs.label }}
         with:
           script: |
-            const body = [
-              "🧪 **Staging deployed** — this PR is now live at https://neuroshot-bot-staging.fly.dev",
-              "",
-              "Open it exactly like production: in the bot chat, send `/staging` (admin-only) and tap the button. The in-app banner confirms which PR you're looking at.",
-            ].join("\n");
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number,
-            });
-            const mine = comments.find((c) => c.user?.type === "Bot" && c.body?.startsWith("🧪 **Staging deployed**"));
-            if (mine) {
-              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: mine.id, body });
-            } else {
-              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
+            const LABEL = "staging";
+            const URL = "https://neuroshot-bot-staging.fly.dev";
+            const { MODE, CLAIM, RELEASE, LABEL_TEXT } = process.env;
+            const repo = { owner: context.repo.owner, repo: context.repo.repo };
+            const MARK = "🧪 **Staging**";
+            const SIG = "\n\n---\n_Generated by [Claude Code](https://claude.ai/code)_";
+
+            // One comment per PR, rewritten in place — a PR must never
+            // accumulate a history of contradictory "it's live" claims.
+            const upsert = async (issue_number, body) => {
+              const { data: comments } = await github.rest.issues.listComments({ ...repo, issue_number, per_page: 100 });
+              const mine = comments.find((c) => c.user?.type === "Bot" && c.body?.startsWith(MARK));
+              if (mine) await github.rest.issues.updateComment({ ...repo, comment_id: mine.id, body });
+              else await github.rest.issues.createComment({ ...repo, issue_number, body });
+            };
+
+            for (const raw of (RELEASE || "").split(",").filter(Boolean)) {
+              const n = Number(raw);
+              await github.rest.issues.removeLabel({ ...repo, issue_number: n, name: LABEL }).catch(() => {});
+              await upsert(n, [
+                `${MARK} — this PR is **no longer** on staging.`,
+                "",
+                `Staging now shows \`${LABEL_TEXT}\`.`,
+                "",
+                `To put this PR back: **Actions → Staging → Run workflow**, \`pr_number\` = \`${n}\`.`,
+              ].join("\n") + SIG);
             }
+
+            if (MODE === "pr" && CLAIM) {
+              const n = Number(CLAIM);
+              await github.rest.issues.createLabel({
+                ...repo, name: LABEL, color: "8250df",
+                description: "Currently deployed to the shared staging app",
+              }).catch(() => {}); // already exists — the normal case
+              await github.rest.issues.addLabels({ ...repo, issue_number: n, labels: [LABEL] });
+              await upsert(n, [
+                `${MARK} — this PR is live at ${URL}`,
+                "",
+                "Open it exactly like production: in the bot chat send `/staging` (admin-only) and tap the button. The in-app banner names the build you're looking at.",
+                "",
+                "Staging returns to `main` automatically when this PR closes, or as soon as anything lands on main.",
+              ].join("\n") + SIG);
+            }
+
+            core.notice(`Staging now shows: ${LABEL_TEXT}`);
+
+      - name: Nothing to do
+        if: steps.plan.outputs.run != 'true'
+        run: 'echo "Skipped — $REASON"'
+        env:
+          REASON: ${{ steps.plan.outputs.reason }}

@@ -1,36 +1,86 @@
-# Staging — a real, in-Telegram preview build
+# Staging — a real, in-Telegram pre-prod
 
-A second, disposable deployment of the exact same code, so "does PR #94 actually
-look right" is answerable by opening the real Mini App inside Telegram — not a
-screenshot, not a local dev server — without touching production.
+A second deployment of the exact same code, so "does this actually look right"
+is answerable by opening the real Mini App inside Telegram — not a screenshot,
+not a local dev server — without touching production.
 
-## How it works
+## What it shows, by default
 
-**One shared Fly app** (`neuroshot-bot-staging`), redeployed on every push to an
-open PR by `.github/workflows/staging.yml`. Not a preview-per-PR fleet — that's
-real ongoing Fly cost/complexity this project doesn't need yet. If two PRs are
-open at once, staging always reflects whichever pushed most recently; the
-in-app banner and the workflow's PR comment both name which one that is.
+**`main`.** Staging is a pre-prod, not a preview fleet: its resting state is the
+code that is live for users right now. Every merge redeploys it, so opening
+staging always has one unambiguous answer.
 
-**No second bot.** Telegram signs a Mini App's `initData` with whichever bot the
-user actually opened it from, so staging shares production's real `BOT_TOKEN` —
-a second bot's token couldn't verify a session opened from the real one anyway.
-What makes sharing the token safe is `ROLE=webapp` (`src/index.ts`): staging
+A PR can **borrow** the box when you actually want to look at it — see below.
+
+## The one rule for multiple PRs
+
+There is one staging app, so exactly one thing can be on it at a time. Which
+thing is recorded in two places that cannot disagree:
+
+- the **`staging` label** on the PR that currently holds it (at most one PR ever
+  carries it — the workflow moves it, you don't), and
+- the **`🧪 STAGING` banner** in the app itself, which names the build.
+
+A PR without the label is not on staging, no matter what any comment says. When
+a PR loses the box, its comment is rewritten in place to say so — no PR is ever
+left claiming to be live when it isn't.
+
+> This replaced auto-deploy on every PR push. That was last-push-wins across
+> every open PR: with a stack of PRs open, each one's "this PR is now live"
+> comment stayed up forever while at most one could be true, and staging
+> silently flipped between branches under you.
+
+## Borrowing the box for a PR
+
+**Actions → Staging → Run workflow**, set `pr_number`. That deploys the PR's
+head, moves the `staging` label onto it, and comments the link.
+
+It comes back to `main` automatically when:
+
+- **anything lands on main** (a merge always wins — staging's job is to track
+  what shipped), or
+- **that PR closes**, merged or not.
+
+To hand it back early, run the workflow with `pr_number` empty.
+
+## Entering it
+
+In the bot chat: **`/staging`** (admin-only, `config.adminIds`) replies with a
+"🧪 Открыть тестовую сборку" button — the same `InlineKeyboard.webApp()`
+mechanism `/app` uses for production, just pointed at a different URL. Telegram
+renders the identical native Mini App webview either way.
+
+## What to expect from it
+
+|                | Production | Staging |
+|---|---|---|
+| Code | `main`, after green CI | `main`, or a borrowed PR |
+| Bot token | real | **the same real one** |
+| `FAL_KEY` | real | **the same real one — renders cost real money** |
+| Database | Neon, persistent | pglite in-process |
+| State lifetime | forever | **survives idle; wiped on every deploy** |
+| Kaspi | live | unset — the buy flow shows "not open yet" |
+| Polling Telegram | yes | **never** (`ROLE=webapp`) |
+
+Two consequences worth internalising:
+
+- **A deploy wipes staging.** Your balance, history and onboarding state go with
+  it. That's intended — it's a test-iteration box — but it means "let me finish
+  this tomorrow" doesn't work if anything merges overnight. Within a session it
+  is stable: the machine no longer scales to zero, precisely so a coffee break
+  doesn't reset your account (it used to, and each reset also re-granted the
+  welcome bonus, which then bought renders against the real `FAL_KEY`).
+- **Generations are billed for real.** Same fal.ai account as production.
+
+## Why it shares production's bot token
+
+Telegram signs a Mini App's `initData` with whichever bot the user actually
+opened it from, so a second bot's token could not verify a session opened from
+the real one. What makes sharing safe is `ROLE=webapp` (`src/index.ts`): staging
 never calls `bot.start()`, never touches `setMyCommands`/`setChatMenuButton`,
 never runs the CEO monitor. Telegram allows exactly **one** `getUpdates` caller
-per token — see `fly.toml`'s own note on the outage that caused once already —
-so a second poller is the one thing staging must never become.
-
-**No separate database.** Staging's `DATABASE_URL` is deliberately unset, so
-`src/db.ts` falls back to embedded, in-memory Postgres (pglite). State resets on
-every deploy/restart — nobody's real credits or history ever live here, and
-there's nothing to provision.
-
-**Enter it exactly like production**: in the bot chat, `/staging` (admin-only,
-`config.adminIds`) replies with a "🧪 Открыть тестовую сборку" button — the same
-`InlineKeyboard.webApp()` mechanism `/app` uses for production, just pointed at
-a different URL. Telegram renders it as the identical native Mini App webview
-either way.
+per token — see `fly.toml`'s note on the outage this caused once — so a second
+poller is the one thing staging must never become.
 
 ## One-time setup
 
@@ -48,49 +98,25 @@ fly secrets set -a neuroshot-bot-staging \
 fly tokens create deploy -a neuroshot-bot-staging
 # → add the printed token as a GitHub Actions repo secret named
 #   FLY_STAGING_API_TOKEN (Settings → Secrets and variables → Actions).
-#   staging.yml reads it under that name.
 ```
 
-Real secrets, on purpose: initData verification needs the real `BOT_TOKEN`, and
-exercising an actual generation on staging needs a real `FAL_KEY` — **that
-generation costs real provider money**, same as any other fal.ai call. Kaspi
-payments are unaffected either way (`KASPI_*` stays unset on staging, so the
-buy flow behaves the same "not open yet" way it does in any env without it).
-
-Nothing else to configure — `fly.staging.toml` ships everything else
-(`ROLE=webapp`, the staging `WEBAPP_URL`, `auto_stop_machines` so the machine
-scales to zero between visits instead of running 24/7 like production's does).
-
-## What ships automatically (`staging.yml`)
-
-On every `opened`/`synchronize`/`reopened` event for any open PR:
-1. Checks out that PR's head commit.
-2. `flyctl apps create neuroshot-bot-staging --org personal || true` (harmless
-   no-op after the first run).
-3. `flyctl deploy -c fly.staging.toml -a neuroshot-bot-staging --remote-only
-   -e STAGING_LABEL="PR #<n> · <title>"` — the one env var that changes per
-   deploy; everything else comes from `fly.staging.toml`.
-4. Comments (or updates its own prior comment) on the PR with the staging URL
-   and a one-line reminder to use `/staging` in the bot.
-
-`STAGING_LABEL` is what the in-app "🧪 STAGING" banner reads (`ME.staging.label`
-via `/api/me`, rendered at the very top of the Home tab in `public/app.html`) —
-the whole reason it exists is so nobody has to guess which build they're
-looking at, or mistakes it for production while poking at it.
-
-## Manual redeploy
-
-`workflow_dispatch` on `staging.yml` takes a `pr_number` input for redeploying
-without a new commit (e.g. after fixing staging infra itself, not the PR's own
-code).
+Everything else ships in `fly.staging.toml` (`ROLE=webapp`, the staging
+`WEBAPP_URL`, `NODE_ENV=staging` so `db.ts` falls back to pglite,
+`min_machines_running = 1`).
 
 ## Notes
 
-- CI (`ci.yml`'s `check` job) runs in parallel on the same PR events, but
-  `staging.yml` does **not** gate on it — staging is for looking at
-  in-progress work, so a red check doesn't block a preview. It just means what
-  you're looking at might be broken; production deploys still require green CI.
+- `STAGING_LABEL` is set per-deploy by the workflow and is the only thing that
+  differs between a main deploy and a PR deploy. It is what the in-app banner
+  renders (`ME.staging.label` via `/api/me`), and `/api/me` only exposes it for
+  a `role: "webapp"` deploy — production can never accidentally show a banner.
+- `staging.yml` does **not** gate on CI. Staging is for looking at in-progress
+  work, so a red check doesn't block a borrow; it just means what you're looking
+  at might be broken. Production deploys still require green CI.
+- The workflow never interpolates a PR title or commit subject into a shell
+  command — both are attacker-controlled text and the job holds a Fly deploy
+  token. They travel via step outputs and `env:`.
 - Deliberately no `[deploy] strategy = "immediate"` in `fly.staging.toml`
   (unlike `fly.toml`) — that setting exists solely to prevent the getUpdates
-  race that `ROLE=webapp` already makes impossible here, and the default
-  rolling strategy gives staging zero-downtime redeploys instead.
+  race that `ROLE=webapp` already makes impossible here, and the default rolling
+  strategy gives staging zero-downtime redeploys instead.
