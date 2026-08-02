@@ -1,0 +1,308 @@
+<title>NeuroShot — ТВ-баннер «Лучшее от Seedance»</title>
+<style>
+  :root{
+    --bg:#08070c; --ink:#f4f2fa; --muted:#8f8aa3; --faint:#5e5975;
+    --violet:#7c5cff; --magenta:#ff4d8d; --amber:#f5b64a;
+
+    --shell-hi:#e59a44; --shell:#b8621f; --shell-lo:#6b3410;
+    --bezel:#1c130f; --chrome:#e7e1d3; --chrome-dk:#8f8878;
+  }
+  *{box-sizing:border-box}
+  html{color-scheme:dark}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.4;
+  }
+  .wrap{max-width:900px; margin:0 auto; padding:28px 20px 70px}
+  h1{font-size:21px; margin:0 0 6px; text-wrap:balance}
+  .lede{color:var(--muted); font-size:13.5px; max-width:60ch; margin:0 0 24px}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.92em; color:var(--muted)}
+
+  .layout{display:flex; gap:34px; flex-wrap:wrap; align-items:flex-start}
+
+  /* ---------- phone context ---------- */
+  .phone{
+    width:390px; max-width:100%; flex:none; border:1.5px solid rgba(255,255,255,.09);
+    border-radius:28px; padding:14px; background:#0b0910;
+  }
+  .ctx-note{font-family:ui-monospace,monospace; font-size:10.5px; color:var(--faint); margin:0 0 10px; letter-spacing:.02em}
+  .page-bg{display:flex; flex-direction:column; gap:12px}
+
+  .mini-promo{
+    all:unset; box-sizing:border-box; cursor:pointer; display:flex; flex-direction:column; gap:8px;
+    width:100%; border-radius:16px; padding:14px;
+    background:
+      radial-gradient(130% 150% at 100% -10%, rgba(255,55,130,.4), transparent 60%),
+      linear-gradient(165deg,#2b0a1c,#150410 75%);
+    border:1px solid rgba(255,130,180,.28); color:#fbeaf1;
+  }
+  .mini-promo:focus-visible{outline:2px solid var(--magenta); outline-offset:3px}
+  .mp-tag{
+    align-self:flex-start; font-size:10.5px; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
+    padding:3px 9px; border-radius:999px; background:rgba(255,64,140,.2); border:1px solid rgba(255,130,180,.4); color:#ff8fbb;
+  }
+  .mp-h{font-size:17px; font-weight:800; margin:0; color:#ff6fa8}
+  .mp-sub{font-size:11.5px; color:#dcb7c8; margin:0}
+  .mp-row{display:flex; align-items:center; justify-content:space-between; gap:10px}
+  .mp-cta{border:0; border-radius:9px; padding:8px 12px; background:#fff; color:#2a0a1c; font-size:12px; font-weight:700}
+  .mp-price{font-size:13px; font-weight:700; color:#fff}
+  .mp-price s{color:#a9899a; font-weight:500; margin-right:4px}
+
+  .ctx-tiles{display:flex; gap:8px}
+  .ctile{
+    flex:1; border-radius:14px; padding:12px; text-align:center; font-size:12px; font-weight:600;
+    background:var(--surface,#14111c); border:1px solid rgba(255,255,255,.07); color:var(--muted);
+  }
+
+  /* ---------- the TV banner itself ---------- */
+  .tv{ all:unset; box-sizing:border-box; cursor:pointer; display:block; width:100%; position:relative; padding-top:40px; }
+  .tv *{box-sizing:border-box}
+  .tv:focus-visible .tv-shell{outline:2px solid var(--magenta); outline-offset:3px}
+  .tv:active .tv-shell{transform:scale(.985)}
+
+  .tv-antenna{position:absolute; top:0; left:50%; width:82px; height:52px; transform:translateX(-50%); z-index:2; pointer-events:none}
+  .antenna-leg,.antenna-heart{fill:none; stroke:var(--chrome); stroke-linecap:round; stroke-linejoin:round}
+  .antenna-leg{stroke-width:5.5; filter:drop-shadow(0 1px 1px rgba(0,0,0,.5))}
+  .antenna-heart{stroke-width:6; filter:drop-shadow(0 1px 1px rgba(0,0,0,.5)) drop-shadow(0 0 7px rgba(255,77,141,.6))}
+  @media (prefers-reduced-motion:no-preference){
+    .tv-antenna{animation:sway 6.5s ease-in-out infinite; transform-origin:50% 96%}
+  }
+  @keyframes sway{0%,100%{transform:translateX(-50%) rotate(-1.6deg)} 50%{transform:translateX(-50%) rotate(1.6deg)}}
+
+  .tv-shell{
+    position:relative; z-index:1; border-radius:26px 26px 15px 15px; padding:14px 14px 0;
+    background:
+      radial-gradient(120% 90% at 18% -8%, var(--shell-hi), transparent 55%),
+      linear-gradient(165deg, var(--shell) 0%, var(--shell-lo) 100%);
+    box-shadow:
+      inset 0 2px 0 rgba(255,255,255,.22),
+      inset 0 -20px 26px -20px rgba(0,0,0,.55),
+      0 18px 34px -18px rgba(0,0,0,.65);
+    transition:transform .12s ease;
+  }
+  .tv-grommet{position:absolute; top:3px; width:13px; height:13px; border-radius:50%; z-index:3;
+    background:radial-gradient(circle at 35% 30%, var(--chrome), var(--chrome-dk));
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.5), 0 1px 1px rgba(255,255,255,.15);}
+  .tv-grommet.l{left:21%} .tv-grommet.r{right:21%}
+
+  .tv-screen-frame{
+    border-radius:13px; padding:2.5px; margin-top:8px;
+    background:linear-gradient(160deg, rgba(0,0,0,.65), rgba(0,0,0,.85));
+    box-shadow:0 2px 8px -3px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.06);
+  }
+  .tv-screen{position:relative; aspect-ratio:16/10; border-radius:11px; overflow:hidden; background:#050308}
+  .reel{
+    position:absolute; inset:-25%;
+    background:
+      radial-gradient(closest-side, rgba(124,92,255,.85), transparent 70%) 20% 30%/55% 55% no-repeat,
+      radial-gradient(closest-side, rgba(255,77,141,.8), transparent 70%) 75% 60%/60% 60% no-repeat,
+      radial-gradient(closest-side, rgba(245,182,74,.5), transparent 70%) 55% 12%/45% 45% no-repeat,
+      #0c0812;
+    filter:blur(18px) saturate(1.35);
+  }
+  @media (prefers-reduced-motion:no-preference){.reel{animation:drift 14s ease-in-out infinite alternate}}
+  @keyframes drift{
+    0%{background-position:20% 30%,75% 60%,55% 12%}
+    100%{background-position:35% 55%,55% 30%,70% 40%}
+  }
+  .scanlines{position:absolute; inset:0; background:repeating-linear-gradient(180deg, rgba(0,0,0,.25) 0 1px, transparent 1px 3px); mix-blend-mode:multiply; opacity:.5}
+  .vignette{position:absolute; inset:0; background:radial-gradient(120% 100% at 50% 50%, transparent 55%, rgba(0,0,0,.55) 100%)}
+  .rec{position:absolute; top:8px; left:9px; display:flex; align-items:center; gap:5px; font-family:ui-monospace,monospace; font-size:9.5px; letter-spacing:.06em; color:#ffb3c8; text-shadow:0 1px 2px rgba(0,0,0,.6)}
+  .rec i{width:6px; height:6px; border-radius:50%; background:#ff4d6a; box-shadow:0 0 6px #ff4d6a; font-style:normal}
+  @media (prefers-reduced-motion:no-preference){.rec i{animation:blink 1.6s ease-in-out infinite}}
+  @keyframes blink{50%{opacity:.25}}
+  .playglyph{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:26px; color:rgba(255,255,255,.45); text-shadow:0 2px 10px rgba(0,0,0,.5)}
+  .neuron-badge{position:absolute; top:8px; right:9px; display:flex; align-items:center; gap:5px; color:#f4f2fa}
+  .neuron-mark{width:15px; height:15px; flex:none; filter:drop-shadow(0 0 3px rgba(255,255,255,.8)) drop-shadow(0 0 1px #fff)}
+  .neuron-badge b{font-family:ui-monospace,monospace; font-size:9.5px; font-weight:600; letter-spacing:.08em; text-shadow:0 1px 2px rgba(0,0,0,.6)}
+  .clipdots{position:absolute; bottom:7px; left:0; right:0; display:flex; gap:5px; justify-content:center}
+  .clipdots i{width:12px; height:3px; border-radius:2px; background:rgba(255,255,255,.28); display:block}
+  .clipdots i.on{width:20px; background:linear-gradient(90deg,var(--violet),var(--magenta))}
+
+  .tv-deck{display:flex; align-items:center; gap:10px; padding:11px 12px 13px}
+  .pwr{
+    width:30px; height:30px; border-radius:50%; flex:none; display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(circle at 35% 30%, #2a2016, #120d08);
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.12), inset 0 -2px 4px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.06);
+    color:var(--amber); font-size:13px;
+  }
+  .plate{flex:1; min-width:0}
+  .plate b{display:block; font-family:ui-monospace,monospace; font-size:11px; font-weight:600; letter-spacing:.04em; color:#fbe9cf; opacity:.92; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-shadow:0 1px 1px rgba(0,0,0,.4)}
+  .plate small{display:block; font-size:10.5px; color:#fbe9cf; opacity:.68; margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .deck-right{display:flex; align-items:center; gap:8px; flex:none}
+  .led{width:7px; height:7px; border-radius:50%; background:#ff5a4d; box-shadow:0 0 7px #ff5a4d; display:block}
+  @media (prefers-reduced-motion:no-preference){.led{animation:pulse 2.1s ease-in-out infinite}}
+  @keyframes pulse{50%{opacity:.35; box-shadow:0 0 2px #ff5a4d}}
+  .grille{width:34px; height:20px; border-radius:4px; background:repeating-linear-gradient(90deg, var(--shell-lo) 0 3px, transparent 3px 6px); opacity:.85}
+
+  .tv-foot{position:absolute; bottom:-7px; width:20px; height:9px; border-radius:0 0 6px 6px; background:var(--shell-lo)}
+  .tv-foot.l{left:13%} .tv-foot.r{right:13%}
+
+  /* ---------- detail / zoom panel ---------- */
+  .detail{flex:1; min-width:280px}
+  .detail h2{font-size:14px; margin:0 0 12px; color:var(--muted); font-weight:600}
+  .detail-stage{
+    border:1.5px solid rgba(255,255,255,.09); border-radius:20px; padding:40px 20px 230px;
+    background:#0b0910; display:flex; justify-content:center;
+  }
+  .detail-scale{width:310px; transform:scale(1.25); transform-origin:top center}
+
+  .notes{margin-top:26px; display:flex; flex-direction:column; gap:8px; font-size:13px; color:var(--muted); max-width:60ch}
+  .notes b{color:var(--ink)}
+
+  @media (max-width:760px){
+    .layout{gap:24px}
+    .detail-stage{padding:30px 16px 46px}
+  }
+</style>
+
+<div class="wrap">
+  <h1>Баннер «Лучшее от Seedance» — под промо-баннером</h1>
+  <p class="lede">Полноширинный, тапабельный, сразу под акцией Seedance. Тело — старый телевизор с безрамочным экраном: крутит подборку кинематографичных Seedance-роликов, снизу — пульт с LED, кнопкой питания и решёткой динамика, сверху — антенна, скрученная в сердце. Логотип NEUROSHOT TV сядет отдельно, в углу экрана — как бренд шоу — как только пришлёте PNG.</p>
+
+  <div class="layout">
+    <div class="phone">
+      <div class="ctx-note">data-page="studio" · в контексте страницы</div>
+      <div class="page-bg">
+
+        <button class="mini-promo" aria-label="Акция Seedance">
+          <span class="mp-tag">🏷 Ограниченное предложение</span>
+          <p class="mp-h">Seedance дешевле вдвое</p>
+          <p class="mp-sub">Видео 720p · 4–15 сек · все тарифы Seedance</p>
+          <div class="mp-row">
+            <span class="mp-cta">Попробовать со скидкой →</span>
+            <span class="mp-price"><s>12</s> 6 🔫</span>
+          </div>
+        </button>
+
+        <button class="tv" aria-label="Лучшее от Seedance — смотреть подборку">
+          <svg class="tv-antenna" viewBox="0 0 120 76" aria-hidden="true">
+            <path class="antenna-leg" d="M60,50 L25,74" />
+            <path class="antenna-leg" d="M60,50 L95,74" />
+            <path class="antenna-heart" d="M60,50 C40,34 22,28 22,16 C22,6 34,2 46,6 C53,8.5 58,13 60,18 C62,13 67,8.5 74,6 C86,2 98,6 98,16 C98,28 80,34 60,50 Z" />
+          </svg>
+          <div class="tv-shell">
+            <span class="tv-grommet l"></span>
+            <span class="tv-grommet r"></span>
+
+            <div class="tv-screen-frame">
+              <div class="tv-screen">
+                <div class="reel"></div>
+                <div class="scanlines"></div>
+                <div class="vignette"></div>
+                <span class="rec"><i></i>REC</span>
+                <span class="neuron-badge">
+                  <svg class="neuron-mark" viewBox="0 0 100 100" aria-hidden="true">
+                    <g stroke="currentColor" fill="currentColor" stroke-width="7" stroke-linecap="round">
+                      <circle cx="50" cy="50" r="9" stroke="none" />
+                      <g transform="translate(50 50) rotate(0)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                      <g transform="translate(50 50) rotate(40) scale(.82)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                      <g transform="translate(50 50) rotate(80)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                      <g transform="translate(50 50) rotate(120) scale(.82)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                      <g transform="translate(50 50) rotate(160)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                      <g transform="translate(50 50) rotate(200) scale(.82)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                      <g transform="translate(50 50) rotate(240)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                      <g transform="translate(50 50) rotate(280) scale(.82)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                      <g transform="translate(50 50) rotate(320)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                    </g>
+                  </svg>
+                  <b>NEUROSHOT</b>
+                </span>
+                <span class="playglyph">▶</span>
+                <div class="clipdots"><i class="on"></i><i></i><i></i><i></i></div>
+              </div>
+            </div>
+
+            <div class="tv-deck">
+              <span class="pwr" aria-hidden="true">⏻</span>
+              <div class="plate">
+                <b>SEEDANCE · ЛУЧШЕЕ</b>
+                <small>тапните — снимем в этом стиле</small>
+              </div>
+              <div class="deck-right">
+                <span class="led"></span>
+                <span class="grille"></span>
+              </div>
+            </div>
+
+            <span class="tv-foot l"></span>
+            <span class="tv-foot r"></span>
+          </div>
+        </button>
+
+        <div class="ctx-tiles">
+          <div class="ctile">📸 Фото</div>
+          <div class="ctile">🎬 Видео</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail">
+      <h2>Крупным планом</h2>
+      <div class="detail-stage">
+        <div class="detail-scale">
+          <button class="tv" aria-label="Лучшее от Seedance — смотреть подборку">
+            <svg class="tv-antenna" viewBox="0 0 120 76" aria-hidden="true">
+              <path class="antenna-leg" d="M60,50 L25,74" />
+              <path class="antenna-leg" d="M60,50 L95,74" />
+              <path class="antenna-heart" d="M60,50 C40,34 22,28 22,16 C22,6 34,2 46,6 C53,8.5 58,13 60,18 C62,13 67,8.5 74,6 C86,2 98,6 98,16 C98,28 80,34 60,50 Z" />
+            </svg>
+            <div class="tv-shell">
+              <span class="tv-grommet l"></span>
+              <span class="tv-grommet r"></span>
+              <div class="tv-screen-frame">
+                <div class="tv-screen">
+                  <div class="reel"></div>
+                  <div class="scanlines"></div>
+                  <div class="vignette"></div>
+                  <span class="rec"><i></i>REC</span>
+                  <span class="neuron-badge">
+                    <svg class="neuron-mark" viewBox="0 0 100 100" aria-hidden="true">
+                      <g stroke="currentColor" fill="currentColor" stroke-width="7" stroke-linecap="round">
+                        <circle cx="50" cy="50" r="9" stroke="none" />
+                        <g transform="translate(50 50) rotate(0)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                        <g transform="translate(50 50) rotate(40) scale(.82)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                        <g transform="translate(50 50) rotate(80)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                        <g transform="translate(50 50) rotate(120) scale(.82)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                        <g transform="translate(50 50) rotate(160)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                        <g transform="translate(50 50) rotate(200) scale(.82)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                        <g transform="translate(50 50) rotate(240)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                        <g transform="translate(50 50) rotate(280) scale(.82)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                        <g transform="translate(50 50) rotate(320)"><path d="M0,0 Q18,-10 32,-6" fill="none" /><circle cx="32" cy="-6" r="5" stroke="none" /></g>
+                      </g>
+                    </svg>
+                    <b>NEUROSHOT</b>
+                  </span>
+                  <span class="playglyph">▶</span>
+                  <div class="clipdots"><i class="on"></i><i></i><i></i><i></i></div>
+                </div>
+              </div>
+              <div class="tv-deck">
+                <span class="pwr" aria-hidden="true">⏻</span>
+                <div class="plate">
+                  <b>SEEDANCE · ЛУЧШЕЕ</b>
+                  <small>тапните — снимем в этом стиле</small>
+                </div>
+                <div class="deck-right">
+                  <span class="led"></span>
+                  <span class="grille"></span>
+                </div>
+              </div>
+              <span class="tv-foot l"></span>
+              <span class="tv-foot r"></span>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <div class="notes">
+        <p><b>Экран</b> — тут в макете анимированное цветное пятно вместо видео. В коде это будет <code>&lt;video autoplay muted loop playsinline&gt;</code>, ролики берём из подборки лучших Seedance-генераций; точки внизу экрана — это индекс роликов в подборке (какой сейчас крутится).</p>
+        <p><b>Тап</b> — весь баннер кликабельный, открывает Студию в режиме видео с моделью Seedance.</p>
+        <p><b>Антенна</b> — лёгкое покачивание (±1.6°), LED и «REC» — мягкая пульсация; всё останавливается при <code>prefers-reduced-motion</code>.</p>
+        <p><b>Логотип-«шоу»</b> — ждём ваш PNG NEUROSHOT TV, поставим меткой в угол экрана (как канал в телевизоре), поверх ролика.</p>
+        <p>Палитра — тёплый корпус (янтарь/умбра) поверх тёмного фона приложения, а свечение экрана — фирменные violet/magenta из самого приложения. Контраст специально: старый предмет — живой неоновый контент внутри.</p>
+      </div>
+    </div>
+  </div>
+</div>

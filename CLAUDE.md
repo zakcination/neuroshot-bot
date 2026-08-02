@@ -229,6 +229,42 @@ Full walkthroughs: `docs/deploy.md`
 
 **When to break these:** Sweeping refactors, multi-system features (split via config flags in `config.ts`).
 
+### "Rebuild" means delete the old one. In the same commit.
+
+**Not negotiable, and never needs restating.** When the ask is *rebuild*,
+*remake*, *redesign*, *переделать* — the old implementation is deleted as part
+of the change. Not deprecated, not left behind a flag, not kept "just in case".
+Nobody should ever have to add "…and remove the old one": that is already what
+the word means.
+
+This is written down because it was violated repeatedly. "Rebuild the Home promo
+banner" and "Rebuild the Studio reference grid" both shipped the new block
+*next to* the old one, and the Home and Studio screens ended up carrying two
+designs at once — a hero, a promo banner and a TV banner all competing above the
+fold, four unrelated ways to attach an input scattered down the composer.
+
+A rebuild is complete when **all** of these are true:
+
+1. The replaced block's **markup, CSS, helper functions, state fields and event
+   handlers are gone.** A stylesheet rule with no markup is the signature of a
+   half-finished rebuild — run `npm run check:dead-css`, which exists for
+   exactly this and reports every class defined in `<style>` that nothing uses.
+2. The screen's wireframe is bumped to the next version **in the same PR**
+   (`docs/wireframes/<screen>.v<N>.html`). A screen change that isn't in a
+   wireframe isn't approved.
+3. Anything on the screen that is **not** in the current wireframe is cut. If
+   it's worth keeping, it goes into the wireframe first. The wireframe is the
+   scope boundary, not a mood board.
+4. Anything cut on purpose gets a paragraph in `docs/graveyard.md` — what it
+   was, why it went, what replaced it. The idea stays recoverable; the dead code
+   does not stay alive.
+
+**Feature flags are for coordinating a merge, not for keeping dead UI on life
+support.** A flag nobody reads is worse than no flag:
+`HOMEPAGE_REDESIGN_ENABLED` sat plumbed through `config.ts` and `/api/me` for
+days while `public/app.html` never once read `uiFeatures` — a switch that
+silently did nothing. Delete a flag once its rollout is done.
+
 ---
 
 ## Before You Hand Off
