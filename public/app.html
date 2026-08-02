@@ -1573,7 +1573,6 @@
       const presetSample = c.presets.slice(0, 4);
 
       el.innerHTML = `
-        <button class="wskip" id="wskipbtn">Пропустить</button>
         <div class="wslides">
           <div class="wslide on" data-slide="0">
             ${heroHtml("/img/onboard-product.jpg", 1, "Добро пожаловать в NeuroShot")}
@@ -1638,8 +1637,7 @@
               <p class="lead" style="text-align:center">Это ваш пробный набор — попробуйте
               студию без риска. Патроны придут на баланс только после того, как вы
               нажмёте кнопку ниже.</p>
-              <button class="wclaim" id="wclaimbtn">🎁 Получить ${wb.pending} бесплатно</button>
-              <button class="wskipclaim" id="wskipclaimbtn">Продолжить без патронов</button>
+              <button class="wclaim" id="wclaimbtn">🎁 Получить ${wb.pending} ${PATRON} бесплатно</button>
             ` : `
               <div class="wgiftbox received"><div class="gn"><img class="appicon" src="/img/ic-patron.png" alt="" /></div><div class="gd">Вы уже получили стартовые патроны</div></div>
               <p class="lead" style="text-align:center">Вы уже забирали бесплатный старт —
@@ -1671,7 +1669,6 @@
         wnextrow.style.display = wcur === wslides.length - 1 ? "none" : "";
       }
       wnextbtn.onclick = () => goSlide(wcur + 1);
-      document.getElementById("wskipbtn").onclick = () => goSlide(wslides.length - 1);
       const openStudioTour = () => {
         closeWelcome();
         if (window.showPage) window.showPage("studio");
@@ -1684,7 +1681,6 @@
         if (status === 200 && data && data.granted > 0) {
           this.textContent = "✓ Начислено — можно начинать";
           this.classList.add("done");
-          document.getElementById("wskipclaimbtn").style.display = "none";
           document.getElementById("wtourbtn").style.display = "flex";
           setBalance((ME?.dashboard.credits || 0) + data.granted);
           haptic("success");
@@ -1693,8 +1689,6 @@
           toast("Не удалось начислить — попробуйте ещё раз");
         }
       };
-      const skipClaimBtn = document.getElementById("wskipclaimbtn");
-      if (skipClaimBtn) skipClaimBtn.onclick = closeWelcome;
       const doneBtn = document.getElementById("wdonebtn");
       if (doneBtn) doneBtn.onclick = openStudioTour;
       document.getElementById("wtourbtn").onclick = openStudioTour;
