@@ -1,0 +1,569 @@
+<title>NeuroShot — Главная + Студия — v3</title>
+<style>
+  /* Document chrome: quiet, utilitarian, cool neutral biased toward the app's
+     violet so the page and the mockups inside it feel related. The phone panes
+     below use the PRODUCT's real tokens verbatim (public/app.html :root) — the
+     mockup must not drift from the thing it specifies. */
+  :root {
+    --page: #f6f5f9;
+    --card: #ffffff;
+    --ink: #1a1823;
+    --muted: #6c6880;
+    --hair: #e2e0ea;
+    --accent: #6544e0;
+    --cut: #c3384f;
+    --move: #2f6fb8;
+    --new: #6544e0;
+    --keep: #7d7a8c;
+
+    /* product tokens — do not retune */
+    --p-bg: #08070c;
+    --p-bg2: #0d0b13;
+    --p-surface: #14111c;
+    --p-surface2: #1b1726;
+    --p-line: rgba(255, 255, 255, .07);
+    --p-ink: #f4f2fa;
+    --p-muted: #8f8aa3;
+    --p-faint: #5e5975;
+    --p-violet: #7c5cff;
+    --p-magenta: #ff4d8d;
+    --p-amber: #f5b64a;
+    --p-aurora: linear-gradient(120deg, #7c5cff, #b44dff 45%, #ff4d8d);
+
+    --step-0: .8125rem;
+    --step-1: .9375rem;
+    --step-2: 1.125rem;
+    --step-3: 1.5rem;
+    --step-4: 2.125rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page: #0f0e14; --card: #17161f; --ink: #eceaf4; --muted: #9995ab;
+      --hair: #272533; --accent: #9b83ff; --cut: #e8697d; --move: #6ba3e0; --new: #9b83ff; --keep: #86829a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --page: #0f0e14; --card: #17161f; --ink: #eceaf4; --muted: #9995ab;
+    --hair: #272533; --accent: #9b83ff; --cut: #e8697d; --move: #6ba3e0; --new: #9b83ff; --keep: #86829a;
+  }
+  :root[data-theme="light"] {
+    --page: #f6f5f9; --card: #ffffff; --ink: #1a1823; --muted: #6c6880;
+    --hair: #e2e0ea; --accent: #6544e0; --cut: #c3384f; --move: #2f6fb8; --new: #6544e0; --keep: #7d7a8c;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--ink);
+    font: 400 var(--step-1)/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 40px 20px 80px; display: flex; flex-direction: column; gap: 32px; }
+
+  header .eyebrow {
+    font-size: var(--step-0); font-weight: 650; letter-spacing: .09em; text-transform: uppercase; color: var(--accent);
+  }
+  header h1 { font-size: var(--step-4); line-height: 1.12; margin: 6px 0 10px; text-wrap: balance; letter-spacing: -.02em; }
+  header p { margin: 0; color: var(--muted); max-width: 62ch; }
+
+  .bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
+    padding: 14px 16px; background: var(--card); border: 1px solid var(--hair); border-radius: 12px;
+    position: sticky; top: 12px; z-index: 5;
+  }
+  .seg { display: inline-flex; border: 1px solid var(--hair); border-radius: 9px; overflow: hidden; }
+  .seg button {
+    border: 0; background: transparent; color: var(--muted); font: inherit; font-size: var(--step-0); font-weight: 650;
+    padding: 7px 16px; cursor: pointer;
+  }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-left: auto; font-size: var(--step-0); color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+
+  .screens { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 28px; align-items: start; }
+  .screen { display: flex; flex-direction: column; gap: 14px; }
+  .screen > h2 { margin: 0; font-size: var(--step-2); letter-spacing: -.01em; }
+  .screen > h2 small { display: block; font-weight: 400; font-size: var(--step-0); color: var(--muted); margin-top: 2px; }
+
+  /* The phone pane — product tokens, product proportions. */
+  .phone {
+    background: var(--p-bg); border: 1px solid var(--p-line); border-radius: 22px; padding: 14px 12px 12px;
+    color: var(--p-ink); font-size: 13px; display: flex; flex-direction: column; gap: 10px;
+    box-shadow: 0 18px 50px -28px rgba(0, 0, 0, .8);
+  }
+  .phone .blk { position: relative; }
+  .phone .id {
+    position: absolute; top: -6px; right: -4px; z-index: 2;
+    font: 650 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em;
+    padding: 3px 5px; border-radius: 4px; color: #fff;
+  }
+  .id.cut { background: var(--cut); } .id.move { background: var(--move); }
+  .id.new { background: var(--new); } .id.keep { background: var(--keep); }
+
+  .p-hdr { display: flex; align-items: center; gap: 8px; }
+  .p-av { width: 30px; height: 30px; border-radius: 50%; background: var(--p-aurora); flex: none; }
+  .p-nm { font-weight: 650; font-size: 12.5px; }
+  .p-pills { margin-left: auto; display: flex; gap: 5px; }
+  .p-pill {
+    background: var(--p-surface); border: 1px solid var(--p-line); border-radius: 999px;
+    padding: 4px 9px; font-size: 10.5px; color: var(--p-muted);
+  }
+  .p-promo {
+    border-radius: 14px; padding: 11px 12px; background: linear-gradient(120deg, rgba(124, 92, 255, .18), rgba(255, 77, 141, .12));
+    border: 1px solid rgba(124, 92, 255, .35);
+  }
+  .p-promo b { font-size: 12.5px; } .p-promo small { display: block; color: var(--p-muted); font-size: 10.5px; margin-top: 2px; }
+  .p-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .p-tile {
+    background: var(--p-surface); border: 1px solid var(--p-line); border-radius: 14px; padding: 14px 11px;
+    display: flex; flex-direction: column; gap: 3px; min-height: 76px;
+  }
+  .p-tile .em { font-size: 17px; } .p-tile b { font-size: 12.5px; }
+  .p-tile small { color: var(--p-muted); font-size: 10px; }
+  .p-sec { display: flex; align-items: baseline; justify-content: space-between; }
+  .p-sec h3 { margin: 0; font-size: 12.5px; font-weight: 650; }
+  .p-sec span { font-size: 10.5px; color: var(--p-muted); }
+  .p-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+  .p-card { aspect-ratio: 4/5; border-radius: 12px; background: var(--p-surface2); border: 1px solid var(--p-line); }
+  .p-road {
+    background: var(--p-surface); border: 1px solid var(--p-line); border-radius: 16px; padding: 13px;
+    display: flex; flex-direction: column; gap: 9px;
+  }
+  .p-road .rh { display: flex; align-items: baseline; justify-content: space-between; }
+  .p-road b { font-size: 12.5px; } .p-road .ct { font-size: 10.5px; color: var(--p-muted); }
+  .p-road .track { height: 5px; border-radius: 999px; background: var(--p-surface2); overflow: hidden; }
+  .p-road .fill { height: 100%; width: 50%; background: var(--p-aurora); border-radius: 999px; }
+  .p-road .steps { display: flex; gap: 6px; }
+  .p-road .st { flex: 1; height: 28px; border-radius: 8px; background: var(--p-bg2); border: 1px solid var(--p-line); }
+  .p-road .st.on { background: rgba(124, 92, 255, .16); border-color: rgba(124, 92, 255, .45); }
+  .p-tab { display: flex; gap: 4px; border-top: 1px solid var(--p-line); padding-top: 9px; margin-top: 2px; }
+  .p-tab i { flex: 1; height: 22px; border-radius: 7px; background: var(--p-surface); font-style: normal; font-size: 9px; color: var(--p-faint); display: flex; align-items: center; justify-content: center; }
+  .p-tab i:first-child { background: rgba(124, 92, 255, .18); color: var(--p-ink); }
+
+  /* Studio-specific */
+  .p-seg { display: flex; gap: 6px; background: var(--p-surface); border: 1px solid var(--p-line); border-radius: 11px; padding: 3px; }
+  .p-seg button {
+    flex: 1; border: 0; background: transparent; color: var(--p-muted); font: inherit; font-size: 12px; font-weight: 650;
+    padding: 8px; border-radius: 8px; cursor: pointer;
+  }
+  .p-seg button[aria-pressed="true"] { background: var(--p-aurora); color: #fff; }
+  .p-dm {
+    display: flex; align-items: center; gap: 10px; background: var(--p-surface);
+    border: 1px solid var(--p-line); border-radius: 12px; padding: 10px 12px;
+  }
+  .p-dm .tx b { font-size: 12.5px; } .p-dm .tx small { display: block; color: var(--p-muted); font-size: 10px; }
+  .tgl { position: relative; width: 42px; height: 25px; flex: none; margin-left: auto; }
+  .tgl input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 2; }
+  .tgl .tr { position: absolute; inset: 0; border-radius: 999px; background: var(--p-surface2); border: 1px solid var(--p-line); transition: background .18s; }
+  .tgl input:checked ~ .tr { background: var(--p-aurora); border-color: transparent; }
+  .tgl .kn { position: absolute; top: 2px; left: 2px; width: 21px; height: 21px; border-radius: 50%; background: #fff; transition: transform .18s; }
+  .tgl input:checked ~ .kn { transform: translateX(17px); }
+  .tgl input:focus-visible ~ .tr { outline: 2px solid var(--p-magenta); outline-offset: 2px; }
+
+  .p-inputs { background: var(--p-surface); border: 1px solid var(--p-line); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 9px; }
+  .p-inputs .ttl { display: flex; align-items: baseline; justify-content: space-between; }
+  .p-inputs .ttl b { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--p-muted); }
+  .p-slots { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .slot {
+    aspect-ratio: 1; border-radius: 9px; background: var(--p-bg2); border: 1px dashed var(--p-line);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: var(--p-faint); font-size: 14px;
+  }
+  .slot small { font-size: 7.5px; letter-spacing: .02em; color: var(--p-faint); }
+  .slot.filled { border-style: solid; border-color: rgba(124, 92, 255, .4); background: rgba(124, 92, 255, .07); color: var(--p-violet); }
+  .slot.dm { border-color: rgba(255, 77, 141, .4); background: rgba(255, 77, 141, .07); color: var(--p-magenta); }
+  .slot.final { border-color: rgba(245, 182, 74, .45); background: rgba(245, 182, 74, .07); color: var(--p-amber); }
+  .slot.addslot { cursor: pointer; }
+  .chiprow { display: flex; gap: 6px; flex-wrap: wrap; }
+  .rchip {
+    border: 1px solid rgba(124, 92, 255, .4); background: rgba(124, 92, 255, .12); color: #c9bfff;
+    border-radius: 999px; padding: 5px 10px; font: inherit; font-size: 10.5px; font-weight: 650; cursor: pointer;
+  }
+  .p-prompt { background: var(--p-surface); border: 1px solid var(--p-line); border-radius: 12px; padding: 10px 11px; display: flex; flex-direction: column; gap: 8px; }
+  .p-prompt .pl { font-size: 10.5px; color: var(--p-muted); display: flex; gap: 6px; align-items: center; }
+  .p-prompt .chip { background: rgba(124, 92, 255, .14); border: 1px solid rgba(124, 92, 255, .4); color: #c9bfff; border-radius: 999px; padding: 2px 8px; font-size: 9.5px; font-weight: 650; }
+  .p-prompt .ta { min-height: 46px; font-size: 11.5px; color: var(--p-ink); line-height: 1.4; }
+  .p-prompt .row { display: flex; gap: 7px; }
+  .p-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+  .p-tags .tag {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 9.5px; font-weight: 650;
+    background: rgba(124, 92, 255, .14); border: 1px solid rgba(124, 92, 255, .42); color: #c9bfff;
+    border-radius: 999px; padding: 3px 8px;
+  }
+  .p-tags .tag i { font-style: normal; opacity: .65; }
+  .p-tags .add { background: transparent; border: 1px dashed var(--p-line); color: var(--p-faint); }
+  .p-prompt .row button {
+    flex: 1; border: 1px solid var(--p-line); background: var(--p-bg2); color: var(--p-muted);
+    border-radius: 9px; padding: 7px; font: inherit; font-size: 10.5px; font-weight: 650; cursor: pointer;
+  }
+  .p-row { background: var(--p-surface); border: 1px solid var(--p-line); border-radius: 11px; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
+  .p-row .v { color: var(--p-muted); font-size: 11px; }
+  .p-params {
+    background: var(--p-surface2); border: 1px solid rgba(124, 92, 255, .28); border-radius: 14px; padding: 10px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .p-params .pg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .p-params .pc {
+    background: var(--p-bg2); border: 1px solid var(--p-line); border-radius: 9px; padding: 7px 4px; text-align: center;
+  }
+  .p-params .pc small { display: block; font-size: 7.5px; color: var(--p-faint); letter-spacing: .04em; text-transform: uppercase; }
+  .p-params .pc b { font-size: 11px; }
+  .p-cta { border: 0; border-radius: 13px; padding: 13px; background: var(--p-aurora); color: #fff; font: inherit; font-size: 13.5px; font-weight: 750; cursor: pointer; width: 100%; }
+
+  .notes { display: flex; flex-direction: column; gap: 0; background: var(--card); border: 1px solid var(--hair); border-radius: 12px; overflow: hidden; }
+  .notes .n { display: grid; grid-template-columns: 46px 1fr; gap: 12px; padding: 11px 14px; border-bottom: 1px solid var(--hair); font-size: var(--step-0); }
+  .notes .n:last-child { border-bottom: 0; }
+  .notes .n code {
+    font: 650 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums;
+    color: #fff; border-radius: 4px; text-align: center; height: fit-content; padding: 2px 0;
+  }
+  code.cut { background: var(--cut); } code.move { background: var(--move); }
+  code.new { background: var(--new); } code.keep { background: var(--keep); }
+  .notes .n b { font-weight: 650; }
+  .notes .n span { color: var(--muted); }
+
+  .flag {
+    border-left: 3px solid var(--cut); background: var(--card); border-radius: 0 12px 12px 0;
+    padding: 16px 18px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .flag h3 { margin: 0; font-size: var(--step-1); }
+  .flag p { margin: 0; color: var(--muted); font-size: var(--step-0); max-width: 76ch; }
+  .hide { display: none !important; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Wireframe · home-studio · v3</div>
+    <h1>Главная и Студия — что остаётся, что уходит</h1>
+    <p>Скоуп двух экранов. Всё, чего здесь нет, вырезается из
+    <code>public/app.html</code>. Переключатель ниже показывает v1 (как было в
+    проде) против v3 (как стало) — тумблеры внутри макетов рабочие. Экран 1
+    (Главная) не менялся со v2. Экран 2 (Студия): v3 заменяет v2's «Входные
+    данные» — v2 рисовало один грид на источник/ракурс/аудио и отдельный
+    скрытый ряд для персонажей/локаций; в реализации это оказались фактически
+    два блока при включённом режиссёрском режиме, что и было отклонено. v3 —
+    единственный грид фото на всё, режиссёрский режим лишь добавляет туда
+    ячейки того же ряда, а аудио/видео живёт отдельной строкой ниже.</p>
+  </header>
+
+  <div class="bar">
+    <div class="seg" role="group" aria-label="Версия макета">
+      <button id="bV1" aria-pressed="false">v1 — было</button>
+      <button id="bV2" aria-pressed="true">v3 — стало</button>
+    </div>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--cut)"></i>вырезать</span>
+      <span><i class="dot" style="background:var(--move)"></i>переместить</span>
+      <span><i class="dot" style="background:var(--new)"></i>изменить</span>
+      <span><i class="dot" style="background:var(--keep)"></i>оставить</span>
+    </div>
+  </div>
+
+  <div class="screens">
+    <!-- ───────────────── ЭКРАН 1 ───────────────── -->
+    <section class="screen">
+      <h2>Экран 1 — Главная<small>вкладка «Студия», <code>data-page="studio"</code></small></h2>
+
+      <div class="phone">
+        <div class="blk"><span class="id keep">H2</span>
+          <div class="p-hdr">
+            <span class="p-av"></span><span class="p-nm">Мирас</span>
+            <span class="p-pills"><span class="p-pill">ур. 3</span><span class="p-pill">+ 24 🔫</span></span>
+          </div>
+        </div>
+
+        <div class="blk v1only"><span class="id cut">H3</span>
+          <div style="padding:14px 2px 4px">
+            <div style="font-size:19px;font-weight:750;line-height:1.15">Одно фото — целая студия</div>
+            <div style="color:var(--p-muted);font-size:11.5px;margin-top:4px">Выберите результат — ИИ сделает остальное.</div>
+          </div>
+        </div>
+
+        <div class="blk v1only"><span class="id cut">H4</span>
+          <div class="p-sec"><h3>🆕 Новые модели</h3></div>
+          <div style="display:flex;gap:7px;margin-top:7px">
+            <div style="flex:1;height:54px;border-radius:11px;background:var(--p-surface);border:1px solid var(--p-line)"></div>
+            <div style="flex:1;height:54px;border-radius:11px;background:var(--p-surface);border:1px solid var(--p-line)"></div>
+            <div style="width:34px;height:54px;border-radius:11px;background:var(--p-surface);border:1px solid var(--p-line);opacity:.5"></div>
+          </div>
+        </div>
+
+        <div class="blk"><span class="id keep">H5</span>
+          <div class="p-promo">
+            <b>🏷 Seedance дешевле вдвое</b>
+            <small>Видео 720p · 4–15 сек · до конца акции 2 дня</small>
+          </div>
+        </div>
+
+        <div class="blk"><span class="id keep">H6</span>
+          <div style="border-radius:14px;border:1px solid var(--p-line);background:var(--p-bg2);padding:9px">
+            <div style="aspect-ratio:16/9;border-radius:9px;background:var(--p-aurora);opacity:.55"></div>
+            <div style="font-size:10.5px;color:var(--p-muted);margin-top:6px">📺 ТВ-баннер — лучшее от Seedance</div>
+          </div>
+        </div>
+
+        <div class="blk"><span class="id keep">H7</span>
+          <div class="p-tiles">
+            <div class="p-tile"><span class="em">📸</span><b>Фото</b><small>пресет в один тап</small></div>
+            <div class="p-tile"><span class="em">🎬</span><b>Видео</b><small>оживить кадр</small></div>
+          </div>
+        </div>
+
+        <div class="blk"><span class="id keep">H8</span>
+          <div class="p-sec"><h3>Что снимаем?</h3><span>Все ›</span></div>
+          <div class="p-grid2" style="margin-top:7px"><div class="p-card"></div><div class="p-card"></div></div>
+        </div>
+
+        <div class="blk"><span class="id keep">H9</span>
+          <div style="font-size:10px;color:var(--p-faint);padding:2px">1 🔫 ≈ одна готовая работа</div>
+        </div>
+
+        <div class="blk"><span class="id new">H10</span>
+          <div class="p-road">
+            <div class="rh"><b>Ваш путь в NeuroShot</b><span class="ct">3 из 6</span></div>
+            <div class="track"><span class="fill"></span></div>
+            <div class="steps"><i class="st on"></i><i class="st on"></i><i class="st on"></i><i class="st"></i><i class="st"></i><i class="st"></i></div>
+            <div style="font-size:10px;color:var(--p-muted)">Ещё немного — и откроется следующая награда</div>
+          </div>
+        </div>
+
+        <div class="p-tab"><i>Студия</i><i>Профиль</i><i>Друзья</i><i>Патроны</i><i>Ещё</i></div>
+      </div>
+
+      <div class="notes">
+        <div class="n"><code class="cut">H3</code><span><b>Хиро «Одно фото — целая студия»</b> — вырезать. Описание уходит в <code>graveyard.md</code>.</span></div>
+        <div class="n"><code class="cut">H4</code><span><b>«🆕 Новые модели»</b> — вырезать. Был в v1 — v2 отменяет.</span></div>
+        <div class="n"><code class="new">H10</code><span><b>Роадмап</b> — редизайн: прогресс-полоса, отступы, поля.</span></div>
+        <div class="n"><code class="keep">H6</code><span><b>ТВ-баннер</b> — не решено. Сделан 1 авг по прямой просьбе, уже после v1.</span></div>
+        <div class="n"><code class="keep">H9</code><span><b>Строка про патрон</b> — не решено.</span></div>
+      </div>
+    </section>
+
+    <!-- ───────────────── ЭКРАН 2 ───────────────── -->
+    <section class="screen">
+      <h2>Экран 2 — Студия<small>лист создания, <code>viewStudio()</code></small></h2>
+
+      <div class="phone">
+        <div style="display:flex;align-items:baseline;justify-content:space-between">
+          <b style="font-size:15px">Студия</b><span style="font-size:10.5px;color:var(--p-faint)">✕</span>
+        </div>
+
+        <div class="blk v1only"><span class="id cut">S1</span>
+          <div style="border-radius:11px;border:1px solid rgba(245,182,74,.35);background:rgba(245,182,74,.1);padding:9px 11px;font-size:11px;color:var(--p-amber)">
+            🏷 Seedance −50% — до конца акции 2 дня 14 ч
+          </div>
+        </div>
+
+        <div class="blk"><span class="id move">S8</span>
+          <div class="p-seg" role="group" aria-label="Режим">
+            <button id="mImg" aria-pressed="false">🖼 Фото</button>
+            <button id="mVid" aria-pressed="true">🎬 Видео</button>
+          </div>
+        </div>
+
+        <div class="blk v2only"><span class="id move">S11</span>
+          <div class="p-dm">
+            <span class="tx"><b>Режиссёрский режим</b><small>персонажи, локации, раскадровка</small></span>
+            <label class="tgl"><input type="checkbox" id="dm" aria-label="Режиссёрский режим" /><span class="tr"></span><span class="kn"></span></label>
+          </div>
+        </div>
+
+        <div class="blk v2only"><span class="id new">S5–S7 · S16</span>
+          <div class="p-inputs">
+            <div class="ttl"><b>Референсные фото</b><span style="font-size:10px;color:var(--p-faint)" id="inCount">1 фото</span></div>
+            <div class="p-slots" id="refSlots">
+              <div class="slot filled">📷</div>
+              <div class="slot final">🏁<small>финал</small></div>
+              <div class="slot addslot" id="refAdd">＋</div>
+            </div>
+            <div class="chiprow hide" id="roleChips">
+              <button class="rchip" data-role="source">📷 Источник</button>
+              <button class="rchip" data-role="character">👤 Персонаж</button>
+              <button class="rchip" data-role="location">📍 Локация</button>
+            </div>
+            <div style="font-size:9.5px;color:var(--p-faint)" id="inHint">Один грид — источник, финал и (для Seedance) персонаж/локация. «＋» на других моделях сразу открывает выбор фото — вопрос про роль тут не появляется вовсе.</div>
+          </div>
+        </div>
+
+        <div class="blk v2only"><span class="id keep">аудио/видео</span>
+          <div class="p-inputs">
+            <div class="ttl"><b>Аудио / видео</b><span style="font-size:10px;color:var(--p-faint)">0 / 3</span></div>
+            <div class="p-slots"><div class="slot">🎵</div><div class="slot">🎞</div><div class="slot addslot">＋</div></div>
+            <div style="font-size:9.5px;color:var(--p-faint)">Отдельная строка ниже грида фото — не участвует в счётчике «Входные данные» и не смешивается с ролями.</div>
+          </div>
+        </div>
+
+        <div class="blk v1only"><span class="id cut">S2</span>
+          <div style="display:flex;gap:6px;align-items:center;background:var(--p-surface);border:1px solid var(--p-line);border-radius:11px;padding:9px 10px">
+            <span style="font-size:11.5px;font-weight:650">Студийный портрет</span>
+            <span style="margin-left:auto;font-size:9.5px;color:var(--p-muted);border:1px solid var(--p-line);border-radius:999px;padding:2px 7px">✎ Изменить</span>
+          </div>
+        </div>
+
+        <div class="blk"><span class="id move">S3 · S4</span>
+          <div class="p-prompt">
+            <span class="pl"><span>Промпт</span></span>
+            <div class="ta">Аня у окна на рассвете, смотрит в кадр…</div>
+            <div class="p-tags v2only">
+              <span class="tag">Студийный портрет <i>✕</i></span>
+              <span class="tag add">＋ стиль</span>
+            </div>
+            <div class="row"><button>✨ Улучшить</button><button>↩ Вернуть</button></div>
+            <div class="v2only" style="font-size:9px;color:var(--p-faint)">Стиль добавляется тегом — промпт остаётся вашим. «Показать промпт стиля» раскрывает его целиком.</div>
+          </div>
+        </div>
+
+        <div class="blk v1only"><span class="id move">S5–S7</span>
+          <div class="p-inputs">
+            <div class="ttl"><b>Референсы</b><span style="font-size:10px;color:var(--p-faint)">2 / 6</span></div>
+            <div class="p-slots"><div class="slot filled">01</div><div class="slot filled">02</div><div class="slot">＋</div><div class="slot">＋</div></div>
+            <div style="font-size:9.5px;color:var(--p-faint)">🎵 аудио 0/3 · 🎞 видео 1/3 — отдельными рядами</div>
+          </div>
+        </div>
+
+        <div class="blk v1only"><span class="id move">S8</span>
+          <div class="p-seg"><button aria-pressed="false">🖼 Фото</button><button aria-pressed="true">🎬 Видео</button></div>
+        </div>
+
+        <div class="blk"><span class="id keep">S9</span>
+          <div class="p-row"><span>Модель</span><span class="v">Seedance 2.0 · от 6 🔫 ▾</span></div>
+        </div>
+
+        <div class="blk"><span class="id keep">S10</span>
+          <div class="p-row"><span>Уровень качества</span><span class="v">Быстро</span></div>
+        </div>
+
+        <div class="blk v1only"><span class="id move">S11</span>
+          <div class="p-dm"><span class="tx"><b>Режиссёрский режим</b><small>внизу, после всех параметров</small></span>
+            <label class="tgl"><input type="checkbox" aria-label="Режиссёрский режим (v1)" /><span class="tr"></span><span class="kn"></span></label></div>
+        </div>
+
+        <div class="blk v1only"><span class="id cut">S16</span>
+          <div class="p-row"><span>Финальный кадр</span><span class="v">＋ добавить</span></div>
+        </div>
+
+        <div class="blk vidonly"><span class="id new">S12–S15</span>
+          <div class="p-params">
+            <div class="pg">
+              <div class="pc"><small>формат</small><b>9:16</b></div>
+              <div class="pc"><small>качество</small><b>720p</b></div>
+              <div class="pc"><small>кол-во</small><b>1</b></div>
+              <div class="pc"><small>длит.</small><b>6с</b></div>
+            </div>
+            <button class="p-cta">Создать за 12 🔫</button>
+          </div>
+        </div>
+        <div class="blk imgonly hide">
+          <button class="p-cta">Создать за 3 🔫</button>
+        </div>
+      </div>
+
+      <div class="notes">
+        <div class="n"><code class="cut">S1</code><span><b>Баннер акции</b> — убрать. Вернётся картинкой с готовым дизайном, не текстом.</span></div>
+        <div class="n"><code class="new">S2</code><span><b>Чип пресета</b> — промпт вставляется в поле, название пресета остаётся рядом меткой. <b>Есть конфликт</b> ↓</span></div>
+        <div class="n"><code class="move">S3 S4</code><span><b>Промпт и «Улучшить»</b> — под входные данные, кнопка рядом с полем.</span></div>
+        <div class="n"><code class="new">S5–S7<br>S16</code><span><b>Референсные фото</b> — один грид, всегда, режиссёрский режим или нет. Финал — слот в том же гриде, показан только для моделей с `endFrame` (Kling-семейство, Seedance-тиры), взаимоисключающе со вторым референсным фото — при переходе в режим нескольких фото слот финала очищается и объясняется тостом, а не пропадает молча. Никакого «ракурса» как отдельного понятия и никакого переключателя товар/персонаж — на «＋» либо сразу открывается выбор фото (не-Seedance модели), либо предлагается роль (Источник / Персонаж / Локация — только Seedance). Аудио/видео — отдельная строка ниже грида, не часть счётчика.</span></div>
+        <div class="n"><code class="move">S8</code><span><b>Фото / Видео</b> — наверх, к заголовку листа.</span></div>
+        <div class="n"><code class="move">S11</code><span><b>Режиссёрский режим</b> — строкой под заголовком. Включение добавляет ячейки персонажа/локации в тот же грид референсных фото — второго блока нет ни визуально, ни в разметке.</span></div>
+        <div class="n"><code class="new">S12–S15</code><span><b>Параметры рендера</b> — закреплены прямо над «Создать»: тратим патроны — видим, на что.</span></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="flag" style="border-left-color:var(--new)">
+    <h3>S2 — стиль приходит тегом, промпт остаётся пользовательским</h3>
+    <p><b>Поле промпта одно и всегда пустое под свой текст.</b> Выбранный пресет
+    не занимает его собой, а вешается <b>тегом</b> рядом — видно, что стиль
+    применён, видно какой, и его можно снять одним тапом. Свой текст
+    дописывается сверху, а не вместо.</p>
+    <p>Так снимается противоречие, которое вылезло бы при «вставить промпт
+    пресета в поле»: наш заявленный принцип — <i>one-tap presets, no prompt
+    engineering</i>, а стена английского текста в поле при выборе пресета — это
+    ровно prompt engineering, вывалённый на человека. Тег показывает <i>что</i>
+    делает стиль, не заставляя читать <i>как</i>. Промпт при этом не прячем —
+    «показать промпт стиля» раскрывает его целиком, открыто, как договорились.</p>
+    <p><b>По проводу почти ничего не меняется:</b> <code>{source:"preset", id,
+    custom}</code> — ровно то, что отправляется сегодня.
+    <code>source_kind:"preset"</code> и <code>source_id</code> остаются, значит
+    аналитика по пресетам жива. Единственная правка на сервере:
+    <code>user_prompt</code> сейчас пишется только для <code>source:"model"</code>
+    (<code>webapp.ts:1358</code>) — надо писать и для пресетов, иначе «Повторить»
+    и карточка деталей не покажут, что человек набрал сам. И лимит
+    <code>custom</code> в 200 символов стоит поднять: он писался под «дописку», а
+    теперь это основное поле ввода.</p>
+  </div>
+</div>
+
+<script>
+  const root = document.documentElement;
+  const bV1 = document.getElementById("bV1"), bV2 = document.getElementById("bV2");
+  const setVer = (v2) => {
+    bV2.setAttribute("aria-pressed", String(v2));
+    bV1.setAttribute("aria-pressed", String(!v2));
+    document.querySelectorAll(".v2only").forEach((el) => el.classList.toggle("hide", !v2));
+    document.querySelectorAll(".v1only").forEach((el) => el.classList.toggle("hide", v2));
+  };
+  bV1.onclick = () => setVer(false);
+  bV2.onclick = () => setVer(true);
+
+  // Director Mode appends cells INTO the same #refSlots grid — no second grid,
+  // no accordion. This is the exact point the first attempt got wrong: it drew
+  // persona/location as a hidden SECOND .p-slots row, so toggling DM produced
+  // two blocks again. v3 mutates one array instead.
+  const dm = document.getElementById("dm");
+  const hint = document.getElementById("inHint"), count = document.getElementById("inCount");
+  const refSlots = document.getElementById("refSlots");
+  const refAdd = document.getElementById("refAdd");
+  const roleChips = document.getElementById("roleChips");
+  let dmCellsAdded = false;
+  const addDmCells = () => {
+    if (dmCellsAdded) return;
+    dmCellsAdded = true;
+    const person = document.createElement("div");
+    person.className = "slot dm"; person.innerHTML = "👤";
+    const place = document.createElement("div");
+    place.className = "slot dm"; place.innerHTML = "📍";
+    refSlots.insertBefore(person, refAdd);
+    refSlots.insertBefore(place, refAdd);
+  };
+  const removeDmCells = () => {
+    dmCellsAdded = false;
+    refSlots.querySelectorAll(".slot.dm").forEach((el) => el.remove());
+  };
+  dm.onchange = () => {
+    if (dm.checked) addDmCells(); else removeDmCells();
+    hint.textContent = dm.checked
+      ? "Режиссёрский режим добавил ячейки персонажа/локации в тот же грид — «＋» теперь предлагает выбор роли"
+      : "Один грид — источник, финал и (для Seedance) персонаж/локация. «＋» на других моделях сразу открывает выбор фото — вопрос про роль тут не появляется вовсе.";
+    count.textContent = dm.checked ? "1 фото · 2 карты" : "1 фото";
+    roleChips.classList.add("hide");
+  };
+
+  // "＋" — on a Seedance/video screen (this mockup's fixed context) offers a
+  // role choice, but ONLY once Director Mode is on; otherwise it behaves like
+  // any other model and would just open a file picker (not reproduced here,
+  // out of scope for a static mockup).
+  refAdd.onclick = () => {
+    if (!dm.checked) { hint.textContent = "На не-Seedance моделях «＋» открыл бы выбор фото напрямую — роль не спрашивается."; return; }
+    roleChips.classList.toggle("hide");
+  };
+  roleChips.querySelectorAll(".rchip").forEach((chip) => {
+    chip.onclick = () => {
+      roleChips.classList.add("hide");
+      hint.textContent = `Выбрано: ${chip.textContent.trim()} — попадает в тот же грид, не в отдельный блок.`;
+    };
+  });
+
+  const mImg = document.getElementById("mImg"), mVid = document.getElementById("mVid");
+  const setMode = (vid) => {
+    mVid.setAttribute("aria-pressed", String(vid));
+    mImg.setAttribute("aria-pressed", String(!vid));
+    document.querySelectorAll(".vidonly").forEach((el) => el.classList.toggle("hide", !vid));
+    document.querySelectorAll(".imgonly").forEach((el) => el.classList.toggle("hide", vid));
+  };
+  mImg.onclick = () => setMode(false);
+  mVid.onclick = () => setMode(true);
+
+  setVer(true);
+</script>

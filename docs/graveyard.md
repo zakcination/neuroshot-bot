@@ -75,8 +75,45 @@ separate drop zone, for the frame a video morphs toward.
 image", sitting far away from the other three. It is an input, and inputs now
 live in one block.
 
-**Replaced by:** a labelled slot (`🏁 финал`) inside the unified input section,
-alongside источник / ракурсы / аудио / видео.
+**Replaced by:** a `🏁 финал` cell inside the same reference-photo grid as
+источник (and, for Seedance with Director Mode on, персонаж/локация) — shown
+only for `endFrame`-capable models and mutually exclusive with multi-photo
+reference mode (adding a second photo clears it, with a toast explaining why,
+not a silent disappearance). Audio/video stay a separate row below the grid —
+they were never merged into it (see `home-studio.v3.html`).
+
+### Subject toggle + «ракурс» framing *(S5–S7 first convergence attempt)*
+
+**Was:** a товар/персонаж (subject) toggle above the extras grid, and every
+non-source reference photo labelled «ракурс» (angle).
+
+**Why it went:** neither concept did real work. The subject toggle asked the
+user to classify their own upload before the model needed to know; «ракурс»
+assumed every extra photo was another angle of the same subject, which was
+never true once Director Mode's named character/location photos entered the
+same grid. Cut per direct product decision — the unified grid speaks in roles
+(Источник / Персонаж / Локация) that already exist in the server's own
+`image_roles` model, not in a UI-only vocabulary invented on top of it.
+
+**Replaced by:** the single reference-photo grid's role choice, offered only
+where more than one role is actually possible (the Seedance umbrella model).
+Every other model's "＋" just adds a source photo, no question asked.
+
+### Персонажи / Локации as standalone accordions *(director-mode v1)*
+
+**Was:** two always-open, independently-collapsible accordion sections
+(`director-mode.v1.html`), living below the ordinary photo slots — Director
+Mode on meant a SECOND input block appeared alongside the first.
+
+**Why it went:** direct product rejection of an intermediate rebuild ("Неет
+все еще не то... у нас 2 блока входных данных, при режиссёрском режиме, хотя
+так не должно быть") — the goal was always one grid, Director Mode on or off,
+not one grid plus two accordions.
+
+**Replaced by:** 👤/📍 cells inside the same reference-photo grid as источник
+and финал. The underlying mechanic (name + photo(s) → paid «Собрать карту»
+sheet generation) is unchanged — only the entry point moved, from a dedicated
+section to the grid's shared "＋".
 
 ### Manual shot-type picker *(Director Mode)*
 
