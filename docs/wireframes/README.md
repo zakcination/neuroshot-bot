@@ -34,8 +34,10 @@ NeuroShot — <Screen> — v<N>
 | Screen | Version | Status | Date | Artifact |
 |---|---|---|---|---|
 | `home-studio` | **v1** | superseded by v2 | 30 Jul 2026 | [костяк экранов](https://claude.ai/code/artifact/68737391-34c0-42dd-bd84-fab249f487f0) |
-| `home-studio` | **v2** | current | 2 Aug 2026 | [Главная + Студия — v2](https://claude.ai/code/artifact/ebfe8e5b-e55f-468e-9c82-f6978975a2db) |
-| `director-mode` | **v1** | current, shipped | 1 Aug 2026 | [Режиссёрский режим](https://claude.ai/code/artifact/421907d2-ad0b-4fc9-96c0-23d8108606ea) |
+| `home-studio` | **v2** | superseded by v3 | 2 Aug 2026 | [Главная + Студия — v2](https://claude.ai/code/artifact/ebfe8e5b-e55f-468e-9c82-f6978975a2db) |
+| `home-studio` | **v3** | current, shipped | 3 Aug 2026 | [Главная + Студия — v3](https://claude.ai/code/artifact/0266cf09-8969-44e3-8d28-9f6bff2859d6) |
+| `director-mode` | **v1** | superseded by v2 | 1 Aug 2026 | [Режиссёрский режим](https://claude.ai/code/artifact/421907d2-ad0b-4fc9-96c0-23d8108606ea) |
+| `director-mode` | **v2** | current, shipped | 3 Aug 2026 | [Режиссёрский режим — v2](https://claude.ai/code/artifact/e9b5deab-2ef0-4e6d-9d17-dfca5d158060) |
 | `tv-banner` | **v1** | current, shipped | 1 Aug 2026 | [ТВ-баннер](https://claude.ai/code/artifact/7cd6baaf-d296-4d22-8912-7a852beef573) |
 
 Related, not wireframes: the [Director Mode
