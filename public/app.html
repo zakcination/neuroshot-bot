@@ -1459,10 +1459,6 @@
     .refslot input { display: none; }
     .xdel { width: 20px; height: 20px; border: 0; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; font: inherit; font-size: 11px; line-height: 20px; padding: 0; cursor: pointer; }
     .refslot .xdel { position: absolute; z-index: 1; top: 4px; right: 4px; }
-    .refmore {
-      grid-column: 1 / -1; border: 1px dashed var(--line); background: var(--surface); color: var(--ink);
-      border-radius: var(--radius-s); padding: 10px; font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer;
-    }
     .rights { display:flex; gap:8px; align-items:flex-start; margin-top:8px; font-size:12.5px; line-height:1.35;
       color:var(--muted); cursor:pointer; }
     .rights input { margin-top:2px; flex:0 0 auto; width:16px; height:16px; }
@@ -1481,14 +1477,32 @@
     .refslot.filled.video { background: linear-gradient(155deg, rgba(255,77,141,.38), rgba(255,77,141,.08) 70%), var(--surface-2); }
     .refslot .rf-ic { position: relative; z-index: 1; font-size: 17px; line-height: 1; }
     .refslot .rf-dur { position: relative; z-index: 1; font-size: 10px; font-weight: 800; color: #fff; }
-    /* Reference-mode subject toggle (Seedance): decides whether the multi-photo
-       input is framed to the model as a face or an object — see referencePrompt
-       in src/models.ts. Two plain chips, not a dropdown: it is one decision made
-       once per render, and it needs to read at a glance before anyone uploads a
-       second photo, not after. */
-    .subjtoggle { display: flex; gap: 8px; }
-    .schip { flex: 1 1 0; padding: 9px 10px; border-radius: var(--radius-s); border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; text-align: center; }
-    .schip.on { border-color: var(--violet); background: rgba(124,92,255,.14); color: var(--violet); }
+    /* Unified reference grid (docs/wireframes — home-studio wireframe, version
+       2, S5-S7·S16): source extras, the end frame, and — Director Mode on —
+       named character/location cards all render as cells of the SAME grid,
+       replacing the old separate extras grid + two collapsible accordions.
+       .person/.place mirror .filled.audio/.video's color-coded-background
+       convention just above. */
+    .refslot.person, .refslot.place {
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 4px;
+    }
+    .refslot.person { background: linear-gradient(155deg, rgba(124,92,255,.32), rgba(124,92,255,.06) 70%), var(--surface-2); }
+    .refslot.place { background: linear-gradient(155deg, rgba(245,182,74,.32), rgba(245,182,74,.06) 70%), var(--surface-2); }
+    .refslot .rf-lbl {
+      position: relative; z-index: 1; font-size: 9.5px; font-weight: 700; text-align: center; line-height: 1.2;
+      max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 2px;
+    }
+    .refslot .rf-spin {
+      width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--violet); border-top-color: transparent;
+      animation: dmspin 1s linear infinite;
+    }
+    .refslot.error { border-color: rgba(232,105,125,.5); }
+    .refslot .rf-err { font-size: 15px; }
+    .refslot.final { border: 1px dashed var(--amber); background: rgba(245,182,74,.06); color: var(--amber); }
+    .refslot.final.filled { border-style: solid; }
+    /* A ready character/location card excluded from this render (x.use false)
+       — dimmed rather than removed, so re-including it is one tap back. */
+    .refslot.unused { opacity: .4; }
 
     /* ————— Director Mode (Seedance) — iOS-style toggle on the aurora gradient,
        three optional accordions (Персонажи / Локации / Кадр), storyboard
@@ -1527,47 +1541,16 @@
     .acc.open .chev { transform: rotate(180deg); }
     .acc-body { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 10px; }
     .acc-hint { font-size: 11.5px; color: var(--muted); margin: 0; line-height: 1.45; }
-    .char-list { display: flex; flex-direction: column; gap: 8px; }
-    .char-card {
-      display: flex; align-items: center; gap: 9px; background: var(--surface-2); border: 1px solid var(--line);
-      border-radius: 13px; padding: 9px 10px;
-    }
-    .char-src {
-      width: 38px; height: 38px; border-radius: 9px; flex: none; overflow: hidden;
-      border: 1px solid rgba(124, 92, 255, .45); background: var(--bg-2);
-      display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 15px;
-    }
-    .char-src img { width: 100%; height: 100%; object-fit: cover; display: block; }
-    .char-arrow { color: var(--faint); font-size: 13px; flex: none; }
-    .char-sheet {
-      width: 48px; height: 38px; border-radius: 8px; flex: none; overflow: hidden; padding: 0;
-      border: 1px solid rgba(255, 77, 141, .4); background: var(--bg-2); cursor: pointer; font: inherit;
-      display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px;
-    }
-    .char-sheet img { width: 100%; height: 100%; object-fit: cover; display: block; }
-    .char-sheet .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--violet); border-top-color: transparent; animation: dmspin 1s linear infinite; }
     @keyframes dmspin { to { transform: rotate(360deg); } }
-    .char-meta { flex: 1; min-width: 0; }
-    .char-meta b { display: block; font-size: 12.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .char-meta small { display: block; font-size: 10.5px; color: var(--muted); margin-top: 1px; }
-    .char-meta small.err { color: var(--amber); }
-    .char-use {
-      border: 1px solid var(--line); background: var(--bg-2); color: var(--muted); border-radius: 999px;
-      padding: 3px 9px; margin-top: 5px; font: inherit; font-size: 10.5px; font-weight: 700; cursor: pointer;
-    }
-    .char-use.on { border-color: rgba(124, 92, 255, .5); color: var(--violet); background: rgba(124, 92, 255, .1); }
-    .char-retry {
-      border: 1px solid rgba(245, 182, 74, .4); background: rgba(245, 182, 74, .1); color: var(--amber); border-radius: 999px;
-      padding: 3px 9px; margin: 5px 0 0 6px; font: inherit; font-size: 10.5px; font-weight: 700; cursor: pointer;
-    }
-    .char-del {
-      width: 22px; height: 22px; border-radius: 50%; background: var(--bg-2); border: 1px solid var(--line);
-      color: var(--muted); font: inherit; font-size: 10px; line-height: 1; display: flex; align-items: center;
-      justify-content: center; flex: none; cursor: pointer; padding: 0;
-    }
     .char-add-card { display: flex; flex-direction: column; gap: 8px; border: 1.5px dashed var(--line); border-radius: 13px; padding: 11px; }
+    .char-add-row { display: flex; align-items: flex-start; gap: 8px; }
+    .char-add-row > div { flex: 1; min-width: 0; }
     .char-add-row b { font-size: 12.5px; font-weight: 700; display: block; }
     .char-add-row small { font-size: 10.5px; color: var(--muted); display: block; margin-top: 1px; }
+    .char-add-cancel {
+      flex: none; width: 22px; height: 22px; border: 0; border-radius: 50%; background: var(--surface-2);
+      color: var(--muted); font: inherit; font-size: 11px; cursor: pointer;
+    }
     .char-add-card .refgrid { margin-top: 0; }
     .char-gen-btn {
       text-align: center; padding: 10px; border-radius: 10px; border: 1px solid rgba(245, 182, 74, .4);
@@ -1623,8 +1606,6 @@
     .assemble-btn:disabled { opacity: .6; cursor: default; }
     .assemble-btn.pulse { animation: dmpulse 2.2s ease-in-out infinite; }
     @keyframes dmpulse { 50% { box-shadow: 0 10px 34px -8px rgba(255, 77, 141, .8); transform: scale(1.015); } }
-    .dmzoom { position: fixed; inset: 0; z-index: 80; background: rgba(0, 0, 0, .88); display: flex; align-items: center; justify-content: center; padding: 18px; cursor: zoom-out; }
-    .dmzoom img { max-width: 100%; max-height: 100%; border-radius: 12px; }
 
     /* Generation detail rows (openViewer) + the failed-render strip in «Мои работы». */
     .gmeta { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 2px 13px; margin-top: 12px; }
@@ -1694,7 +1675,7 @@
     .toast.wide { border-radius: 16px; text-align: left; font-weight: 500; line-height: 1.45; width: min(92vw, 420px); }
 
     @media (prefers-reduced-motion: reduce) {
-      .sky i, .orb, .shot.pending .rip, .assemble-btn.pulse, .char-sheet .spin { animation: none; }
+      .sky i, .orb, .shot.pending .rip, .assemble-btn.pulse, .rf-spin { animation: none; }
       .shot.pending .rip { opacity: .5; transform: scale(1.6); } /* static ring instead of ripple */
       .reveal { opacity: 1; transform: none; transition: none; }
       .btn, .act, .shot, .pack, .sheet, .sheet-bg, .pcard { transition: none; }
@@ -3781,6 +3762,12 @@
     function directorModeHtml() {
       const m = studioModel();
       if (stu.mode !== "video" || !m || m.key !== "seedance") return "";
+      // Персонажи/Локации used to be their own accordions here — they now
+      // render as cells of the unified reference grid (extrasBlock, below the
+      // photo zone), alongside plain source photos and the final frame. Only
+      // the scene-planning half of Director Mode (scenario → shot split →
+      // assemble) is a photo INPUT's opposite — text and AI-picked framing,
+      // not a reference photo — so it's the only thing still gated here.
       return `
         <div class="toggle-row">
           <div class="lbl">Режиссёрский режим<small>персонажи, локации, раскадровка</small></div>
@@ -3790,8 +3777,6 @@
           </label>
         </div>
         ${stu.director ? `
-          ${dmCastAccordion("character")}
-          ${dmCastAccordion("location")}
           ${dmShotAccordion()}
           ${dmAssembleHtml()}` : ""}`;
     }
@@ -3799,61 +3784,37 @@
     const DM_COPY = {
       character: { n: "①", title: "Персонажи", empty: "нет",
         hint: "Одно фото и больше — на выходе карта: ракурсы, мимика, детали. Её увидит модель, когда будет снимать вашу сцену.",
-        add: "Добавить персонажа", ph: "Аня, рыжий кот, робот…", em: "📸", none: "Персонаж",
+        add: "Добавить персонажа", ph: "Аня, рыжий кот, робот…", em: "👤", none: "Персонаж",
         textPh: "необязательно: характер, поза, стиль одежды — то, что фото не передаёт" },
       location: { n: "②", title: "Локации", empty: "нет",
         hint: "То же для места действия — необязательно, но с картой локация не «плывёт» между кадрами.",
-        add: "Добавить локацию", ph: "кухня, лес, ангар…", em: "🏞", none: "Локация",
+        add: "Добавить локацию", ph: "кухня, лес, ангар…", em: "📍", none: "Локация",
         textPh: "необязательно: время суток, погода, настроение места" },
     };
 
-    function dmCastAccordion(kind) {
-      const c = DM_COPY[kind];
-      const secKey = kind === "character" ? "chars" : "locs";
-      const open = !!stu.dmSec[secKey];
-      const list = dmList(kind);
-      const ready = list.filter((x) => x.sheetUrl).length;
-      const state = !list.length ? c.empty
-        : `${dmCast(kind).length} из ${list.length}${ready < list.length ? " · готовится" : ""}`;
+    /**
+     * One cell of the unified reference grid (extrasBlock) for a Director
+     * Mode character/location — same states dmEntryCardHtml used to show as a
+     * standalone row card (pending/ready/error, in-shot toggle), now a
+     * `.refslot` like every other cell. Ready shows the generated sheet like
+     * any other photo (img + a label instead of an index tag); not-yet-ready
+     * uses the person/place color treatment (spinner or a warning glyph) —
+     * there's no photo to show yet, so it can't pretend to be one.
+     */
+    function dmEntryCellHtml(kind, x) {
+      if (x.sheetUrl) {
+        return `
+          <div class="refslot filled ${!x.use ? "unused" : ""}" data-dm-cell="${kind}:${esc(x.id)}">
+            <img src="${esc(x.sheetUrl)}" alt="" />
+            <span class="rf-idx">${esc(x.label)}</span>
+            <button class="xdel" type="button" data-dm-act="${kind}:del:${esc(x.id)}" aria-label="Удалить">✕</button>
+          </div>`;
+      }
       return `
-        <div class="acc ${open ? "open" : ""}">
-          <button class="acc-head" type="button" data-dm-sec="${secKey}" aria-expanded="${open}">
-            <span class="t"><span class="n">${c.n}</span><b>${c.title}</b></span>
-            <span class="state">${esc(state)}</span><span class="chev">▼</span>
-          </button>
-          ${open ? `<div class="acc-body">
-            <p class="acc-hint">${esc(c.hint)}</p>
-            ${list.length ? `<div class="char-list">${list.map((x) => dmEntryCardHtml(kind, x)).join("")}</div>` : ""}
-            ${dmAddCardHtml(kind)}
-          </div>` : ""}
-        </div>`;
-    }
-
-    function dmEntryCardHtml(kind, x) {
-      const src = x.photos && x.photos[0] ? `<img src="${esc(x.photos[0].url)}" alt="" />` : DM_COPY[kind].em;
-      const sheetCell = x.sheetUrl
-        ? `<button class="char-sheet" type="button" data-dm-zoom="${esc(x.sheetUrl)}" aria-label="Открыть карту"><img src="${esc(x.sheetUrl)}" alt="" /></button>`
-        : x.pending ? `<span class="char-sheet"><i class="spin"></i></span>`
-        : `<span class="char-sheet">${x.error ? "⚠" : "—"}</span>`;
-      const status = x.pending ? "карта готовится…"
-        : x.error ? esc(x.error)
-        : x.sheetUrl ? `карта готова · ${x.photos.length} фото`
-        : "нет карты";
-      return `
-        <div class="char-card">
-          <span class="char-src">${src}</span>
-          <span class="char-arrow">→</span>
-          ${sheetCell}
-          <span class="char-meta">
-            <b>${esc(x.label)}</b>
-            ${x.text ? `<small class="char-desc">${esc(x.text)}</small>` : ""}
-            <small class="${x.error ? "err" : ""}">${status}</small>
-            <span>
-              ${x.sheetUrl ? `<button class="char-use ${x.use ? "on" : ""}" type="button" data-dm-act="${kind}:use:${esc(x.id)}" aria-pressed="${!!x.use}">${x.use ? "✓ в кадре" : "не в кадре"}</button>` : ""}
-              ${x.error ? `<button class="char-retry" type="button" data-dm-act="${kind}:retry:${esc(x.id)}">↻ Ещё раз${dmSheetPrice() ? ` · ${dmSheetPrice()} ${PATRON}` : ""}</button>` : ""}
-            </span>
-          </span>
-          <button class="char-del" type="button" data-dm-act="${kind}:del:${esc(x.id)}" aria-label="Удалить">✕</button>
+        <div class="refslot ${kind === "character" ? "person" : ""}${kind === "location" ? "place" : ""} filled ${x.error ? "error" : ""}" data-dm-cell="${kind}:${esc(x.id)}">
+          ${x.pending ? `<span class="rf-spin"></span>` : `<span class="rf-err">${x.error ? "⚠" : DM_COPY[kind].em}</span>`}
+          <span class="rf-lbl">${esc(x.label)}</span>
+          <button class="xdel" type="button" data-dm-act="${kind}:del:${esc(x.id)}" aria-label="Удалить">✕</button>
         </div>`;
     }
 
@@ -3866,7 +3827,10 @@
       const short = price > 0 && price > ME.dashboard.credits;
       return `
         <div class="char-add-card">
-          <div class="char-add-row"><b>${esc(c.add)}</b><small>имя — чтобы отличать в раскадровке</small></div>
+          <div class="char-add-row">
+            <div><b>${esc(c.add)}</b><small>имя — чтобы отличать в раскадровке</small></div>
+            <button type="button" class="char-add-cancel" data-dm-cancel="${kind}" aria-label="Отмена">✕</button>
+          </div>
           <input class="words" id="dm${kind === "character" ? "Char" : "Loc"}Label" maxlength="60" placeholder="${esc(c.ph)}" value="${esc(draft ? draft.label || "" : "")}" />
           <textarea class="words dm-text" id="dm${kind === "character" ? "Char" : "Loc"}Text" maxlength="300" placeholder="${esc(c.textPh)}" style="margin-top:6px">${esc(draft ? draft.text || "" : "")}</textarea>
           <div class="refgrid">
@@ -3880,7 +3844,7 @@
               <span>＋</span>
             </label>` : ""}
           </div>
-          <small class="acc-hint">${photos.length ? `${photos.length} из ${dmPhotoMax()} · больше ракурсов — точнее сходство` : "минимум одно фото"}</small>
+          <small class="acc-hint">${photos.length ? `${photos.length} из ${dmPhotoMax()} · больше фото — точнее сходство` : "минимум одно фото"}</small>
           <button class="char-gen-btn" type="button" id="dm${kind === "character" ? "Char" : "Loc"}GenBtn" ${!photos.length || busy ? "disabled" : ""}>
             ${busy ? "⏳ Отправляю…" : short ? `Пополнить · нужно ${price} ${PATRON}` : `✨ Собрать карту${price ? ` · ${price} ${PATRON}` : ""}`}
           </button>
@@ -3930,12 +3894,6 @@
         </button>`;
     }
 
-    function dmZoom(url) {
-      const z = $(`<div class="dmzoom"><img src="${esc(url)}" alt="Карта" /></div>`);
-      z.onclick = () => z.remove();
-      document.body.appendChild(z);
-    }
-
     const RATIO_LABEL = { auto: "Как фото", "9:16": "9:16 ↕", "16:9": "16:9 ↔", "1:1": "1:1 ◻", "4:3": "4:3 ▭", "3:4": "3:4 ▯" };
 
     // ————————————————————————————————————————————————————————————————————
@@ -3978,10 +3936,10 @@
         // silently shrink a box the user deliberately made taller.
         promptH: prev ? prev.promptH || 104 : 104,
         mq: "", // model-list search filter, reset on every open — not worth persisting
-        // Reference-grid progressive disclosure (extrasBlock) — resets on
-        // every open, same as showAll: a freshly opened composer should never
-        // start pre-expanded just because a previous session left it that way.
-        slotsOpen: false,
+        // The unified reference grid's role-choice row (extrasBlock) — resets
+        // on every open, same as showAll: a freshly opened composer should
+        // never start pre-expanded just because a previous session left it open.
+        refChoiceOpen: false,
         // ——— Director Mode (Seedance) — spec: seedance-director-mode ———
         // Off by default so the fast path stays exactly today's studio. The
         // cast/locations/scenario survive a keep-reopen the same way photos
@@ -3990,7 +3948,7 @@
         dmChars: prev ? prev.dmChars || [] : [], // [{id,label,photos:[{data,url}],text,sheetUrl,genId,pending,error,use}]
         dmLocs: prev ? prev.dmLocs || [] : [],
         dmSeq: prev ? prev.dmSeq || 0 : 0, // entry-id counter — ids feed /api/storyboard
-        dmSec: prev ? prev.dmSec || { chars: true, locs: false, shot: false } : { chars: true, locs: false, shot: false },
+        dmSec: prev ? prev.dmSec || { chars: false, locs: false, shot: false } : { chars: false, locs: false, shot: false },
         dmScenario: prev ? prev.dmScenario || "" : "",
         dmCands: prev ? prev.dmCands || null : null, // storyboard candidates from /api/storyboard
         dmCandIdx: prev && prev.dmCandIdx != null ? prev.dmCandIdx : null,
@@ -4135,7 +4093,15 @@
           const def = capRow.video.defaultSeconds;
           stu.duration = capRow.video.durations.some((d) => d.seconds === def) ? def : capRow.video.durations[0].seconds;
         }
-        if (!capRow.video.endFrame) { stu.endPhoto = null; stu.endGenerationId = null; }
+        // Seedance's reference mode (2+ photos, or any audio/video/named
+        // sheet) and its start→end-frame morph are two different fal
+        // endpoints (routeSeedance) — seedance_ref doesn't accept an end
+        // frame at all. Say so once, the moment it actually happens, rather
+        // than just letting the slot vanish from the grid with no explanation.
+        if (!capRow.video.endFrame) {
+          if (stu.endPhoto) toast("Финал недоступен в режиме нескольких фото — кадр убран", { wide: true, ms: 4500 });
+          stu.endPhoto = null; stu.endGenerationId = null;
+        }
       } else { stu.duration = undefined; stu.endPhoto = null; stu.endGenerationId = null; }
     }
     /**
@@ -4216,92 +4182,67 @@
     }
 
     /**
-     * "More angles of the same face" strip. Shown only once there IS a primary
-     * photo and the chosen model actually reads several (`maxInputs > 1`) — an
-     * empty affordance on a single-photo model would just be a dead end.
+     * The unified reference grid (docs/wireframes — home-studio wireframe,
+     * version 2, S5-S7·S16): every reference photo beyond the primary one —
+     * plain extra angles, the final frame, and (Director Mode) named
+     * characters/locations — renders as a cell of ONE grid instead of three
+     * disconnected UIs (an extras strip, a subject toggle, two collapsible
+     * accordions). All of it already converges server-side into one
+     * image_roles array (viewStudio's submit body) — this just makes the UI
+     * match that.
      *
-     * The copy carries the two things a user cannot guess: these must be the
-     * SAME person (the model is told so server-side, and a second person would
-     * come back as a blend), and it does NOT cost more.
+     * No "ракурс" framing, no person/product question: an extra photo is
+     * just another photo. The distinction that used to justify both (whether
+     * Seedance should read the reference as a face or an object) is gone —
+     * referencePrompt's default wording covers it, and Director Mode's named
+     * roles make the actual subject explicit when it matters.
      */
     function extrasBlock(m, isVideo, hasSource) {
-      // `isVideo` no longer disqualifies: a video model that declares maxInputs
-      // > 1 reads several photographs (Seedance reference mode). The gate is and
-      // always was "does this model actually read more than one".
+      if (!hasSource) return "";
       const maxInputs = (m && m.maxInputs) || 1;
-      if (!hasSource || maxInputs < 2) return "";
       const extras = stu.extras || [];
-      const room = maxInputs - 1 - extras.length;
-      // Only reference mode (Seedance) can point its multi-photo input at a
-      // product instead of a face — the ordinary "extra angles for editing"
-      // path (photo_edit, premium_edit, …) only ever means one thing: the same
-      // person's face, so it keeps the fixed copy it always had.
-      const isRef = !!(m && m.reference);
-      if (isRef && !stu.subject) stu.subject = "person";
-      const subjectToggle = isRef ? `
-          <div class="subjtoggle" role="group" aria-label="Что на фото">
-            <button type="button" class="schip ${stu.subject === "person" ? "on" : ""}" data-subj="person">🙂 Человек</button>
-            <button type="button" class="schip ${stu.subject === "object" ? "on" : ""}" data-subj="object">📦 Товар</button>
-          </div>` : "";
-      const label = isRef && stu.subject === "object" ? "Ещё ракурсы — точнее форма" : "Ещё ракурсы — точнее лицо";
-      const hint = isRef && stu.subject === "object" ? "angles_object" : "angles";
-      const sub = isRef && stu.subject === "object"
-        ? `Тот же предмет с других сторон. Цена не меняется.`
-        : `Те же черты лица с других сторон. Цена не меняется.`;
-      // Extra angles (this grid) and Director Mode's named cast (directorModeHtml,
-      // dmCastAccordion) are the SAME underlying thing server-side — both end up
-      // as {url, role} entries in image_roles (viewStudio's submit body) — but
-      // until now they were two disconnected UIs with no shared entry point. Only
-      // the Seedance umbrella row ever has both available at once (its catalog
-      // row borrows maxInputs/reference from seedance_ref specifically so this
-      // grid is reachable — webapp.ts studioModelsOf), so this only needs to
-      // exist there. Одна кнопка «+», один вопрос — "кто на фото": обычный
-      // ракурс идёт прямо в эту сетку; именованная роль включает Режиссёрский
-      // режим и открывает его карточку — та же оплачиваемая генерация карты,
-      // никакой новой механики.
-      const roleAddRow = m.key === "seedance" ? `
-        <div class="quiz-q">Ссылочные фото <button class="qhint" type="button" data-hint="refroles" aria-label="Что это такое?">?</button></div>
-        <div class="chips" id="refRoleAdd">
-          <button type="button" class="chip" data-refrole="angle" ${room > 0 ? "" : "disabled"}>🙂 Ракурс</button>
-          <button type="button" class="chip" data-refrole="character">👤 Персонаж</button>
-          <button type="button" class="chip" data-refrole="location">🏞 Локация</button>
+      const room = Math.max(0, maxInputs - 1 - extras.length);
+      // Only the Seedance umbrella row is ever Director Mode-capable — its
+      // catalog row deliberately borrows maxInputs/reference from
+      // seedance_ref for exactly this reason (webapp.ts studioModelsOf).
+      const dmCapable = m.key === "seedance";
+      const dmOn = dmCapable && stu.director;
+      // Mutually exclusive with reference mode, not just with Seedance in
+      // general: routeSeedance sends 2+ photos (or any audio/video/named
+      // sheet) to seedance_ref, which doesn't accept an end frame at all —
+      // activeSeedanceRow already resolves to whichever tier is really
+      // active, so this reads the SAME capability the server will enforce.
+      const activeCaps = isVideo && m.video ? activeSeedanceRow(m).video : null;
+      const showFinal = !!(activeCaps && activeCaps.endFrame);
+      const sourceCells = extras.map((x, i) => `
+        <div class="refslot filled"><img src="${x.data}" alt="" /><button class="xdel" type="button" data-xi="${i}" aria-label="Убрать">✕</button></div>`).join("");
+      const charCells = dmOn ? (stu.dmChars || []).map((x) => dmEntryCellHtml("character", x)).join("") : "";
+      const locCells = dmOn ? (stu.dmLocs || []).map((x) => dmEntryCellHtml("location", x)).join("") : "";
+      const finalCell = showFinal ? (stu.endPhoto
+        ? `<div class="refslot filled final"><img src="${stu.endPhoto}" alt="" /><button class="xdel" type="button" id="stuEndRedo" aria-label="Убрать">✕</button></div>`
+        : `<label class="refslot final" for="stuEndFile"><span class="iic">🏁</span><span class="rf-lbl">финал</span><input type="file" accept="image/*" id="stuEndFile" style="display:none" /></label>`) : "";
+      const canAddSource = room > 0;
+      const canAddNamed = dmCapable;
+      const addCell = canAddSource || canAddNamed
+        ? `<button type="button" class="refslot add" id="refAddCell" aria-label="Добавить"><span>＋</span></button>` : "";
+      const choiceRow = stu.refChoiceOpen ? `
+        <div class="chips" id="refRoleAdd" style="margin-top:8px">
+          ${canAddSource ? `<button type="button" class="chip" data-refrole="source">📷 Источник</button>` : ""}
+          ${dmCapable ? `<button type="button" class="chip" data-refrole="character">👤 Персонаж</button>` : ""}
+          ${dmCapable ? `<button type="button" class="chip" data-refrole="location">📍 Локация</button>` : ""}
         </div>` : "";
-      // The primary photo above already fills slot 1 — this grid only ever
-      // needs to offer the REMAINING slots, but the counter reads against the
-      // model's real total so it matches what "до N фото" already promised.
-      const filled = 1 + extras.length;
-      const totalExtraSlots = maxInputs - 1;
-      // Progressive disclosure: a 9-wide grid open by default is a wall of
-      // empty dashed boxes for the common case of adding just one more angle.
-      const DEFAULT_SHOWN = 3;
-      const shown = stu.slotsOpen ? totalExtraSlots : Math.min(DEFAULT_SHOWN, totalExtraSlots);
-      const slotsHtml = Array.from({ length: shown }, (_, i) => {
-        const x = extras[i];
-        // Index tag counts from the primary photo (slot 1), so it matches the
-        // "N / maxInputs" counter above rather than restarting at 1 for the
-        // extras-only array index.
-        if (x) return `<div class="refslot filled"><img src="${x.data}" alt="" /><span class="rf-idx">${String(i + 2).padStart(2, "0")}</span><button class="xdel" data-xi="${i}" aria-label="Убрать">✕</button></div>`;
-        // Every empty slot shares the SAME multi-select file input (via
-        // for="stuExtraFile") — any box is a valid tap target, but choosing
-        // files still fills as many slots at once as the picker returns.
-        if (room > 0) return `<label class="refslot add" for="stuExtraFile"><span>＋</span></label>`;
-        return `<div class="refslot ghost" aria-hidden="true"></div>`;
-      }).join("");
-      return `
-        <div class="xtra">
-          ${roleAddRow}
-          <div class="refhead">${qLabel(label, hint)}<span class="refcount">${filled} / ${maxInputs}</span></div>
-          ${subjectToggle ? `<div style="margin-top:8px">${subjectToggle}</div>` : ""}
+      const grid = sourceCells || charCells || locCells || finalCell || addCell
+        ? `
+          <div class="refhead">${qLabel("Ссылочные фото", "refroles")}</div>
           <div class="refgrid">
-            ${slotsHtml}
-            ${room > 0 ? `<input type="file" accept="image/*" id="stuExtraFile" multiple style="display:none" />` : ""}
-            ${totalExtraSlots > DEFAULT_SHOWN
-              ? `<button type="button" class="refmore" id="refMore">${stu.slotsOpen ? "Свернуть слоты" : `+ Ещё ${totalExtraSlots - DEFAULT_SHOWN} слотов`}</button>`
-              : ""}
+            ${sourceCells}${charCells}${locCells}${finalCell}${addCell}
+            ${canAddSource ? `<input type="file" accept="image/*" id="stuExtraFile" multiple style="display:none" />` : ""}
           </div>
-          <div class="sub" style="margin-top:6px">${sub}</div>
-        </div>
-        ${refMediaBlock(m)}`;
+          ${choiceRow}` : "";
+      const addForms = dmOn ? `
+        ${stu.dmSec.chars ? dmAddCardHtml("character") : ""}
+        ${stu.dmSec.locs ? dmAddCardHtml("location") : ""}` : "";
+      return `${grid}${addForms}${refMediaBlock(m)}`;
     }
 
     /**
@@ -4456,13 +4397,16 @@
         ${isVideo && !has ? `<div class="sub">Для видео нужно исходное фото — добавьте его ниже или сначала создайте картинку.</div>` : ""}
         ${directorModeHtml()}
         ${(() => {
+          const dmOn = stu.director && m.key === "seedance";
           const showFinal = isVideo && m.video && activeSeedanceRow(m).video.endFrame;
-          const showExtras = has && ((m && m.maxInputs) || 1) >= 2;
           const showMedia = !!(m && m.reference);
-          const slots = [{ icon: "🖼", label: "источник", filled: stuHasSource() }];
-          if (showExtras) slots.push({ icon: "➕", label: "ракурс", filled: (stu.extras || []).length > 0 });
-          if (showFinal) slots.push({ icon: "🏁", label: "финал", filled: !!(stu.endPhoto || stu.endGenerationId) });
+          const slots = [{ icon: "📷", label: "источник", filled: stuHasSource() }];
+          if (showFinal) slots.push({ icon: "🏁", label: "финал", filled: !!stu.endPhoto });
           if (showMedia) slots.push({ icon: "🎵", label: "аудио", filled: (stu.refAudio || []).length > 0 || (stu.refVideo || []).length > 0 });
+          if (dmOn) {
+            slots.push({ icon: "👤", label: "персонаж", filled: (stu.dmChars || []).some((x) => x.sheetUrl) });
+            slots.push({ icon: "📍", label: "локация", filled: (stu.dmLocs || []).some((x) => x.sheetUrl) });
+          }
           const filled = slots.filter((s) => s.filled).length;
           return `
             <div class="inputscard">
@@ -4480,11 +4424,6 @@
                      <div class="mini" id="stuMini">${works.map((g) => `<img src="${esc(g.output_url)}" data-gid="${g.id}" loading="lazy" alt="" />`).join("")}</div>` : ""}`}
                 ${extrasBlock(m, isVideo, has)}
               </div>
-              ${showFinal ? `
-                ${qLabel("Финальный кадр (необязательно)", "endframe")}
-                <div id="stuEndZone">${stu.endPhoto ? `<div class="photo-preview"><img src="${stu.endPhoto}" alt="" /><button class="redo" id="stuEndRedo">✕ Убрать</button></div>`
-                  : `<label class="drop"><input type="file" accept="image/*" id="stuEndFile" />
-                       <span class="em">🏁</span><b>Кадр-финал</b><span>видео плавно придёт к нему</span></label>`}</div>` : ""}
             </div>`;
         })()}
         ${stu.preset ? `
@@ -4731,19 +4670,28 @@
         if (failed) toast(failed === files.length ? "Не получилось прочитать фото" : "Часть фото не удалось прочитать");
         clampStudioOpts(); viewStudio();
       }));
-      bind("#refMore", (el) => (el.onclick = () => { stu.slotsOpen = !stu.slotsOpen; viewStudio(); }));
-      // One add point, one role question — see extrasBlock's roleAddRow comment.
-      // "Ракурс" reuses the plain file input as-is; a named role turns on
-      // Director Mode (if it wasn't already) and opens straight to that
-      // accordion's add form — same dmGenerateSheet flow, no new mechanics.
+      // The unified grid's single add point. No Director Mode on this model at
+      // all → the only thing addable is another source photo, so skip the
+      // question and open the picker directly. Otherwise reveal the 3-way
+      // choice (see extrasBlock's own comment on why these converge).
+      bind("#refAddCell", (el) => (el.onclick = () => {
+        if (studioModel().key !== "seedance") { const f = document.getElementById("stuExtraFile"); if (f) f.click(); return; }
+        stu.refChoiceOpen = true; viewStudio();
+      }));
       sheetBody.querySelectorAll("[data-refrole]").forEach((b) => (b.onclick = () => {
         const role = b.dataset.refrole;
-        if (role === "angle") { const f = document.getElementById("stuExtraFile"); if (f) f.click(); return; }
+        stu.refChoiceOpen = false;
+        if (role === "source") { viewStudio(); const f = document.getElementById("stuExtraFile"); if (f) f.click(); return; }
         stu.director = true;
-        stu.dmSec[role === "character" ? "chars" : "locs"] = true;
+        // Opening one add form closes the other — one "adding X" at a time.
+        stu.dmSec.chars = role === "character";
+        stu.dmSec.locs = role === "location";
         viewStudio();
         const target = sheetBody.querySelector(role === "character" ? "#dmCharLabel" : "#dmLocLabel");
         if (target) { target.scrollIntoView({ block: "center" }); target.focus(); }
+      }));
+      sheetBody.querySelectorAll("[data-dm-cancel]").forEach((b) => (b.onclick = () => {
+        stu.dmSec[b.dataset.dmCancel === "character" ? "chars" : "locs"] = false; viewStudio();
       }));
       // Scoped to [data-xi]: the audio/video reference chips reuse the same .xdel
       // styling, and an unscoped selector would splice their index out of the
@@ -4751,8 +4699,18 @@
       sheetBody.querySelectorAll(".xdel[data-xi]").forEach((b) => (b.onclick = () => {
         stu.extras.splice(Number(b.dataset.xi), 1); viewStudio();
       }));
-      sheetBody.querySelectorAll("[data-subj]").forEach((b) => (b.onclick = () => {
-        stu.subject = b.dataset.subj; viewStudio();
+      // A filled character/location cell: an error retries (same cost as the
+      // first attempt), a ready card toggles whether THIS render uses it —
+      // same two actions dmEntryCardHtml's row buttons used to offer, now the
+      // cell itself. The ✕ (data-dm-act:del, wired below) still deletes it —
+      // guarded here so that tap doesn't also fire the toggle/retry.
+      sheetBody.querySelectorAll("[data-dm-cell]").forEach((cell) => (cell.onclick = (e) => {
+        if (e.target.closest(".xdel")) return;
+        const [kind, id] = cell.dataset.dmCell.split(":");
+        const entry = dmList(kind).find((x) => x.id === id);
+        if (!entry || entry.pending) return;
+        if (entry.error) { dmRetrySheet(kind, entry); return; }
+        if (entry.sheetUrl) { entry.use = !entry.use; viewStudio(); }
       }));
       bind("#stuEndFile", (el) => (el.onchange = async (e) => {
         const f = e.target.files[0];
@@ -4799,7 +4757,6 @@
       }));
       dmBindText("#dmCharText", "character");
       dmBindText("#dmLocText", "location");
-      sheetBody.querySelectorAll("[data-dm-zoom]").forEach((btn) => (btn.onclick = () => dmZoom(btn.dataset.dmZoom)));
       sheetBody.querySelectorAll("[data-dm-rm]").forEach((btn) => (btn.onclick = () => {
         const [kind, i] = btn.dataset.dmRm.split(":");
         const draft = dmDraft(kind, false);
