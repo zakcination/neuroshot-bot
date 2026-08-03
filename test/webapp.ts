@@ -67,6 +67,11 @@ let genFail = false;
 // does (403 + "Exhausted balance") — the failure that masquerades as one
 // broken model. Reset to false to simulate the balance being topped up.
 let providerLocked = false;
+// Flip to make every generation model reject the way Seedance 2.0's own face
+// classifier does (403 + "likenesses of real people…") — same status code as
+// providerLocked above, but a PER-PHOTO rejection, not an account block. Must
+// NOT trip the same breaker. Reset to false after use.
+let contentPolicyRejected = false;
 // Content moderation (moderation.ts): tracked as its OWN edge, NOT pushed into
 // falCalls — several assertions use falCalls.length/.at(-1) to mean "the
 // generation MODEL ran", and this classifier call happens in addition to that
@@ -87,6 +92,12 @@ let nsfwCheckCalls = 0;
     const e = new Error("Forbidden") as Error & { status: number; body: unknown };
     e.status = 403;
     e.body = { detail: "User is locked. Reason: Exhausted balance. Top up your balance at fal.ai/dashboard/billing." };
+    throw e;
+  }
+  if (contentPolicyRejected) {
+    const e = new Error("Forbidden") as Error & { status: number; body: unknown };
+    e.status = 403;
+    e.body = { detail: "The images or videos provided may contain likenesses of real people or other private information that cannot be processed." };
     throw e;
   }
   if (endpoint === "fal-ai/any-llm") {
@@ -3135,7 +3146,7 @@ await step("prompt library: no third-party brand or magazine names reach the pro
 });
 
 await step("provider block: an account-level rejection is classified and alerts on the FIRST one", async () => {
-  const { isProviderBlocked } = await import("../src/generate.js");
+  const { isProviderBlocked, classifyGenError } = await import("../src/generate.js");
   const { checkAlerts } = await import("../src/monitor.js");
 
   // What fal actually returns when the account runs dry — the exact shape that
@@ -3148,6 +3159,16 @@ await step("provider block: an account-level rejection is classified and alerts 
   assert.equal(isProviderBlocked({ status: 500, body: { detail: "internal error" } }), false);
   assert.equal(isProviderBlocked(new Error("No output URL in fal response")), false);
   assert.equal(isProviderBlocked(null), false);
+
+  // Seedance 2.0's own per-photo face classifier (reported live, Aug 2026:
+  // ByteDance tightened it and it now flags plenty of legitimate photos) also
+  // answers with a bare 403 — same status the exhausted-balance case uses.
+  // Without the content-policy carve-out, one flagged photo would trip the
+  // account-block breaker and refuse every OTHER user's Seedance render for
+  // two minutes over nothing wrong with their account.
+  const likeness = { status: 403, body: { detail: "The images or videos provided may contain likenesses of real people or other private information that cannot be processed." } };
+  assert.equal(isProviderBlocked(likeness), false, "a per-photo content rejection is not an account block");
+  assert.equal(classifyGenError(likeness), "moderation", "routes to the same bucket as our own NSFW check");
 
   const bu = { id: 990097, username: "blocked" };
   await getOrCreateUser(bu.id, bu.username, null, 0);
@@ -4589,6 +4610,23 @@ await step("error reasons: a fixed code on the row + poll payload, refund still 
   resetProviderBlock(); // the 403 tripped the breaker — clear it for anything after
   assert.equal(String((await query("SELECT error_reason FROM generations WHERE id = $1", [id2]))[0].error_reason), "provider_blocked");
   assert.equal(await balance(), 50);
+
+  // Seedance 2.0's own face classifier rejecting ONE photo → 'moderation', same
+  // as our own NSFW check, and — the actual bug this guards against — it must
+  // NOT trip the account-block breaker. A second, unrelated render right after
+  // has to go through normally, not get refused as "provider_down".
+  contentPolicyRejected = true;
+  const r3 = await gen();
+  assert.equal(r3.status, 200);
+  const id3 = ((await r3.json()) as { id: number }).id;
+  assert.equal((await pollGen(id3, H)).status, "error");
+  contentPolicyRejected = false;
+  assert.equal(String((await query("SELECT error_reason FROM generations WHERE id = $1", [id3]))[0].error_reason), "moderation");
+  assert.equal(await balance(), 50, "refunded exactly once, same as any other failure");
+  const r4 = await gen();
+  assert.equal(r4.status, 200);
+  const id4 = ((await r4.json()) as { id: number }).id;
+  assert.equal((await pollGen(id4, H)).status, "ok", "the breaker must not have tripped — an unrelated render right after still succeeds");
 
   // A render stuck 'pending' (dead process) reaped → 'timeout'.
   await query(
