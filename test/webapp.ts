@@ -3218,6 +3218,18 @@ await step("provider block: an account-level rejection is classified and alerts 
   assert.equal(isProviderBlocked(likeness), false, "a per-photo content rejection is not an account block");
   assert.equal(classifyGenError(likeness), "moderation", "routes to the same bucket as our own NSFW check");
 
+  // The same rejection can also arrive as a 422 (@fal-ai/client wraps that
+  // status in its own ValidationError) — AND its body.detail can be a plain
+  // string OR a FastAPI/Pydantic-style array of {loc,msg,type} objects, per
+  // that client's own fieldErrors comment. Both must classify identically to
+  // the 403/string case above, not just the shape actually seen live.
+  const likeness422String = { status: 422, body: { detail: "The images or videos provided may contain likenesses of real people or other private information that cannot be processed." } };
+  assert.equal(isProviderBlocked(likeness422String), false);
+  assert.equal(classifyGenError(likeness422String), "moderation", "422 status alone must not change the bucket");
+  const likeness422Array = { status: 422, body: { detail: [{ loc: ["body", "image_url"], msg: "The images or videos provided may contain likenesses of real people or other private information that cannot be processed.", type: "value_error" }] } };
+  assert.equal(isProviderBlocked(likeness422Array), false);
+  assert.equal(classifyGenError(likeness422Array), "moderation", "Pydantic-array detail must not be missed just because it isn't a plain string");
+
   const bu = { id: 990097, username: "blocked" };
   await getOrCreateUser(bu.id, bu.username, null, 0);
   await query("DELETE FROM events WHERE type = 'provider_blocked'");

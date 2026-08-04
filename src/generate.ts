@@ -147,11 +147,26 @@ function extractResultUrls(data: unknown): string[] {
  * checked BEFORE isProviderBlocked's bare-403 fallback, or every one of these
  * trips the account-block circuit breaker and refuses every OTHER user's
  * Seedance render for two minutes over a single flagged photo.
+ *
+ * The same rejection can also arrive as a 422: fal's client (@fal-ai/client's
+ * response.js) wraps status 422 in a ValidationError whose own fieldErrors
+ * getter carries a built-in admission that body.detail is "either a plain
+ * string OR a FastAPI/Pydantic-style array of {loc,msg,type} — some custom
+ * 422s aren't in the Pydantic format" either way. Matching only the string
+ * shape would silently miss the array shape, so this stringifies the whole
+ * body and searches that — robust to whichever shape a given rejection
+ * actually uses, string or nested array, without needing to special-case 422
+ * vs 403 or FastAPI vs a bespoke error format.
  */
 function isContentPolicyRejection(err: unknown): boolean {
-  const e = err as { body?: { detail?: unknown } } | null;
-  const detail = typeof e?.body?.detail === "string" ? e.body.detail : "";
-  return /likenesses of real people|private information/i.test(detail);
+  const e = err as { body?: unknown } | null;
+  let text = "";
+  try {
+    text = JSON.stringify(e?.body ?? "");
+  } catch {
+    text = "";
+  }
+  return /likenesses of real people|private information/i.test(text);
 }
 
 /**
