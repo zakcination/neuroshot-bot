@@ -1356,17 +1356,49 @@
     }
     .storyq .sq-edit { border: 0; background: transparent; color: var(--violet); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; flex: none; }
     /* S12–S15: render params pinned as one card directly above the CTA (docs/
-       wireframes — home-studio wireframe, version 2) — aspect/quality/count/
-       duration, same widgets as before, grouped so "what you're spending on"
-       reads as one unit right before the button that spends it. First/last
-       child margins are killed so the card's own padding is the only gap at
-       its edges. */
+       wireframes/home-studio, v3) — aspect/quality/count/duration grouped
+       so "what you're spending on" reads as one unit right before the button
+       that spends it. Each param is a compact pill showing its current value;
+       tapping opens a popup with the full list — one uniform pattern instead
+       of a chip row for some params and a bespoke drag reel/slider for others. */
     .paramscard {
       background: var(--surface-2); border: 1px solid rgba(124,92,255,.28); border-radius: var(--radius-s);
-      padding: 12px 14px 14px; margin: 16px 0 0;
+      padding: 10px 12px; margin: 16px 0 0;
     }
-    .paramscard > .quiz-q:first-child { margin-top: 0; }
-    .paramscard > *:last-child { margin-bottom: 0; }
+    .ppills { display: flex; gap: 8px; flex-wrap: wrap; }
+    .ppill {
+      flex: 1; min-width: 84px; border: 1px solid var(--line); background: var(--surface); border-radius: 11px;
+      padding: 7px 10px; text-align: left; font: inherit; cursor: pointer; display: flex; flex-direction: column; gap: 1px;
+    }
+    .ppill small { font-size: 8.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
+    .ppill b { font-size: 13px; font-weight: 700; color: var(--ink); }
+    .ppill:active { border-color: rgba(124,92,255,.5); }
+    /* The popup itself — a small nested bottom sheet, same slide-up/backdrop
+       language as the main composer sheet (.sheet/.sheet-bg), scoped to its
+       own overlay so it can sit on top of the composer without touching it. */
+    .param-popup { position: fixed; inset: 0; z-index: 75; }
+    .param-popup-backdrop { position: absolute; inset: 0; background: rgba(4,3,8,.6); backdrop-filter: blur(4px); }
+    .param-popup-sheet {
+      position: absolute; left: 0; right: 0; bottom: 0; margin: 0 auto; max-width: 720px;
+      background: var(--bg-2); border: 1px solid var(--line); border-bottom: 0; border-radius: 20px 20px 0 0;
+      padding: 14px 16px calc(16px + env(safe-area-inset-bottom)); max-height: 70dvh; overflow-y: auto;
+      animation: ppSheetUp .22s cubic-bezier(.2,.9,.3,1);
+    }
+    @keyframes ppSheetUp { from { transform: translateY(24px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .param-popup-sheet { animation: none; } }
+    .pp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .pp-head b { font-size: 15px; font-weight: 700; }
+    .pp-x {
+      width: 28px; height: 28px; border-radius: 999px; border: 0; background: var(--surface-2); color: var(--muted);
+      font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    }
+    .pp-list { display: flex; flex-direction: column; gap: 6px; }
+    .pp-row {
+      border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 12px;
+      padding: 12px 14px; text-align: left; font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .pp-row.on { border-color: rgba(124,92,255,.5); background: rgba(124,92,255,.1); color: var(--violet); }
     /* S5–S7, S16: photo / extra angles / audio-video refs / final frame, one
        card instead of four scattered blocks (docs/wireframes — home-studio
        wireframe, version 2). The 4-icon row up top is "what's filled at a
@@ -1391,27 +1423,6 @@
     .islot.on .iic { opacity: 1; }
     .inputscard .quiz-q:first-of-type { margin-top: 0; }
     .inputscard > *:last-child { margin-bottom: 0; }
-    /* Aspect-ratio horizontal reel — a physical drag-scrub strip (wireRatioScrub)
-       for the 3+ option case; visual language borrowed from .durbox (dark
-       track, one clear focal element). A binary choice keeps the plain .chips
-       row instead — a reel is friction for a 2-way choice, not a feature. */
-    .arreel { position: relative; height: 60px; overflow: hidden; border-radius: var(--radius-s); background: var(--surface-2); border: 1px solid var(--line); touch-action: pan-y; cursor: grab; }
-    .arreel:active { cursor: grabbing; }
-    .arwindow {
-      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-      width: 68px; height: 44px; border-radius: 12px; background: rgba(124,92,255,.14);
-      border: 1px solid rgba(124,92,255,.45); pointer-events: none;
-    }
-    .artrack { position: absolute; top: 0; bottom: 0; left: 50%; display: flex; align-items: center; }
-    .aritem {
-      flex: 0 0 68px; width: 68px; height: 60px; display: flex; align-items: center; justify-content: center;
-      border: 0; background: none; font: inherit; font-size: 13px; font-weight: 700; color: var(--muted);
-      cursor: pointer; transition: color .2s, transform .2s; user-select: none;
-    }
-    .aritem.on { color: var(--ink); transform: scale(1.05); }
-    .arfade { position: absolute; top: 0; bottom: 0; width: 36px; pointer-events: none; }
-    .arfade.l { left: 0; background: linear-gradient(to right, var(--surface-2), transparent); }
-    .arfade.r { right: 0; background: linear-gradient(to left, var(--surface-2), transparent); }
     input.words {
       width: 100%; background: var(--surface); color: var(--ink); border: 1px solid var(--line);
       border-radius: var(--radius-s); padding: 12px 14px; font: inherit; font-size: 14px; margin-top: 8px;
@@ -3951,6 +3962,7 @@
         options: {}, // video story picks: stepId -> optionId
         storyStep: 0, // which VIDEO_STORY question the carousel is on (>= story.length = done/collapsed)
         storyDir: null, // "fwd" | "back" — which way the carousel last moved, for the slide-in animation
+        paramPopup: null, // which param popup (aspect/resolution/count/duration) is open, if any
         mode: ctx.mode || (prev ? prev.mode : "image"),
         modelKey: ctx.modelKey || null,
         photo: prev ? prev.photo : null,
@@ -4407,7 +4419,10 @@
           </div>`;
       }
       const s = story[step];
-      const dir = stu.storyDir === "back" ? "slide-back" : "slide-fwd";
+      // Two independent ternaries (not one), each with its own literal ? "x"
+      // branch — check:dead-css only captures a ternary's TRUE branch, so a
+      // single a?"back":"fwd" would read "slide-fwd" as dead.
+      const dir = `${stu.storyDir === "back" ? "slide-back" : ""} ${stu.storyDir !== "back" ? "slide-fwd" : ""}`.trim();
       return `
         <div class="storyq active ${dir}">
           <div class="sq-body" style="display:flex;flex-direction:column;gap:8px;height:100%">
@@ -4419,6 +4434,56 @@
               <button class="sq-back" type="button" id="sqBack" ${step === 0 ? "disabled" : ""}>← Назад</button>
               <button class="sq-skip" type="button" id="sqSkip">Пропустить →</button>
             </div>
+          </div>
+        </div>`;
+    }
+
+    /**
+     * The params popup (S12-S15's pill row) — one option list per param key,
+     * built from the SAME data every pill's current value already reads from
+     * (caps.aspectRatios/resolutions, stuCountOptions, m.video.durations), so
+     * the popup can never disagree with what the pill shows. Duration used to
+     * be its own drag-scrub slider (durationSliderHtml/wireDurationSlider,
+     * still used by the separate video-composer scenario picker — not
+     * removed) — here it's a plain list like the other three, for one
+     * consistent "tap pill, pick from a sheet" pattern across all params.
+     */
+    function paramPopupHtml(key, m, caps, isVideo) {
+      let title = "", rows = [];
+      if (key === "aspect") {
+        title = "Формат кадра";
+        const cur = stu.aspect || caps.aspectRatios[0];
+        rows = caps.aspectRatios.map((r) => ({ id: r, label: esc(RATIO_LABEL[r] || r), on: r === cur }));
+      } else if (key === "resolution") {
+        title = "Качество";
+        const cur = stu.resolution || caps.resolutions[0].id;
+        rows = caps.resolutions.map((r) => ({ id: r.id, label: `${esc(r.label)} · ${r.credits} ${PATRON}`, on: r.id === cur }));
+      } else if (key === "count") {
+        title = "Количество";
+        const cur = stu.numImages || 1;
+        rows = stuCountOptions(m, caps).map((c) => ({ id: String(c.n), label: `${c.n} шт${c.n > 1 ? ` · ${c.credits} ${PATRON}` : ""}`, on: c.n === cur }));
+      } else if (key === "duration") {
+        // Kept as the original drag slider (durationSliderHtml/wireDurationSlider)
+        // — a continuous 4-15s range reads better as a slider than a 12-row
+        // list — just relocated from inline into the popup, pill shows the
+        // current value the same way the other three params do.
+        title = "Длительность";
+        return `
+          <div class="param-popup" id="paramPopup">
+            <div class="param-popup-backdrop" data-popup-close></div>
+            <div class="param-popup-sheet">
+              <div class="pp-head"><b>${esc(title)}</b><button class="pp-x" type="button" data-popup-close aria-label="Закрыть">✕</button></div>
+              <div id="stuDur">${durationSliderHtml(m.video.durations.map((d) => d.seconds), stu.duration || m.video.defaultSeconds, stuDurPrice, stuDurWasPrice)}</div>
+            </div>
+          </div>`;
+      }
+      return `
+        <div class="param-popup" id="paramPopup">
+          <div class="param-popup-backdrop" data-popup-close></div>
+          <div class="param-popup-sheet">
+            <div class="pp-head"><b>${esc(title)}</b><button class="pp-x" type="button" data-popup-close aria-label="Закрыть">✕</button></div>
+            <div class="pp-list">${rows.map((r) =>
+              `<button class="pp-row ${r.on ? "on" : ""}" type="button" data-popup-pick="${esc(r.id)}">${r.label}${r.on ? " ✓" : ""}</button>`).join("")}</div>
           </div>
         </div>`;
     }
@@ -4555,34 +4620,32 @@
         ${(() => {
           // S12–S15: render params pinned as one card directly above the CTA —
           // last thing you see before spending patrons, "тратим — видим на что"
-          // (docs/wireframes/home-studio.v2.html). Same fields as before, same
-          // ids, same wiring below — only WHERE they render changed. Works for
-          // both modes: video sees aspect/resolution/duration, image sees
-          // aspect/resolution/count — whichever this model actually declares.
-          const aspectHtml = caps && caps.aspectRatios && caps.aspectRatios.length > 1 ? `
-            ${qLabel("Формат кадра", "aspect")}
-            ${caps.aspectRatios.length > 2
-              ? arReelHtml(caps.aspectRatios, stu.aspect || caps.aspectRatios[0])
-              : `<div class="chips" id="stuAr">${caps.aspectRatios.map((r) =>
-                  `<button class="chip ${r === (stu.aspect || caps.aspectRatios[0]) ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>`}` : "";
-          const resHtml = caps && caps.resolutions && caps.resolutions.length ? `
-            ${qLabel("Качество", "res")}
-            <div class="chips" id="stuRes">${caps.resolutions.map((r) =>
-              `<button class="chip ${r.id === (stu.resolution || caps.resolutions[0].id) ? "on" : ""}" data-res="${r.id}">${esc(r.label)} · ${r.credits} ${PATRON}</button>`).join("")}</div>` : "";
-          const countHtml = !isVideo && caps && caps.maxCount ? `
-            ${qLabel("Количество", "count")}
-            <div class="chips" id="stuCount">${stuCountOptions(m, caps).map((c) =>
-              `<button class="chip ${c.n === (stu.numImages || 1) ? "on" : ""}" data-cnt="${c.n}">${c.n} шт${c.n > 1 ? ` · ${c.credits} ${PATRON}` : ""}</button>`).join("")}</div>` : "";
-          const durHtml = isVideo && m.video ? `
-            ${qLabel("Длительность", "duration")}
-            <div id="stuDur">${durationSliderHtml(
-              m.video.durations.map((d) => d.seconds),
-              stu.duration,
-              stuDurPrice,
-              stuDurWasPrice,
-            )}</div>` : "";
-          const body = aspectHtml + resHtml + countHtml + durHtml;
-          return body ? `<div class="paramscard">${body}</div>` : "";
+          // (docs/wireframes/home-studio, v3). Works for both modes: video
+          // sees aspect/resolution/duration, image sees aspect/resolution/count
+          // — whichever this model actually declares. Each is a pill (current
+          // value) that opens paramPopupHtml's list on tap.
+          const params = [];
+          if (caps && caps.aspectRatios && caps.aspectRatios.length > 1) {
+            const cur = stu.aspect || caps.aspectRatios[0];
+            params.push({ key: "aspect", label: "Формат", value: RATIO_LABEL[cur] || cur });
+          }
+          if (caps && caps.resolutions && caps.resolutions.length) {
+            const r = caps.resolutions.find((x) => x.id === (stu.resolution || caps.resolutions[0].id)) || caps.resolutions[0];
+            params.push({ key: "resolution", label: "Качество", value: r.label });
+          }
+          if (!isVideo && caps && caps.maxCount) {
+            params.push({ key: "count", label: "Кол-во", value: `${stu.numImages || 1} шт` });
+          }
+          if (isVideo && m.video) {
+            params.push({ key: "duration", label: "Длит-сть", value: `${stu.duration || m.video.defaultSeconds} сек` });
+          }
+          if (!params.length) return "";
+          return `
+            <div class="paramscard">
+              <div class="ppills">${params.map((p) => `
+                <button class="ppill" type="button" data-popup="${p.key}"><small>${esc(p.label)}</small><b>${esc(p.value)}</b></button>`).join("")}</div>
+            </div>
+            ${stu.paramPopup ? paramPopupHtml(stu.paramPopup, m, caps, isVideo) : ""}`;
         })()}
         <div class="stack">
           <button class="btn primary" id="stuGo"></button>
@@ -4665,18 +4728,26 @@
           row.style.display = !q || row.dataset.mname.includes(q) ? "" : "none";
         });
       }));
-      sheetBody.querySelectorAll("#stuAr .chip").forEach((c) => (c.onclick = () => { stu.aspect = c.dataset.ar; viewStudio(); }));
-      wireRatioScrub(sheetBody, caps && caps.aspectRatios);
-      sheetBody.querySelectorAll("#stuRes .chip").forEach((c) => (c.onclick = () => { stu.resolution = c.dataset.res; viewStudio(); }));
       sheetBody.querySelectorAll("#stuTier .chip").forEach((c) => (c.onclick = () => { stu.seedanceTier = c.dataset.tier; viewStudio(); }));
-      sheetBody.querySelectorAll("#stuCount .chip").forEach((c) => (c.onclick = () => { stu.numImages = Number(c.dataset.cnt); viewStudio(); }));
-      // Live, without a re-render: the studio sheet holds typed prompt text and a
-      // scroll position, and rebuilding it on every step of a drag would throw
-      // both away mid-gesture. Only the two numbers that changed are updated.
-      if (isVideo && m.video) {
+      // Params popup: tap a pill to open it, tap a row (or the backdrop/✕) to
+      // pick/close. Duration is the one exception — a slider, not a row list
+      // (see paramPopupHtml) — so it's wired separately below, live during the
+      // drag, same reason the original inline slider avoided a full re-render
+      // per tick: rebuilding the DOM mid-drag would drop pointer capture.
+      sheetBody.querySelectorAll("[data-popup]").forEach((b) => (b.onclick = () => { stu.paramPopup = b.dataset.popup; viewStudio(); }));
+      sheetBody.querySelectorAll("[data-popup-close]").forEach((b) => (b.onclick = () => { stu.paramPopup = null; viewStudio(); }));
+      sheetBody.querySelectorAll("[data-popup-pick]").forEach((b) => (b.onclick = () => {
+        const val = b.dataset.popupPick;
+        if (stu.paramPopup === "aspect") stu.aspect = val;
+        else if (stu.paramPopup === "resolution") stu.resolution = val;
+        else if (stu.paramPopup === "count") stu.numImages = Number(val);
+        stu.paramPopup = null;
+        viewStudio();
+      }));
+      if (stu.paramPopup === "duration" && isVideo && m.video) {
         wireDurationSlider(sheetBody, m.video.durations.map((d) => d.seconds), stuDurPrice, (sec) => {
           stu.duration = sec;
-          cta(); // the button carries the total (and flips to "Пополнить" when short)
+          cta();
         }, stuDurWasPrice);
       }
       // Picking an answer auto-advances the carousel; tapping the SAME chip
@@ -5832,64 +5903,6 @@
       };
     }
 
-    /**
-     * Aspect-ratio reel markup — a physical horizontal strip behind a fixed
-     * center "selected" window, for the 3+ option case (a binary choice stays
-     * a plain .chips row, see viewStudio). Item width (68px) is hardcoded and
-     * MUST match .aritem's flex-basis in CSS — both the initial transform
-     * here and wireRatioScrub's live version depend on the same constant.
-     */
-    function arReelHtml(ratios, current) {
-      const idx = Math.max(0, ratios.indexOf(current));
-      return `<div class="arreel" id="stuArReel">
-        <span class="arwindow"></span>
-        <div class="artrack" id="stuArTrack" style="transform:translateX(-${idx * 68 + 34}px)">
-          ${ratios.map((r, i) => `<button class="aritem ${i === idx ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}
-        </div>
-        <span class="arfade l"></span><span class="arfade r"></span>
-      </div>`;
-    }
-
-    /**
-     * Wire the reel. Same commit-on-release convention as wireModelScrub, but
-     * simpler: there's no open/closed state (the strip is always visible), so
-     * a tap directly on a visible item (no real drag) just jumps to it —
-     * the container is the drag surface, individual items are still their
-     * own tap targets since e.target on pointerdown tells us which.
-     */
-    function wireRatioScrub(root, ratios) {
-      const reel = root.querySelector("#stuArReel");
-      if (!reel || !ratios || !ratios.length) return;
-      const track = reel.querySelector("#stuArTrack");
-      const items = Array.from(reel.querySelectorAll(".aritem"));
-      const STEP = 68;
-      const setIdx = (i) => {
-        items.forEach((it, k) => it.classList.toggle("on", k === i));
-        track.style.transform = `translateX(-${i * STEP + STEP / 2}px)`;
-      };
-      reel.onpointerdown = (e) => {
-        reel.setPointerCapture(e.pointerId);
-        const tapTarget = e.target.closest(".aritem");
-        const startX = e.clientX;
-        const startIdx = Math.max(0, ratios.indexOf(stu.aspect || ratios[0]));
-        let hoverIdx = startIdx, moved = false, last = startIdx;
-        const move = (ev) => {
-          const dx = ev.clientX - startX;
-          if (Math.abs(dx) > 6) moved = true;
-          if (!moved) return;
-          hoverIdx = Math.max(0, Math.min(ratios.length - 1, startIdx - Math.round(dx / STEP)));
-          if (hoverIdx !== last) { last = hoverIdx; setIdx(hoverIdx); hapticTick(); }
-        };
-        const up = () => {
-          reel.onpointermove = null; reel.onpointerup = null; reel.onpointercancel = null;
-          if (moved) { stu.aspect = ratios[hoverIdx]; viewStudio(); }
-          else if (tapTarget && tapTarget.dataset.ar) { stu.aspect = tapTarget.dataset.ar; viewStudio(); }
-        };
-        reel.onpointermove = move;
-        reel.onpointerup = up;
-        reel.onpointercancel = up;
-      };
-    }
 
     // Live combo-offer countdown: ticks the 🔥 badge each second; when the
     // deadline passes the offer pack removes itself from the list.
