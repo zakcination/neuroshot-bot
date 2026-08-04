@@ -4395,6 +4395,20 @@
           <button data-md="video" class="${isVideo ? "on" : ""}">🎬 Видео</button>
         </div>
         ${isVideo && !has ? `<div class="sub">Для видео нужно исходное фото — добавьте его ниже или сначала создайте картинку.</div>` : ""}
+        ${qLabel("Модель", "model")}
+        <button class="mpick" id="stuMpick" aria-expanded="${stu.mopen ? "true" : "false"}">
+          ${stu.mopen
+            ? `<span><b>Выберите модель</b></span><span class="mchev">свернуть ▲</span>`
+            : `<span><b>${esc(m.label)}</b>${m.note ? `<div class="mnote">${esc(m.note)}</div>` : ""}</span>
+               <span class="price">${priceBlockHtml(m.credits, m.wasCredits, isVideo ? "от " : "")}</span>
+               <span class="mchev">▼</span>`}
+        </button>
+        <div class="mlist ${stu.mopen ? "" : "hide"}" id="stuMlist">
+          ${primary.length > 4 ? `<input class="mlistq" id="stuMq" placeholder="⌕ Поиск модели…" value="${esc(stu.mq || "")}" />` : ""}
+          ${primary.map((x, i) => modelRow(x, i)).join("")}
+          ${hidden.length && !stu.showAll ? `<button class="btn ghost" id="stuMore">Показать все модели (${hidden.length}) — нужно фото</button>` : ""}
+          ${hidden.length && stu.showAll ? hidden.map((x) => modelRow(x)).join("") : ""}
+        </div>
         ${directorModeHtml()}
         ${(() => {
           const dmOn = stu.director && m.key === "seedance";
@@ -4440,20 +4454,6 @@
         <div class="row" style="margin-top:6px">
           <button class="btn ghost" id="stuEnh">${enhLabel()}</button>
           ${stu.prevPrompt != null ? `<button class="btn ghost" id="stuUndo">↩ Вернуть</button>` : ""}
-        </div>
-        ${qLabel("Модель", "model")}
-        <button class="mpick" id="stuMpick" aria-expanded="${stu.mopen ? "true" : "false"}">
-          ${stu.mopen
-            ? `<span><b>Выберите модель</b></span><span class="mchev">свернуть ▲</span>`
-            : `<span><b>${esc(m.label)}</b>${m.note ? `<div class="mnote">${esc(m.note)}</div>` : ""}</span>
-               <span class="price">${priceBlockHtml(m.credits, m.wasCredits, isVideo ? "от " : "")}</span>
-               <span class="mchev">▼</span>`}
-        </button>
-        <div class="mlist ${stu.mopen ? "" : "hide"}" id="stuMlist">
-          ${primary.length > 4 ? `<input class="mlistq" id="stuMq" placeholder="⌕ Поиск модели…" value="${esc(stu.mq || "")}" />` : ""}
-          ${primary.map((x, i) => modelRow(x, i)).join("")}
-          ${hidden.length && !stu.showAll ? `<button class="btn ghost" id="stuMore">Показать все модели (${hidden.length}) — нужно фото</button>` : ""}
-          ${hidden.length && stu.showAll ? hidden.map((x) => modelRow(x)).join("") : ""}
         </div>
         ${isVideo && m.key === "seedance" ? (() => {
           const refMode = activeSeedanceTierKey() === "ref";
