@@ -2698,6 +2698,54 @@ await step("gallery pagination: /api/generations pages finished works, excludes 
   assert.equal((await fetch(`${base}/api/generations`)).status, 401);
 });
 
+await step("favorites: star/unstar is owner-scoped, ?favorite=1 filters the gallery", async () => {
+  const fu = { id: 910, username: "fav" };
+  const other = { id: 911, username: "notfav" };
+  await getOrCreateUser(fu.id, fu.username, null, 3);
+  await getOrCreateUser(other.id, other.username, null, 3);
+  for (let i = 0; i < 4; i++) {
+    await logGeneration(fu.id, "seedream_edit", `f${i}`, 2, "ok", `https://fal.test/out/fav${i}.png`);
+  }
+  const ids = (await query(
+    "SELECT id FROM generations WHERE user_id = $1 ORDER BY id ASC",
+    [fu.id],
+  )).map((r) => Number(r.id));
+  const hdr = { Authorization: `tma ${signInitData(fu)}`, "Content-Type": "application/json" };
+  const otherHdr = { Authorization: `tma ${signInitData(other)}`, "Content-Type": "application/json" };
+
+  // Every row starts unfavorited — the filtered view is empty.
+  const empty = (await (await fetch(`${base}/api/generations?favorite=1`, { headers: hdr })).json()) as { total: number };
+  assert.equal(empty.total, 0);
+
+  const star = await fetch(`${base}/api/generations/${ids[0]}/favorite`, { method: "POST", headers: hdr, body: JSON.stringify({ favorite: true }) });
+  assert.equal(star.status, 200);
+  assert.deepEqual(await star.json(), { ok: true, favorite: true });
+  await fetch(`${base}/api/generations/${ids[2]}/favorite`, { method: "POST", headers: hdr, body: JSON.stringify({ favorite: true }) });
+
+  const filtered = (await (await fetch(`${base}/api/generations?favorite=1`, { headers: hdr })).json()) as { total: number; items: Array<{ id: number; favorite: boolean }> };
+  assert.equal(filtered.total, 2);
+  assert.ok(filtered.items.every((i) => i.favorite === true));
+  assert.deepEqual(filtered.items.map((i) => i.id).sort(), [ids[0], ids[2]].sort());
+
+  // The unfiltered page still carries the flag on each item, un-starred ones included.
+  const all = (await (await fetch(`${base}/api/generations`, { headers: hdr })).json()) as { items: Array<{ id: number; favorite: boolean }> };
+  assert.equal(all.items.find((i) => i.id === ids[1])?.favorite, false);
+
+  // Unstar.
+  const unstar = await fetch(`${base}/api/generations/${ids[0]}/favorite`, { method: "POST", headers: hdr, body: JSON.stringify({ favorite: false }) });
+  assert.deepEqual(await unstar.json(), { ok: true, favorite: false });
+  const afterUnstar = (await (await fetch(`${base}/api/generations?favorite=1`, { headers: hdr })).json()) as { total: number };
+  assert.equal(afterUnstar.total, 1);
+
+  // Someone else's id: 404, not a silent no-op, and the target's flag is untouched.
+  const stolen = await fetch(`${base}/api/generations/${ids[2]}/favorite`, { method: "POST", headers: otherHdr, body: JSON.stringify({ favorite: false }) });
+  assert.equal(stolen.status, 404);
+  const stillFav = (await (await fetch(`${base}/api/generations?favorite=1`, { headers: hdr })).json()) as { total: number };
+  assert.equal(stillFav.total, 1, "another user's failed toggle must not have unstarred it");
+
+  assert.equal((await fetch(`${base}/api/generations/${ids[0]}/favorite`, { method: "POST", body: JSON.stringify({ favorite: true }) })).status, 401);
+});
+
 await step("watermark setting: default on, /api/settings toggles it, /me reflects it", async () => {
   const wu = { id: 808, username: "wm" };
   const hdr = { Authorization: `tma ${signInitData(wu)}`, "Content-Type": "application/json" };

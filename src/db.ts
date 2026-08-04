@@ -398,6 +398,13 @@ const SCHEMA: string[] = [
          WHERE l.user_id = o.user_id AND l.reason = 'purchase'
            AND l.meta = o.amount_kzt::text
        )`,
+  // Favorites (Studio's popup gallery browser): a plain per-generation flag,
+  // not a separate join table — one user never favorites another's work, so
+  // there's no many-to-many shape to model, just a bit on the row itself.
+  // Partial index: the filtered gallery query only ever asks for TRUE rows,
+  // so indexing FALSE rows (the overwhelming majority) would be pure waste.
+  `ALTER TABLE generations ADD COLUMN IF NOT EXISTS favorite BOOLEAN NOT NULL DEFAULT false`,
+  `CREATE INDEX IF NOT EXISTS idx_generations_favorite ON generations(user_id, id DESC) WHERE favorite = true`,
 ];
 
 let schemaReady: Promise<void> | null = null;
@@ -2202,6 +2209,8 @@ export interface GenerationRow {
   opts: Record<string, unknown> | null;
   /** Failure code ('moderation'|'provider_blocked'|'provider_error'|'timeout'); null unless failed. */
   error_reason: string | null;
+  /** Starred in the popup gallery browser — false on every pre-existing row. */
+  favorite: boolean;
 }
 
 function mapGeneration(r: Row): GenerationRow {
@@ -2240,12 +2249,13 @@ function mapGeneration(r: Row): GenerationRow {
     user_prompt: (r.user_prompt as string | null) ?? null,
     opts,
     error_reason: (r.error_reason as string | null) ?? null,
+    favorite: r.favorite === true,
   };
 }
 
 /** The generation columns every row reader selects — one list, no drift. */
 const GENERATION_COLUMNS =
-  "id, model, prompt, credits, status, output_url, output_urls, created_at, finished_at, source_id, source_kind, user_prompt, opts, error_reason";
+  "id, model, prompt, credits, status, output_url, output_urls, created_at, finished_at, source_id, source_kind, user_prompt, opts, error_reason, favorite";
 
 /**
  * Web-flow generations run async (HTTP returns immediately, the client polls):
@@ -2444,27 +2454,47 @@ export async function recentGenerations(userId: number, limit = 30): Promise<Gen
 
 /**
  * One page of a user's finished works (status='ok' with an output), newest
- * first, plus the total count — powers the paginated «Мои работы» gallery.
+ * first, plus the total count — powers the paginated «Мои работы» gallery
+ * (both the Studio composer's popup browser and any other gallery view).
  * Only completed works are counted so page numbers stay stable/accurate.
+ * `favoriteOnly` narrows to starred rows only — same shape either way, so
+ * callers don't need a separate code path for the filtered view.
  */
 export async function galleryPage(
   userId: number,
   limit: number,
   offset: number,
+  favoriteOnly = false,
 ): Promise<{ items: GenerationRow[]; total: number }> {
+  const favClause = favoriteOnly ? "AND favorite = true" : "";
   const items = await q(
     `SELECT ${GENERATION_COLUMNS}
      FROM generations
-     WHERE user_id = $1 AND status = 'ok' AND output_url IS NOT NULL
+     WHERE user_id = $1 AND status = 'ok' AND output_url IS NOT NULL ${favClause}
      ORDER BY id DESC LIMIT $2 OFFSET $3`,
     [userId, limit, offset],
   );
   const cnt = await q(
     `SELECT COUNT(*)::int AS c FROM generations
-     WHERE user_id = $1 AND status = 'ok' AND output_url IS NOT NULL`,
+     WHERE user_id = $1 AND status = 'ok' AND output_url IS NOT NULL ${favClause}`,
     [userId],
   );
   return { items: items.map(mapGeneration), total: Number(cnt[0]?.c ?? 0) };
+}
+
+/**
+ * Toggle a generation's favorite flag — owner-scoped (WHERE id AND user_id
+ * together, same convention as every other per-row mutation here), so one
+ * user can never star/unstar another's work even by guessing an id. Returns
+ * false if no matching row was found (wrong id, or not this user's), which
+ * the caller turns into a 404 rather than a silent no-op.
+ */
+export async function setFavorite(userId: number, generationId: number, favorite: boolean): Promise<boolean> {
+  const rows = await q(
+    "UPDATE generations SET favorite = $3 WHERE id = $1 AND user_id = $2 RETURNING id",
+    [generationId, userId, favorite],
+  );
+  return rows.length > 0;
 }
 
 /**
