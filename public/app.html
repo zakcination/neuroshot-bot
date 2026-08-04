@@ -1345,18 +1345,18 @@
        (each already has its own visible widget right below it — a second,
        separate tap target for the same upload would just be two ways to do
        one thing). */
-    .inputscard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
-    .inputs-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
-    .inputs-head b { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-    .inputs-ct { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-    .inputs-slots { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; margin-bottom: 12px; }
-    .islot {
-      aspect-ratio: 1; border-radius: 9px; background: var(--surface-2); border: 1px dashed var(--line);
-      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--muted);
-    }
-    .islot .iic { font-size: 15px; line-height: 1; }
-    .islot .ilbl { font-size: 8.5px; font-weight: 700; letter-spacing: .02em; }
-    .islot.on { border-style: solid; border-color: rgba(124,92,255,.4); background: rgba(124,92,255,.1); color: var(--violet); }
+    .inputscard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; }
+    .inputs-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+    .inputs-head b { font-size: 9.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); }
+    .inputs-ct { font-size: 10px; color: var(--faint); font-variant-numeric: tabular-nums; }
+    /* Status readout, not a control — no card chrome, no dashed "tap me" border.
+       These mirror the real interactive slots below; nothing here is clickable. */
+    .inputs-slots { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .islot { display: flex; align-items: center; gap: 3px; color: var(--faint); cursor: default; }
+    .islot .iic { font-size: 12px; line-height: 1; opacity: .55; }
+    .islot .ilbl { font-size: 8.5px; font-weight: 600; letter-spacing: .01em; }
+    .islot.on { color: var(--violet); }
+    .islot.on .iic { opacity: 1; }
     .inputscard .quiz-q:first-of-type { margin-top: 0; }
     .inputscard > *:last-child { margin-bottom: 0; }
     /* Aspect-ratio horizontal reel — a physical drag-scrub strip (wireRatioScrub)
@@ -1401,14 +1401,14 @@
     .mini img.on { border-color: var(--violet); box-shadow: 0 0 14px rgba(124,92,255,.5); }
 
     .drop {
-      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; text-align: center;
       border: 1.5px dashed rgba(124,92,255,.5); border-radius: var(--radius); background: rgba(124,92,255,.06);
-      padding: 34px 18px; cursor: pointer; transition: background .2s ease;
+      padding: 18px 16px; cursor: pointer; transition: background .2s ease;
     }
     .drop:hover { background: rgba(124,92,255,.12); }
-    .drop .em { font-size: 34px; }
-    .drop b { font-size: 15px; }
-    .drop span { color: var(--muted); font-size: 12.5px; }
+    .drop .em { font-size: 24px; }
+    .drop b { font-size: 13.5px; }
+    .drop span { color: var(--muted); font-size: 11px; }
     .drop input { display: none; }
     .photo-preview { position: relative; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); }
     .photo-preview img { width: 100%; max-height: 42dvh; object-fit: contain; display: block; background: #000; }
