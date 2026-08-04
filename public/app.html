@@ -1636,15 +1636,18 @@
        grab zone rather than the browser's native corner-grip, which is tiny
        and frequently suppressed entirely inside Telegram's in-app WebView. */
     .promptwrap { position: relative; margin-top: 12px; }
+    /* Handle sits at the BOTTOM edge — the box's top stays put as you type;
+       dragging the handle down is what "make more room below" should feel
+       like, matching a native textarea's bottom-right resize corner. */
     .promptgrip {
-      position: absolute; top: -12px; left: 0; right: 0; height: 22px; z-index: 2;
+      position: absolute; bottom: -12px; left: 0; right: 0; height: 22px; z-index: 2;
       display: flex; align-items: center; justify-content: center; cursor: ns-resize; touch-action: none;
     }
     .promptgrip i { width: 34px; height: 4px; border-radius: 999px; background: var(--line); transition: background .15s; }
     .promptgrip.active i { background: var(--violet); }
     textarea.prompt {
       width: 100%; background: var(--surface); color: var(--ink); border: 1px solid var(--line);
-      border-radius: var(--radius-s); padding: 18px 14px 13px; font: inherit; font-size: 14px; resize: none; min-height: 76px;
+      border-radius: var(--radius-s); padding: 13px 14px 18px; font: inherit; font-size: 14px; resize: none; min-height: 76px;
       transition: border-color .15s;
     }
     textarea.prompt:focus { outline: 2px solid rgba(124,92,255,.5); }
@@ -4448,8 +4451,8 @@
         ${qLabel(isVideo ? "Движение (необязательно)" : stu.preset ? "Промпт" : "Что нарисовать?")}
         ${!isVideo && !stu.preset && !stuHasSource() ? `<div class="sub">Фото не нужно — опишите картинку словами, ИИ нарисует её с нуля.</div>` : ""}
         <div class="promptwrap">
-          <div class="promptgrip" id="stuPromptGrip"><i></i></div>
           <textarea class="prompt" id="stuPrompt" style="height:${stu.promptH}px" placeholder="${isVideo ? "камера медленно приближается, ветер в волосах…" : stu.preset ? "допишите детали: имя, цвет, настроение…" : "флакон духов на мокром чёрном мраморе…"}">${esc(promptVal)}</textarea>
+          <div class="promptgrip" id="stuPromptGrip"><i></i></div>
         </div>
         <div class="row" style="margin-top:6px">
           <button class="btn ghost" id="stuEnh">${enhLabel()}</button>
