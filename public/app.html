@@ -1323,6 +1323,38 @@
       border-radius: 999px; padding: 8px 13px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
     }
     .chip.on { background: var(--aurora); border-color: transparent; color: #fff; }
+    /* Video "story" quiz — one question at a time in a FIXED-height card, so
+       answering doesn't reflow everything below it. Picking an option
+       auto-advances; "Назад" steps back to revise; past the last question the
+       whole thing collapses into a summary row. */
+    .storyq { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; }
+    .storyq.active { height: 150px; display: flex; flex-direction: column; gap: 8px; }
+    .storyq .sq-head { display: flex; align-items: baseline; justify-content: space-between; }
+    .storyq .sq-head b { font-size: 9.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); }
+    .storyq .sq-ct { font-size: 10px; color: var(--faint); font-variant-numeric: tabular-nums; }
+    .storyq .sq-q { font-size: 13.5px; font-weight: 650; }
+    .storyq .sq-chips { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 6px; flex: 1; min-height: 0; overflow-y: auto; }
+    .storyq .sq-foot { display: flex; align-items: center; justify-content: space-between; margin-top: auto; }
+    .storyq .sq-back {
+      border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; font-weight: 650;
+      padding: 4px 2px; cursor: pointer;
+    }
+    .storyq .sq-back:disabled { opacity: .35; cursor: default; }
+    .storyq .sq-skip { border: 0; background: transparent; color: var(--faint); font: inherit; font-size: 11.5px; padding: 4px 2px; cursor: pointer; }
+    .storyq.slide-fwd .sq-body { animation: sqSlideFwd .22s ease; }
+    .storyq.slide-back .sq-body { animation: sqSlideBack .22s ease; }
+    @keyframes sqSlideFwd { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    @keyframes sqSlideBack { from { transform: translateX(-20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .storyq.slide-fwd .sq-body, .storyq.slide-back .sq-body { animation: none; } }
+    /* Done state: a plain summary row, reopenable — same visual language as
+       the preset tag row (.ptagrow/.ptag) elsewhere in this composer. */
+    .storyq .sq-done { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .storyq .sq-done .sq-tags { display: flex; flex-wrap: wrap; gap: 5px; flex: 1; min-width: 0; }
+    .storyq .sq-tag {
+      font-size: 11px; font-weight: 600; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line);
+      border-radius: 999px; padding: 4px 9px;
+    }
+    .storyq .sq-edit { border: 0; background: transparent; color: var(--violet); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; flex: none; }
     /* S12–S15: render params pinned as one card directly above the CTA (docs/
        wireframes — home-studio wireframe, version 2) — aspect/quality/count/
        duration, same widgets as before, grouped so "what you're spending on"
@@ -3917,6 +3949,8 @@
         custom: prev ? prev.custom : "",
         prompt: prev ? prev.prompt : "",
         options: {}, // video story picks: stepId -> optionId
+        storyStep: 0, // which VIDEO_STORY question the carousel is on (>= story.length = done/collapsed)
+        storyDir: null, // "fwd" | "back" — which way the carousel last moved, for the slide-in animation
         mode: ctx.mode || (prev ? prev.mode : "image"),
         modelKey: ctx.modelKey || null,
         photo: prev ? prev.photo : null,
@@ -4340,6 +4374,55 @@
       }));
     }
 
+    /**
+     * The video "story" quiz (VIDEO_STORY, src/models.ts) — one question per
+     * card, fixed height so answering never reflows the rest of the composer.
+     * Picking an option auto-advances (stu.storyStep++); "Назад" steps back to
+     * revise a prior answer; skipping just advances without setting
+     * stu.options[id] (every question stays optional, same as before this
+     * rewrite — only the presentation changed). Past the last question the
+     * card collapses into a summary row naming what was picked, tap "изменить"
+     * to reopen at the first question.
+     */
+    function storyQuizHtml(story) {
+      if (!story.length) return "";
+      const step = Math.min(stu.storyStep ?? 0, story.length);
+      if (step >= story.length) {
+        const picked = story
+          .map((s) => s.options.find((o) => o.id === stu.options[s.id]))
+          .filter(Boolean);
+        if (!picked.length) {
+          return `
+            <div class="storyq">
+              <div class="sq-done"><span class="sq-ct" style="flex:1">Уточнения не выбраны</span>
+                <button class="sq-edit" type="button" id="sqEdit">✎ добавить</button></div>
+            </div>`;
+        }
+        return `
+          <div class="storyq">
+            <div class="sq-done">
+              <div class="sq-tags">${picked.map((o) => `<span class="sq-tag">${esc(o.label)}</span>`).join("")}</div>
+              <button class="sq-edit" type="button" id="sqEdit">✎ изменить</button>
+            </div>
+          </div>`;
+      }
+      const s = story[step];
+      const dir = stu.storyDir === "back" ? "slide-back" : "slide-fwd";
+      return `
+        <div class="storyq active ${dir}">
+          <div class="sq-body" style="display:flex;flex-direction:column;gap:8px;height:100%">
+            <div class="sq-head"><b>Уточнение сцены</b><span class="sq-ct">${step + 1} из ${story.length}</span></div>
+            <div class="sq-q">${esc(s.question)}</div>
+            <div class="sq-chips" data-story="${s.id}">${s.options.map((o) =>
+              `<button class="chip ${stu.options[s.id] === o.id ? "on" : ""}" data-opt="${o.id}">${esc(o.label)}</button>`).join("")}</div>
+            <div class="sq-foot">
+              <button class="sq-back" type="button" id="sqBack" ${step === 0 ? "disabled" : ""}>← Назад</button>
+              <button class="sq-skip" type="button" id="sqSkip">Пропустить →</button>
+            </div>
+          </div>
+        </div>`;
+    }
+
     function viewStudio() {
       const m = studioModel();
       if (!m) { st.tab = "shoot"; viewPick(); return; }
@@ -4468,10 +4551,7 @@
               : `<div class="chips" id="stuTier">${tiers.map(([id, label]) =>
                   `<button class="chip ${(stu.seedanceTier || "fast") === id ? "on" : ""}" data-tier="${id}">${label}</button>`).join("")}</div>`}`;
         })() : ""}
-        ${story.length ? `${story.map((s) => `
-          <div class="quiz-q">${esc(s.question)}</div>
-          <div class="chips" data-story="${s.id}">${s.options.map((o) =>
-            `<button class="chip ${stu.options[s.id] === o.id ? "on" : ""}" data-opt="${o.id}">${esc(o.label)}</button>`).join("")}</div>`).join("")}` : ""}
+        ${storyQuizHtml(story)}
         ${(() => {
           // S12–S15: render params pinned as one card directly above the CTA —
           // last thing you see before spending patrons, "тратим — видим на что"
@@ -4599,14 +4679,33 @@
           cta(); // the button carries the total (and flips to "Пополнить" when short)
         }, stuDurWasPrice);
       }
+      // Picking an answer auto-advances the carousel; tapping the SAME chip
+      // again (already selected — can only happen via "Назад") clears it and
+      // still advances, so re-confirming an answer behaves like any other pick.
       sheetBody.querySelectorAll("[data-story]").forEach((row) => {
         row.querySelectorAll(".chip").forEach((chip) => (chip.onclick = () => {
           const id = row.dataset.story;
-          if (stu.options[id] === chip.dataset.opt) delete stu.options[id];
-          else stu.options[id] = chip.dataset.opt;
+          stu.options[id] = chip.dataset.opt;
+          stu.storyDir = "fwd";
+          stu.storyStep = (stu.storyStep ?? 0) + 1;
           viewStudio();
         }));
       });
+      bind("#sqBack", (el) => (el.onclick = () => {
+        stu.storyDir = "back";
+        stu.storyStep = Math.max(0, (stu.storyStep ?? 0) - 1);
+        viewStudio();
+      }));
+      bind("#sqSkip", (el) => (el.onclick = () => {
+        stu.storyDir = "fwd";
+        stu.storyStep = (stu.storyStep ?? 0) + 1;
+        viewStudio();
+      }));
+      bind("#sqEdit", (el) => (el.onclick = () => {
+        stu.storyDir = "back";
+        stu.storyStep = 0;
+        viewStudio();
+      }));
       bind("#stuFile", (el) => (el.onchange = async (e) => {
         const f = e.target.files[0];
         if (!f) return;
