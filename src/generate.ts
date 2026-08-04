@@ -136,6 +136,40 @@ function extractResultUrls(data: unknown): string[] {
 }
 
 /**
+ * Is this failure fal's PER-REQUEST content-policy rejection, not an account
+ * problem? Confirmed live on Seedance 2.0 (bytedance/seedance-2.0/*): fal
+ * returns 403 with body.detail = "The images or videos provided may contain
+ * likenesses of real people or other private information that cannot be
+ * processed." — same status code the account-exhausted-balance case uses
+ * (see isProviderBlocked below), but a completely different failure: THIS
+ * photo tripped ByteDance's own face classifier, which says nothing about
+ * whether the next request (a different photo) would also fail. Must be
+ * checked BEFORE isProviderBlocked's bare-403 fallback, or every one of these
+ * trips the account-block circuit breaker and refuses every OTHER user's
+ * Seedance render for two minutes over a single flagged photo.
+ *
+ * The same rejection can also arrive as a 422: fal's client (@fal-ai/client's
+ * response.js) wraps status 422 in a ValidationError whose own fieldErrors
+ * getter carries a built-in admission that body.detail is "either a plain
+ * string OR a FastAPI/Pydantic-style array of {loc,msg,type} — some custom
+ * 422s aren't in the Pydantic format" either way. Matching only the string
+ * shape would silently miss the array shape, so this stringifies the whole
+ * body and searches that — robust to whichever shape a given rejection
+ * actually uses, string or nested array, without needing to special-case 422
+ * vs 403 or FastAPI vs a bespoke error format.
+ */
+function isContentPolicyRejection(err: unknown): boolean {
+  const e = err as { body?: unknown } | null;
+  let text = "";
+  try {
+    text = JSON.stringify(e?.body ?? "");
+  } catch {
+    text = "";
+  }
+  return /likenesses of real people|private information/i.test(text);
+}
+
+/**
  * Is this failure our PROVIDER ACCOUNT being blocked, rather than one model
  * misbehaving? A 401/403 (bad key, or "User is locked. Reason: Exhausted
  * balance") stops every render we make, but reaches the user as the same
@@ -146,8 +180,15 @@ function extractResultUrls(data: unknown): string[] {
  * balance drains to a level that still covers a $0.04 image but no longer a
  * $1.52 video, so the expensive models "stop working" first and it reads as a
  * bug in one model. Worth its own signal for exactly that reason.
+ *
+ * A bare 401/403 is NOT sufficient on its own — fal reuses 403 for per-request
+ * content-policy rejections too (see isContentPolicyRejection), so those are
+ * excluded first. Everything else keeps the original fail-safe behavior: an
+ * unrecognized 401/403 still counts as blocked, since a bad/revoked key is
+ * exactly the kind of failure that shouldn't need a matching phrase to catch.
  */
 export function isProviderBlocked(err: unknown): boolean {
+  if (isContentPolicyRejection(err)) return false;
   const e = err as { status?: number; body?: { detail?: unknown } } | null;
   if (e?.status === 401 || e?.status === 403) return true;
   const detail = typeof e?.body?.detail === "string" ? e.body.detail : "";
@@ -200,6 +241,10 @@ export type ErrorReason = "moderation" | "provider_blocked" | "provider_error" |
 /** Map a render-tail failure onto its error_reason code. */
 export function classifyGenError(err: unknown): ErrorReason {
   if (err instanceof UnsafeImageError) return "moderation";
+  // Same bucket as our own NSFW check: same user action either way ("upload a
+  // different photo"), and genErrText's moderation copy already says exactly
+  // that — no new copy needed for a provider-side rejection.
+  if (isContentPolicyRejection(err)) return "moderation";
   if (isProviderBlocked(err)) return "provider_blocked";
   return "provider_error";
 }

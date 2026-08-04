@@ -1323,18 +1323,110 @@
       border-radius: 999px; padding: 8px 13px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
     }
     .chip.on { background: var(--aurora); border-color: transparent; color: #fff; }
+    /* Video "story" quiz — one question at a time in a FIXED-height card, so
+       answering doesn't reflow everything below it. Picking an option
+       auto-advances; "Назад" steps back to revise; past the last question the
+       whole thing collapses into a summary row. */
+    .storyq { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; }
+    .storyq.active { height: 150px; display: flex; flex-direction: column; gap: 8px; }
+    .storyq .sq-head { display: flex; align-items: baseline; justify-content: space-between; }
+    .storyq .sq-head b { font-size: 9.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); }
+    .storyq .sq-ct { font-size: 10px; color: var(--faint); font-variant-numeric: tabular-nums; }
+    .storyq .sq-q { font-size: 13.5px; font-weight: 650; }
+    .storyq .sq-chips { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 6px; flex: 1; min-height: 0; overflow-y: auto; }
+    .storyq .sq-foot { display: flex; align-items: center; justify-content: space-between; margin-top: auto; }
+    .storyq .sq-back {
+      border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; font-weight: 650;
+      padding: 4px 2px; cursor: pointer;
+    }
+    .storyq .sq-back:disabled { opacity: .35; cursor: default; }
+    .storyq .sq-skip { border: 0; background: transparent; color: var(--faint); font: inherit; font-size: 11.5px; padding: 4px 2px; cursor: pointer; }
+    .storyq.slide-fwd .sq-body { animation: sqSlideFwd .22s ease; }
+    .storyq.slide-back .sq-body { animation: sqSlideBack .22s ease; }
+    @keyframes sqSlideFwd { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    @keyframes sqSlideBack { from { transform: translateX(-20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .storyq.slide-fwd .sq-body, .storyq.slide-back .sq-body { animation: none; } }
+    /* Done state: a plain summary row, reopenable — same visual language as
+       the preset tag row (.ptagrow/.ptag) elsewhere in this composer. */
+    .storyq .sq-done { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .storyq .sq-done .sq-tags { display: flex; flex-wrap: wrap; gap: 5px; flex: 1; min-width: 0; }
+    .storyq .sq-tag {
+      font-size: 11px; font-weight: 600; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line);
+      border-radius: 999px; padding: 4px 9px;
+    }
+    .storyq .sq-edit { border: 0; background: transparent; color: var(--violet); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; flex: none; }
     /* S12–S15: render params pinned as one card directly above the CTA (docs/
-       wireframes — home-studio wireframe, version 2) — aspect/quality/count/
-       duration, same widgets as before, grouped so "what you're spending on"
-       reads as one unit right before the button that spends it. First/last
-       child margins are killed so the card's own padding is the only gap at
-       its edges. */
+       wireframes/home-studio, v3) — aspect/quality/count/duration grouped
+       so "what you're spending on" reads as one unit right before the button
+       that spends it. Each param is a compact pill showing its current value;
+       tapping opens a popup with the full list — one uniform pattern instead
+       of a chip row for some params and a bespoke drag reel/slider for others. */
     .paramscard {
       background: var(--surface-2); border: 1px solid rgba(124,92,255,.28); border-radius: var(--radius-s);
-      padding: 12px 14px 14px; margin: 16px 0 0;
+      padding: 10px 12px; margin: 16px 0 0;
     }
-    .paramscard > .quiz-q:first-child { margin-top: 0; }
-    .paramscard > *:last-child { margin-bottom: 0; }
+    .ppills { display: flex; gap: 8px; flex-wrap: wrap; }
+    .ppill {
+      flex: 1; min-width: 84px; border: 1px solid var(--line); background: var(--surface); border-radius: 11px;
+      padding: 7px 10px; text-align: left; font: inherit; cursor: pointer; display: flex; flex-direction: column; gap: 1px;
+    }
+    .ppill small { font-size: 8.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
+    .ppill b { font-size: 13px; font-weight: 700; color: var(--ink); }
+    .ppill:active { border-color: rgba(124,92,255,.5); }
+    /* The popup itself — a small nested bottom sheet, same slide-up/backdrop
+       language as the main composer sheet (.sheet/.sheet-bg), scoped to its
+       own overlay so it can sit on top of the composer without touching it. */
+    .param-popup { position: fixed; inset: 0; z-index: 75; }
+    .param-popup-backdrop { position: absolute; inset: 0; background: rgba(4,3,8,.6); backdrop-filter: blur(4px); }
+    .param-popup-sheet {
+      position: absolute; left: 0; right: 0; bottom: 0; margin: 0 auto; max-width: 720px;
+      background: var(--bg-2); border: 1px solid var(--line); border-bottom: 0; border-radius: 20px 20px 0 0;
+      padding: 14px 16px calc(16px + env(safe-area-inset-bottom)); max-height: 70dvh; overflow-y: auto;
+      animation: ppSheetUp .22s cubic-bezier(.2,.9,.3,1);
+    }
+    @keyframes ppSheetUp { from { transform: translateY(24px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .param-popup-sheet { animation: none; } }
+    .pp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .pp-head b { font-size: 15px; font-weight: 700; }
+    .pp-x {
+      width: 28px; height: 28px; border-radius: 999px; border: 0; background: var(--surface-2); color: var(--muted);
+      font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    }
+    .pp-list { display: flex; flex-direction: column; gap: 6px; }
+    .pp-row {
+      border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 12px;
+      padding: 12px 14px; text-align: left; font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .pp-row.on { border-color: rgba(124,92,255,.5); background: rgba(124,92,255,.1); color: var(--violet); }
+    /* Popup gallery browser — reuses .param-popup's overlay/sheet, just a
+       taller sheet and a thumbnail grid instead of a row list. */
+    .gallery-link {
+      border: 0; background: transparent; color: var(--violet); font: inherit; font-size: 11.5px; font-weight: 650;
+      padding: 6px 2px; cursor: pointer;
+    }
+    .gallery-sheet { max-height: 82dvh; }
+    .gfav-toggle {
+      border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); border-radius: 999px;
+      padding: 5px 10px; font: inherit; font-size: 11px; font-weight: 650; cursor: pointer;
+    }
+    .gfav-toggle.on { border-color: rgba(245,182,74,.5); background: rgba(245,182,74,.12); color: var(--amber); }
+    .gallery-empty { padding: 40px 10px; text-align: center; color: var(--muted); font-size: 13px; }
+    .gallery-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .gitem { position: relative; aspect-ratio: 1; border-radius: 12px; overflow: hidden; border: 2px solid transparent; cursor: pointer; }
+    .gitem img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .gitem.on { border-color: var(--violet); box-shadow: 0 0 14px rgba(124,92,255,.5); }
+    .gstar {
+      position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 50%; border: 0;
+      background: rgba(0,0,0,.5); backdrop-filter: blur(4px); color: #fff; font-size: 12px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .gstar.on { color: var(--amber); }
+    .gcheck {
+      position: absolute; bottom: 4px; right: 4px; width: 20px; height: 20px; border-radius: 50%;
+      background: var(--violet); color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+    }
+    .gallery-pager { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; font-size: 12px; color: var(--muted); }
     /* S5–S7, S16: photo / extra angles / audio-video refs / final frame, one
        card instead of four scattered blocks (docs/wireframes — home-studio
        wireframe, version 2). The 4-icon row up top is "what's filled at a
@@ -1345,41 +1437,20 @@
        (each already has its own visible widget right below it — a second,
        separate tap target for the same upload would just be two ways to do
        one thing). */
-    .inputscard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
-    .inputs-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
-    .inputs-head b { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-    .inputs-ct { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-    .inputs-slots { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; margin-bottom: 12px; }
-    .islot {
-      aspect-ratio: 1; border-radius: 9px; background: var(--surface-2); border: 1px dashed var(--line);
-      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--muted);
-    }
-    .islot .iic { font-size: 15px; line-height: 1; }
-    .islot .ilbl { font-size: 8.5px; font-weight: 700; letter-spacing: .02em; }
-    .islot.on { border-style: solid; border-color: rgba(124,92,255,.4); background: rgba(124,92,255,.1); color: var(--violet); }
+    .inputscard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; }
+    .inputs-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+    .inputs-head b { font-size: 9.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); }
+    .inputs-ct { font-size: 10px; color: var(--faint); font-variant-numeric: tabular-nums; }
+    /* Status readout, not a control — no card chrome, no dashed "tap me" border.
+       These mirror the real interactive slots below; nothing here is clickable. */
+    .inputs-slots { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .islot { display: flex; align-items: center; gap: 3px; color: var(--faint); cursor: default; }
+    .islot .iic { font-size: 12px; line-height: 1; opacity: .55; }
+    .islot .ilbl { font-size: 8.5px; font-weight: 600; letter-spacing: .01em; }
+    .islot.on { color: var(--violet); }
+    .islot.on .iic { opacity: 1; }
     .inputscard .quiz-q:first-of-type { margin-top: 0; }
     .inputscard > *:last-child { margin-bottom: 0; }
-    /* Aspect-ratio horizontal reel — a physical drag-scrub strip (wireRatioScrub)
-       for the 3+ option case; visual language borrowed from .durbox (dark
-       track, one clear focal element). A binary choice keeps the plain .chips
-       row instead — a reel is friction for a 2-way choice, not a feature. */
-    .arreel { position: relative; height: 60px; overflow: hidden; border-radius: var(--radius-s); background: var(--surface-2); border: 1px solid var(--line); touch-action: pan-y; cursor: grab; }
-    .arreel:active { cursor: grabbing; }
-    .arwindow {
-      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-      width: 68px; height: 44px; border-radius: 12px; background: rgba(124,92,255,.14);
-      border: 1px solid rgba(124,92,255,.45); pointer-events: none;
-    }
-    .artrack { position: absolute; top: 0; bottom: 0; left: 50%; display: flex; align-items: center; }
-    .aritem {
-      flex: 0 0 68px; width: 68px; height: 60px; display: flex; align-items: center; justify-content: center;
-      border: 0; background: none; font: inherit; font-size: 13px; font-weight: 700; color: var(--muted);
-      cursor: pointer; transition: color .2s, transform .2s; user-select: none;
-    }
-    .aritem.on { color: var(--ink); transform: scale(1.05); }
-    .arfade { position: absolute; top: 0; bottom: 0; width: 36px; pointer-events: none; }
-    .arfade.l { left: 0; background: linear-gradient(to right, var(--surface-2), transparent); }
-    .arfade.r { right: 0; background: linear-gradient(to left, var(--surface-2), transparent); }
     input.words {
       width: 100%; background: var(--surface); color: var(--ink); border: 1px solid var(--line);
       border-radius: var(--radius-s); padding: 12px 14px; font: inherit; font-size: 14px; margin-top: 8px;
@@ -1401,14 +1472,14 @@
     .mini img.on { border-color: var(--violet); box-shadow: 0 0 14px rgba(124,92,255,.5); }
 
     .drop {
-      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; text-align: center;
       border: 1.5px dashed rgba(124,92,255,.5); border-radius: var(--radius); background: rgba(124,92,255,.06);
-      padding: 34px 18px; cursor: pointer; transition: background .2s ease;
+      padding: 18px 16px; cursor: pointer; transition: background .2s ease;
     }
     .drop:hover { background: rgba(124,92,255,.12); }
-    .drop .em { font-size: 34px; }
-    .drop b { font-size: 15px; }
-    .drop span { color: var(--muted); font-size: 12.5px; }
+    .drop .em { font-size: 24px; }
+    .drop b { font-size: 13.5px; }
+    .drop span { color: var(--muted); font-size: 11px; }
     .drop input { display: none; }
     .photo-preview { position: relative; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); }
     .photo-preview img { width: 100%; max-height: 42dvh; object-fit: contain; display: block; background: #000; }
@@ -1636,15 +1707,18 @@
        grab zone rather than the browser's native corner-grip, which is tiny
        and frequently suppressed entirely inside Telegram's in-app WebView. */
     .promptwrap { position: relative; margin-top: 12px; }
+    /* Handle sits at the BOTTOM edge — the box's top stays put as you type;
+       dragging the handle down is what "make more room below" should feel
+       like, matching a native textarea's bottom-right resize corner. */
     .promptgrip {
-      position: absolute; top: -12px; left: 0; right: 0; height: 22px; z-index: 2;
+      position: absolute; bottom: -12px; left: 0; right: 0; height: 22px; z-index: 2;
       display: flex; align-items: center; justify-content: center; cursor: ns-resize; touch-action: none;
     }
     .promptgrip i { width: 34px; height: 4px; border-radius: 999px; background: var(--line); transition: background .15s; }
     .promptgrip.active i { background: var(--violet); }
     textarea.prompt {
       width: 100%; background: var(--surface); color: var(--ink); border: 1px solid var(--line);
-      border-radius: var(--radius-s); padding: 18px 14px 13px; font: inherit; font-size: 14px; resize: none; min-height: 76px;
+      border-radius: var(--radius-s); padding: 13px 14px 18px; font: inherit; font-size: 14px; resize: none; min-height: 76px;
       transition: border-color .15s;
     }
     textarea.prompt:focus { outline: 2px solid rgba(124,92,255,.5); }
@@ -3914,6 +3988,19 @@
         custom: prev ? prev.custom : "",
         prompt: prev ? prev.prompt : "",
         options: {}, // video story picks: stepId -> optionId
+        storyStep: 0, // which VIDEO_STORY question the carousel is on (>= story.length = done/collapsed)
+        storyDir: null, // "fwd" | "back" — which way the carousel last moved, for the slide-in animation
+        paramPopup: null, // which param popup (aspect/resolution/count/duration) is open, if any
+        // Popup gallery browser (full paginated "мои работы", not just the last
+        // few) — see galleryPopupHtml(). galleryMode is "single" (picking the
+        // primary source photo, replaces stu.photo/generationId) or "multi"
+        // (attaching extra reference photos, appends to stu.extras).
+        galleryOpen: false,
+        galleryMode: null,
+        galleryPage: 1,
+        galleryFavOnly: false,
+        galleryData: null, // last-fetched {items,total,page,pages} or null while loading
+        gallerySelected: [], // multi mode only: [{id, url}]
         mode: ctx.mode || (prev ? prev.mode : "image"),
         modelKey: ctx.modelKey || null,
         photo: prev ? prev.photo : null,
@@ -4238,6 +4325,7 @@
             ${sourceCells}${charCells}${locCells}${finalCell}${addCell}
             ${canAddSource ? `<input type="file" accept="image/*" id="stuExtraFile" multiple style="display:none" />` : ""}
           </div>
+          ${canAddSource ? `<button type="button" class="gallery-link" id="refGalleryBtn">📁 из своих работ</button>` : ""}
           ${choiceRow}` : "";
       const addForms = dmOn ? `
         ${stu.dmSec.chars ? dmAddCardHtml("character") : ""}
@@ -4337,6 +4425,175 @@
       }));
     }
 
+    /**
+     * The video "story" quiz (VIDEO_STORY, src/models.ts) — one question per
+     * card, fixed height so answering never reflows the rest of the composer.
+     * Picking an option auto-advances (stu.storyStep++); "Назад" steps back to
+     * revise a prior answer; skipping just advances without setting
+     * stu.options[id] (every question stays optional, same as before this
+     * rewrite — only the presentation changed). Past the last question the
+     * card collapses into a summary row naming what was picked, tap "изменить"
+     * to reopen at the first question.
+     */
+    function storyQuizHtml(story) {
+      if (!story.length) return "";
+      const step = Math.min(stu.storyStep ?? 0, story.length);
+      if (step >= story.length) {
+        const picked = story
+          .map((s) => s.options.find((o) => o.id === stu.options[s.id]))
+          .filter(Boolean);
+        if (!picked.length) {
+          return `
+            <div class="storyq">
+              <div class="sq-done"><span class="sq-ct" style="flex:1">Уточнения не выбраны</span>
+                <button class="sq-edit" type="button" id="sqEdit">✎ добавить</button></div>
+            </div>`;
+        }
+        return `
+          <div class="storyq">
+            <div class="sq-done">
+              <div class="sq-tags">${picked.map((o) => `<span class="sq-tag">${esc(o.label)}</span>`).join("")}</div>
+              <button class="sq-edit" type="button" id="sqEdit">✎ изменить</button>
+            </div>
+          </div>`;
+      }
+      const s = story[step];
+      // Two independent ternaries (not one), each with its own literal ? "x"
+      // branch — check:dead-css only captures a ternary's TRUE branch, so a
+      // single a?"back":"fwd" would read "slide-fwd" as dead.
+      const dir = `${stu.storyDir === "back" ? "slide-back" : ""} ${stu.storyDir !== "back" ? "slide-fwd" : ""}`.trim();
+      return `
+        <div class="storyq active ${dir}">
+          <div class="sq-body" style="display:flex;flex-direction:column;gap:8px;height:100%">
+            <div class="sq-head"><b>Уточнение сцены</b><span class="sq-ct">${step + 1} из ${story.length}</span></div>
+            <div class="sq-q">${esc(s.question)}</div>
+            <div class="sq-chips" data-story="${s.id}">${s.options.map((o) =>
+              `<button class="chip ${stu.options[s.id] === o.id ? "on" : ""}" data-opt="${o.id}">${esc(o.label)}</button>`).join("")}</div>
+            <div class="sq-foot">
+              <button class="sq-back" type="button" id="sqBack" ${step === 0 ? "disabled" : ""}>← Назад</button>
+              <button class="sq-skip" type="button" id="sqSkip">Пропустить →</button>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    /**
+     * The params popup (S12-S15's pill row) — one option list per param key,
+     * built from the SAME data every pill's current value already reads from
+     * (caps.aspectRatios/resolutions, stuCountOptions, m.video.durations), so
+     * the popup can never disagree with what the pill shows. Duration used to
+     * be its own drag-scrub slider (durationSliderHtml/wireDurationSlider,
+     * still used by the separate video-composer scenario picker — not
+     * removed) — here it's a plain list like the other three, for one
+     * consistent "tap pill, pick from a sheet" pattern across all params.
+     */
+    function paramPopupHtml(key, m, caps, isVideo) {
+      let title = "", rows = [];
+      if (key === "aspect") {
+        title = "Формат кадра";
+        const cur = stu.aspect || caps.aspectRatios[0];
+        rows = caps.aspectRatios.map((r) => ({ id: r, label: esc(RATIO_LABEL[r] || r), on: r === cur }));
+      } else if (key === "resolution") {
+        title = "Качество";
+        const cur = stu.resolution || caps.resolutions[0].id;
+        rows = caps.resolutions.map((r) => ({ id: r.id, label: `${esc(r.label)} · ${r.credits} ${PATRON}`, on: r.id === cur }));
+      } else if (key === "count") {
+        title = "Количество";
+        const cur = stu.numImages || 1;
+        rows = stuCountOptions(m, caps).map((c) => ({ id: String(c.n), label: `${c.n} шт${c.n > 1 ? ` · ${c.credits} ${PATRON}` : ""}`, on: c.n === cur }));
+      } else if (key === "duration") {
+        // Kept as the original drag slider (durationSliderHtml/wireDurationSlider)
+        // — a continuous 4-15s range reads better as a slider than a 12-row
+        // list — just relocated from inline into the popup, pill shows the
+        // current value the same way the other three params do.
+        title = "Длительность";
+        return `
+          <div class="param-popup" id="paramPopup">
+            <div class="param-popup-backdrop" data-popup-close></div>
+            <div class="param-popup-sheet">
+              <div class="pp-head"><b>${esc(title)}</b><button class="pp-x" type="button" data-popup-close aria-label="Закрыть">✕</button></div>
+              <div id="stuDur">${durationSliderHtml(m.video.durations.map((d) => d.seconds), stu.duration || m.video.defaultSeconds, stuDurPrice, stuDurWasPrice)}</div>
+            </div>
+          </div>`;
+      }
+      return `
+        <div class="param-popup" id="paramPopup">
+          <div class="param-popup-backdrop" data-popup-close></div>
+          <div class="param-popup-sheet">
+            <div class="pp-head"><b>${esc(title)}</b><button class="pp-x" type="button" data-popup-close aria-label="Закрыть">✕</button></div>
+            <div class="pp-list">${rows.map((r) =>
+              `<button class="pp-row ${r.on ? "on" : ""}" type="button" data-popup-pick="${esc(r.id)}">${r.label}${r.on ? " ✓" : ""}</button>`).join("")}</div>
+          </div>
+        </div>`;
+    }
+
+    /**
+     * Popup gallery browser — full paginated «Мои работы» instead of the last
+     * ~8 pulled from already-loaded catalog data. Opens in "single" mode from
+     * the primary photo picker (replaces stu.photo/generationId, same as
+     * picking from the old inline strip) or "multi" mode from the reference
+     * grid's "+" (appends to stu.extras, several at once).
+     */
+    function openGalleryPopup(mode) {
+      stu.galleryOpen = true;
+      stu.galleryMode = mode;
+      stu.galleryPage = 1;
+      stu.galleryFavOnly = false;
+      stu.galleryData = null;
+      stu.gallerySelected = [];
+      viewStudio();
+      loadGalleryPage();
+    }
+    function closeGalleryPopup() {
+      stu.galleryOpen = false;
+      viewStudio();
+    }
+    async function loadGalleryPage() {
+      const page = stu.galleryPage, favOnly = stu.galleryFavOnly;
+      const qs = `page=${page}&size=12${favOnly ? "&favorite=1" : ""}`;
+      const { status, data } = await api(`/api/generations?${qs}`);
+      // Stale-response guard: if the user changed page/filter again while this
+      // request was in flight, drop the answer to the question we no longer
+      // have open rather than let it clobber newer state.
+      if (stu.galleryPage !== page || stu.galleryFavOnly !== favOnly) return;
+      if (status === 200) stu.galleryData = data;
+      viewStudio();
+    }
+    function galleryPopupHtml() {
+      const d = stu.galleryData;
+      const multi = stu.galleryMode === "multi";
+      const selectedIds = new Set((stu.gallerySelected || []).map((x) => x.id));
+      return `
+        <div class="param-popup" id="galleryPopup">
+          <div class="param-popup-backdrop" data-gallery-close></div>
+          <div class="param-popup-sheet gallery-sheet">
+            <div class="pp-head">
+              <b>Мои работы</b>
+              <div style="display:flex;align-items:center;gap:8px">
+                <button class="gfav-toggle ${stu.galleryFavOnly ? "on" : ""}" type="button" id="galleryFavToggle">⭐ Избранное</button>
+                <button class="pp-x" type="button" data-gallery-close aria-label="Закрыть">✕</button>
+              </div>
+            </div>
+            ${!d ? `<div class="gallery-empty">Загрузка…</div>`
+              : !d.items.length ? `<div class="gallery-empty">${stu.galleryFavOnly ? "Нет избранных работ" : "Пока нет готовых работ"}</div>`
+              : `
+                <div class="gallery-grid">${d.items.map((g) => `
+                  <div class="gitem ${multi && selectedIds.has(g.id) ? "on" : ""}" data-gitem="${g.id}" data-gurl="${esc(g.output_url)}">
+                    <img src="${esc(g.output_url)}" alt="" loading="lazy" />
+                    <button class="gstar ${g.favorite ? "on" : ""}" type="button" data-gstar="${g.id}" aria-label="В избранное">${g.favorite ? "⭐" : "☆"}</button>
+                    ${multi && selectedIds.has(g.id) ? `<span class="gcheck">✓</span>` : ""}
+                  </div>`).join("")}</div>
+                ${d.pages > 1 ? `
+                  <div class="gallery-pager">
+                    <button class="btn ghost" id="galleryPrev" ${d.page <= 1 ? "disabled" : ""}>← Назад</button>
+                    <span>стр. ${d.page} из ${d.pages}</span>
+                    <button class="btn ghost" id="galleryNext" ${d.page >= d.pages ? "disabled" : ""}>Далее →</button>
+                  </div>` : ""}`}
+            ${multi ? `<button class="btn primary" id="galleryConfirm" style="margin-top:10px" ${!stu.gallerySelected.length ? "disabled" : ""}>Добавить (${stu.gallerySelected.length})</button>` : ""}
+          </div>
+        </div>`;
+    }
+
     function viewStudio() {
       const m = studioModel();
       if (!m) { st.tab = "shoot"; viewPick(); return; }
@@ -4395,6 +4652,20 @@
           <button data-md="video" class="${isVideo ? "on" : ""}">🎬 Видео</button>
         </div>
         ${isVideo && !has ? `<div class="sub">Для видео нужно исходное фото — добавьте его ниже или сначала создайте картинку.</div>` : ""}
+        ${qLabel("Модель", "model")}
+        <button class="mpick" id="stuMpick" aria-expanded="${stu.mopen ? "true" : "false"}">
+          ${stu.mopen
+            ? `<span><b>Выберите модель</b></span><span class="mchev">свернуть ▲</span>`
+            : `<span><b>${esc(m.label)}</b>${m.note ? `<div class="mnote">${esc(m.note)}</div>` : ""}</span>
+               <span class="price">${priceBlockHtml(m.credits, m.wasCredits, isVideo ? "от " : "")}</span>
+               <span class="mchev">▼</span>`}
+        </button>
+        <div class="mlist ${stu.mopen ? "" : "hide"}" id="stuMlist">
+          ${primary.length > 4 ? `<input class="mlistq" id="stuMq" placeholder="⌕ Поиск модели…" value="${esc(stu.mq || "")}" />` : ""}
+          ${primary.map((x, i) => modelRow(x, i)).join("")}
+          ${hidden.length && !stu.showAll ? `<button class="btn ghost" id="stuMore">Показать все модели (${hidden.length}) — нужно фото</button>` : ""}
+          ${hidden.length && stu.showAll ? hidden.map((x) => modelRow(x)).join("") : ""}
+        </div>
         ${directorModeHtml()}
         ${(() => {
           const dmOn = stu.director && m.key === "seedance";
@@ -4419,9 +4690,8 @@
                 ${stu.photo ? `<div class="photo-preview"><img src="${stu.photo}" alt="" /><button class="redo" id="stuRedo">↺ Другое</button></div>`
                   : stu.generationId ? `<div class="photo-preview"><img src="${esc(srcUrl)}" alt="" /><button class="redo" id="stuRedo">↺ Другое</button></div>`
                   : `<label class="drop"><input type="file" accept="image/*" id="stuFile" />
-                       <span class="em">📸</span><b>Выбрать фото</b><span>с устройства или из галереи</span></label>
-                     ${works.length ? `<div class="quiz-q">…или из моих работ</div>
-                     <div class="mini" id="stuMini">${works.map((g) => `<img src="${esc(g.output_url)}" data-gid="${g.id}" loading="lazy" alt="" />`).join("")}</div>` : ""}`}
+                       <span class="em">📸</span><b>Выбрать фото</b><span>с устройства</span></label>
+                     ${works.length ? `<button type="button" class="btn ghost" id="stuGalleryBtn" style="margin-top:8px;width:100%">📁 Мои работы</button>` : ""}`}
                 ${extrasBlock(m, isVideo, has)}
               </div>
             </div>`;
@@ -4434,26 +4704,12 @@
         ${qLabel(isVideo ? "Движение (необязательно)" : stu.preset ? "Промпт" : "Что нарисовать?")}
         ${!isVideo && !stu.preset && !stuHasSource() ? `<div class="sub">Фото не нужно — опишите картинку словами, ИИ нарисует её с нуля.</div>` : ""}
         <div class="promptwrap">
-          <div class="promptgrip" id="stuPromptGrip"><i></i></div>
           <textarea class="prompt" id="stuPrompt" style="height:${stu.promptH}px" placeholder="${isVideo ? "камера медленно приближается, ветер в волосах…" : stu.preset ? "допишите детали: имя, цвет, настроение…" : "флакон духов на мокром чёрном мраморе…"}">${esc(promptVal)}</textarea>
+          <div class="promptgrip" id="stuPromptGrip"><i></i></div>
         </div>
         <div class="row" style="margin-top:6px">
           <button class="btn ghost" id="stuEnh">${enhLabel()}</button>
           ${stu.prevPrompt != null ? `<button class="btn ghost" id="stuUndo">↩ Вернуть</button>` : ""}
-        </div>
-        ${qLabel("Модель", "model")}
-        <button class="mpick" id="stuMpick" aria-expanded="${stu.mopen ? "true" : "false"}">
-          ${stu.mopen
-            ? `<span><b>Выберите модель</b></span><span class="mchev">свернуть ▲</span>`
-            : `<span><b>${esc(m.label)}</b>${m.note ? `<div class="mnote">${esc(m.note)}</div>` : ""}</span>
-               <span class="price">${priceBlockHtml(m.credits, m.wasCredits, isVideo ? "от " : "")}</span>
-               <span class="mchev">▼</span>`}
-        </button>
-        <div class="mlist ${stu.mopen ? "" : "hide"}" id="stuMlist">
-          ${primary.length > 4 ? `<input class="mlistq" id="stuMq" placeholder="⌕ Поиск модели…" value="${esc(stu.mq || "")}" />` : ""}
-          ${primary.map((x, i) => modelRow(x, i)).join("")}
-          ${hidden.length && !stu.showAll ? `<button class="btn ghost" id="stuMore">Показать все модели (${hidden.length}) — нужно фото</button>` : ""}
-          ${hidden.length && stu.showAll ? hidden.map((x) => modelRow(x)).join("") : ""}
         </div>
         ${isVideo && m.key === "seedance" ? (() => {
           const refMode = activeSeedanceTierKey() === "ref";
@@ -4465,46 +4721,42 @@
               : `<div class="chips" id="stuTier">${tiers.map(([id, label]) =>
                   `<button class="chip ${(stu.seedanceTier || "fast") === id ? "on" : ""}" data-tier="${id}">${label}</button>`).join("")}</div>`}`;
         })() : ""}
-        ${story.length ? `${story.map((s) => `
-          <div class="quiz-q">${esc(s.question)}</div>
-          <div class="chips" data-story="${s.id}">${s.options.map((o) =>
-            `<button class="chip ${stu.options[s.id] === o.id ? "on" : ""}" data-opt="${o.id}">${esc(o.label)}</button>`).join("")}</div>`).join("")}` : ""}
+        ${storyQuizHtml(story)}
         ${(() => {
           // S12–S15: render params pinned as one card directly above the CTA —
           // last thing you see before spending patrons, "тратим — видим на что"
-          // (docs/wireframes/home-studio.v2.html). Same fields as before, same
-          // ids, same wiring below — only WHERE they render changed. Works for
-          // both modes: video sees aspect/resolution/duration, image sees
-          // aspect/resolution/count — whichever this model actually declares.
-          const aspectHtml = caps && caps.aspectRatios && caps.aspectRatios.length > 1 ? `
-            ${qLabel("Формат кадра", "aspect")}
-            ${caps.aspectRatios.length > 2
-              ? arReelHtml(caps.aspectRatios, stu.aspect || caps.aspectRatios[0])
-              : `<div class="chips" id="stuAr">${caps.aspectRatios.map((r) =>
-                  `<button class="chip ${r === (stu.aspect || caps.aspectRatios[0]) ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}</div>`}` : "";
-          const resHtml = caps && caps.resolutions && caps.resolutions.length ? `
-            ${qLabel("Качество", "res")}
-            <div class="chips" id="stuRes">${caps.resolutions.map((r) =>
-              `<button class="chip ${r.id === (stu.resolution || caps.resolutions[0].id) ? "on" : ""}" data-res="${r.id}">${esc(r.label)} · ${r.credits} ${PATRON}</button>`).join("")}</div>` : "";
-          const countHtml = !isVideo && caps && caps.maxCount ? `
-            ${qLabel("Количество", "count")}
-            <div class="chips" id="stuCount">${stuCountOptions(m, caps).map((c) =>
-              `<button class="chip ${c.n === (stu.numImages || 1) ? "on" : ""}" data-cnt="${c.n}">${c.n} шт${c.n > 1 ? ` · ${c.credits} ${PATRON}` : ""}</button>`).join("")}</div>` : "";
-          const durHtml = isVideo && m.video ? `
-            ${qLabel("Длительность", "duration")}
-            <div id="stuDur">${durationSliderHtml(
-              m.video.durations.map((d) => d.seconds),
-              stu.duration,
-              stuDurPrice,
-              stuDurWasPrice,
-            )}</div>` : "";
-          const body = aspectHtml + resHtml + countHtml + durHtml;
-          return body ? `<div class="paramscard">${body}</div>` : "";
+          // (docs/wireframes/home-studio, v3). Works for both modes: video
+          // sees aspect/resolution/duration, image sees aspect/resolution/count
+          // — whichever this model actually declares. Each is a pill (current
+          // value) that opens paramPopupHtml's list on tap.
+          const params = [];
+          if (caps && caps.aspectRatios && caps.aspectRatios.length > 1) {
+            const cur = stu.aspect || caps.aspectRatios[0];
+            params.push({ key: "aspect", label: "Формат", value: RATIO_LABEL[cur] || cur });
+          }
+          if (caps && caps.resolutions && caps.resolutions.length) {
+            const r = caps.resolutions.find((x) => x.id === (stu.resolution || caps.resolutions[0].id)) || caps.resolutions[0];
+            params.push({ key: "resolution", label: "Качество", value: r.label });
+          }
+          if (!isVideo && caps && caps.maxCount) {
+            params.push({ key: "count", label: "Кол-во", value: `${stu.numImages || 1} шт` });
+          }
+          if (isVideo && m.video) {
+            params.push({ key: "duration", label: "Длит-сть", value: `${stu.duration || m.video.defaultSeconds} сек` });
+          }
+          if (!params.length) return "";
+          return `
+            <div class="paramscard">
+              <div class="ppills">${params.map((p) => `
+                <button class="ppill" type="button" data-popup="${p.key}"><small>${esc(p.label)}</small><b>${esc(p.value)}</b></button>`).join("")}</div>
+            </div>
+            ${stu.paramPopup ? paramPopupHtml(stu.paramPopup, m, caps, isVideo) : ""}`;
         })()}
         <div class="stack">
           <button class="btn primary" id="stuGo"></button>
           <button class="btn ghost" id="stuBack">← Галерея стилей</button>
-        </div>`;
+        </div>
+        ${stu.galleryOpen ? galleryPopupHtml() : ""}`;
 
       const goBtn = sheetBody.querySelector("#stuGo");
       const cta = () => {
@@ -4582,28 +4834,55 @@
           row.style.display = !q || row.dataset.mname.includes(q) ? "" : "none";
         });
       }));
-      sheetBody.querySelectorAll("#stuAr .chip").forEach((c) => (c.onclick = () => { stu.aspect = c.dataset.ar; viewStudio(); }));
-      wireRatioScrub(sheetBody, caps && caps.aspectRatios);
-      sheetBody.querySelectorAll("#stuRes .chip").forEach((c) => (c.onclick = () => { stu.resolution = c.dataset.res; viewStudio(); }));
       sheetBody.querySelectorAll("#stuTier .chip").forEach((c) => (c.onclick = () => { stu.seedanceTier = c.dataset.tier; viewStudio(); }));
-      sheetBody.querySelectorAll("#stuCount .chip").forEach((c) => (c.onclick = () => { stu.numImages = Number(c.dataset.cnt); viewStudio(); }));
-      // Live, without a re-render: the studio sheet holds typed prompt text and a
-      // scroll position, and rebuilding it on every step of a drag would throw
-      // both away mid-gesture. Only the two numbers that changed are updated.
-      if (isVideo && m.video) {
+      // Params popup: tap a pill to open it, tap a row (or the backdrop/✕) to
+      // pick/close. Duration is the one exception — a slider, not a row list
+      // (see paramPopupHtml) — so it's wired separately below, live during the
+      // drag, same reason the original inline slider avoided a full re-render
+      // per tick: rebuilding the DOM mid-drag would drop pointer capture.
+      sheetBody.querySelectorAll("[data-popup]").forEach((b) => (b.onclick = () => { stu.paramPopup = b.dataset.popup; viewStudio(); }));
+      sheetBody.querySelectorAll("[data-popup-close]").forEach((b) => (b.onclick = () => { stu.paramPopup = null; viewStudio(); }));
+      sheetBody.querySelectorAll("[data-popup-pick]").forEach((b) => (b.onclick = () => {
+        const val = b.dataset.popupPick;
+        if (stu.paramPopup === "aspect") stu.aspect = val;
+        else if (stu.paramPopup === "resolution") stu.resolution = val;
+        else if (stu.paramPopup === "count") stu.numImages = Number(val);
+        stu.paramPopup = null;
+        viewStudio();
+      }));
+      if (stu.paramPopup === "duration" && isVideo && m.video) {
         wireDurationSlider(sheetBody, m.video.durations.map((d) => d.seconds), stuDurPrice, (sec) => {
           stu.duration = sec;
-          cta(); // the button carries the total (and flips to "Пополнить" when short)
+          cta();
         }, stuDurWasPrice);
       }
+      // Picking an answer auto-advances the carousel; tapping the SAME chip
+      // again (already selected — can only happen via "Назад") clears it and
+      // still advances, so re-confirming an answer behaves like any other pick.
       sheetBody.querySelectorAll("[data-story]").forEach((row) => {
         row.querySelectorAll(".chip").forEach((chip) => (chip.onclick = () => {
           const id = row.dataset.story;
-          if (stu.options[id] === chip.dataset.opt) delete stu.options[id];
-          else stu.options[id] = chip.dataset.opt;
+          stu.options[id] = chip.dataset.opt;
+          stu.storyDir = "fwd";
+          stu.storyStep = (stu.storyStep ?? 0) + 1;
           viewStudio();
         }));
       });
+      bind("#sqBack", (el) => (el.onclick = () => {
+        stu.storyDir = "back";
+        stu.storyStep = Math.max(0, (stu.storyStep ?? 0) - 1);
+        viewStudio();
+      }));
+      bind("#sqSkip", (el) => (el.onclick = () => {
+        stu.storyDir = "fwd";
+        stu.storyStep = (stu.storyStep ?? 0) + 1;
+        viewStudio();
+      }));
+      bind("#sqEdit", (el) => (el.onclick = () => {
+        stu.storyDir = "back";
+        stu.storyStep = 0;
+        viewStudio();
+      }));
       bind("#stuFile", (el) => (el.onchange = async (e) => {
         const f = e.target.files[0];
         if (!f) return;
@@ -4612,10 +4891,48 @@
         stu.photo = data; stu.photoUrl = null; stu.generationId = null; stu.srcPreview = null;
         clampStudioOpts(); viewStudio();
       }));
-      sheetBody.querySelectorAll("#stuMini img").forEach((im) => (im.onclick = () => {
-        stu.photo = null; stu.photoUrl = null;
-        stu.generationId = Number(im.dataset.gid); stu.srcPreview = im.getAttribute("src");
-        clampStudioOpts(); viewStudio();
+      bind("#stuGalleryBtn", (el) => (el.onclick = () => openGalleryPopup("single")));
+      bind("#refGalleryBtn", (el) => (el.onclick = () => openGalleryPopup("multi")));
+      sheetBody.querySelectorAll("[data-gallery-close]").forEach((b) => (b.onclick = closeGalleryPopup));
+      bind("#galleryFavToggle", (el) => (el.onclick = () => { stu.galleryFavOnly = !stu.galleryFavOnly; stu.galleryPage = 1; stu.galleryData = null; viewStudio(); loadGalleryPage(); }));
+      bind("#galleryPrev", (el) => (el.onclick = () => { stu.galleryPage = Math.max(1, stu.galleryPage - 1); stu.galleryData = null; viewStudio(); loadGalleryPage(); }));
+      bind("#galleryNext", (el) => (el.onclick = () => { stu.galleryPage = stu.galleryPage + 1; stu.galleryData = null; viewStudio(); loadGalleryPage(); }));
+      sheetBody.querySelectorAll("[data-gstar]").forEach((b) => (b.onclick = async (e) => {
+        e.stopPropagation();
+        const id = Number(b.dataset.gstar);
+        const on = !b.classList.contains("on");
+        b.classList.toggle("on", on);
+        b.textContent = on ? "⭐" : "☆";
+        const item = (stu.galleryData?.items || []).find((g) => g.id === id);
+        if (item) item.favorite = on;
+        const { status } = await api(`/api/generations/${id}/favorite`, { method: "POST", body: JSON.stringify({ favorite: on }) });
+        // If we're inside the favorites-only filter and just unstarred one, drop
+        // it from view without waiting for a full refetch — otherwise it's a
+        // stale tile sitting in a list that's supposed to be favorites-only.
+        if (status === 200 && !on && stu.galleryFavOnly) { loadGalleryPage(); }
+      }));
+      sheetBody.querySelectorAll("[data-gitem]").forEach((el) => (el.onclick = () => {
+        const id = Number(el.dataset.gitem);
+        const url = el.dataset.gurl;
+        if (stu.galleryMode === "single") {
+          stu.photo = null; stu.photoUrl = null;
+          stu.generationId = id; stu.srcPreview = url;
+          clampStudioOpts();
+          closeGalleryPopup();
+          return;
+        }
+        // Multi: toggle selection, don't close — "Добавить (N)" commits.
+        const i = stu.gallerySelected.findIndex((x) => x.id === id);
+        if (i >= 0) stu.gallerySelected.splice(i, 1); else stu.gallerySelected.push({ id, url });
+        viewStudio();
+      }));
+      bind("#galleryConfirm", (el) => (el.onclick = () => {
+        const room = (((m && m.maxInputs) || 1) - 1) - (stu.extras || []).length;
+        const picks = stu.gallerySelected.slice(0, Math.max(0, room));
+        if (picks.length < stu.gallerySelected.length) toast(`Добавлено ${picks.length} из ${stu.gallerySelected.length} — больше не помещается`);
+        for (const p of picks) stu.extras.push({ data: p.url, url: p.url });
+        clampStudioOpts();
+        closeGalleryPopup();
       }));
       // Dropping the primary photo drops the extra angles with it — they only
       // ever mean "more of THIS face", so keeping them would silently attach
@@ -5730,64 +6047,6 @@
       };
     }
 
-    /**
-     * Aspect-ratio reel markup — a physical horizontal strip behind a fixed
-     * center "selected" window, for the 3+ option case (a binary choice stays
-     * a plain .chips row, see viewStudio). Item width (68px) is hardcoded and
-     * MUST match .aritem's flex-basis in CSS — both the initial transform
-     * here and wireRatioScrub's live version depend on the same constant.
-     */
-    function arReelHtml(ratios, current) {
-      const idx = Math.max(0, ratios.indexOf(current));
-      return `<div class="arreel" id="stuArReel">
-        <span class="arwindow"></span>
-        <div class="artrack" id="stuArTrack" style="transform:translateX(-${idx * 68 + 34}px)">
-          ${ratios.map((r, i) => `<button class="aritem ${i === idx ? "on" : ""}" data-ar="${r}">${esc(RATIO_LABEL[r] || r)}</button>`).join("")}
-        </div>
-        <span class="arfade l"></span><span class="arfade r"></span>
-      </div>`;
-    }
-
-    /**
-     * Wire the reel. Same commit-on-release convention as wireModelScrub, but
-     * simpler: there's no open/closed state (the strip is always visible), so
-     * a tap directly on a visible item (no real drag) just jumps to it —
-     * the container is the drag surface, individual items are still their
-     * own tap targets since e.target on pointerdown tells us which.
-     */
-    function wireRatioScrub(root, ratios) {
-      const reel = root.querySelector("#stuArReel");
-      if (!reel || !ratios || !ratios.length) return;
-      const track = reel.querySelector("#stuArTrack");
-      const items = Array.from(reel.querySelectorAll(".aritem"));
-      const STEP = 68;
-      const setIdx = (i) => {
-        items.forEach((it, k) => it.classList.toggle("on", k === i));
-        track.style.transform = `translateX(-${i * STEP + STEP / 2}px)`;
-      };
-      reel.onpointerdown = (e) => {
-        reel.setPointerCapture(e.pointerId);
-        const tapTarget = e.target.closest(".aritem");
-        const startX = e.clientX;
-        const startIdx = Math.max(0, ratios.indexOf(stu.aspect || ratios[0]));
-        let hoverIdx = startIdx, moved = false, last = startIdx;
-        const move = (ev) => {
-          const dx = ev.clientX - startX;
-          if (Math.abs(dx) > 6) moved = true;
-          if (!moved) return;
-          hoverIdx = Math.max(0, Math.min(ratios.length - 1, startIdx - Math.round(dx / STEP)));
-          if (hoverIdx !== last) { last = hoverIdx; setIdx(hoverIdx); hapticTick(); }
-        };
-        const up = () => {
-          reel.onpointermove = null; reel.onpointerup = null; reel.onpointercancel = null;
-          if (moved) { stu.aspect = ratios[hoverIdx]; viewStudio(); }
-          else if (tapTarget && tapTarget.dataset.ar) { stu.aspect = tapTarget.dataset.ar; viewStudio(); }
-        };
-        reel.onpointermove = move;
-        reel.onpointerup = up;
-        reel.onpointercancel = up;
-      };
-    }
 
     // Live combo-offer countdown: ticks the 🔥 badge each second; when the
     // deadline passes the offer pack removes itself from the list.

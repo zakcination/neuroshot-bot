@@ -140,6 +140,7 @@ if (config.myNewFeatureEnabled) {
 | AI Video Translator | Not wired | Phase 0 gate not run; no command, no route, no registry entry | `docs/video-translator-spec.md` |
 | GenAI Courses | Partial | Course delivery works; blockers on instructor workflow + cohort scaling | `docs/course/BLOCKERS.md` |
 | Seedance Tiers | Live | Monitor tier-resolution gaps in `clampStudioOpts`. Has real per-second pricing curve. | `docs/seedance-tiers.md` |
+| Seedance Screenwriter Pipeline | Spec only | Purpose-classification + prepared-paths-per-purpose needs its own research pass before code (owner's call, not yet run). Wraps the existing `splitStoryboard`/assemble engine, doesn't replace it. | `docs/seedance-screenwriter-spec.md` |
 
 ## Deployment
 

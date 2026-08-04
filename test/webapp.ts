@@ -67,6 +67,11 @@ let genFail = false;
 // does (403 + "Exhausted balance") — the failure that masquerades as one
 // broken model. Reset to false to simulate the balance being topped up.
 let providerLocked = false;
+// Flip to make every generation model reject the way Seedance 2.0's own face
+// classifier does (403 + "likenesses of real people…") — same status code as
+// providerLocked above, but a PER-PHOTO rejection, not an account block. Must
+// NOT trip the same breaker. Reset to false after use.
+let contentPolicyRejected = false;
 // Content moderation (moderation.ts): tracked as its OWN edge, NOT pushed into
 // falCalls — several assertions use falCalls.length/.at(-1) to mean "the
 // generation MODEL ran", and this classifier call happens in addition to that
@@ -87,6 +92,12 @@ let nsfwCheckCalls = 0;
     const e = new Error("Forbidden") as Error & { status: number; body: unknown };
     e.status = 403;
     e.body = { detail: "User is locked. Reason: Exhausted balance. Top up your balance at fal.ai/dashboard/billing." };
+    throw e;
+  }
+  if (contentPolicyRejected) {
+    const e = new Error("Forbidden") as Error & { status: number; body: unknown };
+    e.status = 403;
+    e.body = { detail: "The images or videos provided may contain likenesses of real people or other private information that cannot be processed." };
     throw e;
   }
   if (endpoint === "fal-ai/any-llm") {
@@ -2687,6 +2698,54 @@ await step("gallery pagination: /api/generations pages finished works, excludes 
   assert.equal((await fetch(`${base}/api/generations`)).status, 401);
 });
 
+await step("favorites: star/unstar is owner-scoped, ?favorite=1 filters the gallery", async () => {
+  const fu = { id: 910, username: "fav" };
+  const other = { id: 911, username: "notfav" };
+  await getOrCreateUser(fu.id, fu.username, null, 3);
+  await getOrCreateUser(other.id, other.username, null, 3);
+  for (let i = 0; i < 4; i++) {
+    await logGeneration(fu.id, "seedream_edit", `f${i}`, 2, "ok", `https://fal.test/out/fav${i}.png`);
+  }
+  const ids = (await query(
+    "SELECT id FROM generations WHERE user_id = $1 ORDER BY id ASC",
+    [fu.id],
+  )).map((r) => Number(r.id));
+  const hdr = { Authorization: `tma ${signInitData(fu)}`, "Content-Type": "application/json" };
+  const otherHdr = { Authorization: `tma ${signInitData(other)}`, "Content-Type": "application/json" };
+
+  // Every row starts unfavorited — the filtered view is empty.
+  const empty = (await (await fetch(`${base}/api/generations?favorite=1`, { headers: hdr })).json()) as { total: number };
+  assert.equal(empty.total, 0);
+
+  const star = await fetch(`${base}/api/generations/${ids[0]}/favorite`, { method: "POST", headers: hdr, body: JSON.stringify({ favorite: true }) });
+  assert.equal(star.status, 200);
+  assert.deepEqual(await star.json(), { ok: true, favorite: true });
+  await fetch(`${base}/api/generations/${ids[2]}/favorite`, { method: "POST", headers: hdr, body: JSON.stringify({ favorite: true }) });
+
+  const filtered = (await (await fetch(`${base}/api/generations?favorite=1`, { headers: hdr })).json()) as { total: number; items: Array<{ id: number; favorite: boolean }> };
+  assert.equal(filtered.total, 2);
+  assert.ok(filtered.items.every((i) => i.favorite === true));
+  assert.deepEqual(filtered.items.map((i) => i.id).sort(), [ids[0], ids[2]].sort());
+
+  // The unfiltered page still carries the flag on each item, un-starred ones included.
+  const all = (await (await fetch(`${base}/api/generations`, { headers: hdr })).json()) as { items: Array<{ id: number; favorite: boolean }> };
+  assert.equal(all.items.find((i) => i.id === ids[1])?.favorite, false);
+
+  // Unstar.
+  const unstar = await fetch(`${base}/api/generations/${ids[0]}/favorite`, { method: "POST", headers: hdr, body: JSON.stringify({ favorite: false }) });
+  assert.deepEqual(await unstar.json(), { ok: true, favorite: false });
+  const afterUnstar = (await (await fetch(`${base}/api/generations?favorite=1`, { headers: hdr })).json()) as { total: number };
+  assert.equal(afterUnstar.total, 1);
+
+  // Someone else's id: 404, not a silent no-op, and the target's flag is untouched.
+  const stolen = await fetch(`${base}/api/generations/${ids[2]}/favorite`, { method: "POST", headers: otherHdr, body: JSON.stringify({ favorite: false }) });
+  assert.equal(stolen.status, 404);
+  const stillFav = (await (await fetch(`${base}/api/generations?favorite=1`, { headers: hdr })).json()) as { total: number };
+  assert.equal(stillFav.total, 1, "another user's failed toggle must not have unstarred it");
+
+  assert.equal((await fetch(`${base}/api/generations/${ids[0]}/favorite`, { method: "POST", body: JSON.stringify({ favorite: true }) })).status, 401);
+});
+
 await step("watermark setting: default on, /api/settings toggles it, /me reflects it", async () => {
   const wu = { id: 808, username: "wm" };
   const hdr = { Authorization: `tma ${signInitData(wu)}`, "Content-Type": "application/json" };
@@ -3135,7 +3194,7 @@ await step("prompt library: no third-party brand or magazine names reach the pro
 });
 
 await step("provider block: an account-level rejection is classified and alerts on the FIRST one", async () => {
-  const { isProviderBlocked } = await import("../src/generate.js");
+  const { isProviderBlocked, classifyGenError } = await import("../src/generate.js");
   const { checkAlerts } = await import("../src/monitor.js");
 
   // What fal actually returns when the account runs dry — the exact shape that
@@ -3148,6 +3207,28 @@ await step("provider block: an account-level rejection is classified and alerts 
   assert.equal(isProviderBlocked({ status: 500, body: { detail: "internal error" } }), false);
   assert.equal(isProviderBlocked(new Error("No output URL in fal response")), false);
   assert.equal(isProviderBlocked(null), false);
+
+  // Seedance 2.0's own per-photo face classifier (reported live, Aug 2026:
+  // ByteDance tightened it and it now flags plenty of legitimate photos) also
+  // answers with a bare 403 — same status the exhausted-balance case uses.
+  // Without the content-policy carve-out, one flagged photo would trip the
+  // account-block breaker and refuse every OTHER user's Seedance render for
+  // two minutes over nothing wrong with their account.
+  const likeness = { status: 403, body: { detail: "The images or videos provided may contain likenesses of real people or other private information that cannot be processed." } };
+  assert.equal(isProviderBlocked(likeness), false, "a per-photo content rejection is not an account block");
+  assert.equal(classifyGenError(likeness), "moderation", "routes to the same bucket as our own NSFW check");
+
+  // The same rejection can also arrive as a 422 (@fal-ai/client wraps that
+  // status in its own ValidationError) — AND its body.detail can be a plain
+  // string OR a FastAPI/Pydantic-style array of {loc,msg,type} objects, per
+  // that client's own fieldErrors comment. Both must classify identically to
+  // the 403/string case above, not just the shape actually seen live.
+  const likeness422String = { status: 422, body: { detail: "The images or videos provided may contain likenesses of real people or other private information that cannot be processed." } };
+  assert.equal(isProviderBlocked(likeness422String), false);
+  assert.equal(classifyGenError(likeness422String), "moderation", "422 status alone must not change the bucket");
+  const likeness422Array = { status: 422, body: { detail: [{ loc: ["body", "image_url"], msg: "The images or videos provided may contain likenesses of real people or other private information that cannot be processed.", type: "value_error" }] } };
+  assert.equal(isProviderBlocked(likeness422Array), false);
+  assert.equal(classifyGenError(likeness422Array), "moderation", "Pydantic-array detail must not be missed just because it isn't a plain string");
 
   const bu = { id: 990097, username: "blocked" };
   await getOrCreateUser(bu.id, bu.username, null, 0);
@@ -4589,6 +4670,23 @@ await step("error reasons: a fixed code on the row + poll payload, refund still 
   resetProviderBlock(); // the 403 tripped the breaker — clear it for anything after
   assert.equal(String((await query("SELECT error_reason FROM generations WHERE id = $1", [id2]))[0].error_reason), "provider_blocked");
   assert.equal(await balance(), 50);
+
+  // Seedance 2.0's own face classifier rejecting ONE photo → 'moderation', same
+  // as our own NSFW check, and — the actual bug this guards against — it must
+  // NOT trip the account-block breaker. A second, unrelated render right after
+  // has to go through normally, not get refused as "provider_down".
+  contentPolicyRejected = true;
+  const r3 = await gen();
+  assert.equal(r3.status, 200);
+  const id3 = ((await r3.json()) as { id: number }).id;
+  assert.equal((await pollGen(id3, H)).status, "error");
+  contentPolicyRejected = false;
+  assert.equal(String((await query("SELECT error_reason FROM generations WHERE id = $1", [id3]))[0].error_reason), "moderation");
+  assert.equal(await balance(), 50, "refunded exactly once, same as any other failure");
+  const r4 = await gen();
+  assert.equal(r4.status, 200);
+  const id4 = ((await r4.json()) as { id: number }).id;
+  assert.equal((await pollGen(id4, H)).status, "ok", "the breaker must not have tripped — an unrelated render right after still succeeds");
 
   // A render stuck 'pending' (dead process) reaped → 'timeout'.
   await query(

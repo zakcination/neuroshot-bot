@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { achievements, activeXpActions, hasGrantedPack, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, latestPendingOrder, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, presetTrendingCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setWatermark, userDashboard, type GenerationRow } from "./db.js";
+import { achievements, activeXpActions, hasGrantedPack, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, latestPendingOrder, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, presetTrendingCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setFavorite, setWatermark, userDashboard, type GenerationRow } from "./db.js";
 import {
   enhancePrompt,
   splitStoryboard,
@@ -816,6 +816,7 @@ function publicGeneration(g: GenerationRow): Record<string, unknown> {
     user_prompt: g.user_prompt,
     opts: g.opts,
     error_reason: g.error_reason,
+    favorite: g.favorite,
   };
 }
 
@@ -2133,15 +2134,34 @@ export function createWebApp(): Server {
       }
 
       // GET /api/generations — one page of the caller's finished works (gallery).
+      // ?favorite=1 narrows to starred works only — same shape, one fewer
+      // round trip than fetching everything and filtering client-side.
       if (url.pathname === "/api/generations") {
         if (!methodIs(res, req.method, "GET")) return;
         const user = resolveUser(req.headers);
         if (!user) return json(res, 401, { error: "unauthorized" });
         const size = Math.min(30, Math.max(1, Math.floor(Number(url.searchParams.get("size")) || 12)));
         const reqPage = Math.max(1, Math.floor(Number(url.searchParams.get("page")) || 1));
-        const { items, total } = await galleryPage(user.id, size, (reqPage - 1) * size);
+        const favoriteOnly = url.searchParams.get("favorite") === "1";
+        const { items, total } = await galleryPage(user.id, size, (reqPage - 1) * size, favoriteOnly);
         const pages = Math.max(1, Math.ceil(total / size));
         return json(res, 200, { items: items.map(publicGeneration), total, page: Math.min(reqPage, pages), pageSize: size, pages });
+      }
+
+      // POST /api/generations/:id/favorite — star/unstar one of the caller's
+      // own works. Body: {favorite: boolean}. 404 (not 403) on someone else's
+      // id, same "don't confirm existence" posture as every other owner-scoped
+      // lookup in this file.
+      const favMatch = /^\/api\/generations\/(\d+)\/favorite$/.exec(url.pathname);
+      if (favMatch) {
+        if (!methodIs(res, req.method, "POST")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const body = await readJsonBody(req, 1024);
+        const favorite = body?.favorite === true;
+        const ok = await setFavorite(user.id, Number(favMatch[1]), favorite);
+        if (!ok) return json(res, 404, { error: "not_found" });
+        return json(res, 200, { ok: true, favorite });
       }
 
       // GET /api/generations/:id — poll a render's status (owner-scoped).
