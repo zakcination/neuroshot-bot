@@ -469,3 +469,130 @@ export async function splitStoryboard(
   if (!r.ok) return r;
   return { ok: true, candidates: r.value, charged: r.charged, free: r.free, balance: r.balance, left: r.left };
 }
+
+// ---------------------------------------------------------------------------
+// Screenwriter pipeline (docs/seedance-screenwriter-spec.md, gated behind
+// config.screenwriterPipelineEnabled): a short vision → an expanded plot +
+// the cast/locations it needs, feeding the EXISTING Director Mode sheet/
+// storyboard/assemble flow unchanged below this point. Same fal any-llm
+// infrastructure, same charge stack, same parse-validate-retry-once
+// discipline as splitStoryboard — this is deliberately NOT a new pattern.
+//
+// Purpose-classification (the spec's own flagged research item — "which of
+// emotional/selling/documentary/capability-demo") is NOT implemented here:
+// one generic system prompt, exactly the pragmatic starting point the spec
+// proposed while that research is still pending.
+// ---------------------------------------------------------------------------
+
+export interface ScreenwriterEntity {
+  id: string;
+  kind: "character" | "location";
+  label: string;
+  /**
+   * One English sentence visually describing the entity — precise enough
+   * that an image model could draw a representative frame from it alone.
+   * This is what makes the "no photo for this location" path possible: it
+   * originates a text-to-image frame from `hint`, then feeds that frame into
+   * the SAME sheet-generation flow a real upload would use (see the client).
+   */
+  hint: string;
+}
+
+export type ScreenwriterResult =
+  | { ok: true; plot: string; entities: ScreenwriterEntity[]; charged: number; free: boolean; balance: number; left: number }
+  | { ok: false; error: "insufficient" };
+
+/** At most this many entities come back — a plot with more than this needs a
+ *  human trimming it, not an ever-growing cast the rest of the flow assumes
+ *  fits in one composer screen (Director Mode itself caps at 6 characters,
+ *  4 locations — ENHANCE_CONTEXT_LIMITS). */
+const SCREENWRITER_MAX_ENTITIES = 6;
+
+function screenwriterSystemPrompt(): string {
+  return (
+    "You are a screenwriter helping plan ONE short AI-generated video (a Seedance clip — a later step " +
+    "shoots a single continuous 4-15 second take from whatever plot you write here, so the plot itself can " +
+    "imply more around that one moment). The user gives a short vision, possibly with visual/VFX notes. " +
+    "Expand it into a vivid scene-by-scene plot in RUSSIAN — a few sentences, what happens and in what order. " +
+    "Then identify every distinct named person, creature, or object, and every distinct location the plot " +
+    "actually needs on screen — nothing incidental, only what a director would need a reference photo for. " +
+    "Respond with ONLY a JSON object (no prose, no markdown, no code fences), exactly: " +
+    '{"plot": "<the Russian plot, a few sentences>", "entities": [{"id": "<short stable slug, lowercase ' +
+    'a-z0-9_ only, unique>", "kind": "<character or location>", "label": "<short Russian name a person would ' +
+    'recognize, e.g. Аня or Кухня на рассвете>", "hint": "<ONE English sentence visually describing this ' +
+    "entity, precise enough that an image model could draw a representative frame of it from this sentence " +
+    `alone>"}]}. At most ${SCREENWRITER_MAX_ENTITIES} entities total, characters and locations combined.`
+  );
+}
+
+function screenwriterUserMessage(vision: string, vfxNotes: string): string {
+  const lines = [`Vision: ${vision}`];
+  if (vfxNotes) lines.push(`Visual/VFX notes: ${vfxNotes}`);
+  return lines.join("\n");
+}
+
+/**
+ * Parse + validate the LLM's plot+entities JSON. Same tolerance-then-strict
+ * shape as parseStoryboard: fences/prose around the object are fine (the
+ * contract is prompt-level, this parse IS the real boundary); a malformed
+ * entity is dropped rather than failing the whole response; a duplicate id
+ * is dropped (second occurrence loses); returns null only when there's no
+ * usable plot at all, or zero entities survive — the caller retries once.
+ */
+export function parseScreenwriterExpansion(text: string): { plot: string; entities: ScreenwriterEntity[] } | null {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  const o = parsed as Record<string, unknown>;
+  const clean = (v: unknown, max: number): string =>
+    typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max) : "";
+  const plot = clean(o.plot, 1500);
+  if (!plot || !Array.isArray(o.entities)) return null;
+  const seen = new Set<string>();
+  const entities: ScreenwriterEntity[] = [];
+  for (const item of o.entities) {
+    if (typeof item !== "object" || item === null) continue;
+    const e = item as Record<string, unknown>;
+    const kind = e.kind === "character" || e.kind === "location" ? e.kind : null;
+    const id = typeof e.id === "string" ? e.id.trim().toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 40) : "";
+    const label = clean(e.label, 80);
+    const hint = clean(e.hint, 300);
+    if (!kind || !id || !label || !hint || seen.has(id)) continue;
+    seen.add(id);
+    entities.push({ id, kind, label, hint });
+    if (entities.length >= SCREENWRITER_MAX_ENTITIES) break;
+  }
+  return entities.length ? { plot, entities } : null;
+}
+
+/**
+ * Expand a vision into a plot + cast on the SAME enhance stack as
+ * enhancePrompt/splitStoryboard (free → paid → refund discipline identical).
+ * Invalid/unparseable LLM output is retried ONCE; a second failure throws —
+ * the route maps it onto 502, and the catch path above has already refunded
+ * a paid charge, leaving the stack untouched.
+ */
+export async function expandVision(
+  userId: number,
+  vision: string,
+  vfxNotes: string,
+  runner: (message: string, systemPrompt: string) => Promise<string> = runEnhance,
+): Promise<ScreenwriterResult> {
+  const system = screenwriterSystemPrompt();
+  const message = screenwriterUserMessage(vision, vfxNotes);
+  const r = await runOnEnhanceStack(userId, async () => {
+    const attempt = async () => parseScreenwriterExpansion(await runner(message, system));
+    const result = (await attempt()) ?? (await attempt()); // one retry
+    if (!result) throw new Error("screenwriter: invalid LLM output after retry");
+    return result;
+  });
+  if (!r.ok) return r;
+  return { ok: true, plot: r.value.plot, entities: r.value.entities, charged: r.charged, free: r.free, balance: r.balance, left: r.left };
+}
