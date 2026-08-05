@@ -1657,6 +1657,20 @@
     .cand-refs { font-size: 10px; color: var(--muted); }
     .cand-card.on { border-color: var(--magenta); background: linear-gradient(160deg, rgba(124, 92, 255, .16), rgba(255, 77, 141, .1)); }
     .cand-card.on .cand-tag { background: var(--aurora); border-color: transparent; color: #fff; }
+    .sw-cast { display: flex; flex-direction: column; gap: 6px; }
+    .sw-cast-row {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border: 1px solid var(--line);
+      background: var(--surface-2); border-radius: 11px; padding: 8px 10px; font-size: 12px;
+    }
+    .sw-cast-row.done { border-color: rgba(124,92,255,.35); }
+    .sw-cast-row b { font-size: 12.5px; font-weight: 700; margin-right: auto; }
+    .sw-status { font-size: 11px; color: var(--muted); white-space: nowrap; }
+    .sw-actions { display: flex; gap: 6px; width: 100%; }
+    .sw-chip {
+      flex: 1; border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+      border-radius: 9px; padding: 7px 8px; font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
+    }
+    .sw-chip:disabled { opacity: .55; cursor: default; }
     .manual-toggle { border: 0; background: none; display: block; width: 100%; text-align: center; padding: 6px; font: inherit; font-size: 11.5px; color: var(--muted); cursor: pointer; }
     .shot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .shot-card {
@@ -3255,6 +3269,7 @@
           // A Director Mode sheet render lands on its entry card in the
           // composer, not in the result view — the studio stays where it was.
           if (job.dmSheet) { dmSheetDone(job, data); return; }
+          if (job.swBg) { swBgDone(job, data); return; }
           if (viewedJob === job.id && sheet.classList.contains("on")) viewResult(data, job);
           else toast("✨ Готово! Работа уже в «Мои работы»");
           return;
@@ -3262,6 +3277,7 @@
         if (status === 200 && data.status === "error") {
           jobs.delete(job.id); updateJobsPill(); refreshMe(); renderGallery(1); haptic("error");
           if (job.dmSheet) { dmSheetFail(job, data); return; }
+          if (job.swBg) { swBgFail(job, data); return; }
           // The server now says WHY (error_reason code) — map it to copy a
           // person can act on; a legacy null keeps today's generic line.
           if (data.error_reason) toast(genErrText(data.error_reason), { wide: true, ms: 5500 });
@@ -3283,6 +3299,13 @@
             const entry = dmSheetEntry(job);
             if (entry) { entry.pending = false; entry.error = "рендер идёт дольше обычного"; }
             toast("Карта готовится дольше обычного — она появится в «Мои работы»", { wide: true, ms: 5000 });
+            if (dmComposerVisible()) viewStudio();
+            return;
+          }
+          if (job.swBg) {
+            const e = (stu.swEntities || []).find((x) => x.id === job.swBg.entityId);
+            if (e) e.bgBusy = false;
+            toast("Фон готовится дольше обычного — он появится в «Мои работы»", { wide: true, ms: 5000 });
             if (dmComposerVisible()) viewStudio();
             return;
           }
@@ -3695,6 +3718,13 @@
       entry.pending = false; entry.error = null;
       entry.genId = job.id;
       toast(`✓ Карта «${entry.label}» готова`);
+      // The screenwriter's plot only overwrites an EMPTY scenario box — a
+      // user who already started typing their own scene keeps it untouched.
+      if (stu.swPlot && !(stu.dmScenario || "").trim() && swAllLinked()) {
+        stu.dmScenario = stu.swPlot;
+        stu.dmSec.shot = true;
+        toast("🎬 Сюжет — в «Кадр»: весь актёрский состав готов", { wide: true, ms: 4000 });
+      }
       if (dmComposerVisible()) viewStudio();
     }
     function dmSheetFail(job, data) {
@@ -3742,7 +3772,11 @@
         // Only the photos that actually reached storage — the card's "N фото"
         // must not count ones the sheet was never built from.
         photos: draft.photos.filter((p) => p.url), urls, sheetUrl: null, genId: null,
-        pending: true, error: null, use: true };
+        pending: true, error: null, use: true,
+        // Set only when this draft was opened FROM a screenwriter entity
+        // (swOpenAddFor/swGenerateBg) — swEntryFor uses it to report that
+        // entity's card as done, without duplicating any state here.
+        swEntityId: draft.swEntityId || null };
       dmList(kind).push(entry);
       const r = await dmFireSheet(kind, entry);
       // Only clear the form once the render is actually queued — a failed
@@ -3832,6 +3866,115 @@
       return "ok";
     }
 
+    /** Expand a screenwriter vision into a plot + cast (POST /api/screenwriter/expand). */
+    async function swExpand() {
+      const vision = (stu.swVision || "").trim();
+      if (!vision) { toast("Сначала опишите идею 🙂"); return; }
+      stu.swExpanding = true; viewStudio();
+      let status, data;
+      try {
+        ({ status, data } = await api("/api/screenwriter/expand", {
+          method: "POST",
+          body: JSON.stringify({ vision, vfxNotes: (stu.swVfxNotes || "").trim() || undefined }),
+        }));
+      } catch (e) {
+        stu.swExpanding = false;
+        toast("Нет связи с сервером — патроны не списаны.", { wide: true, ms: 4500 });
+        viewStudio(); return;
+      }
+      stu.swExpanding = false;
+      if (status === 402) { viewPaywall(data); return; }
+      if (status !== 200 || !data.plot || !(data.entities || []).length) {
+        haptic("error");
+        toast("Не получилось построить сценарий — патроны не списаны. Опишите идею подробнее.", { wide: true, ms: 5000 });
+        viewStudio(); return;
+      }
+      stu.swPlot = data.plot;
+      stu.swEntities = data.entities.map((e) => ({ ...e, bgBusy: false }));
+      ME.dashboard.credits = data.balance; setBalance(data.balance);
+      if (ME.enhance) ME.enhance.left = data.left;
+      haptic("success");
+      toast(data.free ? `✎ Готово · осталось ${data.left}` : `✎ Готово · −${data.charged} ${PATRON}`);
+      viewStudio();
+    }
+    /**
+     * "+ добавить фото" on a screenwriter entity: opens the EXISTING
+     * character/location add-form (dmAddCardHtml), prefilled with the
+     * entity's name and tagged so the finished sheet reports back as this
+     * entity's card (swEntryFor) — no new sheet-generation path.
+     */
+    function swOpenAddFor(e) {
+      const draft = dmDraft(e.kind, true);
+      if (!draft.label) draft.label = e.label;
+      draft.swEntityId = e.id;
+      stu.dmSec.chars = e.kind === "character";
+      stu.dmSec.locs = e.kind === "location";
+      viewStudio();
+      const target = sheetBody.querySelector(e.kind === "character" ? "#dmCharLabel" : "#dmLocLabel");
+      if (target) { target.scrollIntoView({ block: "center" }); target.focus(); }
+    }
+    /** The no-photo location path, once its render lands: chain the frame
+     *  into the SAME sheet draft an upload would use, then fire the sheet
+     *  exactly like dmGenerateSheet always has. */
+    function swBgDone(job, data) {
+      const e = (stu.swEntities || []).find((x) => x.id === job.swBg.entityId);
+      if (!e) { toast("✨ Фон готов — он в «Мои работы»"); return; }
+      e.bgBusy = false;
+      const draft = dmDraft("location", true);
+      if (!draft.label) draft.label = e.label;
+      draft.swEntityId = e.id;
+      draft.photos.push({ data: data.output_url, url: data.output_url });
+      dmGenerateSheet("location");
+    }
+    function swBgFail(job, data) {
+      const e = (stu.swEntities || []).find((x) => x.id === job.swBg.entityId);
+      const why = genErrShort(data.error_reason);
+      if (e) e.bgBusy = false;
+      toast(`Не получилось создать фон для «${(e && e.label) || "локации"}» — ${why}. ${PATRON} патроны возвращены.`, { wide: true, ms: 5500 });
+      if (dmComposerVisible()) viewStudio();
+    }
+    function startSwBgJob(id, entityId) {
+      const job = { id, isVideo: false, campaignId: null, started: Date.now(),
+        etaSec: etaFor("text_to_image"), swBg: { entityId } };
+      jobs.set(id, job); updateJobsPill();
+      pollJob(job);
+      renderGallery(1);
+    }
+    /**
+     * Generate a representative frame for a photo-less location from its
+     * `hint` (fal text_to_image), then chain it into the existing sheet flow
+     * via swBgDone. The button already quoted BOTH charges together
+     * (swBgPrice + dmSheetPrice) — this is the only place either fires.
+     */
+    async function swGenerateBg(e) {
+      if (e.bgBusy) return;
+      const total = swBgPrice() + dmSheetPrice();
+      if (total > 0 && total > ME.dashboard.credits) {
+        viewPaywall({ need: total, balance: ME.dashboard.credits, packs: ME.packs });
+        return;
+      }
+      e.bgBusy = true; viewStudio();
+      let status, data;
+      try {
+        ({ status, data } = await api("/api/generate", {
+          method: "POST",
+          body: JSON.stringify({ source: "model", model: "text_to_image", prompt: e.hint }),
+        }));
+      } catch (err) {
+        e.bgBusy = false;
+        toast("Нет связи с сервером — попробуйте ещё раз.", { wide: true, ms: 4500 });
+        viewStudio(); return;
+      }
+      if (status === 402) { e.bgBusy = false; viewPaywall(data); return; }
+      if (status !== 200) {
+        e.bgBusy = false;
+        toast("Не удалось создать фон — патроны не списаны.", { wide: true, ms: 4500 });
+        viewStudio(); return;
+      }
+      ME.dashboard.credits = data.balance; setBalance(data.balance);
+      startSwBgJob(data.id, e.id);
+    }
+
     /** The toggle plus, when it's on, the three optional sections. */
     function directorModeHtml() {
       const m = studioModel();
@@ -3851,8 +3994,87 @@
           </label>
         </div>
         ${stu.director ? `
+          ${dmScreenwriterHtml()}
           ${dmShotAccordion()}
           ${dmAssembleHtml()}` : ""}`;
+    }
+
+    // ——— Screenwriter pipeline (docs/seedance-screenwriter-spec.md) ———
+    // A vision → plot + cast, feeding the cast/scenario fields above
+    // unchanged: this section only ever produces a plot string and entity
+    // list, never a sheet or a render itself.
+
+    /** The sheet (dmChars/dmLocs) entry a screenwriter entity has produced,
+     *  once one exists — the link is the entry's own swEntityId, set when
+     *  its add-form draft was opened FROM this entity (swOpenAddFor). */
+    function swEntryFor(e) { return dmList(e.kind).find((x) => x.swEntityId === e.id); }
+    /** True once every extracted entity has an actual finished sheet. */
+    function swAllLinked() {
+      const es = stu.swEntities || [];
+      if (!es.length) return false;
+      return es.every((e) => { const x = swEntryFor(e); return x && x.sheetUrl; });
+    }
+    /** A no-photo location's background frame is a real render — quote the
+     *  server's own text-to-image price, same discipline as dmSheetPrice. */
+    function swBgPrice() {
+      const list = (ME.catalog.studio && ME.catalog.studio.image) || [];
+      const t2i = list.find((x) => x.key === "text_to_image");
+      return (t2i && t2i.credits) || 0;
+    }
+
+    function dmSwEntityRow(e) {
+      const entry = swEntryFor(e);
+      const em = e.kind === "character" ? "👤" : "📍";
+      if (entry && entry.sheetUrl) {
+        return `<div class="sw-cast-row done"><span class="em">${em}</span><b>${esc(e.label)}</b><span class="sw-status">✓ фото готово</span></div>`;
+      }
+      if (entry && entry.pending) {
+        return `<div class="sw-cast-row"><span class="em">${em}</span><b>${esc(e.label)}</b><span class="sw-status">⏳ карта в работе</span></div>`;
+      }
+      // The no-photo path only makes sense for locations — a character
+      // without a real photo is exactly the likeness this product refuses to
+      // fabricate; only a place can legitimately start from a text hint.
+      const bgPrice = swBgPrice() + dmSheetPrice();
+      return `<div class="sw-cast-row">
+        <span class="em">${em}</span><b>${esc(e.label)}</b>
+        <div class="sw-actions">
+          <button type="button" class="sw-chip" data-sw-add="${esc(e.id)}">+ добавить фото</button>
+          ${e.kind === "location" ? `<button type="button" class="sw-chip" data-sw-bg="${esc(e.id)}" ${e.bgBusy ? "disabled" : ""}>${e.bgBusy ? "⏳ …" : `🖼 сгенерировать · ${bgPrice} ${PATRON}`}</button>` : ""}
+        </div>
+      </div>`;
+    }
+
+    function dmScreenwriterHtml() {
+      if (!(ME.uiFeatures || {}).screenwriterPipeline) return "";
+      const open = !!stu.dmSec.sw;
+      const busy = !!stu.swExpanding;
+      const cost = ME.enhance && ME.enhance.left > 0 ? "бесплатно" : `${(ME.enhance && ME.enhance.cost) || 1} ${PATRON}`;
+      const entities = stu.swEntities || [];
+      const linked = entities.filter((e) => { const x = swEntryFor(e); return x && x.sheetUrl; }).length;
+      const state = entities.length ? `${linked} из ${entities.length} готовы` : stu.swPlot ? "готово" : "нет";
+      return `
+        <div class="acc ${open ? "open" : ""}">
+          <button class="acc-head" type="button" data-dm-sec="sw" aria-expanded="${open}">
+            <span class="t"><span class="n">✎</span><b>Сценарист</b></span>
+            <span class="state">${esc(state)}</span><span class="chev">▼</span>
+          </button>
+          ${open ? `<div class="acc-body">
+            <p class="acc-hint">Опишите идею в двух словах — распишем сцену и подберём, кого и где снять. Дальше как обычно: фото на каждого, кадр, промпт.</p>
+            <div class="scenario-box">
+              <textarea id="swVision" maxlength="1000" placeholder="Девушка находит старую гитару на чердаке и начинает играть…">${esc(stu.swVision || "")}</textarea>
+            </div>
+            <div class="scenario-box" style="margin-top:6px">
+              <textarea id="swVfxNotes" maxlength="500" placeholder="необязательно: свет, погода, эффекты…">${esc(stu.swVfxNotes || "")}</textarea>
+            </div>
+            <button class="split-btn" type="button" id="swExpandBtn" ${busy || !(stu.swVision || "").trim() ? "disabled" : ""}>
+              ${busy ? "⏳ Пишу сценарий…" : `✎ Построить сценарий · ${cost}`}
+            </button>
+            ${stu.swPlot ? `
+              <p class="acc-hint"><b>Сюжет:</b> ${esc(stu.swPlot)}</p>
+              ${entities.length ? `<div class="sw-cast">${entities.map((e) => dmSwEntityRow(e)).join("")}</div>` : ""}
+            ` : ""}
+          </div>` : ""}
+        </div>`;
     }
 
     const DM_COPY = {
@@ -4035,18 +4257,32 @@
         dmChars: prev ? prev.dmChars || [] : [], // [{id,label,photos:[{data,url}],text,sheetUrl,genId,pending,error,use}]
         dmLocs: prev ? prev.dmLocs || [] : [],
         dmSeq: prev ? prev.dmSeq || 0 : 0, // entry-id counter — ids feed /api/storyboard
-        dmSec: prev ? prev.dmSec || { chars: false, locs: false, shot: false } : { chars: false, locs: false, shot: false },
+        dmSec: prev ? prev.dmSec || { chars: false, locs: false, shot: false, sw: false } : { chars: false, locs: false, shot: false, sw: false },
         dmScenario: prev ? prev.dmScenario || "" : "",
         dmCands: prev ? prev.dmCands || null : null, // storyboard candidates from /api/storyboard
         dmCandIdx: prev && prev.dmCandIdx != null ? prev.dmCandIdx : null,
         dmSplitting: false, dmAssembling: false,
         dmDraftChar: prev ? prev.dmDraftChar || null : null,
         dmDraftLoc: prev ? prev.dmDraftLoc || null : null,
+        // Screenwriter pipeline (docs/seedance-screenwriter-spec.md), gated by
+        // ME.uiFeatures.screenwriterPipeline: a vision → plot + cast, feeding
+        // the Director Mode fields above unchanged. Its open/closed state
+        // lives in dmSec.sw, right alongside the other accordions. Survives
+        // keep-reopen the same way dmScenario does.
+        swVision: prev ? prev.swVision || "" : "",
+        swVfxNotes: prev ? prev.swVfxNotes || "" : "",
+        swExpanding: false,
+        swPlot: prev ? prev.swPlot || null : null,
+        // [{id, kind, label, hint, dmId, bgBusy}] — dmId links to the matching
+        // stu.dmChars/dmLocs entry once its sheet exists; bgBusy while a
+        // no-photo location's background frame is being generated.
+        swEntities: prev ? prev.swEntities || null : null,
       };
       // A draft carried across a reopen must never arrive still "busy" — the
       // in-flight handler that set it died with the previous render.
       if (stu.dmDraftChar) stu.dmDraftChar.busy = false;
       if (stu.dmDraftLoc) stu.dmDraftLoc.busy = false;
+      if (stu.swEntities) for (const e of stu.swEntities) e.bgBusy = false;
       if (!stu.modelKey) stu.modelKey = defaultStudioModel();
       clampStudioOpts();
       openSheet(); viewStudio();
@@ -5097,6 +5333,18 @@
           dmInvalidateShots(id);
         } else if (act === "retry") { dmRetrySheet(kind, entry); return; }
         viewStudio();
+      }));
+      // ——— Screenwriter pipeline event handlers ———
+      bind("#swVision", (el) => (el.oninput = () => { stu.swVision = el.value; }));
+      bind("#swVfxNotes", (el) => (el.oninput = () => { stu.swVfxNotes = el.value; }));
+      bind("#swExpandBtn", (el) => (el.onclick = () => swExpand()));
+      sheetBody.querySelectorAll("[data-sw-add]").forEach((btn) => (btn.onclick = () => {
+        const e = (stu.swEntities || []).find((x) => x.id === btn.dataset.swAdd);
+        if (e) swOpenAddFor(e);
+      }));
+      sheetBody.querySelectorAll("[data-sw-bg]").forEach((btn) => (btn.onclick = () => {
+        const e = (stu.swEntities || []).find((x) => x.id === btn.dataset.swBg);
+        if (e) swGenerateBg(e);
       }));
       bind("#dmScenario", (el) => (el.oninput = () => { stu.dmScenario = el.value; }));
       bind("#dmSplitBtn", (el) => (el.onclick = async () => {
