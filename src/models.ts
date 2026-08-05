@@ -1214,45 +1214,54 @@ export const SHEET_MODEL: ModelSpec = MODELS.nb2_edit;
 /**
  * The curated sheet prompts — SERVER-SIDE ONLY, same invariant as every preset
  * prompt: the client sends `{source:"sheet", sheetType}` and never sees this
- * text. `character` is the universal character-sheet prompt from the spec
- * (§5.1) verbatim; `location` is its twin for places: wide establishing view,
- * distinctive details, a shooting angle — the model decides what THIS location
- * is characterized by, no hardcoded "cafe/street/forest" vocabulary.
+ * text. `location` is the twin of `character` for places: wide establishing
+ * view, distinctive details, a shooting angle — the model decides what THIS
+ * location is characterized by, no hardcoded "cafe/street/forest" vocabulary.
  *
  * Identity/species/costume are deliberately NOT described in words — they
- * arrive via image_urls; the prompt sets composition only.
+ * arrive via image_urls; the prompt sets composition and rendering style only.
+ *
+ * `character` pins a fixed stylized concept-art/painterly-3D look regardless
+ * of the source photo's own style (a deliberate v2 change from matching the
+ * reference's style — a real photo now comes back as an animation/AAA-game
+ * turnaround, not a photoreal composite) so every sheet in a session reads as
+ * one consistent art direction.
  */
 export const SHEET_PROMPTS: Record<"character" | "location", string> = {
   character:
-    "Create a single seamless character reference sheet as ONE composed image, using the exact\n" +
-    "character — species, proportions, colors, markings, costume, and design — from the provided\n" +
-    "reference photo(s). Preserve identity and design exactly across every panel, whether the\n" +
-    "character is human or non-human, any gender, realistic or stylized/animated. Neutral studio\n" +
-    "backdrop, soft even lighting, consistent rendering style throughout matching the reference\n" +
-    "(photographic if the reference is photographic, matching illustration/render style if the\n" +
-    "reference is illustrated or animated) — no text, no labels, no panel borders, clean gutters\n" +
-    "only. Wide canvas, left block larger than right block.\n" +
+    "Create a single seamless character reference sheet as one composed image, using the exact\n" +
+    "character from the provided reference image(s). Preserve the character's identity precisely:\n" +
+    "species, proportions, silhouette, colors, markings, costume, accessories, hairstyle, and\n" +
+    "overall design must remain consistent across every panel. Whether the character is human or\n" +
+    "non-human, realistic or stylized, maintain the same recognizable design throughout.\n" +
     "\n" +
-    "LEFT BLOCK — three full-figure panels, equal width, same pose, same full-body crop:\n" +
-    "1. Front view, facing camera.\n" +
-    "2. Side/profile view.\n" +
+    "Render the sheet in a high-quality stylized concept-art style with subtle painterly\n" +
+    "brushwork and refined 3D illustration aesthetics rather than photographic realism. Surfaces\n" +
+    "should have clean, hand-painted texture, soft material definition, and controlled\n" +
+    "stylization. Lighting should be cinematic yet even, with gentle ambient illumination and\n" +
+    "smooth shading that enhances form without looking like a real photograph. Use a neutral\n" +
+    "studio background with consistent soft lighting across every panel. No text, labels,\n" +
+    "watermarks, logos, or panel borders. Use clean spacing (gutters) only. Wide horizontal\n" +
+    "canvas with the left block noticeably larger than the right.\n" +
+    "\n" +
+    "LEFT BLOCK — three equal-width full-body panels, identical pose and framing:\n" +
+    "1. Front view.\n" +
+    "2. Perfect side/profile view.\n" +
     "3. Back view.\n" +
     "\n" +
-    "RIGHT BLOCK — a 4-row × 3-column mosaic of twelve panels:\n" +
-    "Row 1 (head/face turnaround): front view of the head; profile view of the head; back of\n" +
-    "the head.\n" +
-    "Row 2 (head/face turnaround continued): three-quarter angle; head tilted down; head tilted\n" +
-    "up.\n" +
-    "Row 3 (expressions — this character's emotional range): a joyful/happy expression; a\n" +
-    "neutral/serious expression; a surprised or intense expression.\n" +
-    "Row 4 (distinctive detail close-ups — whatever defines THIS character): a close-up of the\n" +
-    "character's most characteristic surface texture (skin, fur, scales, fabric, metal — match\n" +
-    "whatever the character actually has); a close-up of its single most distinctive feature,\n" +
-    "marking, or accessory; a close-up of the eyes or its most expressive feature.\n" +
+    "RIGHT BLOCK — 4 rows × 3 columns (12 panels):\n" +
+    "Row 1 — Head Turnaround: front; side/profile; back.\n" +
+    "Row 2 — Additional Angles: three-quarter view; looking downward; looking upward.\n" +
+    "Row 3 — Expressions: joyful/smiling; neutral/serious; surprised or intense.\n" +
+    "Row 4 — Detail Close-ups: characteristic surface material (skin, fur, fabric, armor,\n" +
+    "scales, etc.); most distinctive feature or accessory; eyes or the character's most\n" +
+    "expressive feature.\n" +
     "\n" +
-    "Every panel shares identical lighting, background, and design — this is one consistent\n" +
-    "character reference sheet capturing ONE character's full range of angles and emotions, not\n" +
-    "a mood board of different characters.",
+    "Every panel must depict the same character with identical colors, proportions, costume, and\n" +
+    "rendering style. The sheet should resemble a professional animation or AAA game character\n" +
+    "turnaround created by a concept artist: clean, polished, slightly painterly, with subtle\n" +
+    "stylization, believable materials, and consistent lighting — not a photograph, not\n" +
+    "hyper-realistic skin, and not live-action rendering.",
   location:
     "Create a single seamless location reference sheet as ONE composed image, using the exact\n" +
     "place — architecture, layout, materials, colors, signage, vegetation, and atmosphere — from\n" +
