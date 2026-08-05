@@ -1,8 +1,26 @@
-# Seedance screenwriter pipeline — spec (not built)
+# Seedance screenwriter pipeline — spec + shipped implementation
 
-**Status:** spec only, no code shipped. Gate: `SCREENWRITER_PIPELINE_ENABLED`
-(default `false`) once implementation starts — see `CLAUDE.md`'s feature-gating
-section.
+**Status:** steps ①③④⑤⑥⑦ shipped, dark behind `SCREENWRITER_PIPELINE_ENABLED`
+(default `false` — see `CLAUDE.md`'s feature-gating section). Server:
+`expandVision()` (`src/enhance.ts`) + `POST /api/screenwriter/expand`
+(`src/webapp.ts`). Client: the "Сценарист" accordion in Director Mode
+(`public/app.html` — `dmScreenwriterHtml`, `swExpand`, `swOpenAddFor`,
+`swGenerateBg`), reusing the existing sheet/storyboard/assemble flow
+unchanged below the entity-extraction step.
+
+**Shipped as the pragmatic single-prompt version this doc itself proposed**
+(see the flagged research section below) — three things are explicitly
+**not** done yet:
+- **② purpose clarification** — not built; one generic plot-expansion system
+  prompt for every vision, exactly the starting point flagged below.
+- **⑧'s assemble extension** — `vfxNotes` exists in the UI and the expand
+  API, but only feeds the plot-expansion prompt. It is not yet forwarded
+  into `/api/enhance`'s assemble step, and the per-second-ranged beat format
+  described below was not attempted — assemble is untouched, still one
+  flowing paragraph.
+- **No `docs/wireframes/` file** — the Non-goals section below called one
+  out as expected before implementation; this shipped directly from the
+  owner's go-ahead instead. Revisit if this UI needs its own wireframe pass.
 
 **Scope note:** this is Track 2 of the Studio composer restructuring (Track 1 —
 the non-Seedance composer's reordering, popup gallery, params-as-pills — shipped
@@ -92,15 +110,16 @@ built, not decided in this doc.
 
 ## Other open gaps (surfaced while grounding this spec, not resolved)
 
-- **Location-with-no-photo is a two-model problem, not one.** `SHEET_MODEL`
-  (`nb2_edit`) is an *edit* model — it transforms an existing image, it
-  cannot originate one from text. "No photo → derive a description → generate
-  a location sheet anyway" therefore means: text-to-image generate ONE
-  representative frame from the derived description, THEN run that through
-  the existing edit-based sheet multiplication — two provider calls, two
-  charges, where the character path only ever needs one. This changes the
-  economics of the no-photo location path and needs an explicit pricing
-  decision, not a default assumption.
+- **Location-with-no-photo is a two-model problem, not one — resolved.**
+  `SHEET_MODEL` (`nb2_edit`) is an *edit* model — it transforms an existing
+  image, it cannot originate one from text. Shipped as: a `text_to_image`
+  render from the entity's LLM-derived `hint`, chained into the SAME sheet
+  draft an upload would use (`swGenerateBg`/`swBgDone`, `public/app.html`),
+  then the existing edit-based sheet flow runs unchanged. Two provider calls,
+  two charges — the button quotes both together (`swBgPrice() + dmSheetPrice()`)
+  before either fires, so the pricing decision this gap called for is: show
+  the combined cost up front, same discipline as every other paid action in
+  this composer.
 - **Per-second-ranged beat description is unvalidated.** Today's assemble
   step produces one flowing English paragraph; the pipeline asks for a
   timestamped breakdown ("0-3s: X, 3-6s: Y") instead. Whether Seedance's

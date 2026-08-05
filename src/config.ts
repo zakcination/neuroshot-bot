@@ -214,6 +214,13 @@ export const config = {
   // see the spec). RU/EN targets ship without this flag. Flip to true once a
   // native-speaker test dub passes.
   dubKazakhEnabled: (process.env.DUB_KAZAKH_ENABLED ?? "false") === "true",
+  // Seedance screenwriter pipeline (docs/seedance-screenwriter-spec.md): a
+  // vision -> expanded plot + auto-extracted cast, feeding the EXISTING
+  // Director Mode sheet/storyboard/assemble flow. Ships dark until validated
+  // — purpose-classification (the spec's own flagged research item) is not
+  // built yet, this is the single-generic-prompt version the spec proposed
+  // as the pragmatic starting point.
+  screenwriterPipelineEnabled: (process.env.SCREENWRITER_PIPELINE_ENABLED ?? "false") === "true",
   // Max source length (seconds) accepted for a dub. v1 = 60s (15s demo).
   dubMaxSeconds: Number(process.env.DUB_MAX_SECONDS ?? 60),
   // Provider cost per source-SECOND (USD) — PLACEHOLDER until the real ElevenLabs

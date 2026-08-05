@@ -19,6 +19,7 @@ import { achievements, activeXpActions, hasGrantedPack, allPresetGating, certifi
 import {
   enhancePrompt,
   splitStoryboard,
+  expandVision,
   ENHANCE_COST,
   ENHANCE_STACK,
   ENHANCE_CONTEXT_LIMITS,
@@ -435,6 +436,41 @@ export async function storyboardResponse(
   } catch (err) {
     console.error("storyboard failed:", err);
     return { status: 502, body: { error: "storyboard_failed" } };
+  }
+}
+
+/**
+ * POST /api/screenwriter/expand — Seedance screenwriter pipeline
+ * (docs/seedance-screenwriter-spec.md), gated behind
+ * config.screenwriterPipelineEnabled: a short vision (+ optional VFX notes)
+ * → an expanded Russian plot + the cast/locations it needs. The client feeds
+ * the result into the EXISTING Director Mode sheet/storyboard/assemble flow
+ * unchanged — this route only produces the plot + entity list.
+ *
+ * Consumes one charge from the SAME enhancer stack as /api/enhance and
+ * /api/storyboard — same free/paid/402/refund discipline, same events.
+ */
+export async function screenwriterExpandResponse(
+  userId: number,
+  body: Record<string, unknown> | null,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  if (!config.screenwriterPipelineEnabled) return { status: 404, body: { error: "not_found" } };
+  const vision = typeof body?.vision === "string" ? sanitizePrompt(body.vision).slice(0, 1000) : "";
+  const vfxNotes = typeof body?.vfxNotes === "string" ? sanitizePrompt(body.vfxNotes).slice(0, 500) : "";
+  if (!vision) return { status: 400, body: { error: "empty" } };
+  try {
+    const r = await expandVision(userId, vision, vfxNotes);
+    if (!r.ok) {
+      const balance = (await getUser(userId))?.credits ?? 0;
+      return { status: 402, body: { error: "insufficient", need: 1, balance, packs: packsPayload() } };
+    }
+    return {
+      status: 200,
+      body: { plot: r.plot, entities: r.entities, charged: r.charged, free: r.free, balance: r.balance, left: r.left },
+    };
+  } catch (err) {
+    console.error("screenwriter expand failed:", err);
+    return { status: 502, body: { error: "screenwriter_failed" } };
   }
 }
 
@@ -983,6 +1019,7 @@ export async function meResponse(user: TgUser): Promise<Record<string, unknown>>
     // UI feature flags for staging tests (docs/staging.md).
     uiFeatures: {
       homepageRedesign: config.homepageRedesignEnabled,
+      screenwriterPipeline: config.screenwriterPipelineEnabled,
     },
   };
 }
@@ -2130,6 +2167,23 @@ export function createWebApp(): Server {
         if (rl.limited) return tooManyRequests(res, rl.retryAfterMs);
         await getOrCreateUser(user.id, user.username, null, config.freeCredits);
         const { status, body } = await storyboardResponse(user.id, await readJsonBody(req, 16 * 1024));
+        return json(res, status, body);
+      }
+
+      // POST /api/screenwriter/expand — Seedance screenwriter pipeline (spec:
+      // docs/seedance-screenwriter-spec.md), gated behind
+      // config.screenwriterPipelineEnabled (404 when off). Shares the
+      // enhancer's per-minute rate config under its own bucket, same as
+      // /api/storyboard above.
+      if (url.pathname === "/api/screenwriter/expand") {
+        if (!methodIs(res, req.method, "POST")) return;
+        if (!config.screenwriterPipelineEnabled) return json(res, 404, { error: "not_found" });
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const rl = hit(`screenwriter:${user.id}`, config.rateLimitEnhancePerMin, 60_000);
+        if (rl.limited) return tooManyRequests(res, rl.retryAfterMs);
+        await getOrCreateUser(user.id, user.username, null, config.freeCredits);
+        const { status, body } = await screenwriterExpandResponse(user.id, await readJsonBody(req, 4 * 1024));
         return json(res, status, body);
       }
 

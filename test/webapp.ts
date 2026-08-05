@@ -4407,6 +4407,86 @@ await step("storyboard split: strict JSON validated, ids filtered, same stack, r
   assert.equal(parseStoryboard("no brackets at all", ids, new Set()), null);
 });
 
+await step("screenwriter expand: 404 while gated off, then plot+entities on the same enhancer stack", async () => {
+  const wu = { id: 991015, username: "screenwriter", first_name: "Vera" };
+  await getOrCreateUser(wu.id, wu.username, null, 0);
+  const H = { Authorization: `tma ${signInitData(wu)}`, "Content-Type": "application/json" };
+  const post = (body: Record<string, unknown>) =>
+    fetch(`${base}/api/screenwriter/expand`, { method: "POST", headers: H, body: JSON.stringify(body) });
+  const req = { vision: "Девушка находит старую гитару на чердаке и начинает играть", vfxNotes: "тёплый свет заката" };
+
+  // The flag defaults to false — the route must not exist at all while it's off.
+  assert.equal(config.screenwriterPipelineEnabled, false, "flag must default off");
+  const gatedOff = await post(req);
+  assert.equal(gatedOff.status, 404);
+  assert.equal(((await gatedOff.json()) as { error: string }).error, "not_found");
+
+  config.screenwriterPipelineEnabled = true;
+  try {
+    anyLlmReply = JSON.stringify({
+      plot: "Вера поднимается на чердак, находит гитару под пылью и начинает тихо играть у окна.",
+      entities: [
+        { id: "vera", kind: "character", label: "Вера", hint: "young woman with dark hair, warm sweater" },
+        { id: "attic", kind: "location", label: "Чердак", hint: "dusty attic lit by a single window at sunset" },
+      ],
+    });
+    const r1 = await post(req);
+    assert.equal(r1.status, 200);
+    const d1 = (await r1.json()) as {
+      plot: string;
+      entities: Array<{ id: string; kind: string; label: string; hint: string }>;
+      charged: number; free: boolean; left: number;
+    };
+    assert.match(d1.plot, /чердак/i);
+    assert.equal(d1.entities.length, 2);
+    assert.equal(d1.entities[0].kind, "character");
+    assert.equal(d1.entities[1].kind, "location");
+    assert.equal(d1.free, true);
+    assert.equal(d1.charged, 0);
+    assert.equal(d1.left, 1, "screenwriter expand must consume the SAME enhancer stack as enhance/storyboard");
+    const llmCall = falCalls.at(-1)!;
+    assert.equal(llmCall.endpoint, "fal-ai/any-llm");
+    assert.match(String(llmCall.input.prompt), /гитару/);
+
+    // Second free tap empties the stack; the third hits the same 402 shape.
+    assert.equal(((await (await post(req)).json()) as { left: number }).left, 0);
+    const pay = await post(req);
+    assert.equal(pay.status, 402);
+    const payBody = (await pay.json()) as { error: string; need: number; packs: unknown[] };
+    assert.equal(payBody.error, "insufficient");
+    assert.equal(payBody.need, 1);
+    assert.ok(payBody.packs.length > 0);
+
+    // A patron buys a single stack refill, exactly like enhance/storyboard.
+    await addCredits(wu.id, 1, "admin_grant", "test");
+    const paid = (await (await post(req)).json()) as { charged: number; free: boolean; balance: number; left: number };
+    assert.equal(paid.free, false);
+    assert.equal(paid.charged, 1);
+    assert.equal(paid.balance, 0);
+    assert.equal(paid.left, 1);
+    assert.equal(((await (await post(req)).json()) as { left: number }).left, 0); // drain
+
+    // Unusable LLM output: retried exactly once, then 502, with the paid patron
+    // refunded and the stack exactly as before the tap.
+    await addCredits(wu.id, 1, "admin_grant", "test");
+    anyLlmReply = "sorry, I can only answer in prose";
+    const callsBefore = falCalls.length;
+    const boom = await post(req);
+    assert.equal(boom.status, 502);
+    assert.equal(((await boom.json()) as { error: string }).error, "screenwriter_failed");
+    assert.equal(falCalls.length, callsBefore + 2, "invalid output must be retried exactly once");
+    assert.equal(Number((await query("SELECT credits FROM users WHERE id = $1", [wu.id]))[0].credits), 1, "the paid charge must come back");
+    anyLlmReply = null;
+
+    // Empty vision → 400, without touching the stack or the wallet.
+    assert.equal(((await (await post({ vision: "  " })).json()) as { error: string }).error, "empty");
+    assert.equal(Number((await query("SELECT credits FROM users WHERE id = $1", [wu.id]))[0].credits), 1);
+  } finally {
+    config.screenwriterPipelineEnabled = false;
+    anyLlmReply = null;
+  }
+});
+
 await step("a storyboard candidate is accepted verbatim as enhance's shot context", async () => {
   // The seam between the two Director Mode endpoints. /api/storyboard emits
   // candidates and /api/enhance consumes the chosen one as `context.shot`; the
