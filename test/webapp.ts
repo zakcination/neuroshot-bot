@@ -4626,6 +4626,53 @@ await step("sheet generation: pinned model + server-side prompt, charged like a 
   assert.equal("num_images" in falCalls.at(-1)!.input, false);
 });
 
+await step("sheet engine picker: client may choose any SHEET_MODEL_PICKER model, invalid keys are refused", async () => {
+  const { SHEET_MODEL_PICKER } = await import("../src/models.js");
+  const pu = { id: 990045, username: "picker", first_name: "Pick" };
+  await getOrCreateUser(pu.id, pu.username, null, 0);
+  await addCredits(pu.id, 300, "admin_grant", "test");
+  const H = { Authorization: `tma ${signInitData(pu)}`, "Content-Type": "application/json" };
+  const gen = (body: Record<string, unknown>) =>
+    fetch(`${base}/api/generate`, { method: "POST", headers: H, body: JSON.stringify(body) });
+
+  // The catalog advertises every picker entry with its own price/maxInputs —
+  // this is what the client's model chips render from.
+  const me = (await (await fetch(`${base}/api/me`, { headers: H })).json()) as {
+    catalog: { sheetModels: Array<{ key: string; label: string; credits: number; maxInputs: number }> };
+  };
+  assert.deepEqual(me.catalog.sheetModels.map((m) => m.key), SHEET_MODEL_PICKER as unknown as string[]);
+  assert.ok(me.catalog.sheetModels.every((m) => m.credits > 0 && m.maxInputs > 0));
+
+  // GPT Image 2 (premium_edit): a real, differently-priced engine.
+  const r = await gen({
+    source: "sheet", sheetType: "character", model: "premium_edit",
+    image_urls: ["https://fal.test/storage/u-20.jpg"], label: "Ким",
+  });
+  assert.equal(r.status, 200);
+  const d = (await r.json()) as { id: number; credits: number };
+  const gpt = me.catalog.sheetModels.find((m) => m.key === "premium_edit")!;
+  assert.equal(d.credits, gpt.credits);
+  await pollGen(d.id, H);
+  assert.equal(falCalls.at(-1)!.endpoint, "openai/gpt-image-2/edit", "the chosen engine must be the one that actually renders");
+  const row = (await query("SELECT model FROM generations WHERE id = $1", [d.id]))[0];
+  assert.equal(row.model, "premium_edit", "the resolved engine is recorded on the row like any other render");
+
+  // A model outside the picker (e.g. a video model, or a made-up key) must be
+  // refused before any charge — the picker is an allow-list, not a hint.
+  const balBefore = ((await (await fetch(`${base}/api/me`, { headers: H })).json()) as { dashboard: { credits: number } }).dashboard.credits;
+  assert.equal((await gen({ source: "sheet", sheetType: "character", model: "seedance", image_urls: ["https://fal.test/storage/u-21.jpg"] })).status, 400);
+  assert.equal((await gen({ source: "sheet", sheetType: "character", model: "not_a_real_model", image_urls: ["https://fal.test/storage/u-21.jpg"] })).status, 400);
+  const balAfter = ((await (await fetch(`${base}/api/me`, { headers: H })).json()) as { dashboard: { credits: number } }).dashboard.credits;
+  assert.equal(balAfter, balBefore, "a refused model choice must not charge");
+
+  // Omitting `model` entirely still resolves to SHEET_MODEL (nb2_edit) — the
+  // exact pre-picker behavior, so every existing caller keeps working.
+  const legacy = await gen({ source: "sheet", sheetType: "location", image_urls: ["https://fal.test/storage/u-22.jpg"] });
+  assert.equal(legacy.status, 200);
+  await pollGen(((await legacy.json()) as { id: number }).id, H);
+  assert.equal(falCalls.at(-1)!.endpoint, "fal-ai/nano-banana-2/edit");
+});
+
 await step("generation metadata: client-shape opts + user_prompt on the row; curated prompts never in a payload", async () => {
   const mu = { id: 990033, username: "metadata", first_name: "Meta" };
   await getOrCreateUser(mu.id, mu.username, null, 0);

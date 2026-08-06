@@ -69,6 +69,7 @@ import {
   rawPriceFor,
   sceneModel,
   SHEET_MODEL,
+  SHEET_MODEL_PICKER,
   SHEET_PROMPTS,
   styleRefUrl,
   VIDEO_MODEL_PICKER,
@@ -798,6 +799,21 @@ function catalogPayload(usage: Record<string, number>, recent: Record<string, nu
       // stop at the same number the sheet branch will actually accept.
       maxInputs: SHEET_MODEL.image?.maxInputs ?? 1,
     },
+    // Every engine a sheet MAY run on (SHEET_MODEL_PICKER) — the client offers
+    // a choice; a request naming none of these, or none at all, falls back to
+    // SHEET_MODEL server-side (see `sheet` above, and the `source:"sheet"`
+    // branch of generateResponse). Same shape as `imageModels`, plus the
+    // per-model maxInputs a sheet's photo picker has to respect.
+    sheetModels: SHEET_MODEL_PICKER.map((k) => {
+      const spec = MODELS[k] as ModelSpec;
+      return {
+        key: k,
+        label: spec.label,
+        credits: priceFor(spec),
+        wasCredits: rawPriceFor(spec),
+        maxInputs: spec.image?.maxInputs ?? 1,
+      };
+    }),
     // Video story composer (personalize any image→video): ids/labels only.
     videoStory: VIDEO_STORY.map((s) => ({
       id: s.id,
@@ -1527,7 +1543,19 @@ export async function generateResponse(
     // multi-panel breakdown lives in the prompt.
     const sheetType = body?.sheetType === "character" || body?.sheetType === "location" ? body.sheetType : null;
     if (!sheetType || !imageUrl) return { status: 400, body: { error: "bad_request" } };
-    [model, prompt, crafted] = [SHEET_MODEL, SHEET_PROMPTS[sheetType], true];
+    // Engine choice (docs/seedance-director-mode): any SHEET_MODEL_PICKER
+    // entry — the SAME curated composition prompt renders on whichever one
+    // the client picked. An absent or unlisted key falls back to SHEET_MODEL,
+    // so every caller that never sends `model` keeps today's exact behavior.
+    let sheetModel = SHEET_MODEL;
+    if (typeof body?.model === "string" && body.model) {
+      const o = modelByKey(body.model);
+      if (!o || !(SHEET_MODEL_PICKER as readonly string[]).includes(o.key)) {
+        return { status: 400, body: { error: "bad_request" } };
+      }
+      sheetModel = o;
+    }
+    [model, prompt, crafted] = [sheetModel, SHEET_PROMPTS[sheetType], true];
     sourceKind = "sheet";
     const label = typeof body?.label === "string" ? sanitizePrompt(body.label).slice(0, 60) : "";
     sheetMeta = { sheetType, ...(label ? { label } : {}) };

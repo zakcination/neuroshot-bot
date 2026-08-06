@@ -1623,6 +1623,15 @@
       color: var(--muted); font: inherit; font-size: 11px; cursor: pointer;
     }
     .char-add-card .refgrid { margin-top: 0; }
+    .dm-model-row { display: flex; flex-wrap: wrap; gap: 6px; }
+    .dm-model-chip {
+      flex: none; display: flex; flex-direction: column; align-items: center; gap: 1px;
+      border: 1px solid var(--line); background: var(--surface); color: var(--muted);
+      border-radius: 10px; padding: 6px 9px; font: inherit; font-size: 10.5px; font-weight: 700; cursor: pointer;
+    }
+    .dm-model-chip small { font-size: 9.5px; font-weight: 600; color: var(--faint); }
+    .dm-model-chip.on { border-color: var(--magenta); background: linear-gradient(160deg, rgba(124,92,255,.16), rgba(255,77,141,.1)); color: var(--ink); }
+    .dm-model-chip.on small { color: var(--ink); opacity: .85; }
     .char-gen-btn {
       text-align: center; padding: 10px; border-radius: 10px; border: 1px solid rgba(245, 182, 74, .4);
       background: rgba(245, 182, 74, .12); color: var(--amber); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
@@ -3637,15 +3646,29 @@
     // ——————————————————————————————————————————————————————————————————
     // Director Mode (Seedance) — character/location sheets + storyboard
     // ——————————————————————————————————————————————————————————————————
+    /** Every engine a sheet may render on (server: SHEET_MODEL_PICKER) — cheapest
+     *  first, same order the server declares them in. */
+    function dmSheetModels() { return (ME.catalog || {}).sheetModels || []; }
+    function dmSheetModelSpec(key) { return dmSheetModels().find((m) => m.key === key) || null; }
+    /** The engine a fresh draft starts on — the server's own pinned default
+     *  (SHEET_MODEL), so an old cached shell with no `sheetModels` yet still
+     *  resolves to the same model it always rendered on. */
+    function dmSheetDefaultModel() {
+      return ((ME.catalog || {}).sheet || {}).model || (dmSheetModels()[0] || {}).key || "nb2_edit";
+    }
     /**
-     * How many source photos one sheet may carry. This is NOT a taste call —
-     * the sheet model declares a hard `maxInputs` and the server rejects the
-     * whole render with `too_many_inputs` above it, so offering more slots than
-     * the server accepts would build an entry that can never succeed, retry
-     * included. Read the server's own number; 4 only as a floor if an older
-     * cached shell is talking to a newer server.
+     * How many source photos one sheet may carry on the given engine (defaults
+     * to the draft's own choice). This is NOT a taste call — every engine
+     * declares its own hard `maxInputs` and the server rejects the whole
+     * render with `too_many_inputs` above it, so offering more slots than the
+     * SELECTED engine accepts would build an entry that can never succeed,
+     * retry included. Read the server's own number; 4 only as a floor if an
+     * older cached shell is talking to a newer server.
      */
-    function dmPhotoMax() { return ((ME.catalog || {}).sheet || {}).maxInputs || 4; }
+    function dmPhotoMax(modelKey) {
+      const spec = dmSheetModelSpec(modelKey || dmSheetDefaultModel());
+      return (spec && spec.maxInputs) || 4;
+    }
 
     /** The cast list for a kind — the single place that maps kind → state. */
     function dmList(kind) { return kind === "character" ? stu.dmChars : stu.dmLocs; }
@@ -3655,13 +3678,17 @@
     /** The pending "add" form for a kind; create=true materialises it. */
     function dmDraft(kind, create) {
       const key = kind === "character" ? "dmDraftChar" : "dmDraftLoc";
-      if (!stu[key] && create) stu[key] = { photos: [], busy: false };
+      if (!stu[key] && create) stu[key] = { photos: [], busy: false, model: dmSheetDefaultModel() };
       return stu[key];
     }
-    /** A sheet costs a real render — quote the server's own number. 0 means an
-     *  older cached shell is talking to a newer server: quote nothing rather
-     *  than a made-up price, and let the server's 402 be the authority. */
-    function dmSheetPrice() { return ((ME.catalog || {}).sheet || {}).credits || 0; }
+    /** A sheet costs a real render — quote the SELECTED engine's own number
+     *  (defaults to the draft's default). 0 means an older cached shell is
+     *  talking to a newer server: quote nothing rather than a made-up price,
+     *  and let the server's 402 be the authority. */
+    function dmSheetPrice(modelKey) {
+      const spec = dmSheetModelSpec(modelKey || dmSheetDefaultModel());
+      return (spec && spec.credits) || 0;
+    }
     /** True only while the studio composer itself is the open sheet — a sheet
      *  render finishing must not yank the user out of a paywall or a viewer. */
     function dmComposerVisible() {
@@ -3698,9 +3725,9 @@
      * same `jobs` map, so the pill, the gallery ripple and reload-resume all
      * behave exactly as they do for any other render.
      */
-    function startSheetJob(id, kind, entryId) {
+    function startSheetJob(id, kind, entryId, modelKey) {
       const job = { id, isVideo: false, campaignId: null, started: Date.now(),
-        etaSec: etaFor(((ME.catalog || {}).sheet || {}).model), dmSheet: { type: kind, entryId } };
+        etaSec: etaFor(modelKey || dmSheetDefaultModel()), dmSheet: { type: kind, entryId } };
       jobs.set(id, job); updateJobsPill();
       pollJob(job);
       renderGallery(1);
@@ -3742,7 +3769,8 @@
       const draft = dmDraft(kind, false);
       if (!draft || !draft.photos.length) { toast("Сначала добавьте хотя бы одно фото 🙂"); return; }
       if (draft.busy) return; // double-tap guard: this spends patrons
-      const price = dmSheetPrice();
+      const model = draft.model || dmSheetDefaultModel();
+      const price = dmSheetPrice(model);
       if (price > 0 && price > ME.dashboard.credits) {
         viewPaywall({ need: price, balance: ME.dashboard.credits, packs: ME.packs });
         return;
@@ -3773,6 +3801,10 @@
         // must not count ones the sheet was never built from.
         photos: draft.photos.filter((p) => p.url), urls, sheetUrl: null, genId: null,
         pending: true, error: null, use: true,
+        // Pinned at creation time so a retry always re-fires on the SAME
+        // engine it was quoted at, even if the draft picker (or the catalog
+        // default) has since moved on to a different one.
+        model,
         // Set only when this draft was opened FROM a screenwriter entity
         // (swOpenAddFor/swGenerateBg) — swEntryFor uses it to report that
         // entity's card as done, without duplicating any state here.
@@ -3790,7 +3822,7 @@
     /** Re-run a failed sheet from the photos already uploaded for that entry. */
     async function dmRetrySheet(kind, entry) {
       if (entry.pending) return;
-      const price = dmSheetPrice();
+      const price = dmSheetPrice(entry.model);
       if (price > 0 && price > ME.dashboard.credits) {
         viewPaywall({ need: price, balance: ME.dashboard.credits, packs: ME.packs });
         return;
@@ -3801,10 +3833,12 @@
       if (r !== "paywall") viewStudio();
     }
     /**
-     * The one place that POSTs a sheet. The composition prompt and the model
-     * are NOT sent — they are server-side constants (SHEET_PROMPTS/SHEET_MODEL,
-     * src/models.ts), exactly like preset prompts. The client says only what
-     * kind of sheet it wants, whose photos to use, and what to call it.
+     * The one place that POSTs a sheet. The composition prompt is NOT sent —
+     * it's a server-side constant (SHEET_PROMPTS, src/models.ts), exactly like
+     * preset prompts. The client says what kind of sheet it wants, whose
+     * photos to use, what to call it, and — new — which engine to render it
+     * on (any SHEET_MODEL_PICKER key); omitted, the server pins SHEET_MODEL,
+     * same as before this picker existed.
      *
      * Returns "ok" | "paywall" | "fail". Every non-ok path leaves `entry.error`
      * set, which is what makes the ↻ retry button appear — an entry that is
@@ -3820,6 +3854,7 @@
             source: "sheet",
             sheetType: kind,
             label: entry.label,
+            model: entry.model || undefined,
             image_url: entry.urls[0],
             image_urls: entry.urls.length > 1 ? entry.urls.slice(1) : undefined,
           }),
@@ -3862,7 +3897,7 @@
         return "fail";
       }
       ME.dashboard.credits = data.balance; setBalance(data.balance);
-      startSheetJob(data.id, kind, entry.id);
+      startSheetJob(data.id, kind, entry.id, entry.model);
       return "ok";
     }
 
@@ -4119,8 +4154,11 @@
       const draft = dmDraft(kind, false);
       const photos = (draft && draft.photos) || [];
       const busy = !!(draft && draft.busy);
-      const price = dmSheetPrice();
+      const model = (draft && draft.model) || dmSheetDefaultModel();
+      const price = dmSheetPrice(model);
+      const max = dmPhotoMax(model);
       const short = price > 0 && price > ME.dashboard.credits;
+      const models = dmSheetModels();
       return `
         <div class="char-add-card">
           <div class="char-add-row">
@@ -4129,18 +4167,22 @@
           </div>
           <input class="words" id="dm${kind === "character" ? "Char" : "Loc"}Label" maxlength="60" placeholder="${esc(c.ph)}" value="${esc(draft ? draft.label || "" : "")}" />
           <textarea class="words dm-text" id="dm${kind === "character" ? "Char" : "Loc"}Text" maxlength="300" placeholder="${esc(c.textPh)}" style="margin-top:6px">${esc(draft ? draft.text || "" : "")}</textarea>
+          ${models.length > 1 ? `
+          <div class="dm-model-row">
+            ${models.map((m) => `<button type="button" class="dm-model-chip ${m.key === model ? "on" : ""}" data-dm-model="${kind}:${esc(m.key)}">${esc(m.label)}<small>${m.credits} ${PATRON}</small></button>`).join("")}
+          </div>` : ""}
           <div class="refgrid">
             ${photos.map((p, i) => `<div class="refslot filled">
               <img src="${esc(p.url)}" alt="" />
               <span class="rf-idx">${String(i + 1).padStart(2, "0")}</span>
               <button class="xdel" type="button" data-dm-rm="${kind}:${i}" aria-label="Убрать фото">✕</button>
             </div>`).join("")}
-            ${photos.length < dmPhotoMax() ? `<label class="refslot add">
+            ${photos.length < max ? `<label class="refslot add">
               <input type="file" accept="image/*" multiple id="dm${kind === "character" ? "Char" : "Loc"}File" />
               <span>＋</span>
             </label>` : ""}
           </div>
-          <small class="acc-hint">${photos.length ? `${photos.length} из ${dmPhotoMax()} · больше фото — точнее сходство` : "минимум одно фото"}</small>
+          <small class="acc-hint">${photos.length ? `${photos.length} из ${max} · больше фото — точнее сходство` : "минимум одно фото"}</small>
           <button class="char-gen-btn" type="button" id="dm${kind === "character" ? "Char" : "Loc"}GenBtn" ${!photos.length || busy ? "disabled" : ""}>
             ${busy ? "⏳ Отправляю…" : short ? `Пополнить · нужно ${price} ${PATRON}` : `✨ Собрать карту${price ? ` · ${price} ${PATRON}` : ""}`}
           </button>
@@ -4254,7 +4296,7 @@
         // cast/locations/scenario survive a keep-reopen the same way photos
         // do — re-uploading a whole cast is the most expensive re-ask there is.
         director: prev ? !!prev.director : false,
-        dmChars: prev ? prev.dmChars || [] : [], // [{id,label,photos:[{data,url}],text,sheetUrl,genId,pending,error,use}]
+        dmChars: prev ? prev.dmChars || [] : [], // [{id,label,photos:[{data,url}],text,model,sheetUrl,genId,pending,error,use}]
         dmLocs: prev ? prev.dmLocs || [] : [],
         dmSeq: prev ? prev.dmSeq || 0 : 0, // entry-id counter — ids feed /api/storyboard
         dmSec: prev ? prev.dmSec || { chars: false, locs: false, shot: false, sw: false } : { chars: false, locs: false, shot: false, sw: false },
@@ -5288,7 +5330,7 @@
         const draft = dmDraft(kind, true);
         let bad = 0;
         for (const f of files) {
-          if (draft.photos.length >= dmPhotoMax()) break;
+          if (draft.photos.length >= dmPhotoMax(draft.model)) break;
           const data = await downscale(f);
           if (data) draft.photos.push({ data, url: data }); else bad++;
         }
@@ -5310,6 +5352,20 @@
       }));
       dmBindText("#dmCharText", "character");
       dmBindText("#dmLocText", "location");
+      // Engine picker (SHEET_MODEL_PICKER): switching may lower maxInputs
+      // below the photos already picked — trim from the end rather than
+      // leave a draft the server would 400 on the very next tap.
+      sheetBody.querySelectorAll("[data-dm-model]").forEach((btn) => (btn.onclick = () => {
+        const [kind, key] = btn.dataset.dmModel.split(":");
+        const draft = dmDraft(kind, true);
+        draft.model = key;
+        const max = dmPhotoMax(key);
+        if (draft.photos.length > max) {
+          draft.photos.length = max;
+          toast(`У этой модели лимит ${max} фото — лишние убраны`, { wide: true, ms: 4000 });
+        }
+        viewStudio();
+      }));
       sheetBody.querySelectorAll("[data-dm-rm]").forEach((btn) => (btn.onclick = () => {
         const [kind, i] = btn.dataset.dmRm.split(":");
         const draft = dmDraft(kind, false);

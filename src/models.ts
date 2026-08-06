@@ -1212,6 +1212,17 @@ export function presetModel(p: Preset): ModelSpec {
 export const SHEET_MODEL: ModelSpec = MODELS.nb2_edit;
 
 /**
+ * Selectable engines for a Director Mode sheet (character/location card),
+ * cheapest → priciest — every edit-capable model in the registry that takes
+ * `image_urls` and composes from them, same as `SHEET_MODEL` always could.
+ * The client may pass `model` on a `{source:"sheet"}` request; omitting it
+ * (or sending an unlisted key) falls back to `SHEET_MODEL`, preserving every
+ * existing caller's behavior unchanged. `SHEET_PROMPTS` stays the same
+ * regardless of which engine renders it — only the provider changes.
+ */
+export const SHEET_MODEL_PICKER = ["nb2_edit", "nbpro_edit", "premium_edit", "seedream_edit", "photo_edit", "grok_edit"] as const;
+
+/**
  * The curated sheet prompts — SERVER-SIDE ONLY, same invariant as every preset
  * prompt: the client sends `{source:"sheet", sheetType}` and never sees this
  * text. `location` is the twin of `character` for places: wide establishing
