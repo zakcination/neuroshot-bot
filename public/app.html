@@ -351,6 +351,24 @@
       border: 1px dashed rgba(255,255,255,.14); border-radius: var(--radius-s); font-size: 13.5px; line-height: 1.6;
     }
 
+    .ledgerlist { display: flex; flex-direction: column; gap: 7px; }
+    .ledgerrow {
+      display: flex; align-items: center; gap: 10px; border: 1px solid var(--line);
+      background: var(--surface); border-radius: 12px; padding: 10px 12px;
+    }
+    .ledger-ic {
+      flex: none; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center;
+      justify-content: center; font-size: 14px; font-weight: 800;
+    }
+    .ledgerrow.up .ledger-ic { background: rgba(124,92,255,.16); color: #c9bfff; }
+    .ledgerrow.down .ledger-ic { background: rgba(232,105,125,.14); color: #e8697d; }
+    .ledger-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .ledger-tx b { font-size: 12.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ledger-tx small { font-size: 10.5px; color: var(--muted); }
+    .ledger-amt { flex: none; font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .ledgerrow.up .ledger-amt { color: #c9bfff; }
+    .ledgerrow.down .ledger-amt { color: var(--ink); }
+
     .packs { display: grid; gap: 11px; }
     @media (min-width: 560px) { .packs { grid-template-columns: 1fr 1fr; } }
     /* Card, not a single row: name+price on top, the patron amount + its rate
@@ -1623,6 +1641,15 @@
       color: var(--muted); font: inherit; font-size: 11px; cursor: pointer;
     }
     .char-add-card .refgrid { margin-top: 0; }
+    .dm-model-row { display: flex; flex-wrap: wrap; gap: 6px; }
+    .dm-model-chip {
+      flex: none; display: flex; flex-direction: column; align-items: center; gap: 1px;
+      border: 1px solid var(--line); background: var(--surface); color: var(--muted);
+      border-radius: 10px; padding: 6px 9px; font: inherit; font-size: 10.5px; font-weight: 700; cursor: pointer;
+    }
+    .dm-model-chip small { font-size: 9.5px; font-weight: 600; color: var(--faint); }
+    .dm-model-chip.on { border-color: var(--magenta); background: linear-gradient(160deg, rgba(124,92,255,.16), rgba(255,77,141,.1)); color: var(--ink); }
+    .dm-model-chip.on small { color: var(--ink); opacity: .85; }
     .char-gen-btn {
       text-align: center; padding: 10px; border-radius: 10px; border: 1px solid rgba(245, 182, 74, .4);
       background: rgba(245, 182, 74, .12); color: var(--amber); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
@@ -3265,7 +3292,7 @@
           jobs.delete(job.id); updateJobsPill();
           xpOrigin = (viewedJob === job.id && sheet.classList.contains("on"))
             ? sheetBody : document.getElementById("jobsPill");
-          refreshMe(); renderGallery(1); haptic("success");
+          refreshMe(); renderGallery(1); renderLedger(1); haptic("success");
           // A Director Mode sheet render lands on its entry card in the
           // composer, not in the result view — the studio stays where it was.
           if (job.dmSheet) { dmSheetDone(job, data); return; }
@@ -3275,7 +3302,7 @@
           return;
         }
         if (status === 200 && data.status === "error") {
-          jobs.delete(job.id); updateJobsPill(); refreshMe(); renderGallery(1); haptic("error");
+          jobs.delete(job.id); updateJobsPill(); refreshMe(); renderGallery(1); renderLedger(1); haptic("error");
           if (job.dmSheet) { dmSheetFail(job, data); return; }
           if (job.swBg) { swBgFail(job, data); return; }
           // The server now says WHY (error_reason code) — map it to copy a
@@ -3637,15 +3664,29 @@
     // ——————————————————————————————————————————————————————————————————
     // Director Mode (Seedance) — character/location sheets + storyboard
     // ——————————————————————————————————————————————————————————————————
+    /** Every engine a sheet may render on (server: SHEET_MODEL_PICKER) — cheapest
+     *  first, same order the server declares them in. */
+    function dmSheetModels() { return (ME.catalog || {}).sheetModels || []; }
+    function dmSheetModelSpec(key) { return dmSheetModels().find((m) => m.key === key) || null; }
+    /** The engine a fresh draft starts on — the server's own pinned default
+     *  (SHEET_MODEL), so an old cached shell with no `sheetModels` yet still
+     *  resolves to the same model it always rendered on. */
+    function dmSheetDefaultModel() {
+      return ((ME.catalog || {}).sheet || {}).model || (dmSheetModels()[0] || {}).key || "nb2_edit";
+    }
     /**
-     * How many source photos one sheet may carry. This is NOT a taste call —
-     * the sheet model declares a hard `maxInputs` and the server rejects the
-     * whole render with `too_many_inputs` above it, so offering more slots than
-     * the server accepts would build an entry that can never succeed, retry
-     * included. Read the server's own number; 4 only as a floor if an older
-     * cached shell is talking to a newer server.
+     * How many source photos one sheet may carry on the given engine (defaults
+     * to the draft's own choice). This is NOT a taste call — every engine
+     * declares its own hard `maxInputs` and the server rejects the whole
+     * render with `too_many_inputs` above it, so offering more slots than the
+     * SELECTED engine accepts would build an entry that can never succeed,
+     * retry included. Read the server's own number; 4 only as a floor if an
+     * older cached shell is talking to a newer server.
      */
-    function dmPhotoMax() { return ((ME.catalog || {}).sheet || {}).maxInputs || 4; }
+    function dmPhotoMax(modelKey) {
+      const spec = dmSheetModelSpec(modelKey || dmSheetDefaultModel());
+      return (spec && spec.maxInputs) || 4;
+    }
 
     /** The cast list for a kind — the single place that maps kind → state. */
     function dmList(kind) { return kind === "character" ? stu.dmChars : stu.dmLocs; }
@@ -3655,13 +3696,17 @@
     /** The pending "add" form for a kind; create=true materialises it. */
     function dmDraft(kind, create) {
       const key = kind === "character" ? "dmDraftChar" : "dmDraftLoc";
-      if (!stu[key] && create) stu[key] = { photos: [], busy: false };
+      if (!stu[key] && create) stu[key] = { photos: [], busy: false, model: dmSheetDefaultModel() };
       return stu[key];
     }
-    /** A sheet costs a real render — quote the server's own number. 0 means an
-     *  older cached shell is talking to a newer server: quote nothing rather
-     *  than a made-up price, and let the server's 402 be the authority. */
-    function dmSheetPrice() { return ((ME.catalog || {}).sheet || {}).credits || 0; }
+    /** A sheet costs a real render — quote the SELECTED engine's own number
+     *  (defaults to the draft's default). 0 means an older cached shell is
+     *  talking to a newer server: quote nothing rather than a made-up price,
+     *  and let the server's 402 be the authority. */
+    function dmSheetPrice(modelKey) {
+      const spec = dmSheetModelSpec(modelKey || dmSheetDefaultModel());
+      return (spec && spec.credits) || 0;
+    }
     /** True only while the studio composer itself is the open sheet — a sheet
      *  render finishing must not yank the user out of a paywall or a viewer. */
     function dmComposerVisible() {
@@ -3698,9 +3743,9 @@
      * same `jobs` map, so the pill, the gallery ripple and reload-resume all
      * behave exactly as they do for any other render.
      */
-    function startSheetJob(id, kind, entryId) {
+    function startSheetJob(id, kind, entryId, modelKey) {
       const job = { id, isVideo: false, campaignId: null, started: Date.now(),
-        etaSec: etaFor(((ME.catalog || {}).sheet || {}).model), dmSheet: { type: kind, entryId } };
+        etaSec: etaFor(modelKey || dmSheetDefaultModel()), dmSheet: { type: kind, entryId } };
       jobs.set(id, job); updateJobsPill();
       pollJob(job);
       renderGallery(1);
@@ -3742,7 +3787,8 @@
       const draft = dmDraft(kind, false);
       if (!draft || !draft.photos.length) { toast("Сначала добавьте хотя бы одно фото 🙂"); return; }
       if (draft.busy) return; // double-tap guard: this spends patrons
-      const price = dmSheetPrice();
+      const model = draft.model || dmSheetDefaultModel();
+      const price = dmSheetPrice(model);
       if (price > 0 && price > ME.dashboard.credits) {
         viewPaywall({ need: price, balance: ME.dashboard.credits, packs: ME.packs });
         return;
@@ -3773,6 +3819,10 @@
         // must not count ones the sheet was never built from.
         photos: draft.photos.filter((p) => p.url), urls, sheetUrl: null, genId: null,
         pending: true, error: null, use: true,
+        // Pinned at creation time so a retry always re-fires on the SAME
+        // engine it was quoted at, even if the draft picker (or the catalog
+        // default) has since moved on to a different one.
+        model,
         // Set only when this draft was opened FROM a screenwriter entity
         // (swOpenAddFor/swGenerateBg) — swEntryFor uses it to report that
         // entity's card as done, without duplicating any state here.
@@ -3790,7 +3840,7 @@
     /** Re-run a failed sheet from the photos already uploaded for that entry. */
     async function dmRetrySheet(kind, entry) {
       if (entry.pending) return;
-      const price = dmSheetPrice();
+      const price = dmSheetPrice(entry.model);
       if (price > 0 && price > ME.dashboard.credits) {
         viewPaywall({ need: price, balance: ME.dashboard.credits, packs: ME.packs });
         return;
@@ -3801,10 +3851,12 @@
       if (r !== "paywall") viewStudio();
     }
     /**
-     * The one place that POSTs a sheet. The composition prompt and the model
-     * are NOT sent — they are server-side constants (SHEET_PROMPTS/SHEET_MODEL,
-     * src/models.ts), exactly like preset prompts. The client says only what
-     * kind of sheet it wants, whose photos to use, and what to call it.
+     * The one place that POSTs a sheet. The composition prompt is NOT sent —
+     * it's a server-side constant (SHEET_PROMPTS, src/models.ts), exactly like
+     * preset prompts. The client says what kind of sheet it wants, whose
+     * photos to use, what to call it, and — new — which engine to render it
+     * on (any SHEET_MODEL_PICKER key); omitted, the server pins SHEET_MODEL,
+     * same as before this picker existed.
      *
      * Returns "ok" | "paywall" | "fail". Every non-ok path leaves `entry.error`
      * set, which is what makes the ↻ retry button appear — an entry that is
@@ -3820,6 +3872,7 @@
             source: "sheet",
             sheetType: kind,
             label: entry.label,
+            model: entry.model || undefined,
             image_url: entry.urls[0],
             image_urls: entry.urls.length > 1 ? entry.urls.slice(1) : undefined,
           }),
@@ -3862,7 +3915,7 @@
         return "fail";
       }
       ME.dashboard.credits = data.balance; setBalance(data.balance);
-      startSheetJob(data.id, kind, entry.id);
+      startSheetJob(data.id, kind, entry.id, entry.model);
       return "ok";
     }
 
@@ -4119,8 +4172,11 @@
       const draft = dmDraft(kind, false);
       const photos = (draft && draft.photos) || [];
       const busy = !!(draft && draft.busy);
-      const price = dmSheetPrice();
+      const model = (draft && draft.model) || dmSheetDefaultModel();
+      const price = dmSheetPrice(model);
+      const max = dmPhotoMax(model);
       const short = price > 0 && price > ME.dashboard.credits;
+      const models = dmSheetModels();
       return `
         <div class="char-add-card">
           <div class="char-add-row">
@@ -4129,18 +4185,22 @@
           </div>
           <input class="words" id="dm${kind === "character" ? "Char" : "Loc"}Label" maxlength="60" placeholder="${esc(c.ph)}" value="${esc(draft ? draft.label || "" : "")}" />
           <textarea class="words dm-text" id="dm${kind === "character" ? "Char" : "Loc"}Text" maxlength="300" placeholder="${esc(c.textPh)}" style="margin-top:6px">${esc(draft ? draft.text || "" : "")}</textarea>
+          ${models.length > 1 ? `
+          <div class="dm-model-row">
+            ${models.map((m) => `<button type="button" class="dm-model-chip ${m.key === model ? "on" : ""}" data-dm-model="${kind}:${esc(m.key)}">${esc(m.label)}<small>${m.credits} ${PATRON}</small></button>`).join("")}
+          </div>` : ""}
           <div class="refgrid">
             ${photos.map((p, i) => `<div class="refslot filled">
               <img src="${esc(p.url)}" alt="" />
               <span class="rf-idx">${String(i + 1).padStart(2, "0")}</span>
               <button class="xdel" type="button" data-dm-rm="${kind}:${i}" aria-label="Убрать фото">✕</button>
             </div>`).join("")}
-            ${photos.length < dmPhotoMax() ? `<label class="refslot add">
+            ${photos.length < max ? `<label class="refslot add">
               <input type="file" accept="image/*" multiple id="dm${kind === "character" ? "Char" : "Loc"}File" />
               <span>＋</span>
             </label>` : ""}
           </div>
-          <small class="acc-hint">${photos.length ? `${photos.length} из ${dmPhotoMax()} · больше фото — точнее сходство` : "минимум одно фото"}</small>
+          <small class="acc-hint">${photos.length ? `${photos.length} из ${max} · больше фото — точнее сходство` : "минимум одно фото"}</small>
           <button class="char-gen-btn" type="button" id="dm${kind === "character" ? "Char" : "Loc"}GenBtn" ${!photos.length || busy ? "disabled" : ""}>
             ${busy ? "⏳ Отправляю…" : short ? `Пополнить · нужно ${price} ${PATRON}` : `✨ Собрать карту${price ? ` · ${price} ${PATRON}` : ""}`}
           </button>
@@ -4254,7 +4314,7 @@
         // cast/locations/scenario survive a keep-reopen the same way photos
         // do — re-uploading a whole cast is the most expensive re-ask there is.
         director: prev ? !!prev.director : false,
-        dmChars: prev ? prev.dmChars || [] : [], // [{id,label,photos:[{data,url}],text,sheetUrl,genId,pending,error,use}]
+        dmChars: prev ? prev.dmChars || [] : [], // [{id,label,photos:[{data,url}],text,model,sheetUrl,genId,pending,error,use}]
         dmLocs: prev ? prev.dmLocs || [] : [],
         dmSeq: prev ? prev.dmSeq || 0 : 0, // entry-id counter — ids feed /api/storyboard
         dmSec: prev ? prev.dmSec || { chars: false, locs: false, shot: false, sw: false } : { chars: false, locs: false, shot: false, sw: false },
@@ -5288,7 +5348,7 @@
         const draft = dmDraft(kind, true);
         let bad = 0;
         for (const f of files) {
-          if (draft.photos.length >= dmPhotoMax()) break;
+          if (draft.photos.length >= dmPhotoMax(draft.model)) break;
           const data = await downscale(f);
           if (data) draft.photos.push({ data, url: data }); else bad++;
         }
@@ -5310,6 +5370,20 @@
       }));
       dmBindText("#dmCharText", "character");
       dmBindText("#dmLocText", "location");
+      // Engine picker (SHEET_MODEL_PICKER): switching may lower maxInputs
+      // below the photos already picked — trim from the end rather than
+      // leave a draft the server would 400 on the very next tap.
+      sheetBody.querySelectorAll("[data-dm-model]").forEach((btn) => (btn.onclick = () => {
+        const [kind, key] = btn.dataset.dmModel.split(":");
+        const draft = dmDraft(kind, true);
+        draft.model = key;
+        const max = dmPhotoMax(key);
+        if (draft.photos.length > max) {
+          draft.photos.length = max;
+          toast(`У этой модели лимит ${max} фото — лишние убраны`, { wide: true, ms: 4000 });
+        }
+        viewStudio();
+      }));
       sheetBody.querySelectorAll("[data-dm-rm]").forEach((btn) => (btn.onclick = () => {
         const [kind, i] = btn.dataset.dmRm.split(":");
         const draft = dmDraft(kind, false);
@@ -6420,6 +6494,84 @@
       p.append(prev, info, next);
     }
 
+    // ——————————————————————————————————————————————————————————————————
+    // Balance history (Профиль → «История баланса»): every credit/debit the
+    // account has ever had, straight off the server's `ledger` table — same
+    // reason vocabulary db.ts's addCredits/spendCredits already write, so
+    // this can never disagree with the number on the balance itself.
+    // ——————————————————————————————————————————————————————————————————
+    var LEDGER_PAGE = 1, LEDGER_PAGES = 1;
+    const LEDGER_SIZE = 20;
+    /** RU label for a ledger reason that needs no further context. */
+    const LEDGER_REASON_LABEL = {
+      signup: "Приветственный бонус",
+      referral: "Доход с покупки друга",
+      referral_join: "Бонус за переход по ссылке",
+      referral_bonus: "Бонус за первую покупку друга",
+      referral_milestone: "Бонус за приглашённых друзей",
+      partner: "Партнёрский доход",
+      partner_join: "Бонус за переход по коду",
+      partner_welcome: "Бонус за подключение к партнёрской программе",
+      purchase: "Покупка пакета",
+      admin_grant: "Начислено администрацией",
+      push_offer: "Бонус по акции",
+      withdrawal: "Вывод на карту",
+      withdrawal_reject: "Отклонённый вывод — возврат",
+    };
+    /** Model-key metas ('generation'/'refund') get modelLabelFor treatment;
+     *  everything else reads straight off LEDGER_REASON_LABEL. Enhance/
+     *  storyboard/screenwriter charges share one non-model meta value each,
+     *  named here since modelLabelFor would just echo the raw key back. */
+    const LEDGER_META_LABEL = { enhance: "Улучшение промпта" };
+    function ledgerRowLabel(row) {
+      if (row.reason === "generation" || row.reason === "refund") {
+        const what = (row.meta && LEDGER_META_LABEL[row.meta]) || (row.meta ? modelLabelFor(row.meta) : "Генерация");
+        return row.reason === "refund" ? `Возврат — ${what}` : what;
+      }
+      if (row.reason === "purchase" && row.meta) return `${LEDGER_REASON_LABEL.purchase} · ${row.meta} ₸`;
+      return LEDGER_REASON_LABEL[row.reason] || row.reason;
+    }
+    async function renderLedger(page) {
+      const l = document.getElementById("ledgerList");
+      if (!l) return;
+      const want = Math.max(1, page || LEDGER_PAGE);
+      let items = [], cur = want;
+      try {
+        const { status, data } = await api("/api/ledger?page=" + want + "&size=" + LEDGER_SIZE);
+        if (status === 200) { items = data.items || []; cur = data.page || want; LEDGER_PAGES = data.pages || 1; }
+      } catch (e) { /* keep the last rendered page on a transient error */ }
+      LEDGER_PAGE = cur;
+      l.innerHTML = "";
+      if (!items.length) {
+        l.appendChild($(`<div class="empty">Пока пусто — история появится после первого начисления или списания.</div>`));
+      }
+      for (const row of items) {
+        const up = row.delta > 0;
+        const d = new Date(row.created_at);
+        const when = isNaN(d.getTime()) ? "" : d.toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+        l.appendChild($(`<div class="ledgerrow ${up ? "up" : ""}${!up ? "down" : ""}">
+          <span class="ledger-ic">${up ? "＋" : "－"}</span>
+          <span class="ledger-tx"><b>${esc(ledgerRowLabel(row))}</b><small>${esc(when)}</small></span>
+          <span class="ledger-amt">${up ? "+" : ""}${row.delta} ${PATRON}</span>
+        </div>`));
+      }
+      renderLedgerPager();
+    }
+    function renderLedgerPager() {
+      const p = document.getElementById("ledgerPager");
+      if (!p) return;
+      p.innerHTML = "";
+      if (LEDGER_PAGES <= 1) return;
+      const prev = $(`<button aria-label="Назад">‹</button>`);
+      prev.disabled = LEDGER_PAGE <= 1;
+      prev.onclick = () => { if (LEDGER_PAGE > 1) renderLedger(LEDGER_PAGE - 1); };
+      const info = $(`<span class="pinfo">${LEDGER_PAGE} / ${LEDGER_PAGES}</span>`);
+      const next = $(`<button aria-label="Вперёд">›</button>`);
+      next.disabled = LEDGER_PAGE >= LEDGER_PAGES;
+      next.onclick = () => { if (LEDGER_PAGE < LEDGER_PAGES) renderLedger(LEDGER_PAGE + 1); };
+      p.append(prev, info, next);
+    }
+
     async function load() {
       const root = document.getElementById("root");
       let d;
@@ -6531,6 +6683,12 @@
             <div class="sec-h"><h2>Мои работы</h2></div>
             <div class="gallery" id="g"></div>
             <div class="pager" id="pager"></div>
+          </section>
+
+          <section class="reveal">
+            <div class="sec-h"><h2>История баланса</h2></div>
+            <div class="ledgerlist" id="ledgerList"></div>
+            <div class="pager" id="ledgerPager"></div>
           </section>
 
           <section class="reveal">
@@ -6646,6 +6804,7 @@
 
       resumePending(); // re-hydrate in-flight renders BEFORE the first gallery paint
       renderGallery();
+      renderLedger();
 
       const p = document.getElementById("p");
       // Offer packs (the limited-time combo) lead with a live countdown badge;

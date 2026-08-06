@@ -2482,6 +2482,44 @@ export async function galleryPage(
   return { items: items.map(mapGeneration), total: Number(cnt[0]?.c ?? 0) };
 }
 
+export interface LedgerRow {
+  id: number;
+  /** Positive = credited (top-up, bonus, refund); negative = spent. */
+  delta: number;
+  /** See the `ledger` table's own comment (CREATE_STATEMENTS above) for the
+   *  full reason vocabulary — the client owns turning this into RU copy. */
+  reason: string;
+  /** Free-form per-reason context: a model key for 'generation'/'refund', a
+   *  ₸ amount for 'purchase', a referred user id for 'referral*', etc. */
+  meta: string | null;
+  created_at: string;
+}
+function mapLedgerRow(r: Row): LedgerRow {
+  return {
+    id: Number(r.id),
+    delta: Number(r.delta),
+    reason: r.reason as string,
+    meta: (r.meta as string | null) ?? null,
+    created_at: String(r.created_at),
+  };
+}
+/** One page of a user's own balance history (docs: account balance history),
+ *  newest first — every credit and debit this account has ever had, straight
+ *  off the SAME ledger addCredits/spendCredits already write atomically, so
+ *  this can never drift from the number on the balance itself. */
+export async function ledgerPage(
+  userId: number,
+  limit: number,
+  offset: number,
+): Promise<{ items: LedgerRow[]; total: number }> {
+  const items = await q(
+    "SELECT id, delta, reason, meta, created_at FROM ledger WHERE user_id = $1 ORDER BY id DESC LIMIT $2 OFFSET $3",
+    [userId, limit, offset],
+  );
+  const cnt = await q("SELECT COUNT(*)::int AS c FROM ledger WHERE user_id = $1", [userId]);
+  return { items: items.map(mapLedgerRow), total: Number(cnt[0]?.c ?? 0) };
+}
+
 /**
  * Toggle a generation's favorite flag — owner-scoped (WHERE id AND user_id
  * together, same convention as every other per-row mutation here), so one

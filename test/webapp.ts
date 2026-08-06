@@ -2698,6 +2698,84 @@ await step("gallery pagination: /api/generations pages finished works, excludes 
   assert.equal((await fetch(`${base}/api/generations`)).status, 401);
 });
 
+await step("balance history: /api/ledger pages every credit/debit newest-first, owner-scoped", async () => {
+  const lu = { id: 912, username: "ledger" };
+  const other = { id: 913, username: "notledger" };
+  await getOrCreateUser(lu.id, lu.username, null, 0);
+  await getOrCreateUser(other.id, other.username, null, 0);
+  // A mix of credits and debits, in a known order: purchase, generation spend
+  // (via spendCredits, same as a real render), a refund, an admin grant.
+  await addCredits(lu.id, 50, "purchase", "7000");
+  assert.ok(await spendCredits(lu.id, 4, "nb2_edit"));
+  await addCredits(lu.id, 4, "refund", "nb2_edit");
+  await addCredits(lu.id, 10, "admin_grant", String(999));
+  await addCredits(other.id, 100, "purchase", "9000"); // another user's row must never leak
+
+  const hdr = { Authorization: `tma ${signInitData(lu)}` };
+  const p1 = (await (await fetch(`${base}/api/ledger?page=1&size=3`, { headers: hdr })).json()) as {
+    items: Array<{ id: number; delta: number; reason: string; meta: string | null; created_at: string }>;
+    total: number; pages: number; page: number; pageSize: number;
+  };
+  assert.equal(p1.total, 4);
+  assert.equal(p1.pages, 2);
+  assert.equal(p1.pageSize, 3);
+  assert.equal(p1.items.length, 3);
+  // Newest first: admin_grant, refund, spend (generation) — purchase is page 2.
+  assert.deepEqual(p1.items.map((r) => r.reason), ["admin_grant", "refund", "generation"]);
+  assert.deepEqual(p1.items.map((r) => r.delta), [10, 4, -4]);
+  // admin_grant's meta is the GRANTING ADMIN's own Telegram id (src/bot.ts) —
+  // never the target user's business, so the public API redacts it even
+  // though the raw ledger row still carries "999" for internal bookkeeping.
+  assert.equal(p1.items[0].meta, null, "admin_grant's meta (the admin's id) must never reach the client");
+  assert.equal(p1.items[1].meta, "nb2_edit");
+  assert.equal(p1.items[2].meta, "nb2_edit");
+  assert.ok(p1.items.every((r) => typeof r.id === "number" && !isNaN(Date.parse(r.created_at))));
+  assert.equal(Number((await query("SELECT meta FROM ledger WHERE user_id = $1 AND reason = 'admin_grant'", [lu.id]))[0].meta), 999, "the raw row itself keeps the real value — only the public API redacts it");
+
+  const p2 = (await (await fetch(`${base}/api/ledger?page=2&size=3`, { headers: hdr })).json()) as {
+    items: Array<{ reason: string; delta: number; meta: string | null }>; page: number;
+  };
+  assert.equal(p2.page, 2);
+  assert.equal(p2.items.length, 1);
+  assert.equal(p2.items[0].reason, "purchase");
+  assert.equal(p2.items[0].delta, 50);
+  assert.equal(p2.items[0].meta, "7000");
+
+  assert.equal((await fetch(`${base}/api/ledger`)).status, 401);
+});
+
+await step("balance history: /api/ledger redacts every reason whose meta is someone else's raw id", async () => {
+  const ru = { id: 914, username: "redact" };
+  await getOrCreateUser(ru.id, ru.username, null, 0);
+  // Exactly the reasons whose `meta` column holds another account's raw
+  // Telegram id (or, for 'partner', embeds one) — every one of these must
+  // come back null over the API even though the row itself keeps the real
+  // value (support/ops still needs it; the client never should see it).
+  await addCredits(ru.id, 5, "referral", "555111");
+  await addCredits(ru.id, 5, "referral_join", "555222"); // the INVITER's id
+  await addCredits(ru.id, 5, "referral_bonus", "555333");
+  await addCredits(ru.id, 5, "partner", "somecode:555444");
+  // Safe metas — never another account's identifier — must pass through.
+  await addCredits(ru.id, 5, "referral_milestone", "3"); // a friend COUNT, not an id
+  await addCredits(ru.id, 5, "partner_join", "somecode"); // the CODE, not an id
+  await addCredits(ru.id, 5, "partner_welcome", "join");
+  await addCredits(ru.id, 5, "push_offer", "pack_x");
+
+  const hdr = { Authorization: `tma ${signInitData(ru)}` };
+  const r = (await (await fetch(`${base}/api/ledger?page=1&size=20`, { headers: hdr })).json()) as {
+    items: Array<{ reason: string; meta: string | null }>;
+  };
+  const byReason = Object.fromEntries(r.items.map((x) => [x.reason, x.meta]));
+  assert.equal(byReason.referral, null);
+  assert.equal(byReason.referral_join, null);
+  assert.equal(byReason.referral_bonus, null);
+  assert.equal(byReason.partner, null);
+  assert.equal(byReason.referral_milestone, "3");
+  assert.equal(byReason.partner_join, "somecode");
+  assert.equal(byReason.partner_welcome, "join");
+  assert.equal(byReason.push_offer, "pack_x");
+});
+
 await step("favorites: star/unstar is owner-scoped, ?favorite=1 filters the gallery", async () => {
   const fu = { id: 910, username: "fav" };
   const other = { id: 911, username: "notfav" };
@@ -4624,6 +4702,53 @@ await step("sheet generation: pinned model + server-side prompt, charged like a 
   assert.equal(pd.credits, 4, "a sheet must always be charged as ONE image");
   await pollGen(pd.id, H);
   assert.equal("num_images" in falCalls.at(-1)!.input, false);
+});
+
+await step("sheet engine picker: client may choose any SHEET_MODEL_PICKER model, invalid keys are refused", async () => {
+  const { SHEET_MODEL_PICKER } = await import("../src/models.js");
+  const pu = { id: 990045, username: "picker", first_name: "Pick" };
+  await getOrCreateUser(pu.id, pu.username, null, 0);
+  await addCredits(pu.id, 300, "admin_grant", "test");
+  const H = { Authorization: `tma ${signInitData(pu)}`, "Content-Type": "application/json" };
+  const gen = (body: Record<string, unknown>) =>
+    fetch(`${base}/api/generate`, { method: "POST", headers: H, body: JSON.stringify(body) });
+
+  // The catalog advertises every picker entry with its own price/maxInputs —
+  // this is what the client's model chips render from.
+  const me = (await (await fetch(`${base}/api/me`, { headers: H })).json()) as {
+    catalog: { sheetModels: Array<{ key: string; label: string; credits: number; maxInputs: number }> };
+  };
+  assert.deepEqual(me.catalog.sheetModels.map((m) => m.key), SHEET_MODEL_PICKER as unknown as string[]);
+  assert.ok(me.catalog.sheetModels.every((m) => m.credits > 0 && m.maxInputs > 0));
+
+  // GPT Image 2 (premium_edit): a real, differently-priced engine.
+  const r = await gen({
+    source: "sheet", sheetType: "character", model: "premium_edit",
+    image_urls: ["https://fal.test/storage/u-20.jpg"], label: "Ким",
+  });
+  assert.equal(r.status, 200);
+  const d = (await r.json()) as { id: number; credits: number };
+  const gpt = me.catalog.sheetModels.find((m) => m.key === "premium_edit")!;
+  assert.equal(d.credits, gpt.credits);
+  await pollGen(d.id, H);
+  assert.equal(falCalls.at(-1)!.endpoint, "openai/gpt-image-2/edit", "the chosen engine must be the one that actually renders");
+  const row = (await query("SELECT model FROM generations WHERE id = $1", [d.id]))[0];
+  assert.equal(row.model, "premium_edit", "the resolved engine is recorded on the row like any other render");
+
+  // A model outside the picker (e.g. a video model, or a made-up key) must be
+  // refused before any charge — the picker is an allow-list, not a hint.
+  const balBefore = ((await (await fetch(`${base}/api/me`, { headers: H })).json()) as { dashboard: { credits: number } }).dashboard.credits;
+  assert.equal((await gen({ source: "sheet", sheetType: "character", model: "seedance", image_urls: ["https://fal.test/storage/u-21.jpg"] })).status, 400);
+  assert.equal((await gen({ source: "sheet", sheetType: "character", model: "not_a_real_model", image_urls: ["https://fal.test/storage/u-21.jpg"] })).status, 400);
+  const balAfter = ((await (await fetch(`${base}/api/me`, { headers: H })).json()) as { dashboard: { credits: number } }).dashboard.credits;
+  assert.equal(balAfter, balBefore, "a refused model choice must not charge");
+
+  // Omitting `model` entirely still resolves to SHEET_MODEL (nb2_edit) — the
+  // exact pre-picker behavior, so every existing caller keeps working.
+  const legacy = await gen({ source: "sheet", sheetType: "location", image_urls: ["https://fal.test/storage/u-22.jpg"] });
+  assert.equal(legacy.status, 200);
+  await pollGen(((await legacy.json()) as { id: number }).id, H);
+  assert.equal(falCalls.at(-1)!.endpoint, "fal-ai/nano-banana-2/edit");
 });
 
 await step("generation metadata: client-shape opts + user_prompt on the row; curated prompts never in a payload", async () => {

@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { achievements, activeXpActions, hasGrantedPack, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, latestPendingOrder, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, presetTrendingCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setFavorite, setWatermark, userDashboard, type GenerationRow } from "./db.js";
+import { achievements, activeXpActions, hasGrantedPack, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, latestPendingOrder, ledgerPage, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, presetTrendingCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setFavorite, setWatermark, userDashboard, type GenerationRow, type LedgerRow } from "./db.js";
 import {
   enhancePrompt,
   splitStoryboard,
@@ -69,6 +69,7 @@ import {
   rawPriceFor,
   sceneModel,
   SHEET_MODEL,
+  SHEET_MODEL_PICKER,
   SHEET_PROMPTS,
   styleRefUrl,
   VIDEO_MODEL_PICKER,
@@ -798,6 +799,21 @@ function catalogPayload(usage: Record<string, number>, recent: Record<string, nu
       // stop at the same number the sheet branch will actually accept.
       maxInputs: SHEET_MODEL.image?.maxInputs ?? 1,
     },
+    // Every engine a sheet MAY run on (SHEET_MODEL_PICKER) — the client offers
+    // a choice; a request naming none of these, or none at all, falls back to
+    // SHEET_MODEL server-side (see `sheet` above, and the `source:"sheet"`
+    // branch of generateResponse). Same shape as `imageModels`, plus the
+    // per-model maxInputs a sheet's photo picker has to respect.
+    sheetModels: SHEET_MODEL_PICKER.map((k) => {
+      const spec = MODELS[k] as ModelSpec;
+      return {
+        key: k,
+        label: spec.label,
+        credits: priceFor(spec),
+        wasCredits: rawPriceFor(spec),
+        maxInputs: spec.image?.maxInputs ?? 1,
+      };
+    }),
     // Video story composer (personalize any image→video): ids/labels only.
     videoStory: VIDEO_STORY.map((s) => ({
       id: s.id,
@@ -853,6 +869,29 @@ function publicGeneration(g: GenerationRow): Record<string, unknown> {
     opts: g.opts,
     error_reason: g.error_reason,
     favorite: g.favorite,
+  };
+}
+
+// `meta` is an internal bookkeeping token (LedgerRow's own doc comment: "the
+// client owns turning this into RU copy"), NOT a vetted public field — for
+// these reasons it's someone else's raw Telegram numeric id, never meant to
+// leave the server: 'referral'/'referral_bonus' (the referred friend's id,
+// addCredits calls in claimWelcomeBonus/referralFinance's payout path),
+// 'referral_join' (the INVITER's id — pending_join_meta, getOrCreateUser),
+// 'partner' ("code:buyerId" — the buyer's id), 'admin_grant' (the granting
+// admin's own id, src/bot.ts). Same discipline referralList already applies
+// (it exposes username/status only, explicitly never a raw id) — redacted
+// here rather than trusted as already-safe just because it reached a column.
+// ledgerRowLabel (public/app.html) never reads meta for any of these reasons
+// anyway, so this has no effect on what the client actually shows.
+const LEDGER_META_REDACTED = new Set(["referral", "referral_join", "referral_bonus", "partner", "admin_grant"]);
+function publicLedgerRow(l: LedgerRow): Record<string, unknown> {
+  return {
+    id: l.id,
+    delta: l.delta,
+    reason: l.reason,
+    meta: LEDGER_META_REDACTED.has(l.reason) ? null : l.meta,
+    created_at: l.created_at,
   };
 }
 
@@ -1527,7 +1566,19 @@ export async function generateResponse(
     // multi-panel breakdown lives in the prompt.
     const sheetType = body?.sheetType === "character" || body?.sheetType === "location" ? body.sheetType : null;
     if (!sheetType || !imageUrl) return { status: 400, body: { error: "bad_request" } };
-    [model, prompt, crafted] = [SHEET_MODEL, SHEET_PROMPTS[sheetType], true];
+    // Engine choice (docs/seedance-director-mode): any SHEET_MODEL_PICKER
+    // entry — the SAME curated composition prompt renders on whichever one
+    // the client picked. An absent or unlisted key falls back to SHEET_MODEL,
+    // so every caller that never sends `model` keeps today's exact behavior.
+    let sheetModel = SHEET_MODEL;
+    if (typeof body?.model === "string" && body.model) {
+      const o = modelByKey(body.model);
+      if (!o || !(SHEET_MODEL_PICKER as readonly string[]).includes(o.key)) {
+        return { status: 400, body: { error: "bad_request" } };
+      }
+      sheetModel = o;
+    }
+    [model, prompt, crafted] = [sheetModel, SHEET_PROMPTS[sheetType], true];
     sourceKind = "sheet";
     const label = typeof body?.label === "string" ? sanitizePrompt(body.label).slice(0, 60) : "";
     sheetMeta = { sheetType, ...(label ? { label } : {}) };
@@ -2200,6 +2251,21 @@ export function createWebApp(): Server {
         const { items, total } = await galleryPage(user.id, size, (reqPage - 1) * size, favoriteOnly);
         const pages = Math.max(1, Math.ceil(total / size));
         return json(res, 200, { items: items.map(publicGeneration), total, page: Math.min(reqPage, pages), pageSize: size, pages });
+      }
+
+      // GET /api/ledger — one page of the caller's OWN balance history (every
+      // credit/debit the account has ever had), newest first. Reads the SAME
+      // `ledger` table addCredits/spendCredits already write atomically, so
+      // this can never disagree with the balance itself.
+      if (url.pathname === "/api/ledger") {
+        if (!methodIs(res, req.method, "GET")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const size = Math.min(50, Math.max(1, Math.floor(Number(url.searchParams.get("size")) || 20)));
+        const reqPage = Math.max(1, Math.floor(Number(url.searchParams.get("page")) || 1));
+        const { items, total } = await ledgerPage(user.id, size, (reqPage - 1) * size);
+        const pages = Math.max(1, Math.ceil(total / size));
+        return json(res, 200, { items: items.map(publicLedgerRow), total, page: Math.min(reqPage, pages), pageSize: size, pages });
       }
 
       // POST /api/generations/:id/favorite — star/unstar one of the caller's
