@@ -2723,10 +2723,14 @@ await step("balance history: /api/ledger pages every credit/debit newest-first, 
   // Newest first: admin_grant, refund, spend (generation) — purchase is page 2.
   assert.deepEqual(p1.items.map((r) => r.reason), ["admin_grant", "refund", "generation"]);
   assert.deepEqual(p1.items.map((r) => r.delta), [10, 4, -4]);
-  assert.equal(p1.items[0].meta, "999");
+  // admin_grant's meta is the GRANTING ADMIN's own Telegram id (src/bot.ts) —
+  // never the target user's business, so the public API redacts it even
+  // though the raw ledger row still carries "999" for internal bookkeeping.
+  assert.equal(p1.items[0].meta, null, "admin_grant's meta (the admin's id) must never reach the client");
   assert.equal(p1.items[1].meta, "nb2_edit");
   assert.equal(p1.items[2].meta, "nb2_edit");
   assert.ok(p1.items.every((r) => typeof r.id === "number" && !isNaN(Date.parse(r.created_at))));
+  assert.equal(Number((await query("SELECT meta FROM ledger WHERE user_id = $1 AND reason = 'admin_grant'", [lu.id]))[0].meta), 999, "the raw row itself keeps the real value — only the public API redacts it");
 
   const p2 = (await (await fetch(`${base}/api/ledger?page=2&size=3`, { headers: hdr })).json()) as {
     items: Array<{ reason: string; delta: number; meta: string | null }>; page: number;
@@ -2738,6 +2742,38 @@ await step("balance history: /api/ledger pages every credit/debit newest-first, 
   assert.equal(p2.items[0].meta, "7000");
 
   assert.equal((await fetch(`${base}/api/ledger`)).status, 401);
+});
+
+await step("balance history: /api/ledger redacts every reason whose meta is someone else's raw id", async () => {
+  const ru = { id: 914, username: "redact" };
+  await getOrCreateUser(ru.id, ru.username, null, 0);
+  // Exactly the reasons whose `meta` column holds another account's raw
+  // Telegram id (or, for 'partner', embeds one) — every one of these must
+  // come back null over the API even though the row itself keeps the real
+  // value (support/ops still needs it; the client never should see it).
+  await addCredits(ru.id, 5, "referral", "555111");
+  await addCredits(ru.id, 5, "referral_join", "555222"); // the INVITER's id
+  await addCredits(ru.id, 5, "referral_bonus", "555333");
+  await addCredits(ru.id, 5, "partner", "somecode:555444");
+  // Safe metas — never another account's identifier — must pass through.
+  await addCredits(ru.id, 5, "referral_milestone", "3"); // a friend COUNT, not an id
+  await addCredits(ru.id, 5, "partner_join", "somecode"); // the CODE, not an id
+  await addCredits(ru.id, 5, "partner_welcome", "join");
+  await addCredits(ru.id, 5, "push_offer", "pack_x");
+
+  const hdr = { Authorization: `tma ${signInitData(ru)}` };
+  const r = (await (await fetch(`${base}/api/ledger?page=1&size=20`, { headers: hdr })).json()) as {
+    items: Array<{ reason: string; meta: string | null }>;
+  };
+  const byReason = Object.fromEntries(r.items.map((x) => [x.reason, x.meta]));
+  assert.equal(byReason.referral, null);
+  assert.equal(byReason.referral_join, null);
+  assert.equal(byReason.referral_bonus, null);
+  assert.equal(byReason.partner, null);
+  assert.equal(byReason.referral_milestone, "3");
+  assert.equal(byReason.partner_join, "somecode");
+  assert.equal(byReason.partner_welcome, "join");
+  assert.equal(byReason.push_offer, "pack_x");
 });
 
 await step("favorites: star/unstar is owner-scoped, ?favorite=1 filters the gallery", async () => {

@@ -872,8 +872,27 @@ function publicGeneration(g: GenerationRow): Record<string, unknown> {
   };
 }
 
+// `meta` is an internal bookkeeping token (LedgerRow's own doc comment: "the
+// client owns turning this into RU copy"), NOT a vetted public field — for
+// these reasons it's someone else's raw Telegram numeric id, never meant to
+// leave the server: 'referral'/'referral_bonus' (the referred friend's id,
+// addCredits calls in claimWelcomeBonus/referralFinance's payout path),
+// 'referral_join' (the INVITER's id — pending_join_meta, getOrCreateUser),
+// 'partner' ("code:buyerId" — the buyer's id), 'admin_grant' (the granting
+// admin's own id, src/bot.ts). Same discipline referralList already applies
+// (it exposes username/status only, explicitly never a raw id) — redacted
+// here rather than trusted as already-safe just because it reached a column.
+// ledgerRowLabel (public/app.html) never reads meta for any of these reasons
+// anyway, so this has no effect on what the client actually shows.
+const LEDGER_META_REDACTED = new Set(["referral", "referral_join", "referral_bonus", "partner", "admin_grant"]);
 function publicLedgerRow(l: LedgerRow): Record<string, unknown> {
-  return { id: l.id, delta: l.delta, reason: l.reason, meta: l.meta, created_at: l.created_at };
+  return {
+    id: l.id,
+    delta: l.delta,
+    reason: l.reason,
+    meta: LEDGER_META_REDACTED.has(l.reason) ? null : l.meta,
+    created_at: l.created_at,
+  };
 }
 
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
