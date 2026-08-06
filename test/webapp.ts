@@ -2698,6 +2698,48 @@ await step("gallery pagination: /api/generations pages finished works, excludes 
   assert.equal((await fetch(`${base}/api/generations`)).status, 401);
 });
 
+await step("balance history: /api/ledger pages every credit/debit newest-first, owner-scoped", async () => {
+  const lu = { id: 912, username: "ledger" };
+  const other = { id: 913, username: "notledger" };
+  await getOrCreateUser(lu.id, lu.username, null, 0);
+  await getOrCreateUser(other.id, other.username, null, 0);
+  // A mix of credits and debits, in a known order: purchase, generation spend
+  // (via spendCredits, same as a real render), a refund, an admin grant.
+  await addCredits(lu.id, 50, "purchase", "7000");
+  assert.ok(await spendCredits(lu.id, 4, "nb2_edit"));
+  await addCredits(lu.id, 4, "refund", "nb2_edit");
+  await addCredits(lu.id, 10, "admin_grant", String(999));
+  await addCredits(other.id, 100, "purchase", "9000"); // another user's row must never leak
+
+  const hdr = { Authorization: `tma ${signInitData(lu)}` };
+  const p1 = (await (await fetch(`${base}/api/ledger?page=1&size=3`, { headers: hdr })).json()) as {
+    items: Array<{ id: number; delta: number; reason: string; meta: string | null; created_at: string }>;
+    total: number; pages: number; page: number; pageSize: number;
+  };
+  assert.equal(p1.total, 4);
+  assert.equal(p1.pages, 2);
+  assert.equal(p1.pageSize, 3);
+  assert.equal(p1.items.length, 3);
+  // Newest first: admin_grant, refund, spend (generation) — purchase is page 2.
+  assert.deepEqual(p1.items.map((r) => r.reason), ["admin_grant", "refund", "generation"]);
+  assert.deepEqual(p1.items.map((r) => r.delta), [10, 4, -4]);
+  assert.equal(p1.items[0].meta, "999");
+  assert.equal(p1.items[1].meta, "nb2_edit");
+  assert.equal(p1.items[2].meta, "nb2_edit");
+  assert.ok(p1.items.every((r) => typeof r.id === "number" && !isNaN(Date.parse(r.created_at))));
+
+  const p2 = (await (await fetch(`${base}/api/ledger?page=2&size=3`, { headers: hdr })).json()) as {
+    items: Array<{ reason: string; delta: number; meta: string | null }>; page: number;
+  };
+  assert.equal(p2.page, 2);
+  assert.equal(p2.items.length, 1);
+  assert.equal(p2.items[0].reason, "purchase");
+  assert.equal(p2.items[0].delta, 50);
+  assert.equal(p2.items[0].meta, "7000");
+
+  assert.equal((await fetch(`${base}/api/ledger`)).status, 401);
+});
+
 await step("favorites: star/unstar is owner-scoped, ?favorite=1 filters the gallery", async () => {
   const fu = { id: 910, username: "fav" };
   const other = { id: 911, username: "notfav" };

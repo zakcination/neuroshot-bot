@@ -351,6 +351,24 @@
       border: 1px dashed rgba(255,255,255,.14); border-radius: var(--radius-s); font-size: 13.5px; line-height: 1.6;
     }
 
+    .ledgerlist { display: flex; flex-direction: column; gap: 7px; }
+    .ledgerrow {
+      display: flex; align-items: center; gap: 10px; border: 1px solid var(--line);
+      background: var(--surface); border-radius: 12px; padding: 10px 12px;
+    }
+    .ledger-ic {
+      flex: none; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center;
+      justify-content: center; font-size: 14px; font-weight: 800;
+    }
+    .ledgerrow.up .ledger-ic { background: rgba(124,92,255,.16); color: #c9bfff; }
+    .ledgerrow.down .ledger-ic { background: rgba(232,105,125,.14); color: #e8697d; }
+    .ledger-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .ledger-tx b { font-size: 12.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ledger-tx small { font-size: 10.5px; color: var(--muted); }
+    .ledger-amt { flex: none; font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .ledgerrow.up .ledger-amt { color: #c9bfff; }
+    .ledgerrow.down .ledger-amt { color: var(--ink); }
+
     .packs { display: grid; gap: 11px; }
     @media (min-width: 560px) { .packs { grid-template-columns: 1fr 1fr; } }
     /* Card, not a single row: name+price on top, the patron amount + its rate
@@ -3265,7 +3283,7 @@
           jobs.delete(job.id); updateJobsPill();
           xpOrigin = (viewedJob === job.id && sheet.classList.contains("on"))
             ? sheetBody : document.getElementById("jobsPill");
-          refreshMe(); renderGallery(1); haptic("success");
+          refreshMe(); renderGallery(1); renderLedger(1); haptic("success");
           // A Director Mode sheet render lands on its entry card in the
           // composer, not in the result view — the studio stays where it was.
           if (job.dmSheet) { dmSheetDone(job, data); return; }
@@ -3275,7 +3293,7 @@
           return;
         }
         if (status === 200 && data.status === "error") {
-          jobs.delete(job.id); updateJobsPill(); refreshMe(); renderGallery(1); haptic("error");
+          jobs.delete(job.id); updateJobsPill(); refreshMe(); renderGallery(1); renderLedger(1); haptic("error");
           if (job.dmSheet) { dmSheetFail(job, data); return; }
           if (job.swBg) { swBgFail(job, data); return; }
           // The server now says WHY (error_reason code) — map it to copy a
@@ -6420,6 +6438,84 @@
       p.append(prev, info, next);
     }
 
+    // ——————————————————————————————————————————————————————————————————
+    // Balance history (Профиль → «История баланса»): every credit/debit the
+    // account has ever had, straight off the server's `ledger` table — same
+    // reason vocabulary db.ts's addCredits/spendCredits already write, so
+    // this can never disagree with the number on the balance itself.
+    // ——————————————————————————————————————————————————————————————————
+    var LEDGER_PAGE = 1, LEDGER_PAGES = 1;
+    const LEDGER_SIZE = 20;
+    /** RU label for a ledger reason that needs no further context. */
+    const LEDGER_REASON_LABEL = {
+      signup: "Приветственный бонус",
+      referral: "Доход с покупки друга",
+      referral_join: "Бонус за переход по ссылке",
+      referral_bonus: "Бонус за первую покупку друга",
+      referral_milestone: "Бонус за приглашённых друзей",
+      partner: "Партнёрский доход",
+      partner_join: "Бонус за переход по коду",
+      partner_welcome: "Бонус за подключение к партнёрской программе",
+      purchase: "Покупка пакета",
+      admin_grant: "Начислено администрацией",
+      push_offer: "Бонус по акции",
+      withdrawal: "Вывод на карту",
+      withdrawal_reject: "Отклонённый вывод — возврат",
+    };
+    /** Model-key metas ('generation'/'refund') get modelLabelFor treatment;
+     *  everything else reads straight off LEDGER_REASON_LABEL. Enhance/
+     *  storyboard/screenwriter charges share one non-model meta value each,
+     *  named here since modelLabelFor would just echo the raw key back. */
+    const LEDGER_META_LABEL = { enhance: "Улучшение промпта" };
+    function ledgerRowLabel(row) {
+      if (row.reason === "generation" || row.reason === "refund") {
+        const what = (row.meta && LEDGER_META_LABEL[row.meta]) || (row.meta ? modelLabelFor(row.meta) : "Генерация");
+        return row.reason === "refund" ? `Возврат — ${what}` : what;
+      }
+      if (row.reason === "purchase" && row.meta) return `${LEDGER_REASON_LABEL.purchase} · ${row.meta} ₸`;
+      return LEDGER_REASON_LABEL[row.reason] || row.reason;
+    }
+    async function renderLedger(page) {
+      const l = document.getElementById("ledgerList");
+      if (!l) return;
+      const want = Math.max(1, page || LEDGER_PAGE);
+      let items = [], cur = want;
+      try {
+        const { status, data } = await api("/api/ledger?page=" + want + "&size=" + LEDGER_SIZE);
+        if (status === 200) { items = data.items || []; cur = data.page || want; LEDGER_PAGES = data.pages || 1; }
+      } catch (e) { /* keep the last rendered page on a transient error */ }
+      LEDGER_PAGE = cur;
+      l.innerHTML = "";
+      if (!items.length) {
+        l.appendChild($(`<div class="empty">Пока пусто — история появится после первого начисления или списания.</div>`));
+      }
+      for (const row of items) {
+        const up = row.delta > 0;
+        const d = new Date(row.created_at);
+        const when = isNaN(d.getTime()) ? "" : d.toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+        l.appendChild($(`<div class="ledgerrow ${up ? "up" : ""}${!up ? "down" : ""}">
+          <span class="ledger-ic">${up ? "＋" : "－"}</span>
+          <span class="ledger-tx"><b>${esc(ledgerRowLabel(row))}</b><small>${esc(when)}</small></span>
+          <span class="ledger-amt">${up ? "+" : ""}${row.delta} ${PATRON}</span>
+        </div>`));
+      }
+      renderLedgerPager();
+    }
+    function renderLedgerPager() {
+      const p = document.getElementById("ledgerPager");
+      if (!p) return;
+      p.innerHTML = "";
+      if (LEDGER_PAGES <= 1) return;
+      const prev = $(`<button aria-label="Назад">‹</button>`);
+      prev.disabled = LEDGER_PAGE <= 1;
+      prev.onclick = () => { if (LEDGER_PAGE > 1) renderLedger(LEDGER_PAGE - 1); };
+      const info = $(`<span class="pinfo">${LEDGER_PAGE} / ${LEDGER_PAGES}</span>`);
+      const next = $(`<button aria-label="Вперёд">›</button>`);
+      next.disabled = LEDGER_PAGE >= LEDGER_PAGES;
+      next.onclick = () => { if (LEDGER_PAGE < LEDGER_PAGES) renderLedger(LEDGER_PAGE + 1); };
+      p.append(prev, info, next);
+    }
+
     async function load() {
       const root = document.getElementById("root");
       let d;
@@ -6531,6 +6627,12 @@
             <div class="sec-h"><h2>Мои работы</h2></div>
             <div class="gallery" id="g"></div>
             <div class="pager" id="pager"></div>
+          </section>
+
+          <section class="reveal">
+            <div class="sec-h"><h2>История баланса</h2></div>
+            <div class="ledgerlist" id="ledgerList"></div>
+            <div class="pager" id="ledgerPager"></div>
           </section>
 
           <section class="reveal">
@@ -6646,6 +6748,7 @@
 
       resumePending(); // re-hydrate in-flight renders BEFORE the first gallery paint
       renderGallery();
+      renderLedger();
 
       const p = document.getElementById("p");
       // Offer packs (the limited-time combo) lead with a live countdown badge;

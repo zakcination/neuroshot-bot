@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { achievements, activeXpActions, hasGrantedPack, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, latestPendingOrder, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, presetTrendingCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setFavorite, setWatermark, userDashboard, type GenerationRow } from "./db.js";
+import { achievements, activeXpActions, hasGrantedPack, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, latestPendingOrder, ledgerPage, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, presetTrendingCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setFavorite, setWatermark, userDashboard, type GenerationRow, type LedgerRow } from "./db.js";
 import {
   enhancePrompt,
   splitStoryboard,
@@ -854,6 +854,10 @@ function publicGeneration(g: GenerationRow): Record<string, unknown> {
     error_reason: g.error_reason,
     favorite: g.favorite,
   };
+}
+
+function publicLedgerRow(l: LedgerRow): Record<string, unknown> {
+  return { id: l.id, delta: l.delta, reason: l.reason, meta: l.meta, created_at: l.created_at };
 }
 
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
@@ -2200,6 +2204,21 @@ export function createWebApp(): Server {
         const { items, total } = await galleryPage(user.id, size, (reqPage - 1) * size, favoriteOnly);
         const pages = Math.max(1, Math.ceil(total / size));
         return json(res, 200, { items: items.map(publicGeneration), total, page: Math.min(reqPage, pages), pageSize: size, pages });
+      }
+
+      // GET /api/ledger — one page of the caller's OWN balance history (every
+      // credit/debit the account has ever had), newest first. Reads the SAME
+      // `ledger` table addCredits/spendCredits already write atomically, so
+      // this can never disagree with the balance itself.
+      if (url.pathname === "/api/ledger") {
+        if (!methodIs(res, req.method, "GET")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const size = Math.min(50, Math.max(1, Math.floor(Number(url.searchParams.get("size")) || 20)));
+        const reqPage = Math.max(1, Math.floor(Number(url.searchParams.get("page")) || 1));
+        const { items, total } = await ledgerPage(user.id, size, (reqPage - 1) * size);
+        const pages = Math.max(1, Math.ceil(total / size));
+        return json(res, 200, { items: items.map(publicLedgerRow), total, page: Math.min(reqPage, pages), pageSize: size, pages });
       }
 
       // POST /api/generations/:id/favorite — star/unstar one of the caller's
