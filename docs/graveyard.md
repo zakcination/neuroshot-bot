@@ -131,3 +131,32 @@ split fails, the failure is now stated and no patron is spent.
 **If it comes back:** it needs the client to synthesise a `momentRu` and a
 camera direction from the scenario text, or the server to accept a
 type-only shot and fill the rest — neither of which exists today.
+
+### Storyboard split ("Кадр" step, Director Mode)
+
+**Was:** the LLM-driven shot-picking step between the scenario and the
+assembled prompt — `splitStoryboard()` (`src/enhance.ts`), `POST
+/api/storyboard` (`src/webapp.ts`), and the "Кадр" accordion (candidate
+cards, `dmShotAccordion()`, `public/app.html`) it fed. A free-text scenario
+was split into 3-4 single-take candidates (`shotType`, `momentRu`,
+`cameraDirectionEn`, `characterIds`, `locationIds`); the user picked one,
+and that candidate became `/api/enhance`'s `context.shot`.
+
+**Why it went:** owner's call — an extra LLM call and an extra tap that
+picked one framing out of a fixed eight-shot vocabulary added friction
+without adding creative control worth the cost. `context.shot` was already
+optional at both the type and the runtime-validation level, so nothing
+downstream needed to change to survive dropping it.
+
+**Replaced by:** the scenario textarea feeds `/api/enhance` directly —
+`composeEnhanceInput()` degrades to describing the whole cast/locations
+without shot-scoping, same wording it already used when a shot's
+`characterIds`/`locationIds` were absent. `SHOT_TYPES`/`ShotType`/
+`SHOT_TYPE_IDS` (`src/enhance.ts`), the `.cand-*` CSS, and the manual
+shot-type picker entry above are now dead history — the eight-shot
+vocabulary they described no longer exists anywhere in the code.
+
+**If it comes back:** it would need to be re-derived as its own feature,
+not restored verbatim — the screenwriter pipeline's `expandVision()` already
+covers "derive structure from a vision," so a future shot-picking step
+should build on that instead of resurrecting `splitStoryboard`.

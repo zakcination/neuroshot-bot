@@ -6,24 +6,20 @@
  * fal's `fal-ai/any-llm` endpoint — the SAME fal client + FAL_KEY the renders
  * use, so there is no new provider dependency or secret.
  *
- * Director Mode adds two things on the same infrastructure:
- *   • a per-model STYLE map (ENHANCE_STYLES): Seedance gets its own system
- *     prompt (one continuous take, ONE camera movement, under 40 words); every
- *     model without an entry falls back to the pre-existing generic prompt
- *     byte-for-byte, so old clients (which send no `model` at all) see zero
- *     change;
- *   • the storyboard split (splitStoryboard): scenario + cast → 3-4 candidate
- *     single-take moments as strict JSON, validated server-side against the
- *     fixed SHOT_TYPES vocabulary.
+ * Director Mode adds a per-model STYLE map (ENHANCE_STYLES) on the same
+ * infrastructure: Seedance gets its own system prompt (one continuous take,
+ * ONE camera movement, under 40 words); every model without an entry falls
+ * back to the pre-existing generic prompt byte-for-byte, so old clients
+ * (which send no `model` at all) see zero change.
  *
  * Pricing: a STACK of ENHANCE_STACK charges rather than a single free shot.
  * One rewrite is rarely the one you keep — you read it and want to nudge it
  * again — so charging on the second tap taxes the moment the feature starts
  * being useful. Each render refills the stack (a new idea deserves a fresh
  * one); when it runs out, 1 patron refills it in full, so the patron buys a
- * round of iteration rather than a single tap. The storyboard split consumes
- * the SAME stack (spec §9 p.7): it is the same kind of LLM assist, and one
- * pool keeps the economy legible.
+ * round of iteration rather than a single tap. The screenwriter pipeline's
+ * expandVision() consumes the SAME stack: it is the same kind of LLM assist,
+ * and one pool keeps the economy legible.
  *
  * The count is derived from the events log (no schema change, nothing to drift)
  * — see enhanceChargesLeft. A paid refill is charged atomically up front and
@@ -114,40 +110,10 @@ export function enhanceStyleFor(modelKey?: string, hasDirectorContext = false): 
 }
 
 // ---------------------------------------------------------------------------
-// Shot-type vocabulary (spec §7) — a dictionary FOR THE LLM, not a user-facing
-// gallery of director names. Defined once here; the storyboard validator, the
-// enhance-context validator and the catalog payload all read this list.
-// ---------------------------------------------------------------------------
-
-export interface ShotType {
-  /** Stable id — what the API speaks and what the client sends back. */
-  id: string;
-  /** RU-facing label for the manual gallery / candidate chips. */
-  labelRu: string;
-  /** English directorial hint woven into LLM messages. Server-side vocabulary. */
-  hintEn: string;
-}
-
-export const SHOT_TYPES: readonly ShotType[] = [
-  { id: "hero_low_angle", labelRu: "Герой снизу", hintEn: "low angle on the hero, camera slowly rising" },
-  { id: "tense_closeup", labelRu: "Напряжённый крупный план", hintEn: "static tense close-up, slow push-in on the eyes/face" },
-  { id: "dutch_angle", labelRu: "Голландский угол", hintEn: "tilted dutch angle, unease and imbalance" },
-  { id: "wide_quiet", labelRu: "Дальний план, тишина", hintEn: "static contemplative wide frame, stillness" },
-  { id: "reveal_push_in", labelRu: "Наезд-разоблачение", hintEn: "slow push-in that reveals a telling detail" },
-  { id: "lateral_parallax", labelRu: "Параллакс сбоку", hintEn: "lateral tracking move past foreground elements" },
-  { id: "chase_dynamic", labelRu: "Погоня/динамика", hintEn: "fast dynamic panning, chase energy" },
-  { id: "soft_light_portrait", labelRu: "Мягкий свет, портрет", hintEn: "near-static portrait, soft light doing the work" },
-] as const;
-
-export const SHOT_TYPE_IDS: ReadonlySet<string> = new Set(SHOT_TYPES.map((s) => s.id));
-
-const shotTypeById = new Map(SHOT_TYPES.map((s) => [s.id, s]));
-
-// ---------------------------------------------------------------------------
 // Enhance context (Director Mode "Собрать Seedance-промпт", spec §8 p.4):
-// characters/locations/scenario/chosen shot travel as STRUCTURED context and
-// are serialized into the user message, so the LLM weaves them into one
-// coherent prompt instead of us concatenating strings mechanically.
+// characters/locations/scenario travel as STRUCTURED context and are
+// serialized into the user message, so the LLM weaves them into one coherent
+// prompt instead of us concatenating strings mechanically.
 // ---------------------------------------------------------------------------
 
 /** Caps for untrusted context fields — enforced by the route (webapp.ts). */
@@ -157,13 +123,11 @@ export const ENHANCE_CONTEXT_LIMITS = {
   label: 80,
   description: 300,
   scenario: 1000,
-  shotText: 300,
 } as const;
 
 export interface EnhanceContextEntity {
   /** Optional: present whenever the client can identify the entity (Director
-   *  Mode always sends one). Absent only for a hypothetical caller that never
-   *  needs shot-scoping — entityLine works either way. */
+   *  Mode always sends one). Absent for a caller that has no use for one. */
   id?: string;
   label: string;
   description?: string;
@@ -173,17 +137,6 @@ export interface EnhanceContext {
   characters?: EnhanceContextEntity[];
   locations?: EnhanceContextEntity[];
   scenario?: string;
-  shot?: {
-    type: string;
-    momentRu: string;
-    cameraDirectionEn: string;
-    /** Who/where is ACTUALLY in this shot, as a subset of `characters`/
-     *  `locations` ids above — what makes shot-scoping possible at all.
-     *  Absent (an older caller, or a shot picked with no cast attached) falls
-     *  back to describing the whole cast, exactly as before this existed. */
-    characterIds?: string[];
-    locationIds?: string[];
-  };
 }
 
 function entityLine(e: EnhanceContextEntity): string {
@@ -194,13 +147,6 @@ function entityLine(e: EnhanceContextEntity): string {
  * Serialize the user's idea + Director Mode context into ONE user message.
  * Plain labelled lines, no JSON: the LLM's job is to weave, and labelled
  * natural-language context is what these models weave best from.
- *
- * When the chosen shot names WHO is actually in it (`shot.characterIds`/
- * `locationIds`), the cast is split into "In this shot" vs "elsewhere in the
- * story" — describing the ENTIRE ticked cast for a one-person close-up is
- * what put four people in frame when only one belonged there. Without shot
- * ids (an older caller, or no shot at all) this reproduces the original
- * undifferentiated "Characters in the scene" wording byte for byte.
  */
 export function composeEnhanceInput(raw: string, ctx?: EnhanceContext): string {
   if (!ctx) return raw;
@@ -210,36 +156,9 @@ export function composeEnhanceInput(raw: string, ctx?: EnhanceContext): string {
 
   const chars = ctx.characters ?? [];
   const locs = ctx.locations ?? [];
-  const shotCharIds = ctx.shot?.characterIds;
-  const shotLocIds = ctx.shot?.locationIds;
-  if (shotCharIds || shotLocIds) {
-    const inShot = chars.filter((c) => c.id && shotCharIds?.includes(c.id));
-    const shotPlaces = locs.filter((l) => l.id && shotLocIds?.includes(l.id));
-    const elsewhere = [
-      ...chars.filter((c) => !c.id || !shotCharIds?.includes(c.id)),
-      ...locs.filter((l) => !l.id || !shotLocIds?.includes(l.id)),
-    ];
-    if (inShot.length) lines.push(`In this shot: ${inShot.map(entityLine).join("; ")}.`);
-    if (shotPlaces.length) lines.push(`Location: ${shotPlaces.map(entityLine).join("; ")}.`);
-    if (elsewhere.length) {
-      lines.push(`Elsewhere in the story (do NOT put these on screen in this shot): ${elsewhere.map(entityLine).join("; ")}.`);
-    }
-  } else {
-    if (chars.length) lines.push(`Characters in the scene: ${chars.map(entityLine).join("; ")}.`);
-    if (locs.length) lines.push(`Locations: ${locs.map(entityLine).join("; ")}.`);
-  }
+  if (chars.length) lines.push(`Characters in the scene: ${chars.map(entityLine).join("; ")}.`);
+  if (locs.length) lines.push(`Locations: ${locs.map(entityLine).join("; ")}.`);
 
-  if (ctx.shot) {
-    const t = shotTypeById.get(ctx.shot.type);
-    const hint = t ? ` (${t.hintEn})` : "";
-    // cameraDirectionEn is the LLM's own generated move for THIS exact shot —
-    // authoritative. hintEn is background framing only, so it must never read
-    // as competing with the move that was actually chosen.
-    lines.push(
-      `Chosen shot: ${ctx.shot.momentRu}. Shot framing${hint}. ` +
-        `Camera movement (authoritative — follow this exactly): ${ctx.shot.cameraDirectionEn}.`,
-    );
-  }
   return lines.join("\n");
 }
 
@@ -255,7 +174,7 @@ export async function runEnhance(message: string, systemPrompt: string = ENHANCE
 }
 
 // ---------------------------------------------------------------------------
-// The shared charge stack — one pool for the enhancer AND the storyboard split.
+// The shared charge stack — one pool for the enhancer AND the screenwriter pipeline.
 // ---------------------------------------------------------------------------
 
 type StackOutcome<T> =
@@ -323,7 +242,7 @@ export async function enhancePrompt(
   // context IS the idea. Without it, the pre-existing rule stands.
   const message = composeEnhanceInput(text, req.context).trim();
   if (!message) return { ok: false, error: "empty" };
-  const hasDirectorContext = !!(req.context?.characters?.length || req.context?.locations?.length || req.context?.shot);
+  const hasDirectorContext = !!(req.context?.characters?.length || req.context?.locations?.length);
   const style = enhanceStyleFor(req.model, hasDirectorContext);
   const r = await runOnEnhanceStack(userId, () => runner(message, style));
   if (!r.ok) return r;
@@ -331,152 +250,13 @@ export async function enhancePrompt(
 }
 
 // ---------------------------------------------------------------------------
-// Storyboard split ("Разбить на кадры", spec §7 / §10): scenario + cast →
-// 3-4 candidate single-take moments, strict JSON, validated here. Same fal
-// any-llm infrastructure, same charge stack, same refund discipline.
-// ---------------------------------------------------------------------------
-
-export interface StoryboardEntity {
-  id: string;
-  label: string;
-  description?: string;
-}
-
-export interface StoryboardCandidate {
-  shotType: string;
-  momentRu: string;
-  characterIds: string[];
-  locationIds: string[];
-  cameraDirectionEn: string;
-}
-
-export type StoryboardResult =
-  | { ok: true; candidates: StoryboardCandidate[]; charged: number; free: boolean; balance: number; left: number }
-  | { ok: false; error: "insufficient" };
-
-/** Max candidates returned to the client (the spec promises 3-4). */
-const STORYBOARD_MAX_CANDIDATES = 4;
-
-function storyboardSystemPrompt(): string {
-  const ids = SHOT_TYPES.map((s) => s.id).join(" | ");
-  const glossary = SHOT_TYPES.map((s) => `${s.id} = ${s.hintEn}`).join("; ");
-  return (
-    "You are a film director planning ONE continuous 4-15 second AI video clip (no cuts, no montage). " +
-    "The user gives a scenario and a cast of characters and locations, each with an id. " +
-    "Pick the 3-4 strongest single moments of the scenario, each shootable as ONE continuous take. " +
-    "Respond with ONLY a JSON array (no prose, no markdown, no code fences) of 3-4 objects, each exactly: " +
-    `{"shotType": "<one of: ${ids}>", ` +
-    '"momentRu": "<one short Russian sentence naming who and where, using the given names>", ' +
-    '"characterIds": ["<ids of the characters visible in this shot, from the given list only>"], ' +
-    '"locationIds": ["<ids of the locations of this shot, from the given list only>"], ' +
-    '"cameraDirectionEn": "<ONE continuous camera movement in English, concrete cinematic verbs, under 20 words, ' +
-    "and consistent with the chosen shotType's own meaning below — a hero_low_angle shot rising, not panning; " +
-    'a wide_quiet shot staying still, not tracking fast>"}. ' +
-    `Shot-type meanings: ${glossary}. Use only ids that were given; empty arrays are allowed.`
-  );
-}
-
-function storyboardUserMessage(scenario: string, characters: StoryboardEntity[], locations: StoryboardEntity[]): string {
-  const cast = (list: StoryboardEntity[]): string =>
-    list.map((e) => `- id: ${e.id} — ${e.label}${e.description ? ` (${e.description})` : ""}`).join("\n");
-  const lines = [`Scenario: ${scenario}`];
-  lines.push(characters.length ? `Characters:\n${cast(characters)}` : "Characters: none listed.");
-  lines.push(locations.length ? `Locations:\n${cast(locations)}` : "Locations: none listed.");
-  return lines.join("\n");
-}
-
-/**
- * Parse + validate the LLM's storyboard JSON. Tolerant of fences/prose around
- * the array (the JSON contract is prompt-level only — this parse IS the actual
- * contract boundary). Per-candidate strictness: an unknown shotType or a
- * missing field drops THAT candidate; unknown character/location ids are
- * dropped from the arrays (LLM noise, not user error). Returns null when
- * nothing valid survives — the caller retries once, then fails.
- */
-export function parseStoryboard(
-  text: string,
-  characterIds: ReadonlySet<string>,
-  locationIds: ReadonlySet<string>,
-): StoryboardCandidate[] | null {
-  const start = text.indexOf("[");
-  const end = text.lastIndexOf("]");
-  if (start < 0 || end <= start) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text.slice(start, end + 1));
-  } catch {
-    return null;
-  }
-  if (!Array.isArray(parsed)) return null;
-  const clean = (v: unknown, max: number): string =>
-    typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max) : "";
-  const idList = (v: unknown, known: ReadonlySet<string>): string[] => {
-    if (!Array.isArray(v)) return [];
-    const out: string[] = [];
-    for (const raw of v) {
-      const id = typeof raw === "string" ? raw.trim() : "";
-      if (id && known.has(id) && !out.includes(id)) out.push(id);
-    }
-    return out;
-  };
-  const candidates: StoryboardCandidate[] = [];
-  for (const item of parsed as unknown[]) {
-    if (typeof item !== "object" || item === null) continue;
-    const o = item as Record<string, unknown>;
-    const shotType = typeof o.shotType === "string" ? o.shotType.trim() : "";
-    const momentRu = clean(o.momentRu, 300);
-    const cameraDirectionEn = clean(o.cameraDirectionEn, 300);
-    // The fixed vocabulary is the contract: a shot type we don't know is a shot
-    // type the product can't explain or reuse, so the candidate is dropped.
-    if (!SHOT_TYPE_IDS.has(shotType) || !momentRu || !cameraDirectionEn) continue;
-    candidates.push({
-      shotType,
-      momentRu,
-      characterIds: idList(o.characterIds, characterIds),
-      locationIds: idList(o.locationIds, locationIds),
-      cameraDirectionEn,
-    });
-    if (candidates.length >= STORYBOARD_MAX_CANDIDATES) break;
-  }
-  return candidates.length ? candidates : null;
-}
-
-/**
- * Split a scenario into 3-4 single-take candidates. Consumes one charge from
- * the SAME enhance stack (free → paid → refund discipline identical to
- * enhancePrompt). Invalid/unparseable LLM output is retried ONCE; a second
- * failure throws — the route maps it onto 502 and the catch path above has
- * already refunded a paid charge, leaving the stack untouched.
- */
-export async function splitStoryboard(
-  userId: number,
-  scenario: string,
-  characters: StoryboardEntity[],
-  locations: StoryboardEntity[],
-  runner: (message: string, systemPrompt: string) => Promise<string> = runEnhance,
-): Promise<StoryboardResult> {
-  const system = storyboardSystemPrompt();
-  const message = storyboardUserMessage(scenario, characters, locations);
-  const charIds: ReadonlySet<string> = new Set(characters.map((c) => c.id));
-  const locIds: ReadonlySet<string> = new Set(locations.map((l) => l.id));
-  const r = await runOnEnhanceStack(userId, async () => {
-    const attempt = async (): Promise<StoryboardCandidate[] | null> =>
-      parseStoryboard(await runner(message, system), charIds, locIds);
-    const candidates = (await attempt()) ?? (await attempt()); // one retry
-    if (!candidates) throw new Error("storyboard: invalid LLM output after retry");
-    return candidates;
-  });
-  if (!r.ok) return r;
-  return { ok: true, candidates: r.value, charged: r.charged, free: r.free, balance: r.balance, left: r.left };
-}
-
-// ---------------------------------------------------------------------------
 // Screenwriter pipeline (docs/seedance-screenwriter-spec.md, gated behind
 // config.screenwriterPipelineEnabled): a short vision → an expanded plot +
 // the cast/locations it needs, feeding the EXISTING Director Mode sheet/
-// storyboard/assemble flow unchanged below this point. Same fal any-llm
+// assemble flow unchanged below this point (the plot fills the scenario box
+// directly — there is no intermediate shot-picking step). Same fal any-llm
 // infrastructure, same charge stack, same parse-validate-retry-once
-// discipline as splitStoryboard — this is deliberately NOT a new pattern.
+// discipline as enhancePrompt — this is deliberately NOT a new pattern.
 //
 // Purpose-classification (the spec's own flagged research item — "which of
 // emotional/selling/documentary/capability-demo") is NOT implemented here:

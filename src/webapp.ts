@@ -18,16 +18,12 @@ import { issueSession, verifySession } from "./auth.js";
 import { achievements, activeXpActions, hasGrantedPack, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, latestPendingOrder, ledgerPage, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, presetTrendingCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setFavorite, setWatermark, userDashboard, type GenerationRow, type LedgerRow } from "./db.js";
 import {
   enhancePrompt,
-  splitStoryboard,
   expandVision,
   ENHANCE_COST,
   ENHANCE_STACK,
   ENHANCE_CONTEXT_LIMITS,
-  SHOT_TYPES,
-  SHOT_TYPE_IDS,
   type EnhanceContext,
   type EnhanceContextEntity,
-  type StoryboardEntity,
 } from "./enhance.js";
 import { latestReleaseId, unseenReleases } from "./changelog.js";
 import { modelByKey, startWebGeneration } from "./generate.js";
@@ -262,15 +258,9 @@ function parseImageRole(raw: unknown): ImageRole | null {
  *
  * `idMode` — "none": id never read (kept for a hypothetical caller with no use
  * for one). "optional": id captured WHEN the client sends one, but its absence
- * doesn't invalidate the entity — this is /api/enhance's mode, since shot-
- * scoping (composeEnhanceInput, enhance.ts) needs ids to filter by, but an
- * older/simpler caller that never names a shot's cast must keep working.
- * "required": id is mandatory — /api/storyboard's mode, where every candidate
- * MUST reference a real id or "who's in this shot" is meaningless.
+ * doesn't invalidate the entity — this is /api/enhance's mode.
  */
-function parseContextEntity(raw: unknown, idMode: "none" | "optional"): EnhanceContextEntity | null;
-function parseContextEntity(raw: unknown, idMode: "required"): StoryboardEntity | null;
-function parseContextEntity(raw: unknown, idMode: "none" | "optional" | "required"): EnhanceContextEntity | null {
+function parseContextEntity(raw: unknown, idMode: "none" | "optional"): EnhanceContextEntity | null {
   if (typeof raw !== "object" || raw === null) return null;
   const o = raw as Record<string, unknown>;
   const label = typeof o.label === "string" ? sanitizePrompt(o.label).slice(0, ENHANCE_CONTEXT_LIMITS.label) : "";
@@ -283,27 +273,7 @@ function parseContextEntity(raw: unknown, idMode: "none" | "optional" | "require
   }
   if (idMode !== "none") {
     const id = typeof o.id === "string" ? o.id.trim().slice(0, 64) : "";
-    if (idMode === "required" && !id) return null;
     if (id) out.id = id;
-  }
-  return out;
-}
-
-/**
- * Validate a client-supplied id array against a set of ids already accepted
- * IN THE SAME REQUEST (e.g. a shot's characterIds against the characters list
- * beside it). Unlike enhance.ts's LLM-output idList (which drops unknowns —
- * the model is untrusted, not malicious), this REJECTS on any unknown id: it
- * validates a request, and an id that names no supplied entity is a bug or a
- * probe, not noise to silently tolerate.
- */
-function idListOf(raw: unknown, known: ReadonlySet<string>): string[] | null {
-  if (raw == null) return [];
-  if (!Array.isArray(raw)) return null;
-  const out: string[] = [];
-  for (const item of raw) {
-    if (typeof item !== "string" || !known.has(item)) return null;
-    if (!out.includes(item)) out.push(item);
   }
   return out;
 }
@@ -340,29 +310,6 @@ function parseEnhanceContext(raw: unknown): EnhanceContext | null | undefined {
     if (typeof o.scenario !== "string") return null;
     const s = sanitizePrompt(o.scenario).slice(0, ENHANCE_CONTEXT_LIMITS.scenario);
     if (s) ctx.scenario = s;
-  }
-  if (o.shot != null) {
-    if (typeof o.shot !== "object" || Array.isArray(o.shot)) return null;
-    const sh = o.shot as Record<string, unknown>;
-    const type = typeof sh.type === "string" ? sh.type.trim() : "";
-    const momentRu = typeof sh.momentRu === "string" ? sanitizePrompt(sh.momentRu).slice(0, ENHANCE_CONTEXT_LIMITS.shotText) : "";
-    const cameraDirectionEn =
-      typeof sh.cameraDirectionEn === "string" ? sanitizePrompt(sh.cameraDirectionEn).slice(0, ENHANCE_CONTEXT_LIMITS.shotText) : "";
-    // The shot always comes from a storyboard candidate or the manual gallery,
-    // both of which speak the fixed vocabulary — anything else is a probe.
-    if (!SHOT_TYPE_IDS.has(type) || !momentRu || !cameraDirectionEn) return null;
-    ctx.shot = { type, momentRu, cameraDirectionEn };
-    // Who's actually IN this shot — a subset of the characters/locations ids
-    // supplied above. What makes composeEnhanceInput's shot-scoping possible
-    // at all: without this the LLM is handed the WHOLE ticked cast for every
-    // shot, including a one-person close-up (docs/ui-rebuild-v2.md §4).
-    const knownChars = new Set(characters.map((c) => c.id).filter((x): x is string => !!x));
-    const knownLocs = new Set(locations.map((l) => l.id).filter((x): x is string => !!x));
-    const shotCharIds = idListOf(sh.characterIds, knownChars);
-    const shotLocIds = idListOf(sh.locationIds, knownLocs);
-    if (shotCharIds === null || shotLocIds === null) return null;
-    if (shotCharIds.length) ctx.shot.characterIds = shotCharIds;
-    if (shotLocIds.length) ctx.shot.locationIds = shotLocIds;
   }
   return ctx;
 }
@@ -404,52 +351,15 @@ export async function enhanceResponse(
 }
 
 /**
- * POST /api/storyboard — Director Mode "Разбить на кадры" (spec §7): a whole
- * scenario in the user's own words → 3-4 candidate single-take moments, each
- * bound to a fixed shot type and to the REAL character/location ids the client
- * sent, so the UI can show "👤 Аня" and know whose photos to attach.
- *
- * Consumes one charge from the SAME enhancer stack as /api/enhance (spec §9
- * p.7) — same free/paid/402/refund discipline, same events. Unparseable or
- * invalid LLM output is retried once server-side, then → 502 with any paid
- * charge already refunded (the client falls back to its manual gallery).
- */
-export async function storyboardResponse(
-  userId: number,
-  body: Record<string, unknown> | null,
-): Promise<{ status: number; body: Record<string, unknown> }> {
-  const scenario =
-    typeof body?.scenario === "string" ? sanitizePrompt(body.scenario).slice(0, ENHANCE_CONTEXT_LIMITS.scenario) : "";
-  const characters = parseEntityList(body?.characters, ENHANCE_CONTEXT_LIMITS.characters, (x) => parseContextEntity(x, "required"));
-  const locations = parseEntityList(body?.locations, ENHANCE_CONTEXT_LIMITS.locations, (x) => parseContextEntity(x, "required"));
-  if (characters === null || locations === null) return { status: 400, body: { error: "bad_request" } };
-  if (!scenario) return { status: 400, body: { error: "empty" } };
-  try {
-    const r = await splitStoryboard(userId, scenario, characters, locations);
-    if (!r.ok) {
-      const balance = (await getUser(userId))?.credits ?? 0;
-      return { status: 402, body: { error: "insufficient", need: 1, balance, packs: packsPayload() } };
-    }
-    return {
-      status: 200,
-      body: { candidates: r.candidates, charged: r.charged, free: r.free, balance: r.balance, left: r.left },
-    };
-  } catch (err) {
-    console.error("storyboard failed:", err);
-    return { status: 502, body: { error: "storyboard_failed" } };
-  }
-}
-
-/**
  * POST /api/screenwriter/expand — Seedance screenwriter pipeline
  * (docs/seedance-screenwriter-spec.md), gated behind
  * config.screenwriterPipelineEnabled: a short vision (+ optional VFX notes)
  * → an expanded Russian plot + the cast/locations it needs. The client feeds
- * the result into the EXISTING Director Mode sheet/storyboard/assemble flow
- * unchanged — this route only produces the plot + entity list.
+ * the result into the EXISTING Director Mode sheet/assemble flow unchanged —
+ * this route only produces the plot + entity list.
  *
- * Consumes one charge from the SAME enhancer stack as /api/enhance and
- * /api/storyboard — same free/paid/402/refund discipline, same events.
+ * Consumes one charge from the SAME enhancer stack as /api/enhance — same
+ * free/paid/402/refund discipline, same events.
  */
 export async function screenwriterExpandResponse(
   userId: number,
@@ -780,11 +690,6 @@ function catalogPayload(usage: Record<string, number>, recent: Record<string, nu
           : null,
       };
     }),
-    // Director Mode shot-type vocabulary (spec §7): ids + RU labels only — the
-    // English directorial hints stay server-side with the other curated text.
-    // The manual "или выбрать вручную" gallery renders from this list, and the
-    // ids are what /api/storyboard candidates and enhance context speak.
-    shotTypes: SHOT_TYPES.map((s) => ({ id: s.id, label: s.labelRu })),
     // What a character/location sheet costs. The model is pinned server-side
     // (SHEET_MODEL), so its price has to travel with it — otherwise the client
     // would have to hardcode the registry key to quote a number, and would
@@ -2206,26 +2111,11 @@ export function createWebApp(): Server {
         return json(res, status, body);
       }
 
-      // POST /api/storyboard — Director Mode "Разбить на кадры": scenario +
-      // cast → 3-4 single-take candidates. Shares the enhancer's per-minute
-      // rate config (it is the same class of LLM assist) under its own bucket,
-      // so a storyboard burst can't starve plain enhances and vice versa.
-      if (url.pathname === "/api/storyboard") {
-        if (!methodIs(res, req.method, "POST")) return;
-        const user = resolveUser(req.headers);
-        if (!user) return json(res, 401, { error: "unauthorized" });
-        const rl = hit(`storyboard:${user.id}`, config.rateLimitEnhancePerMin, 60_000);
-        if (rl.limited) return tooManyRequests(res, rl.retryAfterMs);
-        await getOrCreateUser(user.id, user.username, null, config.freeCredits);
-        const { status, body } = await storyboardResponse(user.id, await readJsonBody(req, 16 * 1024));
-        return json(res, status, body);
-      }
-
       // POST /api/screenwriter/expand — Seedance screenwriter pipeline (spec:
       // docs/seedance-screenwriter-spec.md), gated behind
       // config.screenwriterPipelineEnabled (404 when off). Shares the
       // enhancer's per-minute rate config under its own bucket, same as
-      // /api/storyboard above.
+      // /api/enhance above.
       if (url.pathname === "/api/screenwriter/expand") {
         if (!methodIs(res, req.method, "POST")) return;
         if (!config.screenwriterPipelineEnabled) return json(res, 404, { error: "not_found" });

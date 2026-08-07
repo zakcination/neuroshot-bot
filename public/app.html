@@ -1594,9 +1594,9 @@
     .refslot.unused { opacity: .4; }
 
     /* ————— Director Mode (Seedance) — iOS-style toggle on the aurora gradient,
-       three optional accordions (Персонажи / Локации / Кадр), storyboard
-       candidate cards and the assemble CTA. Ported from the approved
-       director-mode wireframe, recolored onto the app's own tokens. ————— */
+       two optional accordions (Персонажи / Локации), a free-text scenario box
+       and the assemble CTA. Ported from the approved director-mode wireframe,
+       recolored onto the app's own tokens. ————— */
     .toggle-row {
       display: flex; align-items: center; justify-content: space-between; gap: 10px;
       background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s);
@@ -1667,23 +1667,6 @@
       color: #c9bfff; font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer;
     }
     .split-btn:disabled { opacity: .55; cursor: default; }
-    .cand-list { display: flex; flex-direction: column; gap: 7px; }
-    .cand-head { display: flex; align-items: baseline; justify-content: space-between; margin: 2px 0 0; }
-    .cand-head span { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
-    .cand-head small { font-size: 10.5px; color: var(--faint); }
-    .cand-card {
-      display: flex; flex-direction: column; gap: 5px; width: 100%; text-align: left;
-      border: 1px solid var(--line); background: var(--surface-2); border-radius: 12px; padding: 10px 11px;
-      cursor: pointer; font: inherit; color: var(--ink);
-    }
-    .cand-card b { font-size: 12.5px; font-weight: 600; line-height: 1.35; }
-    .cand-tag {
-      align-self: flex-start; font-size: 9.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
-      padding: 2px 8px; border-radius: 999px; background: var(--bg-2); border: 1px solid var(--line); color: var(--muted);
-    }
-    .cand-refs { font-size: 10px; color: var(--muted); }
-    .cand-card.on { border-color: var(--magenta); background: linear-gradient(160deg, rgba(124, 92, 255, .16), rgba(255, 77, 141, .1)); }
-    .cand-card.on .cand-tag { background: var(--aurora); border-color: transparent; color: #fff; }
     .sw-cast { display: flex; flex-direction: column; gap: 6px; }
     .sw-cast-row {
       display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border: 1px solid var(--line);
@@ -3662,7 +3645,7 @@
     }
 
     // ——————————————————————————————————————————————————————————————————
-    // Director Mode (Seedance) — character/location sheets + storyboard
+    // Director Mode (Seedance) — character/location sheets + scenario assemble
     // ——————————————————————————————————————————————————————————————————
     /** Every engine a sheet may render on (server: SHEET_MODEL_PICKER) — cheapest
      *  first, same order the server declares them in. */
@@ -3691,7 +3674,7 @@
     /** The cast list for a kind — the single place that maps kind → state. */
     function dmList(kind) { return kind === "character" ? stu.dmChars : stu.dmLocs; }
     /** Entries that are BOTH ticked and actually have a finished sheet — the
-     *  only ones the storyboard and the assembled prompt may speak about. */
+     *  only ones the assembled prompt may speak about. */
     function dmCast(kind) { return dmList(kind).filter((x) => x.use && x.sheetUrl); }
     /** The pending "add" form for a kind; create=true materialises it. */
     function dmDraft(kind, create) {
@@ -3712,29 +3695,6 @@
     function dmComposerVisible() {
       return !!(stu && sheet.classList.contains("on") && sheetBody.querySelector("#stuGo"));
     }
-    /** RU label for a shot-type id (catalog vocabulary, ids never shown raw). */
-    function dmShotLabel(id) {
-      const hit = ((ME.catalog || {}).shotTypes || []).find((s) => s.id === id);
-      return hit ? hit.label : "кадр";
-    }
-    /** Names of the cast a candidate puts on screen, for the card's refs line. */
-    function dmCandRefs(c) {
-      const names = []
-        .concat((c.characterIds || []).map((id) => (stu.dmChars.find((x) => x.id === id) || {}).label))
-        .concat((c.locationIds || []).map((id) => (stu.dmLocs.find((x) => x.id === id) || {}).label))
-        .filter(Boolean);
-      return names.join(" · ");
-    }
-    /** A removed cast member makes any storyboard built around them stale. */
-    function dmInvalidateShots(removedId) {
-      if (!stu.dmCands) return;
-      const stale = stu.dmCands.some((c) =>
-        (c.characterIds || []).includes(removedId) || (c.locationIds || []).includes(removedId));
-      if (!stale) return;
-      stu.dmCands = null; stu.dmCandIdx = null;
-      toast("Раскадровка сброшена — в ней был удалённый участник", { wide: true, ms: 4000 });
-    }
-
     /**
      * Start a sheet render WITHOUT leaving the composer. startJob() takes over
      * the sheet body with a progress screen, which is right for the main render
@@ -3767,8 +3727,7 @@
       // user who already started typing their own scene keeps it untouched.
       if (stu.swPlot && !(stu.dmScenario || "").trim() && swAllLinked()) {
         stu.dmScenario = stu.swPlot;
-        stu.dmSec.shot = true;
-        toast("🎬 Сюжет — в «Кадр»: весь актёрский состав готов", { wide: true, ms: 4000 });
+        toast("🎬 Сюжет готов — весь актёрский состав на месте, можно собрать промпт", { wide: true, ms: 4000 });
       }
       if (dmComposerVisible()) viewStudio();
     }
@@ -4035,12 +3994,12 @@
       // Персонажи/Локации used to be their own accordions here — they now
       // render as cells of the unified reference grid (extrasBlock, below the
       // photo zone), alongside plain source photos and the final frame. Only
-      // the scene-planning half of Director Mode (scenario → shot split →
-      // assemble) is a photo INPUT's opposite — text and AI-picked framing,
-      // not a reference photo — so it's the only thing still gated here.
+      // the scene-planning half of Director Mode (scenario → assemble) is a
+      // photo INPUT's opposite — text, not a reference photo — so it's the
+      // only thing still gated here.
       return `
         <div class="toggle-row">
-          <div class="lbl">Режиссёрский режим<small>персонажи, локации, раскадровка</small></div>
+          <div class="lbl">Режиссёрский режим<small>персонажи, локации, сценарий</small></div>
           <label class="ios-toggle">
             <input type="checkbox" id="dmToggle" ${stu.director ? "checked" : ""} aria-label="Режиссёрский режим" />
             <span class="track"></span><span class="knob"></span>
@@ -4048,7 +4007,7 @@
         </div>
         ${stu.director ? `
           ${dmScreenwriterHtml()}
-          ${dmShotAccordion()}
+          ${dmScenarioHtml()}
           ${dmAssembleHtml()}` : ""}`;
     }
 
@@ -4207,46 +4166,27 @@
         </div>`;
     }
 
-    function dmShotAccordion() {
-      const open = !!stu.dmSec.shot;
-      const cands = stu.dmCands || [];
-      const state = stu.dmCandIdx != null ? "кадр выбран" : cands.length ? `${cands.length} ${plural(cands.length, "вариант", "варианта", "вариантов")}` : "нет";
-      const cost = ME.enhance && ME.enhance.left > 0 ? "бесплатно" : `${(ME.enhance && ME.enhance.cost) || 1} ${PATRON}`;
+    /**
+     * Free-text scene description feeding "Собрать Seedance-промпт" directly
+     * — no intermediate shot-picking step (removed: /api/enhance already
+     * treats Director context as scenario+cast, no `shot` field required, so
+     * dropping the split needed no server changes at all).
+     */
+    function dmScenarioHtml() {
       return `
-        <div class="acc ${open ? "open" : ""}">
-          <button class="acc-head" type="button" data-dm-sec="shot" aria-expanded="${open}">
-            <span class="t"><span class="n">③</span><b>Кадр</b></span>
-            <span class="state">${esc(state)}</span><span class="chev">▼</span>
-          </button>
-          ${open ? `<div class="acc-body">
-            <p class="acc-hint">Опишите сцену целиком, своими словами. Разобьём её на несколько цельных кадров — Seedance снимает один непрерывный дубль, без монтажа.</p>
-            <div class="scenario-box">
-              <textarea id="dmScenario" maxlength="1000" placeholder="Аня выходит на кухню на рассвете, наливает кофе и замирает у окна…">${esc(stu.dmScenario || "")}</textarea>
-            </div>
-            <button class="split-btn" type="button" id="dmSplitBtn" ${stu.dmSplitting || !(stu.dmScenario || "").trim() ? "disabled" : ""}>
-              ${stu.dmSplitting ? "⏳ Разбиваю на кадры…" : `🎞 Разбить на кадры · ${cost}`}
-            </button>
-            ${cands.length ? `
-              <div class="cand-head"><span>Выберите кадр</span><small>${stu.dmCandIdx != null ? "✓ выбран" : "один из " + cands.length}</small></div>
-              <div class="cand-list">${cands.map((c, i) => {
-                const refs = dmCandRefs(c);
-                return `<button class="cand-card ${stu.dmCandIdx === i ? "on" : ""}" type="button" data-cand-idx="${i}" aria-pressed="${stu.dmCandIdx === i}">
-                  <span class="cand-tag">${esc(dmShotLabel(c.shotType))}</span>
-                  <b>${esc(c.momentRu)}</b>
-                  ${refs ? `<span class="cand-refs">${esc(refs)}</span>` : ""}
-                </button>`;
-              }).join("")}</div>` : ""}
-          </div>` : ""}
+        <p class="acc-hint" style="margin-top:10px">Опишите сцену целиком, своими словами — Seedance снимает один непрерывный дубль, без монтажа.</p>
+        <div class="scenario-box">
+          <textarea id="dmScenario" maxlength="1000" placeholder="Аня выходит на кухню на рассвете, наливает кофе и замирает у окна…">${esc(stu.dmScenario || "")}</textarea>
         </div>`;
     }
 
     function dmAssembleHtml() {
-      const ready = stu.dmCandIdx != null;
+      const ready = !!(stu.dmScenario || "").trim();
       const cost = ME.enhance && ME.enhance.left > 0 ? "бесплатно" : `${(ME.enhance && ME.enhance.cost) || 1} ${PATRON}`;
       return `
         <button class="assemble-btn ${ready && !stu.dmAssembling ? "pulse" : ""}" type="button" id="dmAssembleBtn" ${!ready || stu.dmAssembling ? "disabled" : ""}>
-          ${stu.dmAssembling ? "⏳ Собираю промпт…" : "④ Собрать Seedance-промпт"}
-          <small>${ready ? `кто, где и какой кадр → в поле «Движение» · ${cost}` : "сначала выберите кадр в ③"}</small>
+          ${stu.dmAssembling ? "⏳ Собираю промпт…" : "Собрать Seedance-промпт"}
+          <small>${ready ? `кто, где и что происходит → в поле «Движение» · ${cost}` : "сначала опишите сценарий выше"}</small>
         </button>`;
     }
 
@@ -4316,12 +4256,10 @@
         director: prev ? !!prev.director : false,
         dmChars: prev ? prev.dmChars || [] : [], // [{id,label,photos:[{data,url}],text,model,sheetUrl,genId,pending,error,use}]
         dmLocs: prev ? prev.dmLocs || [] : [],
-        dmSeq: prev ? prev.dmSeq || 0 : 0, // entry-id counter — ids feed /api/storyboard
-        dmSec: prev ? prev.dmSec || { chars: false, locs: false, shot: false, sw: false } : { chars: false, locs: false, shot: false, sw: false },
+        dmSeq: prev ? prev.dmSeq || 0 : 0, // entry-id counter
+        dmSec: prev ? prev.dmSec || { chars: false, locs: false, sw: false } : { chars: false, locs: false, sw: false },
         dmScenario: prev ? prev.dmScenario || "" : "",
-        dmCands: prev ? prev.dmCands || null : null, // storyboard candidates from /api/storyboard
-        dmCandIdx: prev && prev.dmCandIdx != null ? prev.dmCandIdx : null,
-        dmSplitting: false, dmAssembling: false,
+        dmAssembling: false,
         dmDraftChar: prev ? prev.dmDraftChar || null : null,
         dmDraftLoc: prev ? prev.dmDraftLoc || null : null,
         // Screenwriter pipeline (docs/seedance-screenwriter-spec.md), gated by
@@ -5399,12 +5337,8 @@
         if (!entry) return;
         if (act === "use") entry.use = !entry.use;
         else if (act === "del") {
-          // Deleting a cast member invalidates a storyboard that was split
-          // around them — candidates name people by id, so keeping them would
-          // offer shots starring someone who is no longer in the cast.
           if (kind === "character") stu.dmChars = stu.dmChars.filter((x) => x.id !== id);
           else stu.dmLocs = stu.dmLocs.filter((x) => x.id !== id);
-          dmInvalidateShots(id);
         } else if (act === "retry") { dmRetrySheet(kind, entry); return; }
         viewStudio();
       }));
@@ -5421,71 +5355,23 @@
         if (e) swGenerateBg(e);
       }));
       bind("#dmScenario", (el) => (el.oninput = () => { stu.dmScenario = el.value; }));
-      bind("#dmSplitBtn", (el) => (el.onclick = async () => {
+      bind("#dmAssembleBtn", (el) => (el.onclick = async () => {
         const scenario = (stu.dmScenario || "").trim();
         if (!scenario) { toast("Сначала опишите сценарий 🙂"); return; }
-        stu.dmSplitting = true; viewStudio();
-        let status, data;
-        try {
-          ({ status, data } = await api("/api/storyboard", {
-            method: "POST",
-            body: JSON.stringify({
-              scenario,
-              characters: dmCast("character").map((c) => ({ id: c.id, label: c.label, description: c.text || undefined })),
-              locations: dmCast("location").map((l) => ({ id: l.id, label: l.label, description: l.text || undefined })),
-            }),
-          }));
-        } catch (e) {
-          // Without this the button stays disabled behind dmSplitting forever.
-          stu.dmSplitting = false;
-          toast("Нет связи с сервером — патроны не списаны.", { wide: true, ms: 4500 });
-          viewStudio(); return;
-        }
-        stu.dmSplitting = false;
-        if (status === 402) { viewPaywall(data); return; } // paywall owns the sheet body now
-        if (status !== 200 || !(data.candidates || []).length) {
-          haptic("error");
-          toast("Не получилось разбить сценарий — патроны не списаны. Попробуйте ещё раз или опишите сцену подробнее.", { wide: true, ms: 5000 });
-          viewStudio(); return;
-        }
-        stu.dmCands = data.candidates;
-        stu.dmCandIdx = null;
-        ME.dashboard.credits = data.balance; setBalance(data.balance);
-        if (ME.enhance) ME.enhance.left = data.left;
-        haptic("success");
-        toast(data.free ? `🎞 Готово · осталось ${data.left}` : `🎞 Готово · −${data.charged} ${PATRON}`);
-        viewStudio();
-      }));
-      sheetBody.querySelectorAll("[data-cand-idx]").forEach((btn) => (btn.onclick = () => {
-        stu.dmCandIdx = Number(btn.dataset.candIdx);
-        viewStudio();
-      }));
-      bind("#dmAssembleBtn", (el) => (el.onclick = async () => {
-        const cand = stu.dmCandIdx != null ? stu.dmCands[stu.dmCandIdx] : null;
-        if (!cand) { toast("Сначала выберите кадр 🙂"); return; }
         stu.dmAssembling = true; viewStudio();
-        // characterIds/locationIds on the shot are what let the server describe
-        // only who's ACTUALLY in this take ("In this shot: …") instead of the
-        // whole ticked cast for every shot — a 1-person close-up used to name
-        // all 4 people who happened to be ticked. The candidate already carries
-        // these from /api/storyboard; forward them as-is.
         const context = {
           characters: dmCast("character").map((c) => ({ id: c.id, label: c.label, description: c.text || undefined })),
           locations: dmCast("location").map((l) => ({ id: l.id, label: l.label, description: l.text || undefined })),
-          scenario: (stu.dmScenario || "").trim() || undefined,
-          shot: {
-            type: cand.shotType, momentRu: cand.momentRu, cameraDirectionEn: cand.cameraDirectionEn,
-            characterIds: cand.characterIds, locationIds: cand.locationIds,
-          },
+          scenario,
         };
         const raw = (stu.prompt || "").trim();
         let status, data;
         try {
           ({ status, data } = await api("/api/enhance", {
             method: "POST",
-            // The chosen moment IS the idea when the user hasn't typed one — an
-            // empty prompt would be rejected as "напишите идею".
-            body: JSON.stringify({ prompt: raw || cand.momentRu, model: "seedance", context }),
+            // The scenario IS the idea when the user hasn't typed one directly
+            // — an empty prompt would be rejected as "напишите идею".
+            body: JSON.stringify({ prompt: raw || scenario, model: "seedance", context }),
           }));
         } catch (e) {
           stu.dmAssembling = false;
@@ -6520,8 +6406,8 @@
     };
     /** Model-key metas ('generation'/'refund') get modelLabelFor treatment;
      *  everything else reads straight off LEDGER_REASON_LABEL. Enhance/
-     *  storyboard/screenwriter charges share one non-model meta value each,
-     *  named here since modelLabelFor would just echo the raw key back. */
+     *  screenwriter charges share one non-model meta value each, named here
+     *  since modelLabelFor would just echo the raw key back. */
     const LEDGER_META_LABEL = { enhance: "Улучшение промпта" };
     function ledgerRowLabel(row) {
       if (row.reason === "generation" || row.reason === "refund") {

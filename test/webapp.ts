@@ -55,8 +55,8 @@ interface FalCall {
 }
 const falCalls: FalCall[] = [];
 let anyLlmFail = false; // flip to make the enhancer's LLM call blow up (refund path)
-// When set, every fal-ai/any-llm call returns EXACTLY this string — lets the
-// storyboard steps script the LLM's JSON (valid, invalid, junk) per attempt.
+// When set, every fal-ai/any-llm call returns EXACTLY this string — lets
+// steps script the LLM's JSON (valid, invalid, junk) per attempt.
 // null = the default echo reply below. Reset to null after each use.
 let anyLlmReply: string | null = null;
 // Flip to make GENERATION models (not the LLM, not the nsfw classifier) throw a
@@ -873,7 +873,7 @@ await step("image_roles: named sheets are described individually, not as one rep
   // A render with a NAMED reference (Director Mode's cast) must be
   // distinguishable, after the fact, from one with only plain extra angles —
   // otherwise there is no way to ever measure whether Director Mode's own
-  // complexity (character/location sheets, storyboard split, shot pick) gets
+  // complexity (character/location sheets, scenario assemble) gets
   // used, versus generated a card, and then never actually attached to a render.
   const dmRow = (await query("SELECT opts FROM generations WHERE id = $1", [d.id]))[0];
   assert.equal(JSON.parse(String(dmRow.opts)).directorMode, true);
@@ -4278,7 +4278,7 @@ await step("release notes: shown once, never to a newcomer, and only ever moving
   assert.deepEqual(after.whatsNew, [], "a read note must not come back");
 });
 
-// ---- Director Mode backend: model-aware enhancer, storyboard, sheets, metadata ----
+// ---- Director Mode backend: model-aware enhancer, sheets, metadata ----
 
 await step("model-aware enhancer: Seedance style by key, byte-identical fallback, context woven in", async () => {
   const { ENHANCE_STYLES, ENHANCE_STYLE_DEFAULT, SEEDANCE_DIRECTOR_STYLE } = await import("../src/enhance.js");
@@ -4312,12 +4312,9 @@ await step("model-aware enhancer: Seedance style by key, byte-identical fallback
   assert.equal(r3.status, 200);
   assert.equal(falCalls.at(-1)!.input.system_prompt, ENHANCE_STYLE_DEFAULT);
 
-  // Director Mode context: characters/locations/scenario/shot are serialized
-  // into the USER message (the LLM weaves them) — and with context attached an
+  // Director Mode context: characters/locations/scenario are serialized into
+  // the USER message (the LLM weaves them) — and with context attached an
   // empty free-text idea is allowed, because the context IS the idea.
-  //
-  // No shot.characterIds/locationIds here (an older-shape shot) — must fall
-  // back to describing the WHOLE cast under the pre-existing wording.
   const r4 = await call({
     prompt: "",
     model: "seedance",
@@ -4325,7 +4322,6 @@ await step("model-aware enhancer: Seedance style by key, byte-identical fallback
       characters: [{ label: "Аня", description: "девушка в красном плаще" }],
       locations: [{ label: "ночной город" }],
       scenario: "Аня идёт по ночному городу под неоновыми вывесками",
-      shot: { type: "tense_closeup", momentRu: "Аня у витрины", cameraDirectionEn: "slow push-in on the eyes" },
     },
   });
   assert.equal(r4.status, 200);
@@ -4336,153 +4332,19 @@ await step("model-aware enhancer: Seedance style by key, byte-identical fallback
   assert.match(String(c4.input.system_prompt), /EXACTLY as/);
   assert.match(String(c4.input.system_prompt), /Do NOT write any @Image/);
   const msg = String(c4.input.prompt);
-  assert.match(msg, /Characters in the scene:.*Аня — девушка в красном плаще/, "no shot ids → whole cast, old wording");
-  assert.match(msg, /ночной город/);
-  assert.match(msg, /slow push-in on the eyes/);
-  assert.match(msg, /Аня у витрины/);
+  assert.match(msg, /Characters in the scene:.*Аня — девушка в красном плаще/);
+  assert.match(msg, /Locations:.*ночной город/);
+  assert.match(msg, /Аня идёт по ночному городу/);
 
-  // Now WITH shot.characterIds/locationIds — the two-character, one-location
-  // case that motivated this: only the shot's own cast is "in this shot",
-  // everyone else is explicitly kept off screen.
-  const r5 = await call({
-    prompt: "",
-    model: "seedance",
-    context: {
-      characters: [
-        { id: "c1", label: "Аня" },
-        { id: "c2", label: "Марат" },
-      ],
-      locations: [{ id: "l1", label: "кухня" }],
-      shot: {
-        type: "tense_closeup", momentRu: "Аня и Марат за столом", cameraDirectionEn: "slow push-in",
-        characterIds: ["c1"], locationIds: ["l1"],
-      },
-    },
-  });
-  assert.equal(r5.status, 200);
-  const msg5 = String(falCalls.at(-1)!.input.prompt);
-  assert.match(msg5, /In this shot: Аня\./);
-  assert.match(msg5, /Location: кухня\./);
-  assert.match(msg5, /Elsewhere in the story \(do NOT put these on screen in this shot\): Марат\./);
-  assert.doesNotMatch(msg5, /Characters in the scene:/, "shot-scoped and whole-cast wording must not both appear");
-
-  // An id in shot.characterIds that was never in `characters` is a probe or a
-  // stale reference — reject the whole request rather than silently drop it.
-  const badShotId = await call({
-    prompt: "x",
-    model: "seedance",
-    context: {
-      characters: [{ id: "c1", label: "Аня" }],
-      shot: { type: "tense_closeup", momentRu: "x", cameraDirectionEn: "y", characterIds: ["ghost"] },
-    },
-  });
-  assert.equal(badShotId.status, 400);
-
-  // Malformed context (a shot type outside the fixed vocabulary) → 400 before
-  // any charge is touched.
+  // Malformed context (characters not an array) → 400 before any charge.
   const leftBefore = await meLeft();
-  const bad = await call({
-    prompt: "x",
-    context: { shot: { type: "vertigo_zoom", momentRu: "x", cameraDirectionEn: "y" } },
-  });
+  const bad = await call({ prompt: "x", context: { characters: "not-an-array" } });
   assert.equal(bad.status, 400);
   assert.equal(((await bad.json()) as { error: string }).error, "bad_request");
   assert.equal(await meLeft(), leftBefore, "a rejected context must not consume a charge");
 
   // No prompt AND no context is still the pre-existing "empty" refusal.
   assert.equal((await call({ prompt: "   " })).status, 400);
-});
-
-await step("storyboard split: strict JSON validated, ids filtered, same stack, refund after one retry", async () => {
-  const { parseStoryboard } = await import("../src/enhance.js");
-  const su = { id: 990055, username: "boarder", first_name: "Story" };
-  await getOrCreateUser(su.id, su.username, null, 0);
-  const H = { Authorization: `tma ${signInitData(su)}`, "Content-Type": "application/json" };
-  const post = (body: Record<string, unknown>) =>
-    fetch(`${base}/api/storyboard`, { method: "POST", headers: H, body: JSON.stringify(body) });
-  const req = {
-    scenario: "Аня идёт по ночному городу, останавливается у витрины, оборачивается на звук",
-    characters: [{ id: "c1", label: "Аня", description: "девушка в красном плаще" }],
-    locations: [{ id: "l1", label: "ночной город" }],
-  };
-  const meLeft = async () =>
-    ((await (await fetch(`${base}/api/me`, { headers: H })).json()) as { enhance: { left: number } }).enhance.left;
-
-  // The LLM answers with 3 items: one fully valid, one carrying an id we never
-  // sent (dropped from the array, candidate kept), one with a shot type outside
-  // the fixed list (candidate dropped entirely).
-  anyLlmReply = JSON.stringify([
-    { shotType: "hero_low_angle", momentRu: "Аня выходит из тени у витрины", characterIds: ["c1"], locationIds: ["l1"], cameraDirectionEn: "low angle, camera slowly rises" },
-    { shotType: "wide_quiet", momentRu: "Ночной город замирает", characterIds: [], locationIds: ["l1", "bogus"], cameraDirectionEn: "locked-off wide frame" },
-    { shotType: "vertigo_zoom", momentRu: "Не из словаря", characterIds: ["nope"], locationIds: [], cameraDirectionEn: "dolly zoom" },
-  ]);
-  const r1 = await post(req);
-  assert.equal(r1.status, 200);
-  const d1 = (await r1.json()) as {
-    candidates: Array<{ shotType: string; momentRu: string; characterIds: string[]; locationIds: string[]; cameraDirectionEn: string }>;
-    charged: number; free: boolean; left: number;
-  };
-  assert.equal(d1.candidates.length, 2, "the out-of-vocabulary shot type must be rejected");
-  assert.equal(d1.candidates[0].shotType, "hero_low_angle");
-  assert.deepEqual(d1.candidates[0].characterIds, ["c1"]);
-  assert.deepEqual(d1.candidates[1].locationIds, ["l1"], "an id we never sent must be filtered out");
-  assert.equal(d1.free, true);
-  assert.equal(d1.charged, 0);
-  assert.equal(d1.left, 1, "the storyboard call must consume the SAME enhancer stack");
-  const llmCall = falCalls.at(-1)!;
-  assert.equal(llmCall.endpoint, "fal-ai/any-llm");
-  assert.match(String(llmCall.input.system_prompt), /hero_low_angle/);
-  assert.match(String(llmCall.input.system_prompt), /JSON array/);
-  assert.match(String(llmCall.input.prompt), /id: c1 — Аня/);
-
-  // Second free tap empties the stack; the third hits the SAME 402 paywall
-  // shape as /api/enhance.
-  assert.equal(((await (await post(req)).json()) as { left: number }).left, 0);
-  const pay = await post(req);
-  assert.equal(pay.status, 402);
-  const payBody = (await pay.json()) as { error: string; need: number; packs: unknown[] };
-  assert.equal(payBody.error, "insufficient");
-  assert.equal(payBody.need, 1);
-  assert.ok(payBody.packs.length > 0);
-
-  // 1 patron buys a whole stack, exactly like the enhancer.
-  await addCredits(su.id, 1, "admin_grant", "test");
-  const paid = (await (await post(req)).json()) as { charged: number; free: boolean; balance: number; left: number };
-  assert.equal(paid.free, false);
-  assert.equal(paid.charged, 1);
-  assert.equal(paid.balance, 0);
-  assert.equal(paid.left, 1);
-  assert.equal(((await (await post(req)).json()) as { free: boolean; left: number }).left, 0); // drain
-
-  // Unusable LLM output: retried exactly ONCE, then 502 — with the paid patron
-  // refunded and the stack exactly as before the tap.
-  await addCredits(su.id, 1, "admin_grant", "test");
-  anyLlmReply = "sorry, I can only answer in prose";
-  const callsBefore = falCalls.length;
-  const boom = await post(req);
-  assert.equal(boom.status, 502);
-  assert.equal(((await boom.json()) as { error: string }).error, "storyboard_failed");
-  assert.equal(falCalls.length, callsBefore + 2, "invalid output must be retried exactly once");
-  assert.equal(Number((await query("SELECT credits FROM users WHERE id = $1", [su.id]))[0].credits), 1, "the paid charge must come back");
-  assert.equal(await meLeft(), 0, "a failed split must not consume a charge");
-  anyLlmReply = null;
-
-  // Input guards: no scenario → 400 empty; more characters than the Director
-  // Mode slot limit (6) → 400, both without touching the stack or the wallet.
-  assert.equal(((await (await post({ ...req, scenario: "  " })).json()) as { error: string }).error, "empty");
-  const crowd = { ...req, characters: Array.from({ length: 7 }, (_, i) => ({ id: `c${i}`, label: `Герой ${i}` })) };
-  assert.equal((await post(crowd)).status, 400);
-  assert.equal(Number((await query("SELECT credits FROM users WHERE id = $1", [su.id]))[0].credits), 1);
-
-  // parseStoryboard is the real contract boundary — pin its edges directly:
-  // fenced/prose-wrapped JSON parses; an all-invalid array is a null, not [].
-  const ids = new Set(["c1"]);
-  const fenced = "```json\n[{\"shotType\":\"dutch_angle\",\"momentRu\":\"Тревога\",\"characterIds\":[\"c1\"],\"locationIds\":[],\"cameraDirectionEn\":\"tilted frame\"}]\n```";
-  const parsed = parseStoryboard(fenced, ids, new Set());
-  assert.equal(parsed?.length, 1);
-  assert.equal(parsed![0].shotType, "dutch_angle");
-  assert.equal(parseStoryboard("[{\"shotType\":\"nope\",\"momentRu\":\"x\",\"cameraDirectionEn\":\"y\"}]", ids, new Set()), null);
-  assert.equal(parseStoryboard("no brackets at all", ids, new Set()), null);
 });
 
 await step("screenwriter expand: 404 while gated off, then plot+entities on the same enhancer stack", async () => {
@@ -4521,7 +4383,7 @@ await step("screenwriter expand: 404 while gated off, then plot+entities on the 
     assert.equal(d1.entities[1].kind, "location");
     assert.equal(d1.free, true);
     assert.equal(d1.charged, 0);
-    assert.equal(d1.left, 1, "screenwriter expand must consume the SAME enhancer stack as enhance/storyboard");
+    assert.equal(d1.left, 1, "screenwriter expand must consume the SAME enhancer stack as enhance");
     const llmCall = falCalls.at(-1)!;
     assert.equal(llmCall.endpoint, "fal-ai/any-llm");
     assert.match(String(llmCall.input.prompt), /гитару/);
@@ -4535,7 +4397,7 @@ await step("screenwriter expand: 404 while gated off, then plot+entities on the 
     assert.equal(payBody.need, 1);
     assert.ok(payBody.packs.length > 0);
 
-    // A patron buys a single stack refill, exactly like enhance/storyboard.
+    // A patron buys a single stack refill, exactly like enhance.
     await addCredits(wu.id, 1, "admin_grant", "test");
     const paid = (await (await post(req)).json()) as { charged: number; free: boolean; balance: number; left: number };
     assert.equal(paid.free, false);
@@ -4563,50 +4425,6 @@ await step("screenwriter expand: 404 while gated off, then plot+entities on the 
     config.screenwriterPipelineEnabled = false;
     anyLlmReply = null;
   }
-});
-
-await step("a storyboard candidate is accepted verbatim as enhance's shot context", async () => {
-  // The seam between the two Director Mode endpoints. /api/storyboard emits
-  // candidates and /api/enhance consumes the chosen one as `context.shot`; the
-  // client only forwards it. Nothing pinned that the shape one produces is the
-  // shape the other takes, and it silently wasn't: the field is `shotType` on
-  // the way out and `type` on the way in, so a straight passthrough 400s and
-  // the final step of the flow can never complete. Pin both directions here so
-  // renaming either side fails loudly instead of at the last tap.
-  const cu = { id: 990066, username: "seam", first_name: "Seam" };
-  await getOrCreateUser(cu.id, cu.username, null, 50);
-  const H = { Authorization: `tma ${signInitData(cu)}`, "Content-Type": "application/json" };
-  const characters = [{ id: "c1", label: "Аня" }];
-  const locations = [{ id: "l1", label: "ночной город" }];
-
-  anyLlmReply = JSON.stringify([
-    { shotType: "reveal_push_in", momentRu: "Аня оборачивается у витрины", characterIds: ["c1"], locationIds: ["l1"], cameraDirectionEn: "slow push-in revealing her face" },
-  ]);
-  const board = await fetch(`${base}/api/storyboard`, {
-    method: "POST", headers: H,
-    body: JSON.stringify({ scenario: "Аня идёт по ночному городу и оборачивается", characters, locations }),
-  });
-  assert.equal(board.status, 200);
-  const cand = ((await board.json()) as { candidates: Array<Record<string, string>> }).candidates[0];
-
-  // Exactly the mapping the client performs — every field taken off the
-  // candidate by the name the candidate actually uses.
-  anyLlmReply = null;
-  const shot = { type: cand.shotType, momentRu: cand.momentRu, cameraDirectionEn: cand.cameraDirectionEn };
-  for (const [k, v] of Object.entries(shot)) assert.ok(v, `candidate is missing ${k} — the client would send undefined`);
-
-  const enh = await fetch(`${base}/api/enhance`, {
-    method: "POST", headers: H,
-    body: JSON.stringify({ prompt: cand.momentRu, model: "seedance", context: { characters, locations, shot } }),
-  });
-  assert.equal(enh.status, 200, "a real candidate must be a valid shot context");
-
-  // And the negative: the pre-fix client read `cand.type`, which is undefined.
-  const broken = await fetch(`${base}/api/enhance`, {
-    method: "POST", headers: H,
-    body: JSON.stringify({ prompt: cand.momentRu, model: "seedance", context: { characters, locations, shot: { ...shot, type: undefined } } }),
-  });
-  assert.equal(broken.status, 400, "a shot without a type must be refused, not silently rendered");
 });
 
 await step("sheet generation: pinned model + server-side prompt, charged like a normal render, marked on the row", async () => {
