@@ -1423,6 +1423,10 @@
       border: 0; background: transparent; color: var(--violet); font: inherit; font-size: 11.5px; font-weight: 650;
       padding: 6px 2px; cursor: pointer;
     }
+    /* Library links sit right below the gallery link, same zone, same input-
+       source role — two because saved entities are kind-scoped (character vs
+       location) and there's no ambiguity worth an extra picker step for two. */
+    .lib-links { display: flex; flex-wrap: wrap; gap: 4px 14px; }
     .gallery-sheet { max-height: 82dvh; }
     .gfav-toggle {
       border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); border-radius: 999px;
@@ -1667,16 +1671,6 @@
     .dm-model-chip small { font-size: 9.5px; font-weight: 600; color: var(--faint); }
     .dm-model-chip.on { border-color: var(--magenta); background: linear-gradient(160deg, rgba(124,92,255,.16), rgba(255,77,141,.1)); color: var(--ink); }
     .dm-model-chip.on small { color: var(--ink); opacity: .85; }
-    .tier-row { display: flex; gap: 6px; }
-    .tier-chip {
-      flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center;
-      border: 1px solid var(--line); background: var(--surface); color: var(--muted);
-      border-radius: 12px; padding: 8px 6px; font: inherit; cursor: pointer;
-    }
-    .tier-chip b { font-size: 12.5px; font-weight: 700; color: var(--ink); }
-    .tier-chip small { font-size: 9.5px; line-height: 1.25; color: var(--faint); }
-    .tier-chip.on { border-color: var(--violet); background: rgba(124,92,255,.1); }
-    .tier-chip.on b { color: var(--violet); }
     /* Mandatory AI-disclosure notice (docs/compliance.md, KZ Law 230-VIII) —
        stated before the charge, not just baked into the delivered file, so a
        client-facing render doesn't surprise its buyer after patrons are spent. */
@@ -4200,7 +4194,6 @@
             <div><b>${esc(c.add)}</b><small>имя — чтобы отличать в раскадровке</small></div>
             <button type="button" class="char-add-cancel" data-dm-cancel="${kind}" aria-label="Отмена">✕</button>
           </div>
-          <button type="button" class="gallery-link" data-lib-open="${kind}">📚 Взять из библиотеки — уже есть готовая карта</button>
           <input class="words" id="dm${kind === "character" ? "Char" : "Loc"}Label" maxlength="60" placeholder="${esc(c.ph)}" value="${esc(draft ? draft.label || "" : "")}" />
           <textarea class="words dm-text" id="dm${kind === "character" ? "Char" : "Loc"}Text" maxlength="300" placeholder="${esc(c.textPh)}" style="margin-top:6px">${esc(draft ? draft.text || "" : "")}</textarea>
           ${models.length > 1 ? `
@@ -4638,6 +4631,17 @@
           ${dmCapable ? `<button type="button" class="chip" data-refrole="character">👤 Персонаж</button>` : ""}
           ${dmCapable ? `<button type="button" class="chip" data-refrole="location">📍 Локация</button>` : ""}
         </div>` : "";
+      // The saved-entity library is an INPUT method (a reference, same as a
+      // fresh photo or the gallery link above it) — it lives here, at the
+      // top level of the reference grid, not nested a level deeper inside the
+      // "add a new character" form. All input sources for this block live in
+      // this one zone; all render params live in their own (see paramscard,
+      // below in viewStudio) — persona-simulation follow-up.
+      const libLinks = dmCapable ? `
+        <div class="lib-links">
+          <button type="button" class="gallery-link" data-lib-open="character">📚 Персонажи из библиотеки</button>
+          <button type="button" class="gallery-link" data-lib-open="location">📚 Локации из библиотеки</button>
+        </div>` : "";
       const grid = sourceCells || charCells || locCells || finalCell || addCell
         ? `
           <div class="refhead">${qLabel("Ссылочные фото", "refroles")}</div>
@@ -4646,6 +4650,7 @@
             ${canAddSource ? `<input type="file" accept="image/*" id="stuExtraFile" multiple style="display:none" />` : ""}
           </div>
           ${canAddSource ? `<button type="button" class="gallery-link" id="refGalleryBtn">📁 из своих работ</button>` : ""}
+          ${libLinks}
           ${choiceRow}` : "";
       const addForms = dmOn ? `
         ${stu.dmSec.chars ? dmAddCardHtml("character") : ""}
@@ -4821,6 +4826,19 @@
         title = "Количество";
         const cur = stu.numImages || 1;
         rows = stuCountOptions(m, caps).map((c) => ({ id: String(c.n), label: `${c.n} шт${c.n > 1 ? ` · ${c.credits} ${PATRON}` : ""}`, on: c.n === cur }));
+      } else if (key === "tier") {
+        // Seedance's Дёшево/Быстро/Качество toggle — folded into the SAME
+        // params popup as aspect/resolution/duration (was its own standalone
+        // row above; "all params in one zone" per the persona-simulation
+        // follow-up). Each option states its OUTCOME, not just its name.
+        title = "Уровень качества";
+        const cur = stu.seedanceTier || "fast";
+        const tiers = [
+          ["cheap", "Дёшево — для сторис и черновика"],
+          ["fast", "Быстро — баланс цены и вида"],
+          ["quality", "Качество — для клиента и печати"],
+        ];
+        rows = tiers.map(([id, label]) => ({ id, label: esc(label), on: id === cur }));
       } else if (key === "duration") {
         // Kept as the original drag slider (durationSliderHtml/wireDurationSlider)
         // — a continuous 4-15s range reads better as a slider than a 12-row
@@ -5100,23 +5118,6 @@
           <button class="btn ghost" id="stuEnh">${enhLabel()}</button>
           ${stu.prevPrompt != null ? `<button class="btn ghost" id="stuUndo">↩ Вернуть</button>` : ""}
         </div>
-        ${isVideo && m.key === "seedance" ? (() => {
-          const refMode = activeSeedanceTierKey() === "ref";
-          // Each tariff states its OUTCOME, not just its name — "Дёшево" alone
-          // told a first-time user nothing about what they'd get for it (found
-          // via persona simulation, docs/wireframes/director-mode.v4.html).
-          const tiers = [
-            ["cheap", "Дёшево", "для сторис и черновика"],
-            ["fast", "Быстро", "баланс цены и вида"],
-            ["quality", "Качество", "для клиента и печати"],
-          ];
-          return `
-            ${qLabel("Уровень качества")}
-            ${refMode
-              ? `<div class="sub">Режим по фото — несколько референсов или аудио/видео фиксируют качество, тумблер недоступен.</div>`
-              : `<div class="tier-row" id="stuTier">${tiers.map(([id, label, why]) =>
-                  `<button type="button" class="tier-chip ${(stu.seedanceTier || "fast") === id ? "on" : ""}" data-tier="${id}"><b>${label}</b><small>${why}</small></button>`).join("")}</div>`}`;
-        })() : ""}
         ${storyQuizHtml(story)}
         ${(() => {
           // S12–S15: render params pinned as one card directly above the CTA —
@@ -5124,7 +5125,11 @@
           // (docs/wireframes/home-studio, v3). Works for both modes: video
           // sees aspect/resolution/duration, image sees aspect/resolution/count
           // — whichever this model actually declares. Each is a pill (current
-          // value) that opens paramPopupHtml's list on tap.
+          // value) that opens paramPopupHtml's list on tap. Seedance's
+          // Дёшево/Быстро/Качество toggle lives here too, not as its own card
+          // — "all params in one zone" (persona-simulation follow-up); a
+          // reference-mode render fixes it, so it's simply absent then rather
+          // than shown disabled.
           const params = [];
           if (caps && caps.aspectRatios && caps.aspectRatios.length > 1) {
             const cur = stu.aspect || caps.aspectRatios[0];
@@ -5139,6 +5144,10 @@
           }
           if (isVideo && m.video) {
             params.push({ key: "duration", label: "Длит-сть", value: `${stu.duration || m.video.defaultSeconds} сек` });
+          }
+          if (isVideo && m.key === "seedance" && activeSeedanceTierKey() !== "ref") {
+            const tierLabel = { cheap: "Дёшево", fast: "Быстро", quality: "Качество" };
+            params.push({ key: "tier", label: "Уровень", value: tierLabel[stu.seedanceTier || "fast"] });
           }
           if (!params.length) return "";
           return `
@@ -5232,7 +5241,6 @@
           row.style.display = !q || row.dataset.mname.includes(q) ? "" : "none";
         });
       }));
-      sheetBody.querySelectorAll("#stuTier .tier-chip").forEach((c) => (c.onclick = () => { stu.seedanceTier = c.dataset.tier; viewStudio(); }));
       // Params popup: tap a pill to open it, tap a row (or the backdrop/✕) to
       // pick/close. Duration is the one exception — a slider, not a row list
       // (see paramPopupHtml) — so it's wired separately below, live during the
@@ -5245,6 +5253,7 @@
         if (stu.paramPopup === "aspect") stu.aspect = val;
         else if (stu.paramPopup === "resolution") stu.resolution = val;
         else if (stu.paramPopup === "count") stu.numImages = Number(val);
+        else if (stu.paramPopup === "tier") stu.seedanceTier = val;
         stu.paramPopup = null;
         viewStudio();
       }));
