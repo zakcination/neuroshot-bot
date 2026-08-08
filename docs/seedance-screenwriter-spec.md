@@ -5,8 +5,16 @@
 `expandVision()` (`src/enhance.ts`) + `POST /api/screenwriter/expand`
 (`src/webapp.ts`). Client: the "Сценарист" accordion in Director Mode
 (`public/app.html` — `dmScreenwriterHtml`, `swExpand`, `swOpenAddFor`,
-`swGenerateBg`), reusing the existing sheet/storyboard/assemble flow
-unchanged below the entity-extraction step.
+`swGenerateBg`), reusing the existing sheet/assemble flow unchanged below
+the entity-extraction step (see the Update note below — the storyboard step
+described in the rest of this doc has since been removed).
+
+**Update (2026-08):** the storyboard/shot-picking step ("Кадр" — `splitStoryboard`,
+`POST /api/storyboard`) referenced throughout this doc has since been removed
+(see `docs/graveyard.md`). The scenario now feeds `/api/enhance` directly, with
+no intermediate shot-candidate selection. The historical description below is
+kept for the pipeline's still-accurate steps ①③④⑤⑥; step ⑦ no longer exists —
+read "run splitStoryboard" as "the scenario/plot is used directly."
 
 **Shipped as the pragmatic single-prompt version this doc itself proposed**
 (see the flagged research section below) — three things are explicitly
@@ -97,9 +105,9 @@ exercise) covering at minimum:
 - How purpose is actually detected — a direct question to the user, or
   inferred from the vision text, or both (inferred with a confirm step)?
 - What differs per path — a different plot-expansion system prompt seems
-  necessary at minimum. Does shot selection (`splitStoryboard`'s `SHOT_TYPES`
-  vocabulary) need purpose-specific weighting too, or is that overreach for
-  a first cut?
+  necessary at minimum. (The shot-selection vocabulary this question
+  originally referenced, `splitStoryboard`'s `SHOT_TYPES`, no longer exists —
+  see the Update note above.)
 - How many purposes ship at once vs. get added incrementally — four at
   launch is untested scope, not a given.
 
@@ -130,11 +138,10 @@ built, not decided in this doc.
 - **VFX notes** — no field for this exists anywhere in the composer today.
   Needs a UI home (a new optional textarea in the vision/plan step, most
   likely) and a slot in the assemble prompt; not designed here.
-- **Entity extraction's failure mode.** `splitStoryboard` already has a
+- **Entity extraction's failure mode.** `expandVision` already has a
   precedent for "the LLM call fails or returns garbage" (one retry, then a
-  refund, per the existing `parseStoryboard`/retry logic) — entity
-  extraction needs the same discipline, but the exact schema/validation
-  isn't drafted here.
+  refund) — entity extraction needs the same discipline, but the exact
+  schema/validation isn't drafted here.
 
 ## Non-goals for this doc
 

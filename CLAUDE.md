@@ -116,7 +116,7 @@ if (config.myNewFeatureEnabled) {
 | `REENGAGE_ENABLED` | true | Daily re-engagement sweep (nudges, pushes). | `docs/monitoring.md` |
 | `FREE_GATE_ENABLED` | false | Require phone verification before free-result claim. | `docs/growth-product.md` |
 | `DUB_KAZAKH_ENABLED` | false | Enable AI video translator (Phase 0, not public). | `docs/video-translator-spec.md` |
-| `SCREENWRITER_PIPELINE_ENABLED` | false | Seedance screenwriter pipeline: vision → plot + auto-extracted cast, feeding the existing Director Mode sheet/storyboard/assemble flow. | `docs/seedance-screenwriter-spec.md` |
+| `SCREENWRITER_PIPELINE_ENABLED` | false | Seedance screenwriter pipeline: vision → plot + auto-extracted cast, feeding the existing Director Mode sheet/assemble flow. | `docs/seedance-screenwriter-spec.md` |
 | `COURSE_FLAGSHIP_CHANNEL_ID` | "" | If set, deliver course packs to this Telegram channel. | `docs/course-funnel.md` |
 | Pricing knobs | per config | `SEEDANCE_SALE_ACTIVE`, `FLAGSHIP_CAP_FROM`, `REFERRAL_FIRST_PURCHASE_BONUS`, etc. | `docs/pricing.md` |
 
@@ -141,7 +141,7 @@ if (config.myNewFeatureEnabled) {
 | AI Video Translator | Not wired | Phase 0 gate not run; no command, no route, no registry entry | `docs/video-translator-spec.md` |
 | GenAI Courses | Partial | Course delivery works; blockers on instructor workflow + cohort scaling | `docs/course/BLOCKERS.md` |
 | Seedance Tiers | Live | Monitor tier-resolution gaps in `clampStudioOpts`. Has real per-second pricing curve. | `docs/seedance-tiers.md` |
-| Seedance Screenwriter Pipeline | Shipped, dark behind `SCREENWRITER_PIPELINE_ENABLED` | Purpose-classification + prepared-paths-per-purpose still needs its own research pass before code (owner's call, not yet run) — one generic prompt ships instead. `vfxNotes` isn't forwarded into the assemble step yet. Wraps the existing `splitStoryboard`/assemble engine, doesn't replace it. | `docs/seedance-screenwriter-spec.md` |
+| Seedance Screenwriter Pipeline | Shipped, dark behind `SCREENWRITER_PIPELINE_ENABLED` | Purpose-classification + prepared-paths-per-purpose still needs its own research pass before code (owner's call, not yet run) — one generic prompt ships instead. `vfxNotes` isn't forwarded into the assemble step yet. Feeds the existing sheet/assemble engine directly — the intermediate shot-picking step ("Кадр") was removed, see `docs/graveyard.md`. | `docs/seedance-screenwriter-spec.md` |
 
 ## Deployment
 
