@@ -1,0 +1,280 @@
+<title>NeuroShot — Режиссёрский режим — v3</title>
+<style>
+  :root{
+    --bg:#08070c; --bg-2:#0d0b13; --surface:#14111c; --surface-2:#1b1726;
+    --line:rgba(255,255,255,.09); --ink:#f4f2fa; --muted:#8f8aa3; --faint:#5e5975;
+    --violet:#7c5cff; --magenta:#ff4d8d; --amber:#f5b64a; --green:#57d18b;
+    --aurora:linear-gradient(120deg,#7c5cff,#b44dff 45%,#ff4d8d);
+  }
+  *{box-sizing:border-box}
+  html{color-scheme:dark}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.42;
+  }
+  .wrap{max-width:1220px; margin:0 auto; padding:28px 20px 70px}
+  h1{font-size:21px; margin:0 0 6px; text-wrap:balance}
+  .lede{color:var(--muted); font-size:13.5px; max-width:76ch; margin:0 0 10px}
+  .lede b{color:var(--ink)}
+  .badge-row{display:flex; gap:6px; flex-wrap:wrap; margin:0 0 20px}
+  .badge{font-size:10.5px; font-weight:700; letter-spacing:.03em; padding:4px 10px; border-radius:999px; border:1px solid var(--line); color:var(--muted)}
+  .badge.on{color:#fff; background:var(--aurora); border-color:transparent}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.92em; color:var(--muted)}
+
+  .layout{display:flex; gap:30px; flex-wrap:wrap; align-items:flex-start}
+  .phone{width:390px; max-width:100%; flex:none; border:1.5px solid var(--line); border-radius:28px; padding:14px; background:var(--bg-2)}
+  .ctx{font-family:ui-monospace,monospace; font-size:10.5px; color:var(--faint); margin:0 0 10px}
+  .sheet{display:flex; flex-direction:column; gap:12px}
+
+  .row{display:flex; align-items:center; justify-content:space-between; gap:10px}
+  h3.scr{font-size:15px; margin:0}
+  .seg{display:flex; background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:3px; gap:3px}
+  .seg button{all:unset; flex:1; text-align:center; padding:7px; border-radius:9px; font-size:12px; font-weight:600; color:var(--muted); cursor:pointer}
+  .seg button.on{background:var(--aurora); color:#fff}
+  .qlbl{font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); margin:2px 0 -2px}
+
+  .mrow-ctx{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:10px 12px;
+  }
+  .mrow-ctx b{font-size:14px}
+  .mrow-ctx small{display:block; color:var(--muted); font-size:11px; margin-top:1px}
+  .price{font-size:12px; font-weight:700; color:var(--amber)}
+
+  .toggle-row{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:12px 12px;
+  }
+  .toggle-row .lbl{font-size:14px; font-weight:600}
+  .toggle-row .lbl small{display:block; color:var(--muted); font-size:11px; font-weight:400; margin-top:1px}
+  .ios-toggle{position:relative; width:46px; height:27px; flex:none}
+  .ios-toggle input{position:absolute; inset:0; opacity:0; margin:0; cursor:pointer; z-index:2}
+  .ios-toggle .track{position:absolute; inset:0; border-radius:999px; background:#3a3a3f; transition:background .18s}
+  .ios-toggle input:checked ~ .track{background:var(--aurora)}
+  .ios-toggle .knob{
+    position:absolute; top:2px; left:2px; width:23px; height:23px; border-radius:50%;
+    background:#fff; box-shadow:0 2px 5px rgba(0,0,0,.4); transition:transform .18s cubic-bezier(.4,0,.2,1);
+  }
+  .ios-toggle input:checked ~ .knob{transform:translateX(19px)}
+
+  .flag{display:flex; align-items:center; gap:6px; font-size:10px; color:var(--faint); margin:-4px 0 0 2px}
+  .flag .dot{width:6px; height:6px; border-radius:50%; background:var(--green)}
+
+  .acc{background:var(--surface); border:1px solid var(--line); border-radius:16px; overflow:hidden}
+  .acc-head{
+    all:unset; box-sizing:border-box; display:flex; align-items:center; justify-content:space-between;
+    width:100%; padding:13px 14px; cursor:pointer; gap:10px;
+  }
+  .acc-head .t{display:flex; align-items:center; gap:9px; min-width:0}
+  .acc-head .n{font-size:12px; color:var(--faint)}
+  .acc-head b{font-size:14px; font-weight:600}
+  .acc-head .state{font-size:11.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .acc-head .chev{color:var(--faint); font-size:11px; flex:none; transform:rotate(180deg)}
+  .acc-body{padding:0 14px 14px; display:flex; flex-direction:column; gap:10px}
+  .acc-hint{font-size:11.5px; color:var(--muted); margin:0}
+  .acc-hint b{color:var(--ink)}
+
+  .scenario-box{background:var(--surface-2); border:1px solid var(--line); border-radius:12px; padding:10px 11px}
+  .scenario-box textarea{width:100%; min-height:44px; resize:none; border:0; background:transparent; color:var(--ink); font:inherit; font-size:12.5px; line-height:1.45; padding:0; outline:none}
+  .scenario-box.ph textarea{color:var(--faint)}
+  .split-btn{
+    all:unset; box-sizing:border-box; display:flex; align-items:center; justify-content:center; gap:6px;
+    width:100%; padding:10px; border-radius:11px; border:1px solid rgba(124,92,255,.45);
+    background:rgba(124,92,255,.12); color:#c9bfff; font-size:12.5px; font-weight:700; cursor:pointer;
+  }
+
+  .sw-cast{display:flex; flex-direction:column; gap:6px}
+  .sw-cast-row{display:flex; align-items:center; gap:8px; background:var(--surface-2); border:1px solid var(--line); border-radius:10px; padding:8px 10px; font-size:12px}
+  .sw-cast-row b{flex:1; font-weight:600}
+  .sw-cast-row .sw-status{font-size:10.5px; color:var(--green); font-weight:700}
+  .sw-cast-row.done .sw-status{color:var(--green)}
+  .sw-actions{display:flex; gap:6px}
+  .sw-chip{all:unset; font-size:10.5px; font-weight:700; padding:5px 9px; border-radius:999px; background:var(--bg-2); border:1px solid var(--line); color:var(--muted); cursor:pointer; white-space:nowrap}
+
+  .assemble-btn{
+    all:unset; box-sizing:border-box; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+    width:100%; padding:13px; border-radius:14px; background:var(--aurora); color:#fff;
+    font-size:13.5px; font-weight:700; cursor:pointer; box-shadow:0 10px 24px -12px rgba(124,92,255,.7);
+  }
+  .assemble-btn small{font-weight:400; font-size:10.5px; opacity:.85}
+
+  .trap{border:1.5px dashed var(--magenta); border-radius:12px; padding:8px 10px; font-size:10.5px; color:#ff9cc0; background:rgba(255,77,141,.06); display:flex; gap:6px; align-items:flex-start}
+  .trap b{color:#ffd0e2}
+
+  .inputscard{background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:12px}
+  .inputs-head{display:flex; align-items:center; justify-content:space-between; font-size:12.5px; margin-bottom:8px}
+  .inputs-head .ct{font-size:11px; color:var(--muted); font-weight:600}
+  .refgrid{display:grid; grid-template-columns:repeat(4,1fr); gap:7px}
+  .refslot{aspect-ratio:1; border-radius:11px; background:var(--surface-2); border:1px dashed var(--line); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; position:relative; overflow:hidden}
+  .refslot.person{border-color:rgba(124,92,255,.4); background:rgba(124,92,255,.07)}
+  .refslot.place{border-color:rgba(245,182,74,.4); background:rgba(245,182,74,.07)}
+  .refslot.filled{border-style:solid}
+  .refslot.filled.ph{background:linear-gradient(160deg,rgba(124,92,255,.22),rgba(255,77,141,.14)); display:flex; align-items:center; justify-content:center; font-size:20px}
+  .refslot .rf-lbl,.refslot .rf-idx{position:relative; z-index:1; font-size:9px; font-weight:700}
+  .refslot .rf-idx{position:absolute; left:5px; bottom:4px; background:rgba(0,0,0,.55); padding:1px 5px; border-radius:999px; font-size:8.5px}
+  .refslot.add{cursor:pointer; color:var(--faint); font-size:18px}
+  .chips{display:flex; gap:6px; flex-wrap:wrap}
+  .chip{all:unset; font-size:11px; font-weight:700; padding:7px 11px; border-radius:999px; background:var(--surface-2); border:1px solid var(--line); color:var(--ink); cursor:pointer}
+
+  .char-add-card{background:var(--surface-2); border:1px solid var(--line); border-radius:14px; padding:12px; display:flex; flex-direction:column; gap:8px; margin-top:8px}
+  .char-add-row{display:flex; align-items:center; justify-content:space-between}
+  .char-add-row b{font-size:13px}
+  .char-add-row small{display:block; color:var(--muted); font-size:10.5px}
+  .words{width:100%; background:var(--bg-2); border:1px solid var(--line); border-radius:9px; padding:8px 10px; color:var(--ink); font:inherit; font-size:12px; outline:none}
+  textarea.words{resize:none; min-height:38px}
+  .dm-model-row{display:flex; gap:6px; flex-wrap:wrap}
+  .dm-model-chip{all:unset; font-size:10px; font-weight:700; padding:6px 9px; border-radius:9px; background:var(--bg-2); border:1px solid var(--line); color:var(--muted); cursor:pointer; text-align:center; line-height:1.3}
+  .dm-model-chip small{display:block; font-weight:400; font-size:9px; opacity:.8}
+  .dm-model-chip.on{background:var(--aurora); color:#fff; border-color:transparent}
+  .char-gen-btn{all:unset; box-sizing:border-box; width:100%; text-align:center; padding:10px; border-radius:10px; background:var(--aurora); color:#fff; font-size:12.5px; font-weight:700; cursor:pointer}
+
+  .prompt-box{background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:12px}
+  .prompt-box .lbl2{font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); margin:0 0 7px}
+  .prompt-box textarea{width:100%; min-height:58px; resize:none; border:0; background:transparent; color:var(--ink); font:inherit; font-size:13px; line-height:1.5; padding:0; outline:none}
+  .prompt-hint{font-size:10.5px; color:var(--faint); margin:6px 0 0}
+  .enh-row{display:flex; gap:8px; margin-top:9px}
+  .enh-btn{all:unset; box-sizing:border-box; flex:1; text-align:center; padding:9px; border-radius:10px; border:1px solid rgba(255,77,141,.35); background:rgba(255,77,141,.08); color:#ff9cc0; font-size:12px; font-weight:700; cursor:pointer}
+
+  .foot-note{font-size:11.5px; color:var(--muted); margin:2px 0 0}
+
+  .notes{flex:1; min-width:300px; display:flex; flex-direction:column; gap:16px}
+  .notes h2{font-size:14px; margin:0 0 4px; color:var(--muted); font-weight:600}
+  .note-card{background:var(--bg-2); border:1px solid var(--line); border-radius:14px; padding:14px 16px}
+  .note-card.warn{border-color:rgba(255,77,141,.35)}
+  .note-card p{margin:0 0 8px; font-size:13px; color:var(--muted); line-height:1.55}
+  .note-card p:last-child{margin-bottom:0}
+  .note-card b{color:var(--ink)}
+  .note-card code{color:#c9bfff}
+
+  @media (max-width:760px){.layout{gap:22px}}
+</style>
+
+<div class="wrap">
+  <h1>Режиссёрский режим — v3</h1>
+  <div class="badge-row">
+    <span class="badge on">Сценарист включён</span>
+    <span class="badge on">Выбор движка карты</span>
+    <span class="badge">Кадр — удалён (см. graveyard.md)</span>
+  </div>
+  <p class="lede">Живёт внутри <code>viewStudio()</code>, когда выбран Seedance + видео-режим. Тумблер выключен по умолчанию.
+  <b>Что нового в v3 относительно v2 (документирует уже выпущенный код, не предлагает новый):</b>
+  раскадровка «Кадр» удалена целиком — сценарий уходит в <code>/api/enhance</code> напрямую, без выбора кадра
+  (<code>docs/graveyard.md</code>). Добавлен аккордеон «Сценарист» — сцена и состав по одной фразе, за флагом
+  <code>SCREENWRITER_PIPELINE_ENABLED</code> (в этом макете — включён). У карточки «Собрать карту» появился выбор
+  движка (nb2 / nb2 pro / gpt-image · nano-banana pro / seedream — <code>SHEET_MODEL_PICKER</code>, <code>src/models.ts</code>).</p>
+
+  <div class="layout">
+    <div class="phone">
+      <div class="ctx">viewStudio() · модель = Seedance · video mode · директор ON</div>
+      <div class="sheet">
+
+        <div class="row"><h3 class="scr">Студия</h3></div>
+        <div class="seg"><button class="on">🖼 Фото</button><button>🎬 Видео</button></div>
+
+        <div class="qlbl">Модель</div>
+        <div class="mrow-ctx">
+          <div><b>Seedance 2.0</b><small>кино-качество, звук и физика</small></div>
+          <span class="price">от 10 🔫</span>
+        </div>
+
+        <div class="toggle-row">
+          <span class="lbl">Режиссёрский режим<small>персонажи, локации, сценарий</small></span>
+          <span class="ios-toggle"><input type="checkbox" checked /><span class="track"></span><span class="knob"></span></span>
+        </div>
+
+        <!-- ① Сценарист — открыт, весь пайплайн включён -->
+        <div class="acc">
+          <button class="acc-head">
+            <span class="t"><span class="n">✎</span><b>Сценарист</b></span>
+            <span class="state">2 из 2 готовы</span><span class="chev">▾</span>
+          </button>
+          <div class="acc-body">
+            <p class="acc-hint">Опишите идею в двух словах — распишем сцену и подберём, кого и где снять. Дальше как обычно: фото на каждого, кадр, промпт.</p>
+            <div class="scenario-box"><textarea>Девушка находит старую гитару на чердаке и начинает играть</textarea></div>
+            <div class="scenario-box" style="margin-top:2px"><textarea placeholder="необязательно: свет, погода, эффекты…"></textarea></div>
+            <button class="split-btn" disabled>✎ Построить сценарий · бесплатно</button>
+            <p class="acc-hint"><b>Сюжет:</b> Вера поднимается на чердак, находит гитару под пылью и начинает тихо играть у окна на закате.</p>
+            <div class="sw-cast">
+              <div class="sw-cast-row done"><span>👤</span><b>Вера</b><span class="sw-status">✓ фото готово</span></div>
+              <div class="sw-cast-row done"><span>📍</span><b>Чердак</b><span class="sw-status">✓ фото готово</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ② Сценарий — простой текстовый блок, никакого выбора кадра -->
+        <p class="acc-hint" style="margin-top:2px">Опишите сцену целиком, своими словами — Seedance снимает один непрерывный дубль, без монтажа.</p>
+        <div class="scenario-box"><textarea>Вера поднимается на чердак, находит гитару под пылью и начинает тихо играть у окна на закате.</textarea></div>
+
+        <!-- ③ Собрать промпт — ДО того, как показан грид с фото персонажей ниже -->
+        <button class="assemble-btn">
+          Собрать Seedance-промпт
+          <small>кто, где и что происходит → в поле «Движение» · бесплатно</small>
+        </button>
+
+        <div class="trap">⚠ <span><b>Порядок на экране:</b> «Сценарист» и «Собрать промпт» выше грида «Входные данные» — но карточки персонажей/локаций (где реально загружают фото) находятся НИЖЕ. Юзер может нажать «Собрать промпт», ни разу не увидев, где добавить фото. См. заметку в панели справа.</span></div>
+
+        <!-- ④ Входные данные — грид, где на самом деле добавляются персонажи/локации -->
+        <div class="inputscard">
+          <div class="inputs-head"><b>Входные данные <span style="color:var(--faint);font-weight:400">?</span></b><span class="ct">3 из 4</span></div>
+          <div class="refgrid">
+            <div class="refslot filled ph">📷</div>
+            <div class="refslot person filled ph">👤<span class="rf-idx">Вера</span></div>
+            <div class="refslot place filled ph">📍<span class="rf-idx">Чердак</span></div>
+            <div class="refslot add">＋</div>
+          </div>
+          <div class="chips" style="margin-top:8px">
+            <span class="chip">📷 Источник</span><span class="chip">👤 Персонаж</span><span class="chip">📍 Локация</span>
+          </div>
+
+          <!-- Форма добавления персонажа — выбор движка карты -->
+          <div class="char-add-card">
+            <div class="char-add-row"><div><b>Добавить персонажа</b><small>имя — чтобы отличать в раскадровке</small></div></div>
+            <input class="words" placeholder="Аня, рыжий кот, робот…" />
+            <textarea class="words" placeholder="необязательно: характер, поза, стиль одежды"></textarea>
+            <div class="dm-model-row">
+              <button class="dm-model-chip on">nano-banana 2<small>4 🔫</small></button>
+              <button class="dm-model-chip">nb2 pro<small>7 🔫</small></button>
+              <button class="dm-model-chip">gpt-image<small>9 🔫</small></button>
+              <button class="dm-model-chip">seedream<small>6 🔫</small></button>
+            </div>
+            <div class="refgrid" style="grid-template-columns:repeat(4,1fr)">
+              <div class="refslot add">＋</div>
+            </div>
+            <button class="char-gen-btn">✨ Собрать карту · 4 🔫</button>
+          </div>
+        </div>
+
+        <div class="qlbl">Движение (необязательно)</div>
+        <div class="prompt-box">
+          <textarea>Young woman, three-quarter portrait, standing at a dusty attic window — golden hour light, warm rim light, gentle handheld push-in.</textarea>
+          <p class="prompt-hint">Заполняется автоматически после «Собрать Seedance-промпт» — можно править руками.</p>
+          <div class="enh-row"><div class="enh-btn">✨ Улучшить · осталось 2 из 2</div></div>
+        </div>
+
+        <p class="foot-note">Дальше — как сегодня: тариф (дёшево/быстро/качество) / формат / длительность → Создать.</p>
+      </div>
+    </div>
+
+    <div class="notes">
+      <h2>Что изменилось и что важно на этом макете</h2>
+
+      <div class="note-card">
+        <p><b>«Кадр» удалён целиком (v2 → v3)</b> — раньше сценарий проходил ещё один LLM-вызов (<code>splitStoryboard</code>), который предлагал 3–4 варианта кадра, и юзер выбирал один. Теперь сценарий уходит в <code>/api/enhance</code> напрямую. Решение владельца: лишний тап и вызов не добавляли творческого контроля, которого стоила бы цена. <code>docs/graveyard.md</code> хранит, что это было и почему ушло.</p>
+        <p><b>«Сценарист» (новое в этом макете)</b> — короткая идея на входе превращается в сюжет + список действующих лиц одним LLM-вызовом (<code>expandVision</code>). Дальше — тот же путь, что и при ручном добавлении: на каждую сущность нужно фото (или, только для локаций, сгенерировать фон по тексту). Сценарий из «Сценариста» просто заполняет текстовое поле ниже — отдельного склеивания не происходит.</p>
+        <p><b>Выбор движка карты (новое)</b> — карточка «Собрать карту» получила ряд чипов движка (nano-banana 2 / pro / gpt-image / seedream), с ценой на каждом. По умолчанию — самый дешёвый. Раньше движок был зашит на сервере без права выбора.</p>
+      </div>
+
+      <div class="note-card warn">
+        <p><b>⚠ Находка: порядок разделов инвертирован.</b> Экран читается сверху вниз как «опишите сцену → соберите промпт», а карточки персонажей/локаций (где реально загружается фото) идут НИЖЕ обеих секций. Формально работать можно и без единой добавленной карточки — сборка просто опишет пустой состав. Но юзер, который не прокрутил вниз, получит промпт без своих персонажей и не поймёт, почему. Раньше (v1/v2, документ «Что важно» в v2) порядок был «сначала состав, потом сценарий» — код 8 авг. незаметно поменял его местами при удалении «Кадра». Стоит решить: либо переставить «Входные данные» выше «Сценариста», либо явно показать в тексте кнопки «Собрать промпт», что состав ещё пуст.</p>
+        <p><b>⚠ Находка: подсказка кнопки ссылается на поле, которого не видно.</b> «кто, где и что происходит → в поле «Движение»» — но поле «Движение» ещё не отрисовано на экране в этот момент (оно ниже грида «Входные данные», после сборки промпта). Для того, кто не пролистал весь экран один раз заранее, отсылка звучит как ошибка интерфейса.</p>
+        <p><b>⚠ Находка: два безымянных текстовых поля подряд.</b> В «Сценаристе» видение и VFX-заметки — два одинаковых на вид блока без явных лейблов, различить их можно только по плейсхолдеру (у второго — тусклый текст, легко принять за подпись, а не поле ввода).</p>
+      </div>
+
+      <div class="note-card">
+        <p><b>Единый грид референсов не тронут (home-studio v3)</b> — «＋» по-прежнему предлагает Источник / Персонаж / Локация одним рядом чипов, как в v2. Персонаж/Локация — те же ячейки 👤/📍 в общем гриде, а не отдельные блоки.</p>
+        <p><b>«Собрать Seedance-промпт»</b> — не изменилось по механике: контекст (состав + сценарий) уходит в тот же <code>/api/enhance</code> с <code>model:"seedance"</code>; Enhancer сплетает всё в связный текст. Кнопка активна при непустом сценарии — независимо от того, добавлен ли хоть один персонаж.</p>
+      </div>
+    </div>
+  </div>
+</div>

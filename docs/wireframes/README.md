@@ -37,7 +37,8 @@ NeuroShot — <Screen> — v<N>
 | `home-studio` | **v2** | superseded by v3 | 2 Aug 2026 | [Главная + Студия — v2](https://claude.ai/code/artifact/ebfe8e5b-e55f-468e-9c82-f6978975a2db) |
 | `home-studio` | **v3** | current, shipped | 3 Aug 2026 | [Главная + Студия — v3](https://claude.ai/code/artifact/0266cf09-8969-44e3-8d28-9f6bff2859d6) |
 | `director-mode` | **v1** | superseded by v2 | 1 Aug 2026 | [Режиссёрский режим](https://claude.ai/code/artifact/421907d2-ad0b-4fc9-96c0-23d8108606ea) |
-| `director-mode` | **v2** | current, shipped | 3 Aug 2026 | [Режиссёрский режим — v2](https://claude.ai/code/artifact/e9b5deab-2ef0-4e6d-9d17-dfca5d158060) |
+| `director-mode` | **v2** | superseded by v3 | 3 Aug 2026 | [Режиссёрский режим — v2](https://claude.ai/code/artifact/e9b5deab-2ef0-4e6d-9d17-dfca5d158060) |
+| `director-mode` | **v3** | current, shipped | 8 Aug 2026 | [Режиссёрский режим — v3](https://claude.ai/code/artifact/17ce4fb6-83cd-4161-8756-9b412bf953b9) |
 | `tv-banner` | **v1** | current, shipped | 1 Aug 2026 | [ТВ-баннер](https://claude.ai/code/artifact/7cd6baaf-d296-4d22-8912-7a852beef573) |
 
 Related, not wireframes: the [Director Mode
