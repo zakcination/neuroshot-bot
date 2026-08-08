@@ -405,6 +405,23 @@ const SCHEMA: string[] = [
   // so indexing FALSE rows (the overwhelming majority) would be pure waste.
   `ALTER TABLE generations ADD COLUMN IF NOT EXISTS favorite BOOLEAN NOT NULL DEFAULT false`,
   `CREATE INDEX IF NOT EXISTS idx_generations_favorite ON generations(user_id, id DESC) WHERE favorite = true`,
+  // Director Mode's saved character/location library: a finished sheet
+  // (nb2/nb2 pro/gpt-image/seedream — SHEET_MODEL_PICKER) a user chooses to
+  // keep, so a recurring cast member doesn't need re-uploading and
+  // re-generating for every new video. Deliberately NOT tied to a specific
+  // generation row — the sheet may outlive the render it was first built for,
+  // and this table is the reuse index, not a copy of the sheet itself.
+  `CREATE TABLE IF NOT EXISTS saved_entities (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    kind TEXT NOT NULL,           -- 'character' | 'location'
+    label TEXT NOT NULL,
+    text TEXT,                    -- optional character/location description
+    sheet_url TEXT NOT NULL,
+    model TEXT,                   -- which SHEET_MODEL_PICKER engine rendered it
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_saved_entities_user ON saved_entities(user_id, kind, id DESC)`,
 ];
 
 let schemaReady: Promise<void> | null = null;
@@ -2532,6 +2549,77 @@ export async function setFavorite(userId: number, generationId: number, favorite
     "UPDATE generations SET favorite = $3 WHERE id = $1 AND user_id = $2 RETURNING id",
     [generationId, userId, favorite],
   );
+  return rows.length > 0;
+}
+
+export interface SavedEntityRow {
+  id: number;
+  kind: "character" | "location";
+  label: string;
+  text: string | null;
+  sheetUrl: string;
+  model: string | null;
+  created_at: string;
+}
+function mapSavedEntity(r: Row): SavedEntityRow {
+  return {
+    id: Number(r.id),
+    kind: r.kind as "character" | "location",
+    label: r.label as string,
+    text: (r.text as string | null) ?? null,
+    sheetUrl: r.sheet_url as string,
+    model: (r.model as string | null) ?? null,
+    created_at: String(r.created_at),
+  };
+}
+
+/** How many library entries one account may keep — a generous personal
+ *  library, not a dataset: enough for every recurring cast member across
+ *  several projects without becoming a place to dump every sheet ever made. */
+export const SAVED_ENTITY_LIMIT = 40;
+
+/**
+ * Save a finished character/location sheet for reuse in a future video — the
+ * Director Mode library (docs/graveyard.md § Кадр removal names this as the
+ * follow-up it deferred). The count is re-evaluated INSIDE the INSERT's
+ * WHERE clause (same discipline as createPartnerCode's active-code cap
+ * above), not checked separately beforehand — a plain SELECT-then-INSERT
+ * would let two concurrent saves both slip past SAVED_ENTITY_LIMIT. Returns
+ * null when the cap is already hit; the caller turns that into a 400.
+ */
+export async function saveEntity(
+  userId: number,
+  kind: "character" | "location",
+  label: string,
+  text: string | null,
+  sheetUrl: string,
+  model: string | null,
+): Promise<SavedEntityRow | null> {
+  const rows = await q(
+    `INSERT INTO saved_entities (user_id, kind, label, text, sheet_url, model)
+     SELECT $1, $2, $3, $4, $5, $6
+     WHERE (SELECT COUNT(*) FROM saved_entities WHERE user_id = $1) < $7
+     RETURNING id, kind, label, text, sheet_url, model, created_at`,
+    [userId, kind, label, text, sheetUrl, model, SAVED_ENTITY_LIMIT],
+  );
+  if (!rows.length) return null;
+  return mapSavedEntity(rows[0]);
+}
+
+export async function listSavedEntities(userId: number, kind: "character" | "location"): Promise<SavedEntityRow[]> {
+  const rows = await q(
+    `SELECT id, kind, label, text, sheet_url, model, created_at FROM saved_entities
+     WHERE user_id = $1 AND kind = $2 ORDER BY id DESC LIMIT $3`,
+    [userId, kind, SAVED_ENTITY_LIMIT],
+  );
+  return rows.map(mapSavedEntity);
+}
+
+/** Owner-scoped delete — same "WHERE id AND user_id together" convention as
+ *  setFavorite above, so one user can never remove another's saved entity
+ *  even by guessing an id. */
+export async function deleteSavedEntity(userId: number, id: number): Promise<boolean> {
+  const rows = await q("DELETE FROM saved_entities WHERE id = $1 AND user_id = $2 RETURNING id", [id, userId]);
   return rows.length > 0;
 }
 
