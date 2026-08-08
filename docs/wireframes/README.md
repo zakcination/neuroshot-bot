@@ -39,6 +39,7 @@ NeuroShot — <Screen> — v<N>
 | `director-mode` | **v1** | superseded by v2 | 1 Aug 2026 | [Режиссёрский режим](https://claude.ai/code/artifact/421907d2-ad0b-4fc9-96c0-23d8108606ea) |
 | `director-mode` | **v2** | superseded by v3 | 3 Aug 2026 | [Режиссёрский режим — v2](https://claude.ai/code/artifact/e9b5deab-2ef0-4e6d-9d17-dfca5d158060) |
 | `director-mode` | **v3** | current, shipped | 8 Aug 2026 | [Режиссёрский режим — v3](https://claude.ai/code/artifact/17ce4fb6-83cd-4161-8756-9b412bf953b9) |
+| `director-mode` | **v4** | proposed, pending approval | 8 Aug 2026 | [Режиссёрский режим — v4](https://claude.ai/code/artifact/c34f9219-2b7c-4023-9e41-c4a4b88c3e18) |
 | `tv-banner` | **v1** | current, shipped | 1 Aug 2026 | [ТВ-баннер](https://claude.ai/code/artifact/7cd6baaf-d296-4d22-8912-7a852beef573) |
 
 Related, not wireframes: the [Director Mode
