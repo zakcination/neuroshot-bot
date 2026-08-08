@@ -2816,6 +2816,16 @@ await step("Director Mode library: save/list/delete a character or location for 
   assert.equal((await fetch(`${base}/api/library?kind=nope`, { headers: hdr })).status, 400);
   assert.equal((await fetch(`${base}/api/library?kind=character`)).status, 401);
 
+  // No kind (or kind=all) — the library popup's "Все" tab — mixes both kinds,
+  // each row still carrying its own `kind` so the client can tell them apart.
+  for (const qs of ["", "?kind=all"]) {
+    const all = (await (await fetch(`${base}/api/library${qs}`, { headers: hdr })).json()) as { items: Array<{ label: string; kind: string }> };
+    assert.equal(all.items.length, 2, `both kinds must appear for '${qs}'`);
+    const byLabel = Object.fromEntries(all.items.map((x) => [x.label, x.kind]));
+    assert.equal(byLabel["Аня"], "character");
+    assert.equal(byLabel["Чердак"], "location");
+  }
+
   // A sheetUrl off our own storage host must be rejected — same isMediaUrl
   // discipline /api/generate's image_urls already enforces.
   const badUrl = await fetch(`${base}/api/library`, {

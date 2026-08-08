@@ -1423,10 +1423,6 @@
       border: 0; background: transparent; color: var(--violet); font: inherit; font-size: 11.5px; font-weight: 650;
       padding: 6px 2px; cursor: pointer;
     }
-    /* Library links sit right below the gallery link, same zone, same input-
-       source role — two because saved entities are kind-scoped (character vs
-       location) and there's no ambiguity worth an extra picker step for two. */
-    .lib-links { display: flex; flex-wrap: wrap; gap: 4px 14px; }
     .gallery-sheet { max-height: 82dvh; }
     .gfav-toggle {
       border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); border-radius: 999px;
@@ -1662,15 +1658,15 @@
       color: var(--muted); font: inherit; font-size: 11px; cursor: pointer;
     }
     .char-add-card .refgrid { margin-top: 0; }
-    .dm-model-row { display: flex; flex-wrap: wrap; gap: 6px; }
-    .dm-model-chip {
-      flex: none; display: flex; flex-direction: column; align-items: center; gap: 1px;
-      border: 1px solid var(--line); background: var(--surface); color: var(--muted);
-      border-radius: 10px; padding: 6px 9px; font: inherit; font-size: 10.5px; font-weight: 700; cursor: pointer;
+    /* Sheet engine picker — a native <select> (every SHEET_MODEL_PICKER
+       engine is an option), not a chip row: a dropdown scales to more engines
+       without wrapping, and is the same control language a "choose one of
+       several named options" decision uses everywhere else in this app. */
+    select.dm-model-select {
+      width: 100%; background: var(--surface); color: var(--ink); border: 1px solid var(--line);
+      border-radius: var(--radius-s); padding: 12px 14px; font: inherit; font-size: 13px; margin-top: 8px; cursor: pointer;
     }
-    .dm-model-chip small { font-size: 9.5px; font-weight: 600; color: var(--faint); }
-    .dm-model-chip.on { border-color: var(--magenta); background: linear-gradient(160deg, rgba(124,92,255,.16), rgba(255,77,141,.1)); color: var(--ink); }
-    .dm-model-chip.on small { color: var(--ink); opacity: .85; }
+    select.dm-model-select:focus { outline: 2px solid rgba(124,92,255,.5); }
     /* Mandatory AI-disclosure notice (docs/compliance.md, KZ Law 230-VIII) —
        stated before the charge, not just baked into the delivered file, so a
        client-facing render doesn't surprise its buyer after patrons are spent. */
@@ -4197,9 +4193,9 @@
           <input class="words" id="dm${kind === "character" ? "Char" : "Loc"}Label" maxlength="60" placeholder="${esc(c.ph)}" value="${esc(draft ? draft.label || "" : "")}" />
           <textarea class="words dm-text" id="dm${kind === "character" ? "Char" : "Loc"}Text" maxlength="300" placeholder="${esc(c.textPh)}" style="margin-top:6px">${esc(draft ? draft.text || "" : "")}</textarea>
           ${models.length > 1 ? `
-          <div class="dm-model-row">
-            ${models.map((m) => `<button type="button" class="dm-model-chip ${m.key === model ? "on" : ""}" data-dm-model="${kind}:${esc(m.key)}">${esc(m.label)}<small>${m.credits} ${PATRON}</small></button>`).join("")}
-          </div>` : ""}
+          <select class="words dm-model-select" data-dm-model-kind="${kind}">
+            ${models.map((m) => `<option value="${esc(m.key)}" ${m.key === model ? "selected" : ""}>${esc(m.label)} · ${m.credits} ${PATRON}</option>`).join("")}
+          </select>` : ""}
           <div class="refgrid">
             ${photos.map((p, i) => `<div class="refslot filled">
               <img src="${esc(p.url)}" alt="" />
@@ -4636,12 +4632,9 @@
       // top level of the reference grid, not nested a level deeper inside the
       // "add a new character" form. All input sources for this block live in
       // this one zone; all render params live in their own (see paramscard,
-      // below in viewStudio) — persona-simulation follow-up.
-      const libLinks = dmCapable ? `
-        <div class="lib-links">
-          <button type="button" class="gallery-link" data-lib-open="character">📚 Персонажи из библиотеки</button>
-          <button type="button" class="gallery-link" data-lib-open="location">📚 Локации из библиотеки</button>
-        </div>` : "";
+      // below in viewStudio) — persona-simulation follow-up. One button, not
+      // two — the popup itself now carries Все/Персонажи/Локации tabs.
+      const libLink = dmCapable ? `<button type="button" class="gallery-link" id="libOpenBtn">📚 Библиотека</button>` : "";
       const grid = sourceCells || charCells || locCells || finalCell || addCell
         ? `
           <div class="refhead">${qLabel("Ссылочные фото", "refroles")}</div>
@@ -4650,7 +4643,7 @@
             ${canAddSource ? `<input type="file" accept="image/*" id="stuExtraFile" multiple style="display:none" />` : ""}
           </div>
           ${canAddSource ? `<button type="button" class="gallery-link" id="refGalleryBtn">📁 из своих работ</button>` : ""}
-          ${libLinks}
+          ${libLink}
           ${choiceRow}` : "";
       const addForms = dmOn ? `
         ${stu.dmSec.chars ? dmAddCardHtml("character") : ""}
@@ -4935,17 +4928,29 @@
     /**
      * Director Mode's saved character/location library (docs/graveyard.md §
      * Кадр removal names this as the deferred follow-up; docs/wireframes/
-     * director-mode.v4.html). Picking a saved entity adds a filled cell
+     * director-mode.v6.html). Picking a saved entity adds a filled cell
      * straight to dmChars/dmLocs — no photo upload, no «Собрать карту» spend,
      * since the sheet already exists.
+     *
+     * ONE entry point, not two: earlier this had separate "Персонажи"/
+     * "Локации" links opening kind-locked popups; the popup itself now
+     * carries tabs (Все / Персонажи / Локации), so there's one button and
+     * one place to browse either kind. stu.libraryKind is the ACTIVE TAB
+     * ("all"|"character"|"location"), not a lock on what can be picked —
+     * libraryPick reads the picked row's OWN kind, since "Все" mixes both.
      */
-    async function openLibraryPopup(kind) {
+    async function openLibraryPopup() {
       stu.libraryOpen = true;
-      stu.libraryKind = kind;
+      stu.libraryKind = "all";
       stu.libraryData = null;
       viewStudio();
-      const { status, data } = await api(`/api/library?kind=${kind}`);
-      if (!stu.libraryOpen || stu.libraryKind !== kind) return; // closed/switched while in flight
+      loadLibraryTab();
+    }
+    async function loadLibraryTab() {
+      const kind = stu.libraryKind;
+      const qs = kind === "all" ? "" : `?kind=${kind}`;
+      const { status, data } = await api(`/api/library${qs}`);
+      if (!stu.libraryOpen || stu.libraryKind !== kind) return; // closed/switched tab while in flight
       if (status === 200) stu.libraryData = data.items;
       viewStudio();
     }
@@ -4954,7 +4959,7 @@
       viewStudio();
     }
     function libraryPick(entity) {
-      const kind = stu.libraryKind;
+      const kind = entity.kind; // NOT stu.libraryKind — the "Все" tab mixes both kinds
       stu.dmSeq++;
       dmList(kind).push({
         id: `${kind === "character" ? "char" : "loc"}_${stu.dmSeq}`,
@@ -4963,7 +4968,7 @@
         model: entity.model || dmSheetDefaultModel(), swEntityId: null,
       });
       stu.libraryOpen = false;
-      stu[kind === "character" ? "dmDraftChar" : "dmDraftLoc"] = null; // the add-card's job is done
+      stu[kind === "character" ? "dmDraftChar" : "dmDraftLoc"] = null; // the add-card's job is done, if one was open
       toast(`«${entity.label}» добавлен(а) из библиотеки`);
       viewStudio();
     }
@@ -4974,18 +4979,23 @@
     }
     function libraryPopupHtml() {
       const items = stu.libraryData;
-      const title = stu.libraryKind === "character" ? "Персонажи из библиотеки" : "Локации из библиотеки";
+      const tabs = [["all", "Все"], ["character", "Персонажи"], ["location", "Локации"]];
+      const emptyText = { all: "Пока пусто — при сборке карты отметьте «Сохранить в библиотеку»",
+        character: "Нет сохранённых персонажей", location: "Нет сохранённых локаций" }[stu.libraryKind];
       return `
         <div class="param-popup" id="libraryPopup">
           <div class="param-popup-backdrop" data-library-close></div>
           <div class="param-popup-sheet">
-            <div class="pp-head"><b>${title}</b><button class="pp-x" type="button" data-library-close aria-label="Закрыть">✕</button></div>
+            <div class="pp-head"><b>Библиотека</b><button class="pp-x" type="button" data-library-close aria-label="Закрыть">✕</button></div>
+            <div class="chips" id="libTabs" style="margin-bottom:10px">
+              ${tabs.map(([id, label]) => `<button type="button" class="chip ${stu.libraryKind === id ? "on" : ""}" data-lib-tab="${id}">${label}</button>`).join("")}
+            </div>
             ${!items ? `<div class="gallery-empty">Загрузка…</div>`
-              : !items.length ? `<div class="gallery-empty">Пока пусто — при сборке карты отметьте «Сохранить в библиотеку»</div>`
+              : !items.length ? `<div class="gallery-empty">${emptyText}</div>`
               : `<div class="lib-list">${items.map((e) => `
                   <button class="lib-row" type="button" data-lib-pick="${e.id}">
                     <img src="${esc(e.sheetUrl)}" alt="" loading="lazy" />
-                    <span class="lib-name">${esc(e.label)}</span>
+                    <span class="lib-name">${esc(e.label)}${stu.libraryKind === "all" ? ` <small>${e.kind === "character" ? "👤" : "📍"}</small>` : ""}</span>
                     <span class="lib-del" data-lib-del="${e.id}" role="button" aria-label="Удалить из библиотеки">✕</span>
                   </button>`).join("")}</div>`}
           </div>
@@ -5341,8 +5351,15 @@
         clampStudioOpts();
         closeGalleryPopup();
       }));
-      sheetBody.querySelectorAll("[data-lib-open]").forEach((b) => (b.onclick = () => openLibraryPopup(b.dataset.libOpen)));
+      bind("#libOpenBtn", (el) => (el.onclick = () => openLibraryPopup()));
       sheetBody.querySelectorAll("[data-library-close]").forEach((b) => (b.onclick = closeLibraryPopup));
+      sheetBody.querySelectorAll("[data-lib-tab]").forEach((b) => (b.onclick = () => {
+        if (stu.libraryKind === b.dataset.libTab) return;
+        stu.libraryKind = b.dataset.libTab;
+        stu.libraryData = null;
+        viewStudio();
+        loadLibraryTab();
+      }));
       sheetBody.querySelectorAll("[data-lib-del]").forEach((b) => (b.onclick = (e) => {
         e.stopPropagation(); // the delete glyph sits inside the pick button
         libraryDelete(Number(b.dataset.libDel));
@@ -5500,8 +5517,9 @@
       // Engine picker (SHEET_MODEL_PICKER): switching may lower maxInputs
       // below the photos already picked — trim from the end rather than
       // leave a draft the server would 400 on the very next tap.
-      sheetBody.querySelectorAll("[data-dm-model]").forEach((btn) => (btn.onclick = () => {
-        const [kind, key] = btn.dataset.dmModel.split(":");
+      sheetBody.querySelectorAll("[data-dm-model-kind]").forEach((sel) => (sel.onchange = () => {
+        const kind = sel.dataset.dmModelKind;
+        const key = sel.value;
         const draft = dmDraft(kind, true);
         draft.model = key;
         const max = dmPhotoMax(key);

@@ -2175,8 +2175,15 @@ export function createWebApp(): Server {
         const user = resolveUser(req.headers);
         if (!user) return json(res, 401, { error: "unauthorized" });
         if (req.method === "GET") {
-          const kind = url.searchParams.get("kind");
-          if (kind !== "character" && kind !== "location") return json(res, 400, { error: "bad_request" });
+          // kind omitted (or "all") = every saved entity of either kind —
+          // the library popup's "Все" tab; a present-but-invalid kind is
+          // still a 400, same reject-not-silently-widen discipline as
+          // parseContextEntity elsewhere in this file.
+          const rawKind = url.searchParams.get("kind");
+          if (rawKind !== null && rawKind !== "all" && rawKind !== "character" && rawKind !== "location") {
+            return json(res, 400, { error: "bad_request" });
+          }
+          const kind = rawKind === "character" || rawKind === "location" ? rawKind : undefined;
           const items = await listSavedEntities(user.id, kind);
           return json(res, 200, { items: items.map(publicSavedEntity) });
         }

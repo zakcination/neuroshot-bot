@@ -2606,12 +2606,20 @@ export async function saveEntity(
   return mapSavedEntity(rows[0]);
 }
 
-export async function listSavedEntities(userId: number, kind: "character" | "location"): Promise<SavedEntityRow[]> {
-  const rows = await q(
-    `SELECT id, kind, label, text, sheet_url, model, created_at FROM saved_entities
-     WHERE user_id = $1 AND kind = $2 ORDER BY id DESC LIMIT $3`,
-    [userId, kind, SAVED_ENTITY_LIMIT],
-  );
+/** `kind` omitted lists every saved entity of either kind, newest first —
+ *  the library popup's "Все" tab (public/app.html). */
+export async function listSavedEntities(userId: number, kind?: "character" | "location"): Promise<SavedEntityRow[]> {
+  const rows = kind
+    ? await q(
+        `SELECT id, kind, label, text, sheet_url, model, created_at FROM saved_entities
+         WHERE user_id = $1 AND kind = $2 ORDER BY id DESC LIMIT $3`,
+        [userId, kind, SAVED_ENTITY_LIMIT],
+      )
+    : await q(
+        `SELECT id, kind, label, text, sheet_url, model, created_at FROM saved_entities
+         WHERE user_id = $1 ORDER BY id DESC LIMIT $2`,
+        [userId, SAVED_ENTITY_LIMIT],
+      );
   return rows.map(mapSavedEntity);
 }
 
