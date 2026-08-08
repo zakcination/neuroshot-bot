@@ -15,7 +15,7 @@ import { fal } from "@fal-ai/client";
 import { Api } from "grammy";
 import { config, kaspiLinkFor } from "./config.js";
 import { issueSession, verifySession } from "./auth.js";
-import { achievements, activeXpActions, hasGrantedPack, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, latestPendingOrder, ledgerPage, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, presetTrendingCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, setFavorite, setWatermark, userDashboard, type GenerationRow, type LedgerRow } from "./db.js";
+import { achievements, activeXpActions, hasGrantedPack, allPresetGating, certificates, markReleaseSeen, releaseState, myPartnerCodes, myWithdrawals, partnerAccount, requestWithdrawal, awardXpOnce, modelEtaSeconds, claimRoadmapBonus, claimSaveXp, claimWelcomeBonus, createOrder, deleteSavedEntity, deleteUserData, ensureRefCode, galleryPage, getActiveSeason, getGeneration, getLevel, getLevelProgress, getOrCreateUser, getOrder, getPresetMinLevel, getUser, latestPendingOrder, ledgerPage, listSavedEntities, logEvent, markOnboardingSeen, enhanceChargesLeft, presetUsageCounts, presetTrendingCounts, recentGenerations, referralFinance, referralList, resolveOrder, roadmapProgress, SAVED_ENTITY_LIMIT, saveEntity, setFavorite, setWatermark, userDashboard, type GenerationRow, type LedgerRow, type SavedEntityRow } from "./db.js";
 import {
   enhancePrompt,
   expandVision,
@@ -798,6 +798,10 @@ function publicLedgerRow(l: LedgerRow): Record<string, unknown> {
     meta: LEDGER_META_REDACTED.has(l.reason) ? null : l.meta,
     created_at: l.created_at,
   };
+}
+
+function publicSavedEntity(e: SavedEntityRow): Record<string, unknown> {
+  return { id: e.id, kind: e.kind, label: e.label, text: e.text, sheetUrl: e.sheetUrl, model: e.model, created_at: e.created_at };
 }
 
 /** Fetch the caller's shared state for the Mini App (onboards idempotently). */
@@ -2156,6 +2160,71 @@ export function createWebApp(): Server {
         const { items, total } = await ledgerPage(user.id, size, (reqPage - 1) * size);
         const pages = Math.max(1, Math.ceil(total / size));
         return json(res, 200, { items: items.map(publicLedgerRow), total, page: Math.min(reqPage, pages), pageSize: size, pages });
+      }
+
+      // /api/library — the caller's saved Director Mode cast/locations
+      // (docs/graveyard.md § Кадр removal named this as the deferred
+      // follow-up). GET lists (newest first, same shape as every other list
+      // here); POST saves a FINISHED sheet (a card already built via
+      // /api/generate source:"sheet") for reuse in a future video. Both
+      // methods share one pathname, so — unlike every other route in this
+      // file — method dispatch happens INSIDE the block, not via methodIs's
+      // early-return: two separate `if (url.pathname === ...)` blocks here
+      // would let the first one's 405 swallow the second method entirely.
+      if (url.pathname === "/api/library") {
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        if (req.method === "GET") {
+          // kind omitted (or "all") = every saved entity of either kind —
+          // the library popup's "Все" tab; a present-but-invalid kind is
+          // still a 400, same reject-not-silently-widen discipline as
+          // parseContextEntity elsewhere in this file.
+          const rawKind = url.searchParams.get("kind");
+          if (rawKind !== null && rawKind !== "all" && rawKind !== "character" && rawKind !== "location") {
+            return json(res, 400, { error: "bad_request" });
+          }
+          const kind = rawKind === "character" || rawKind === "location" ? rawKind : undefined;
+          const items = await listSavedEntities(user.id, kind);
+          return json(res, 200, { items: items.map(publicSavedEntity) });
+        }
+        if (req.method === "POST") {
+          const body = await readJsonBody(req, 4 * 1024);
+          const kind = body?.kind;
+          if (kind !== "character" && kind !== "location") return json(res, 400, { error: "bad_request" });
+          const label = typeof body?.label === "string" ? sanitizePrompt(body.label).slice(0, ENHANCE_CONTEXT_LIMITS.label) : "";
+          if (!label) return json(res, 400, { error: "bad_request" });
+          let text: string | null = null;
+          if (body?.text != null) {
+            if (typeof body.text !== "string") return json(res, 400, { error: "bad_request" });
+            text = sanitizePrompt(body.text).slice(0, ENHANCE_CONTEXT_LIMITS.description) || null;
+          }
+          // sheetUrl is trusted the same way /api/generate's image_urls is —
+          // isMediaUrl restricts it to a host we actually issue URLs from,
+          // never an arbitrary client-supplied one.
+          if (!isMediaUrl(body?.sheetUrl)) return json(res, 400, { error: "bad_source" });
+          const model = typeof body?.model === "string" && (SHEET_MODEL_PICKER as readonly string[]).includes(body.model) ? body.model : null;
+          // saveEntity enforces SAVED_ENTITY_LIMIT atomically (inside the
+          // INSERT itself) — no separate pre-check here, which would leave a
+          // gap for two concurrent saves to both slip past the cap.
+          const saved = await saveEntity(user.id, kind, label, text, body.sheetUrl, model);
+          if (!saved) return json(res, 400, { error: "library_full", limit: SAVED_ENTITY_LIMIT });
+          return json(res, 200, publicSavedEntity(saved));
+        }
+        res.setHeader("Allow", "GET, POST");
+        return json(res, 405, { error: "method_not_allowed" });
+      }
+
+      // DELETE /api/library/:id — remove one of the caller's own saved
+      // entities. 404 (not 403) on someone else's id, same "don't confirm
+      // existence" posture as every other owner-scoped lookup in this file.
+      const libMatch = /^\/api\/library\/(\d+)$/.exec(url.pathname);
+      if (libMatch) {
+        if (!methodIs(res, req.method, "DELETE")) return;
+        const user = resolveUser(req.headers);
+        if (!user) return json(res, 401, { error: "unauthorized" });
+        const ok = await deleteSavedEntity(user.id, Number(libMatch[1]));
+        if (!ok) return json(res, 404, { error: "not_found" });
+        return json(res, 200, { ok: true });
       }
 
       // POST /api/generations/:id/favorite — star/unstar one of the caller's

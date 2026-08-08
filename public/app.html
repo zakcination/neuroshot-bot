@@ -1434,6 +1434,22 @@
     .gitem { position: relative; aspect-ratio: 1; border-radius: 12px; overflow: hidden; border: 2px solid transparent; cursor: pointer; }
     .gitem img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .gitem.on { border-color: var(--violet); box-shadow: 0 0 14px rgba(124,92,255,.5); }
+    /* Director Mode library popup — a saved-entity ROW list (name matters more
+       than a big thumbnail), reusing .param-popup's overlay/sheet like the
+       gallery browser above. */
+    .lib-list { display: flex; flex-direction: column; gap: 6px; }
+    .lib-row {
+      all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 10px; width: 100%;
+      border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 8px 10px; cursor: pointer;
+    }
+    .lib-row img { width: 36px; height: 36px; border-radius: 9px; object-fit: cover; flex: none; }
+    .lib-name { flex: 1; font-size: 13px; font-weight: 600; color: var(--ink); }
+    .lib-del {
+      flex: none; width: 24px; height: 24px; border-radius: 999px; display: flex; align-items: center; justify-content: center;
+      color: var(--faint); font-size: 12px;
+    }
+    .lib-save-row { display: flex; align-items: flex-start; gap: 7px; font-size: 11px; color: var(--muted); line-height: 1.4; cursor: pointer; }
+    .lib-save-row input { flex: none; margin-top: 2px; }
     .gstar {
       position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 50%; border: 0;
       background: rgba(0,0,0,.5); backdrop-filter: blur(4px); color: #fff; font-size: 12px; cursor: pointer;
@@ -1630,6 +1646,7 @@
     .acc.open .chev { transform: rotate(180deg); }
     .acc-body { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 10px; }
     .acc-hint { font-size: 11.5px; color: var(--muted); margin: 0; line-height: 1.45; }
+    .field-lbl { font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--faint); margin: 0; }
     @keyframes dmspin { to { transform: rotate(360deg); } }
     .char-add-card { display: flex; flex-direction: column; gap: 8px; border: 1.5px dashed var(--line); border-radius: 13px; padding: 11px; }
     .char-add-row { display: flex; align-items: flex-start; gap: 8px; }
@@ -1641,15 +1658,20 @@
       color: var(--muted); font: inherit; font-size: 11px; cursor: pointer;
     }
     .char-add-card .refgrid { margin-top: 0; }
-    .dm-model-row { display: flex; flex-wrap: wrap; gap: 6px; }
-    .dm-model-chip {
-      flex: none; display: flex; flex-direction: column; align-items: center; gap: 1px;
-      border: 1px solid var(--line); background: var(--surface); color: var(--muted);
-      border-radius: 10px; padding: 6px 9px; font: inherit; font-size: 10.5px; font-weight: 700; cursor: pointer;
+    /* Sheet engine picker — a native <select> (every SHEET_MODEL_PICKER
+       engine is an option), not a chip row: a dropdown scales to more engines
+       without wrapping, and is the same control language a "choose one of
+       several named options" decision uses everywhere else in this app. */
+    select.dm-model-select {
+      width: 100%; background: var(--surface); color: var(--ink); border: 1px solid var(--line);
+      border-radius: var(--radius-s); padding: 12px 14px; font: inherit; font-size: 13px; margin-top: 8px; cursor: pointer;
     }
-    .dm-model-chip small { font-size: 9.5px; font-weight: 600; color: var(--faint); }
-    .dm-model-chip.on { border-color: var(--magenta); background: linear-gradient(160deg, rgba(124,92,255,.16), rgba(255,77,141,.1)); color: var(--ink); }
-    .dm-model-chip.on small { color: var(--ink); opacity: .85; }
+    select.dm-model-select:focus { outline: 2px solid rgba(124,92,255,.5); }
+    /* Mandatory AI-disclosure notice (docs/compliance.md, KZ Law 230-VIII) —
+       stated before the charge, not just baked into the delivered file, so a
+       client-facing render doesn't surprise its buyer after patrons are spent. */
+    .disclose { display: flex; gap: 7px; align-items: flex-start; font-size: 10.5px; line-height: 1.4; color: var(--muted); padding: 9px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; margin-top: 2px; }
+    .disclose .ic { flex: none; font-size: 12px; }
     .char-gen-btn {
       text-align: center; padding: 10px; border-radius: 10px; border: 1px solid rgba(245, 182, 74, .4);
       background: rgba(245, 182, 74, .12); color: var(--amber); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
@@ -3723,6 +3745,16 @@
       entry.pending = false; entry.error = null;
       entry.genId = job.id;
       toast(`✓ Карта «${entry.label}» готова`);
+      // Fire-and-forget: the sheet already rendered and was already charged
+      // for, so a failed save here shouldn't block or re-toast over the
+      // success the user just saw. Best-effort, matches the checkbox's own
+      // framing ("сохранить" is a convenience, not a paid step of its own).
+      if (entry.saveToLibrary) {
+        api("/api/library", {
+          method: "POST",
+          body: JSON.stringify({ kind: job.dmSheet.type, label: entry.label, text: entry.text || undefined, sheetUrl: entry.sheetUrl, model: entry.model }),
+        }).catch(() => {});
+      }
       // The screenwriter's plot only overwrites an EMPTY scenario box — a
       // user who already started typing their own scene keeps it untouched.
       if (stu.swPlot && !(stu.dmScenario || "").trim() && swAllLinked()) {
@@ -3785,7 +3817,11 @@
         // Set only when this draft was opened FROM a screenwriter entity
         // (swOpenAddFor/swGenerateBg) — swEntryFor uses it to report that
         // entity's card as done, without duplicating any state here.
-        swEntityId: draft.swEntityId || null };
+        swEntityId: draft.swEntityId || null,
+        // «Сохранить в библиотеку» checkbox — read once here so a later edit
+        // to the (long-gone) draft can't retroactively change what a
+        // finished entry does; dmSheetDone reads this, not the draft.
+        saveToLibrary: !!draft.saveToLibrary };
       dmList(kind).push(entry);
       const r = await dmFireSheet(kind, entry);
       // Only clear the form once the render is actually queued — a failed
@@ -3988,15 +4024,13 @@
     }
 
     /** The toggle plus, when it's on, the three optional sections. */
-    function directorModeHtml() {
+    /** Just the on/off switch — visible as soon as Seedance is selected, so
+     *  a user always sees the toggle before deciding whether to open
+     *  Director Mode at all. Split from the planning half below so the
+     *  planning half can render AFTER the reference grid (see dmPlanningHtml). */
+    function dmToggleHtml() {
       const m = studioModel();
       if (stu.mode !== "video" || !m || m.key !== "seedance") return "";
-      // Персонажи/Локации used to be their own accordions here — they now
-      // render as cells of the unified reference grid (extrasBlock, below the
-      // photo zone), alongside plain source photos and the final frame. Only
-      // the scene-planning half of Director Mode (scenario → assemble) is a
-      // photo INPUT's opposite — text, not a reference photo — so it's the
-      // only thing still gated here.
       return `
         <div class="toggle-row">
           <div class="lbl">Режиссёрский режим<small>персонажи, локации, сценарий</small></div>
@@ -4004,11 +4038,23 @@
             <input type="checkbox" id="dmToggle" ${stu.director ? "checked" : ""} aria-label="Режиссёрский режим" />
             <span class="track"></span><span class="knob"></span>
           </label>
-        </div>
-        ${stu.director ? `
-          ${dmScreenwriterHtml()}
-          ${dmScenarioHtml()}
-          ${dmAssembleHtml()}` : ""}`;
+        </div>`;
+    }
+
+    /**
+     * Сценарист + сценарий + «Собрать промпт» — everything that reads the
+     * cast, so it renders AFTER the reference grid (extrasBlock) where that
+     * cast is actually built, not before it. Rendering this above an empty
+     * grid let a user tap «Собрать промпт» having never seen where to add a
+     * character/location — found while writing docs/wireframes/director-mode.v3.html
+     * (personas 2, 4, 6 all hit it independently, see director-mode.v4.html).
+     * Placing it right after the grid also puts it directly above «Движение»,
+     * which its own hint text points to.
+     */
+    function dmPlanningHtml() {
+      const m = studioModel();
+      if (stu.mode !== "video" || !m || m.key !== "seedance" || !stu.director) return "";
+      return `${dmScreenwriterHtml()}${dmScenarioHtml()}${dmAssembleHtml()}`;
     }
 
     // ——— Screenwriter pipeline (docs/seedance-screenwriter-spec.md) ———
@@ -4072,11 +4118,13 @@
           </button>
           ${open ? `<div class="acc-body">
             <p class="acc-hint">Опишите идею в двух словах — распишем сцену и подберём, кого и где снять. Дальше как обычно: фото на каждого, кадр, промпт.</p>
+            <p class="field-lbl">Идея</p>
             <div class="scenario-box">
               <textarea id="swVision" maxlength="1000" placeholder="Девушка находит старую гитару на чердаке и начинает играть…">${esc(stu.swVision || "")}</textarea>
             </div>
-            <div class="scenario-box" style="margin-top:6px">
-              <textarea id="swVfxNotes" maxlength="500" placeholder="необязательно: свет, погода, эффекты…">${esc(stu.swVfxNotes || "")}</textarea>
+            <p class="field-lbl" style="margin-top:2px">Детали — необязательно</p>
+            <div class="scenario-box">
+              <textarea id="swVfxNotes" maxlength="500" placeholder="свет, погода, эффекты…">${esc(stu.swVfxNotes || "")}</textarea>
             </div>
             <button class="split-btn" type="button" id="swExpandBtn" ${busy || !(stu.swVision || "").trim() ? "disabled" : ""}>
               ${busy ? "⏳ Пишу сценарий…" : `✎ Построить сценарий · ${cost}`}
@@ -4145,9 +4193,9 @@
           <input class="words" id="dm${kind === "character" ? "Char" : "Loc"}Label" maxlength="60" placeholder="${esc(c.ph)}" value="${esc(draft ? draft.label || "" : "")}" />
           <textarea class="words dm-text" id="dm${kind === "character" ? "Char" : "Loc"}Text" maxlength="300" placeholder="${esc(c.textPh)}" style="margin-top:6px">${esc(draft ? draft.text || "" : "")}</textarea>
           ${models.length > 1 ? `
-          <div class="dm-model-row">
-            ${models.map((m) => `<button type="button" class="dm-model-chip ${m.key === model ? "on" : ""}" data-dm-model="${kind}:${esc(m.key)}">${esc(m.label)}<small>${m.credits} ${PATRON}</small></button>`).join("")}
-          </div>` : ""}
+          <select class="words dm-model-select" data-dm-model-kind="${kind}">
+            ${models.map((m) => `<option value="${esc(m.key)}" ${m.key === model ? "selected" : ""}>${esc(m.label)} · ${m.credits} ${PATRON}</option>`).join("")}
+          </select>` : ""}
           <div class="refgrid">
             ${photos.map((p, i) => `<div class="refslot filled">
               <img src="${esc(p.url)}" alt="" />
@@ -4160,6 +4208,10 @@
             </label>` : ""}
           </div>
           <small class="acc-hint">${photos.length ? `${photos.length} из ${max} · больше фото — точнее сходство` : "минимум одно фото"}</small>
+          <label class="lib-save-row">
+            <input type="checkbox" id="dm${kind === "character" ? "Char" : "Loc"}SaveLib" ${draft && draft.saveToLibrary ? "checked" : ""} />
+            <span>💾 Сохранить в библиотеку — использовать в будущих видео без пересборки</span>
+          </label>
           <button class="char-gen-btn" type="button" id="dm${kind === "character" ? "Char" : "Loc"}GenBtn" ${!photos.length || busy ? "disabled" : ""}>
             ${busy ? "⏳ Отправляю…" : short ? `Пополнить · нужно ${price} ${PATRON}` : `✨ Собрать карту${price ? ` · ${price} ${PATRON}` : ""}`}
           </button>
@@ -4201,6 +4253,20 @@
     // pricing authority (402 paywall); this mirrors priceFor exactly.
     // ————————————————————————————————————————————————————————————————————
     let stu = null;
+    /**
+     * The expensive-to-redo half of Director Mode state (uploaded/generated
+     * cast, written scenario, screenwriter plot) — survives leaving Studio
+     * entirely and coming back, not just a `keep` preset-swap re-open like
+     * `prev` below. Found via persona simulation (docs/wireframes/
+     * director-mode.v4.html, persona 6): today `openStudio()` resets `stu`
+     * from scratch on any normal re-entry, which silently threw away a
+     * half-filled character card the moment someone left Studio for Home and
+     * came back. Snapshotted at the top of every viewStudio() render (cheap —
+     * it's called after every state change already) so it can never drift
+     * from what's actually on screen; read back here as a SECOND fallback,
+     * behind `prev`, so an intentional fresh preset/scenario pick still wins.
+     */
+    let dmSaved = null;
     function openStudio(ctx) {
       ctx = ctx || {};
       const prev = ctx.keep && stu ? stu : null; // ⇄ preset swap keeps inputs (E7)
@@ -4253,28 +4319,37 @@
         // Off by default so the fast path stays exactly today's studio. The
         // cast/locations/scenario survive a keep-reopen the same way photos
         // do — re-uploading a whole cast is the most expensive re-ask there is.
-        director: prev ? !!prev.director : false,
-        dmChars: prev ? prev.dmChars || [] : [], // [{id,label,photos:[{data,url}],text,model,sheetUrl,genId,pending,error,use}]
-        dmLocs: prev ? prev.dmLocs || [] : [],
-        dmSeq: prev ? prev.dmSeq || 0 : 0, // entry-id counter
-        dmSec: prev ? prev.dmSec || { chars: false, locs: false, sw: false } : { chars: false, locs: false, sw: false },
-        dmScenario: prev ? prev.dmScenario || "" : "",
+        // Falls back to dmSaved (see its own doc comment above) when this is a
+        // normal fresh open, not a keep-reopen — so leaving Studio and coming
+        // back doesn't silently discard a half-built cast.
+        director: prev ? !!prev.director : !!(dmSaved && dmSaved.director),
+        dmChars: prev ? prev.dmChars || [] : (dmSaved && dmSaved.dmChars) || [], // [{id,label,photos:[{data,url}],text,model,sheetUrl,genId,pending,error,use}]
+        dmLocs: prev ? prev.dmLocs || [] : (dmSaved && dmSaved.dmLocs) || [],
+        dmSeq: prev ? prev.dmSeq || 0 : (dmSaved && dmSaved.dmSeq) || 0, // entry-id counter
+        dmSec: prev ? prev.dmSec || { chars: false, locs: false, sw: false } : (dmSaved && dmSaved.dmSec) || { chars: false, locs: false, sw: false },
+        dmScenario: prev ? prev.dmScenario || "" : (dmSaved && dmSaved.dmScenario) || "",
         dmAssembling: false,
-        dmDraftChar: prev ? prev.dmDraftChar || null : null,
-        dmDraftLoc: prev ? prev.dmDraftLoc || null : null,
+        dmDraftChar: prev ? prev.dmDraftChar || null : (dmSaved && dmSaved.dmDraftChar) || null,
+        dmDraftLoc: prev ? prev.dmDraftLoc || null : (dmSaved && dmSaved.dmDraftLoc) || null,
         // Screenwriter pipeline (docs/seedance-screenwriter-spec.md), gated by
         // ME.uiFeatures.screenwriterPipeline: a vision → plot + cast, feeding
         // the Director Mode fields above unchanged. Its open/closed state
         // lives in dmSec.sw, right alongside the other accordions. Survives
-        // keep-reopen the same way dmScenario does.
-        swVision: prev ? prev.swVision || "" : "",
-        swVfxNotes: prev ? prev.swVfxNotes || "" : "",
+        // keep-reopen the same way dmScenario does, and a plain re-open the
+        // same way the rest of Director Mode does (see dmSaved above).
+        swVision: prev ? prev.swVision || "" : (dmSaved && dmSaved.swVision) || "",
+        swVfxNotes: prev ? prev.swVfxNotes || "" : (dmSaved && dmSaved.swVfxNotes) || "",
         swExpanding: false,
-        swPlot: prev ? prev.swPlot || null : null,
+        swPlot: prev ? prev.swPlot || null : (dmSaved && dmSaved.swPlot) || null,
         // [{id, kind, label, hint, dmId, bgBusy}] — dmId links to the matching
         // stu.dmChars/dmLocs entry once its sheet exists; bgBusy while a
         // no-photo location's background frame is being generated.
-        swEntities: prev ? prev.swEntities || null : null,
+        swEntities: prev ? prev.swEntities || null : (dmSaved && dmSaved.swEntities) || null,
+        // Director Mode library popup (docs: saved character/location reuse) —
+        // resets on every open, same as the reference-grid role-choice row.
+        libraryOpen: false,
+        libraryKind: null,
+        libraryData: null,
       };
       // A draft carried across a reopen must never arrive still "busy" — the
       // in-flight handler that set it died with the previous render.
@@ -4552,6 +4627,14 @@
           ${dmCapable ? `<button type="button" class="chip" data-refrole="character">👤 Персонаж</button>` : ""}
           ${dmCapable ? `<button type="button" class="chip" data-refrole="location">📍 Локация</button>` : ""}
         </div>` : "";
+      // The saved-entity library is an INPUT method (a reference, same as a
+      // fresh photo or the gallery link above it) — it lives here, at the
+      // top level of the reference grid, not nested a level deeper inside the
+      // "add a new character" form. All input sources for this block live in
+      // this one zone; all render params live in their own (see paramscard,
+      // below in viewStudio) — persona-simulation follow-up. One button, not
+      // two — the popup itself now carries Все/Персонажи/Локации tabs.
+      const libLink = dmCapable ? `<button type="button" class="gallery-link" id="libOpenBtn">📚 Библиотека</button>` : "";
       const grid = sourceCells || charCells || locCells || finalCell || addCell
         ? `
           <div class="refhead">${qLabel("Ссылочные фото", "refroles")}</div>
@@ -4560,6 +4643,7 @@
             ${canAddSource ? `<input type="file" accept="image/*" id="stuExtraFile" multiple style="display:none" />` : ""}
           </div>
           ${canAddSource ? `<button type="button" class="gallery-link" id="refGalleryBtn">📁 из своих работ</button>` : ""}
+          ${libLink}
           ${choiceRow}` : "";
       const addForms = dmOn ? `
         ${stu.dmSec.chars ? dmAddCardHtml("character") : ""}
@@ -4735,6 +4819,19 @@
         title = "Количество";
         const cur = stu.numImages || 1;
         rows = stuCountOptions(m, caps).map((c) => ({ id: String(c.n), label: `${c.n} шт${c.n > 1 ? ` · ${c.credits} ${PATRON}` : ""}`, on: c.n === cur }));
+      } else if (key === "tier") {
+        // Seedance's Дёшево/Быстро/Качество toggle — folded into the SAME
+        // params popup as aspect/resolution/duration (was its own standalone
+        // row above; "all params in one zone" per the persona-simulation
+        // follow-up). Each option states its OUTCOME, not just its name.
+        title = "Уровень качества";
+        const cur = stu.seedanceTier || "fast";
+        const tiers = [
+          ["cheap", "Дёшево — для сторис и черновика"],
+          ["fast", "Быстро — баланс цены и вида"],
+          ["quality", "Качество — для клиента и печати"],
+        ];
+        rows = tiers.map(([id, label]) => ({ id, label: esc(label), on: id === cur }));
       } else if (key === "duration") {
         // Kept as the original drag slider (durationSliderHtml/wireDurationSlider)
         // — a continuous 4-15s range reads better as a slider than a 12-row
@@ -4828,7 +4925,92 @@
         </div>`;
     }
 
+    /**
+     * Director Mode's saved character/location library (docs/graveyard.md §
+     * Кадр removal names this as the deferred follow-up; docs/wireframes/
+     * director-mode.v6.html). Picking a saved entity adds a filled cell
+     * straight to dmChars/dmLocs — no photo upload, no «Собрать карту» spend,
+     * since the sheet already exists.
+     *
+     * ONE entry point, not two: earlier this had separate "Персонажи"/
+     * "Локации" links opening kind-locked popups; the popup itself now
+     * carries tabs (Все / Персонажи / Локации), so there's one button and
+     * one place to browse either kind. stu.libraryKind is the ACTIVE TAB
+     * ("all"|"character"|"location"), not a lock on what can be picked —
+     * libraryPick reads the picked row's OWN kind, since "Все" mixes both.
+     */
+    async function openLibraryPopup() {
+      stu.libraryOpen = true;
+      stu.libraryKind = "all";
+      stu.libraryData = null;
+      viewStudio();
+      loadLibraryTab();
+    }
+    async function loadLibraryTab() {
+      const kind = stu.libraryKind;
+      const qs = kind === "all" ? "" : `?kind=${kind}`;
+      const { status, data } = await api(`/api/library${qs}`);
+      if (!stu.libraryOpen || stu.libraryKind !== kind) return; // closed/switched tab while in flight
+      if (status === 200) stu.libraryData = data.items;
+      viewStudio();
+    }
+    function closeLibraryPopup() {
+      stu.libraryOpen = false;
+      viewStudio();
+    }
+    function libraryPick(entity) {
+      const kind = entity.kind; // NOT stu.libraryKind — the "Все" tab mixes both kinds
+      stu.dmSeq++;
+      dmList(kind).push({
+        id: `${kind === "character" ? "char" : "loc"}_${stu.dmSeq}`,
+        label: entity.label, text: entity.text || "", photos: [], urls: [],
+        sheetUrl: entity.sheetUrl, genId: null, pending: false, error: null, use: true,
+        model: entity.model || dmSheetDefaultModel(), swEntityId: null,
+      });
+      stu.libraryOpen = false;
+      stu[kind === "character" ? "dmDraftChar" : "dmDraftLoc"] = null; // the add-card's job is done, if one was open
+      toast(`«${entity.label}» добавлен(а) из библиотеки`);
+      viewStudio();
+    }
+    async function libraryDelete(id) {
+      await api(`/api/library/${id}`, { method: "DELETE" });
+      if (stu.libraryData) stu.libraryData = stu.libraryData.filter((x) => x.id !== id);
+      viewStudio();
+    }
+    function libraryPopupHtml() {
+      const items = stu.libraryData;
+      const tabs = [["all", "Все"], ["character", "Персонажи"], ["location", "Локации"]];
+      const emptyText = { all: "Пока пусто — при сборке карты отметьте «Сохранить в библиотеку»",
+        character: "Нет сохранённых персонажей", location: "Нет сохранённых локаций" }[stu.libraryKind];
+      return `
+        <div class="param-popup" id="libraryPopup">
+          <div class="param-popup-backdrop" data-library-close></div>
+          <div class="param-popup-sheet">
+            <div class="pp-head"><b>Библиотека</b><button class="pp-x" type="button" data-library-close aria-label="Закрыть">✕</button></div>
+            <div class="chips" id="libTabs" style="margin-bottom:10px">
+              ${tabs.map(([id, label]) => `<button type="button" class="chip ${stu.libraryKind === id ? "on" : ""}" data-lib-tab="${id}">${label}</button>`).join("")}
+            </div>
+            ${!items ? `<div class="gallery-empty">Загрузка…</div>`
+              : !items.length ? `<div class="gallery-empty">${emptyText}</div>`
+              : `<div class="lib-list">${items.map((e) => `
+                  <button class="lib-row" type="button" data-lib-pick="${e.id}">
+                    <img src="${esc(e.sheetUrl)}" alt="" loading="lazy" />
+                    <span class="lib-name">${esc(e.label)}${stu.libraryKind === "all" ? ` <small>${e.kind === "character" ? "👤" : "📍"}</small>` : ""}</span>
+                    <span class="lib-del" data-lib-del="${e.id}" role="button" aria-label="Удалить из библиотеки">✕</span>
+                  </button>`).join("")}</div>`}
+          </div>
+        </div>`;
+    }
+
     function viewStudio() {
+      // Mirror the expensive-to-redo half of Director Mode into dmSaved on
+      // every render (see its declaration for why) — always in sync with
+      // `stu` by construction, no separate mutation hooks to keep up to date.
+      dmSaved = {
+        director: stu.director, dmChars: stu.dmChars, dmLocs: stu.dmLocs, dmSeq: stu.dmSeq, dmSec: stu.dmSec,
+        dmScenario: stu.dmScenario, dmDraftChar: stu.dmDraftChar, dmDraftLoc: stu.dmDraftLoc,
+        swVision: stu.swVision, swVfxNotes: stu.swVfxNotes, swPlot: stu.swPlot, swEntities: stu.swEntities,
+      };
       const m = studioModel();
       if (!m) { st.tab = "shoot"; viewPick(); return; }
       const isVideo = stu.mode === "video";
@@ -4900,7 +5082,7 @@
           ${hidden.length && !stu.showAll ? `<button class="btn ghost" id="stuMore">Показать все модели (${hidden.length}) — нужно фото</button>` : ""}
           ${hidden.length && stu.showAll ? hidden.map((x) => modelRow(x)).join("") : ""}
         </div>
-        ${directorModeHtml()}
+        ${dmToggleHtml()}
         ${(() => {
           const dmOn = stu.director && m.key === "seedance";
           const showFinal = isVideo && m.video && activeSeedanceRow(m).video.endFrame;
@@ -4930,6 +5112,7 @@
               </div>
             </div>`;
         })()}
+        ${dmPlanningHtml()}
         ${stu.preset ? `
           <div class="ptagrow">
             <span class="ptag"><span>${esc(stu.preset.label)}</span><button type="button" id="stuPresetX" aria-label="Сменить стиль">✕</button></span>
@@ -4945,16 +5128,6 @@
           <button class="btn ghost" id="stuEnh">${enhLabel()}</button>
           ${stu.prevPrompt != null ? `<button class="btn ghost" id="stuUndo">↩ Вернуть</button>` : ""}
         </div>
-        ${isVideo && m.key === "seedance" ? (() => {
-          const refMode = activeSeedanceTierKey() === "ref";
-          const tiers = [["cheap", "Дёшево"], ["fast", "Быстро"], ["quality", "Качество"]];
-          return `
-            ${qLabel("Уровень качества")}
-            ${refMode
-              ? `<div class="sub">Режим по фото — несколько референсов или аудио/видео фиксируют качество, тумблер недоступен.</div>`
-              : `<div class="chips" id="stuTier">${tiers.map(([id, label]) =>
-                  `<button class="chip ${(stu.seedanceTier || "fast") === id ? "on" : ""}" data-tier="${id}">${label}</button>`).join("")}</div>`}`;
-        })() : ""}
         ${storyQuizHtml(story)}
         ${(() => {
           // S12–S15: render params pinned as one card directly above the CTA —
@@ -4962,7 +5135,11 @@
           // (docs/wireframes/home-studio, v3). Works for both modes: video
           // sees aspect/resolution/duration, image sees aspect/resolution/count
           // — whichever this model actually declares. Each is a pill (current
-          // value) that opens paramPopupHtml's list on tap.
+          // value) that opens paramPopupHtml's list on tap. Seedance's
+          // Дёшево/Быстро/Качество toggle lives here too, not as its own card
+          // — "all params in one zone" (persona-simulation follow-up); a
+          // reference-mode render fixes it, so it's simply absent then rather
+          // than shown disabled.
           const params = [];
           if (caps && caps.aspectRatios && caps.aspectRatios.length > 1) {
             const cur = stu.aspect || caps.aspectRatios[0];
@@ -4978,6 +5155,10 @@
           if (isVideo && m.video) {
             params.push({ key: "duration", label: "Длит-сть", value: `${stu.duration || m.video.defaultSeconds} сек` });
           }
+          if (isVideo && m.key === "seedance" && activeSeedanceTierKey() !== "ref") {
+            const tierLabel = { cheap: "Дёшево", fast: "Быстро", quality: "Качество" };
+            params.push({ key: "tier", label: "Уровень", value: tierLabel[stu.seedanceTier || "fast"] });
+          }
           if (!params.length) return "";
           return `
             <div class="paramscard">
@@ -4986,11 +5167,13 @@
             </div>
             ${stu.paramPopup ? paramPopupHtml(stu.paramPopup, m, caps, isVideo) : ""}`;
         })()}
+        <div class="disclose"><span class="ic">🏷</span><span>Готовый результат получит обязательную плашку «AI Generated» — по закону РК, на каждой работе, независимо от настройки водяного знака в Профиле.</span></div>
         <div class="stack">
           <button class="btn primary" id="stuGo"></button>
           <button class="btn ghost" id="stuBack">← Галерея стилей</button>
         </div>
-        ${stu.galleryOpen ? galleryPopupHtml() : ""}`;
+        ${stu.galleryOpen ? galleryPopupHtml() : ""}
+        ${stu.libraryOpen ? libraryPopupHtml() : ""}`;
 
       const goBtn = sheetBody.querySelector("#stuGo");
       const cta = () => {
@@ -5068,7 +5251,6 @@
           row.style.display = !q || row.dataset.mname.includes(q) ? "" : "none";
         });
       }));
-      sheetBody.querySelectorAll("#stuTier .chip").forEach((c) => (c.onclick = () => { stu.seedanceTier = c.dataset.tier; viewStudio(); }));
       // Params popup: tap a pill to open it, tap a row (or the backdrop/✕) to
       // pick/close. Duration is the one exception — a slider, not a row list
       // (see paramPopupHtml) — so it's wired separately below, live during the
@@ -5081,6 +5263,7 @@
         if (stu.paramPopup === "aspect") stu.aspect = val;
         else if (stu.paramPopup === "resolution") stu.resolution = val;
         else if (stu.paramPopup === "count") stu.numImages = Number(val);
+        else if (stu.paramPopup === "tier") stu.seedanceTier = val;
         stu.paramPopup = null;
         viewStudio();
       }));
@@ -5167,6 +5350,24 @@
         for (const p of picks) stu.extras.push({ data: p.url, url: p.url });
         clampStudioOpts();
         closeGalleryPopup();
+      }));
+      bind("#libOpenBtn", (el) => (el.onclick = () => openLibraryPopup()));
+      sheetBody.querySelectorAll("[data-library-close]").forEach((b) => (b.onclick = closeLibraryPopup));
+      sheetBody.querySelectorAll("[data-lib-tab]").forEach((b) => (b.onclick = () => {
+        if (stu.libraryKind === b.dataset.libTab) return;
+        stu.libraryKind = b.dataset.libTab;
+        stu.libraryData = null;
+        viewStudio();
+        loadLibraryTab();
+      }));
+      sheetBody.querySelectorAll("[data-lib-del]").forEach((b) => (b.onclick = (e) => {
+        e.stopPropagation(); // the delete glyph sits inside the pick button
+        libraryDelete(Number(b.dataset.libDel));
+      }));
+      sheetBody.querySelectorAll("[data-lib-pick]").forEach((b) => (b.onclick = () => {
+        const id = Number(b.dataset.libPick);
+        const entity = (stu.libraryData || []).find((x) => x.id === id);
+        if (entity) libraryPick(entity);
       }));
       // Dropping the primary photo drops the extra angles with it — they only
       // ever mean "more of THIS face", so keeping them would silently attach
@@ -5308,11 +5509,17 @@
       }));
       dmBindText("#dmCharText", "character");
       dmBindText("#dmLocText", "location");
+      const dmBindSaveLib = (sel, kind) => bind(sel, (el) => (el.onchange = () => {
+        dmDraft(kind, true).saveToLibrary = el.checked;
+      }));
+      dmBindSaveLib("#dmCharSaveLib", "character");
+      dmBindSaveLib("#dmLocSaveLib", "location");
       // Engine picker (SHEET_MODEL_PICKER): switching may lower maxInputs
       // below the photos already picked — trim from the end rather than
       // leave a draft the server would 400 on the very next tap.
-      sheetBody.querySelectorAll("[data-dm-model]").forEach((btn) => (btn.onclick = () => {
-        const [kind, key] = btn.dataset.dmModel.split(":");
+      sheetBody.querySelectorAll("[data-dm-model-kind]").forEach((sel) => (sel.onchange = () => {
+        const kind = sel.dataset.dmModelKind;
+        const key = sel.value;
         const draft = dmDraft(kind, true);
         draft.model = key;
         const max = dmPhotoMax(key);

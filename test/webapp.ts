@@ -2776,6 +2776,106 @@ await step("balance history: /api/ledger redacts every reason whose meta is some
   assert.equal(byReason.push_offer, "pack_x");
 });
 
+await step("Director Mode library: save/list/delete a character or location for reuse, owner-scoped", async () => {
+  const lu = { id: 915, username: "libowner" };
+  const other = { id: 916, username: "notlibowner" };
+  await getOrCreateUser(lu.id, lu.username, null, 0);
+  await getOrCreateUser(other.id, other.username, null, 0);
+  const hdr = { Authorization: `tma ${signInitData(lu)}`, "Content-Type": "application/json" };
+  const otherHdr = { Authorization: `tma ${signInitData(other)}`, "Content-Type": "application/json" };
+
+  // Save one character and one location.
+  const saveChar = await fetch(`${base}/api/library`, {
+    method: "POST", headers: hdr,
+    body: JSON.stringify({ kind: "character", label: "Аня", text: "рыжий кот", sheetUrl: "https://fal.test/storage/char.jpg", model: "nb2_edit" }),
+  });
+  assert.equal(saveChar.status, 200);
+  const savedChar = (await saveChar.json()) as { id: number; kind: string; label: string; text: string | null; sheetUrl: string; model: string | null };
+  assert.equal(savedChar.kind, "character");
+  assert.equal(savedChar.label, "Аня");
+  assert.equal(savedChar.text, "рыжий кот");
+  assert.equal(savedChar.sheetUrl, "https://fal.test/storage/char.jpg");
+  assert.equal(savedChar.model, "nb2_edit");
+
+  const saveLoc = await fetch(`${base}/api/library`, {
+    method: "POST", headers: hdr,
+    body: JSON.stringify({ kind: "location", label: "Чердак", sheetUrl: "https://fal.test/storage/loc.jpg" }),
+  });
+  assert.equal(saveLoc.status, 200);
+  const savedLoc = (await saveLoc.json()) as { id: number; text: string | null; model: string | null };
+  assert.equal(savedLoc.text, null, "optional text omitted must come back null, not an empty string");
+  assert.equal(savedLoc.model, null, "an unrecognized/omitted model must come back null, never echoed unchecked");
+
+  // Listing is kind-scoped — a character save must not appear under ?kind=location.
+  const chars = (await (await fetch(`${base}/api/library?kind=character`, { headers: hdr })).json()) as { items: Array<{ id: number; label: string }> };
+  assert.equal(chars.items.length, 1);
+  assert.equal(chars.items[0].label, "Аня");
+  const locs = (await (await fetch(`${base}/api/library?kind=location`, { headers: hdr })).json()) as { items: Array<{ id: number; label: string }> };
+  assert.equal(locs.items.length, 1);
+  assert.equal(locs.items[0].label, "Чердак");
+  assert.equal((await fetch(`${base}/api/library?kind=nope`, { headers: hdr })).status, 400);
+  assert.equal((await fetch(`${base}/api/library?kind=character`)).status, 401);
+
+  // No kind (or kind=all) — the library popup's "Все" tab — mixes both kinds,
+  // each row still carrying its own `kind` so the client can tell them apart.
+  for (const qs of ["", "?kind=all"]) {
+    const all = (await (await fetch(`${base}/api/library${qs}`, { headers: hdr })).json()) as { items: Array<{ label: string; kind: string }> };
+    assert.equal(all.items.length, 2, `both kinds must appear for '${qs}'`);
+    const byLabel = Object.fromEntries(all.items.map((x) => [x.label, x.kind]));
+    assert.equal(byLabel["Аня"], "character");
+    assert.equal(byLabel["Чердак"], "location");
+  }
+
+  // A sheetUrl off our own storage host must be rejected — same isMediaUrl
+  // discipline /api/generate's image_urls already enforces.
+  const badUrl = await fetch(`${base}/api/library`, {
+    method: "POST", headers: hdr,
+    body: JSON.stringify({ kind: "character", label: "Evil", sheetUrl: "https://evil.example.com/x.jpg" }),
+  });
+  assert.equal(badUrl.status, 400);
+  assert.equal(((await badUrl.json()) as { error: string }).error, "bad_source");
+
+  // An empty label is rejected before anything is written.
+  const noLabel = await fetch(`${base}/api/library`, {
+    method: "POST", headers: hdr,
+    body: JSON.stringify({ kind: "character", label: "   ", sheetUrl: "https://fal.test/storage/x.jpg" }),
+  });
+  assert.equal(noLabel.status, 400);
+
+  // Another account's list must never include this user's saves.
+  const otherChars = (await (await fetch(`${base}/api/library?kind=character`, { headers: otherHdr })).json()) as { items: unknown[] };
+  assert.equal(otherChars.items.length, 0);
+
+  // Delete is owner-scoped: another account can't remove this user's entry
+  // (404, not 403 — same "don't confirm existence" posture as favorites).
+  const stolenDelete = await fetch(`${base}/api/library/${savedChar.id}`, { method: "DELETE", headers: otherHdr });
+  assert.equal(stolenDelete.status, 404);
+  const stillThere = (await (await fetch(`${base}/api/library?kind=character`, { headers: hdr })).json()) as { items: unknown[] };
+  assert.equal(stillThere.items.length, 1, "a rejected delete must not have removed the row");
+
+  const realDelete = await fetch(`${base}/api/library/${savedChar.id}`, { method: "DELETE", headers: hdr });
+  assert.equal(realDelete.status, 200);
+  const afterDelete = (await (await fetch(`${base}/api/library?kind=character`, { headers: hdr })).json()) as { items: unknown[] };
+  assert.equal(afterDelete.items.length, 0);
+  assert.equal((await fetch(`${base}/api/library/${savedChar.id}`, { method: "DELETE", headers: hdr })).status, 404, "deleting an already-gone row is a 404, not a silent 200");
+});
+
+await step("Director Mode library: the per-account cap is enforced before a new save is written", async () => {
+  const cu = { id: 917, username: "libcap" };
+  await getOrCreateUser(cu.id, cu.username, null, 0);
+  const hdr = { Authorization: `tma ${signInitData(cu)}`, "Content-Type": "application/json" };
+  const { SAVED_ENTITY_LIMIT } = await import("../src/db.js");
+  const save = (i: number) =>
+    fetch(`${base}/api/library`, {
+      method: "POST", headers: hdr,
+      body: JSON.stringify({ kind: "character", label: `Персонаж ${i}`, sheetUrl: `https://fal.test/storage/c${i}.jpg` }),
+    });
+  for (let i = 0; i < SAVED_ENTITY_LIMIT; i++) assert.equal((await save(i)).status, 200);
+  const over = await save(SAVED_ENTITY_LIMIT);
+  assert.equal(over.status, 400);
+  assert.equal(((await over.json()) as { error: string }).error, "library_full");
+});
+
 await step("favorites: star/unstar is owner-scoped, ?favorite=1 filters the gallery", async () => {
   const fu = { id: 910, username: "fav" };
   const other = { id: 911, username: "notfav" };

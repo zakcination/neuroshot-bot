@@ -174,6 +174,16 @@ verified ⬜ not started against current code:
   transparent background is still open (`docs/model-inputs.md`).
 - Art. 21 legal-scope question (all AI media vs. deepfake-of-real-persons
   only) — unresolved at the law level per `docs/compliance.md`, not a code gap.
+- **Business/enterprise account support** (юрлицо/безнал payment, multi-user
+  access under one company balance, exportable spend reports for accounting)
+  — surfaced by the persona 10 ("marketing coordinator, budget isn't personal")
+  simulation in `docs/wireframes/director-mode.v4.html`. **Deliberately
+  deprioritized (2026-08-08, owner's call): no real business has asked for
+  this yet.** Every account today is a personal Telegram-ID wallet by design
+  (see "Creator-first pricing" in `CLAUDE.md` and Anti-goal #1 below — stay
+  wedge-first, don't become a generic aggregator/enterprise dashboard). Revisit
+  only once actual demand shows up, not speculatively — building it now would
+  be exactly the kind of scope creep this roadmap's discipline exists to catch.
 
 ---
 
