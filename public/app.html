@@ -4487,6 +4487,10 @@
       // server would refuse the request anyway, and carrying them invisibly is
       // how a user ends up wondering why their sound was ignored.
       if (!m.reference) { stu.refAudio = []; stu.refVideo = []; stu.refRights = false; }
+      // Only the flagship tier declares audioToggle — a tier/model switch away
+      // from it must drop a captured "off" so a later generation on a model
+      // that doesn't read generate_audio doesn't get one it can't accept.
+      if (!(caps && caps.audioToggle) && stu.generateAudio === false) stu.generateAudio = undefined;
       if (stu.mode === "video" && capRow.video) {
         if (!capRow.video.durations.some((d) => d.seconds === stu.duration)) {
           // The model's own default, not the first entry — that is the shortest
@@ -5385,7 +5389,7 @@
         if (stu.paramPopup === "aspect") stu.aspect = val;
         else if (stu.paramPopup === "resolution") stu.resolution = val;
         else if (stu.paramPopup === "count") stu.numImages = Number(val);
-        else if (stu.paramPopup === "tier") stu.seedanceTier = val;
+        else if (stu.paramPopup === "tier") { stu.seedanceTier = val; clampStudioOpts(); }
         stu.paramPopup = null;
         viewStudio();
       }));
