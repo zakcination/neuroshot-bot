@@ -308,6 +308,11 @@
     .seg { display: flex; background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 3px; margin: 12px 0 4px; }
     .seg button { flex: 1; border: 0; background: transparent; color: var(--muted); font-weight: 700; font-size: 13.5px; padding: 9px 0; border-radius: 999px; cursor: pointer; }
     .seg button.on { background: var(--aurora); color: #fff; }
+    /* Unified materials popup's outer-tab switch (Элементы/Мои работы) — same
+       pill language as .seg, sized and margin-free for a popup header row. */
+    .materials-seg { display: flex; background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 2px; }
+    .materials-seg button { flex: 1; border: 0; background: transparent; color: var(--muted); font-weight: 700; font-size: 12px; padding: 7px 0; border-radius: 999px; cursor: pointer; }
+    .materials-seg button.on { background: var(--aurora); color: #fff; }
     .mlist { display: flex; flex-direction: column; gap: 8px; }
     .mlist.hide { display: none; }
     .mlistq {
@@ -4348,9 +4353,12 @@
         // stu.dmChars/dmLocs entry once its sheet exists; bgBusy while a
         // no-photo location's background frame is being generated.
         swEntities: prev ? prev.swEntities || null : (dmSaved && dmSaved.swEntities) || null,
-        // Director Mode library popup (docs: saved character/location reuse) —
-        // resets on every open, same as the reference-grid role-choice row.
+        // Unified materials popup (docs: saved character/location reuse +
+        // past-generations browsing) — resets on every open, same as the
+        // reference-grid role-choice row. assetTab is the OUTER tab
+        // (elements/generations); libraryKind is Элементы's own INNER tab.
         libraryOpen: false,
+        assetTab: null,
         libraryKind: null,
         libraryData: null,
       };
@@ -4630,14 +4638,15 @@
           ${dmCapable ? `<button type="button" class="chip" data-refrole="character">👤 Персонаж</button>` : ""}
           ${dmCapable ? `<button type="button" class="chip" data-refrole="location">📍 Локация</button>` : ""}
         </div>` : "";
-      // The saved-entity library is an INPUT method (a reference, same as a
-      // fresh photo or the gallery link above it) — it lives here, at the
-      // top level of the reference grid, not nested a level deeper inside the
-      // "add a new character" form. All input sources for this block live in
-      // this one zone; all render params live in their own (see paramscard,
-      // below in viewStudio) — persona-simulation follow-up. One button, not
-      // two — the popup itself now carries Все/Персонажи/Локации tabs.
-      const libLink = dmCapable ? `<button type="button" class="gallery-link" id="libOpenBtn">📚 Библиотека</button>` : "";
+      // Every browsable INPUT source — past renders AND the saved-entity
+      // library — behind ONE button, not the two separate links this used to
+      // be. The popup itself carries the tabs (Элементы / Мои работы); this
+      // is the same "all input sources live in one zone" call as before, just
+      // extended to the SOURCE of a reference, not only its kind (persona-
+      // simulation follow-up; Higgsfield's Cinema Studio composer reference —
+      // one "+"/"@" surface with Uploads/Elements/Generations/Liked tabs).
+      const materialsLink = canAddSource || dmCapable
+        ? `<button type="button" class="gallery-link" id="materialsOpenBtn">🗂 Материалы</button>` : "";
       const grid = sourceCells || charCells || locCells || finalCell || addCell
         ? `
           <div class="refhead">${qLabel("Ссылочные фото", "refroles")}</div>
@@ -4645,8 +4654,7 @@
             ${sourceCells}${charCells}${locCells}${finalCell}${addCell}
             ${canAddSource ? `<input type="file" accept="image/*" id="stuExtraFile" multiple style="display:none" />` : ""}
           </div>
-          ${canAddSource ? `<button type="button" class="gallery-link" id="refGalleryBtn">📁 из своих работ</button>` : ""}
-          ${libLink}
+          ${materialsLink}
           ${choiceRow}` : "";
       const addForms = dmOn ? `
         ${stu.dmSec.chars ? dmAddCardHtml("character") : ""}
@@ -4893,38 +4901,47 @@
       if (status === 200) stu.galleryData = data;
       viewStudio();
     }
-    function galleryPopupHtml() {
+    /**
+     * Just the head-row + grid/pager/confirm — no outer popup wrapper.
+     * Reused two ways: galleryPopupHtml() below wraps it standalone (the
+     * top-level "Мои работы" single-photo picker, unchanged); the unified
+     * materials picker (libraryPopupHtml) renders it as its "Мои работы"
+     * outer tab, inside the SAME wrapper as the Элементы library tab.
+     */
+    function galleryBodyHtml(closeAttr) {
       const d = stu.galleryData;
       const multi = stu.galleryMode === "multi";
       const selectedIds = new Set((stu.gallerySelected || []).map((x) => x.id));
       return `
+        <div class="pp-head">
+          <b>Мои работы</b>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button class="gfav-toggle ${stu.galleryFavOnly ? "on" : ""}" type="button" id="galleryFavToggle">⭐ Избранное</button>
+            <button class="pp-x" type="button" ${closeAttr} aria-label="Закрыть">✕</button>
+          </div>
+        </div>
+        ${!d ? `<div class="gallery-empty">Загрузка…</div>`
+          : !d.items.length ? `<div class="gallery-empty">${stu.galleryFavOnly ? "Нет избранных работ" : "Пока нет готовых работ"}</div>`
+          : `
+            <div class="gallery-grid">${d.items.map((g) => `
+              <div class="gitem ${multi && selectedIds.has(g.id) ? "on" : ""}" data-gitem="${g.id}" data-gurl="${esc(g.output_url)}">
+                <img src="${esc(g.output_url)}" alt="" loading="lazy" />
+                <button class="gstar ${g.favorite ? "on" : ""}" type="button" data-gstar="${g.id}" aria-label="В избранное">${g.favorite ? "⭐" : "☆"}</button>
+                ${multi && selectedIds.has(g.id) ? `<span class="gcheck">✓</span>` : ""}
+              </div>`).join("")}</div>
+            ${d.pages > 1 ? `
+              <div class="gallery-pager">
+                <button class="btn ghost" id="galleryPrev" ${d.page <= 1 ? "disabled" : ""}>← Назад</button>
+                <span>стр. ${d.page} из ${d.pages}</span>
+                <button class="btn ghost" id="galleryNext" ${d.page >= d.pages ? "disabled" : ""}>Далее →</button>
+              </div>` : ""}`}
+        ${multi ? `<button class="btn primary" id="galleryConfirm" style="margin-top:10px" ${!stu.gallerySelected.length ? "disabled" : ""}>Добавить (${stu.gallerySelected.length})</button>` : ""}`;
+    }
+    function galleryPopupHtml() {
+      return `
         <div class="param-popup" id="galleryPopup">
           <div class="param-popup-backdrop" data-gallery-close></div>
-          <div class="param-popup-sheet gallery-sheet">
-            <div class="pp-head">
-              <b>Мои работы</b>
-              <div style="display:flex;align-items:center;gap:8px">
-                <button class="gfav-toggle ${stu.galleryFavOnly ? "on" : ""}" type="button" id="galleryFavToggle">⭐ Избранное</button>
-                <button class="pp-x" type="button" data-gallery-close aria-label="Закрыть">✕</button>
-              </div>
-            </div>
-            ${!d ? `<div class="gallery-empty">Загрузка…</div>`
-              : !d.items.length ? `<div class="gallery-empty">${stu.galleryFavOnly ? "Нет избранных работ" : "Пока нет готовых работ"}</div>`
-              : `
-                <div class="gallery-grid">${d.items.map((g) => `
-                  <div class="gitem ${multi && selectedIds.has(g.id) ? "on" : ""}" data-gitem="${g.id}" data-gurl="${esc(g.output_url)}">
-                    <img src="${esc(g.output_url)}" alt="" loading="lazy" />
-                    <button class="gstar ${g.favorite ? "on" : ""}" type="button" data-gstar="${g.id}" aria-label="В избранное">${g.favorite ? "⭐" : "☆"}</button>
-                    ${multi && selectedIds.has(g.id) ? `<span class="gcheck">✓</span>` : ""}
-                  </div>`).join("")}</div>
-                ${d.pages > 1 ? `
-                  <div class="gallery-pager">
-                    <button class="btn ghost" id="galleryPrev" ${d.page <= 1 ? "disabled" : ""}>← Назад</button>
-                    <span>стр. ${d.page} из ${d.pages}</span>
-                    <button class="btn ghost" id="galleryNext" ${d.page >= d.pages ? "disabled" : ""}>Далее →</button>
-                  </div>` : ""}`}
-            ${multi ? `<button class="btn primary" id="galleryConfirm" style="margin-top:10px" ${!stu.gallerySelected.length ? "disabled" : ""}>Добавить (${stu.gallerySelected.length})</button>` : ""}
-          </div>
+          <div class="param-popup-sheet gallery-sheet">${galleryBodyHtml("data-gallery-close")}</div>
         </div>`;
     }
 
@@ -4942,12 +4959,50 @@
      * ("all"|"character"|"location"), not a lock on what can be picked —
      * libraryPick reads the picked row's OWN kind, since "Все" mixes both.
      */
+    /**
+     * The unified materials picker (docs/wireframes/director-mode.v7.html) —
+     * ONE modal for every browsable input source, replacing what used to be
+     * two separate popups behind two separate links ("📁 из своих работ" /
+     * "📚 Библиотека"). Two OUTER tabs:
+     *   - "elements" — the saved character/location library
+     *     (docs/graveyard.md § Кадр removal names this as the deferred
+     *     follow-up). Picking adds a filled cell straight to dmChars/dmLocs —
+     *     no photo upload, no «Собрать карту» spend, the sheet already
+     *     exists. Has its own INNER tabs (Все/Персонажи/Локации,
+     *     stu.libraryKind) — unrelated to the outer tab, kept as-is.
+     *   - "generations" — past renders (today's "Мои работы"), reusing
+     *     galleryBodyHtml in its existing "multi" mode: picks append to
+     *     stu.extras, exactly like the old standalone gallery link did.
+     * Reference: Higgsfield's Cinema Studio composer bar — one "+"/"@"
+     * surface with Uploads/Elements/Generations/Liked tabs. We fold
+     * "Liked" into the generations tab's existing ⭐ Избранное toggle
+     * rather than a third tab — same data, already one tap away.
+     */
     async function openLibraryPopup() {
       stu.libraryOpen = true;
-      stu.libraryKind = "all";
-      stu.libraryData = null;
-      viewStudio();
-      loadLibraryTab();
+      // Элементы only exists while Director Mode is on (libraryPopupHtml
+      // falls back to gallery-only with no outer tabs otherwise) — opening
+      // straight to "elements" then would leave the gallery body permanently
+      // stuck on "Загрузка…", since nothing would ever call loadGalleryPage.
+      // Same dmOn check libraryPopupHtml uses — stu.director alone can be
+      // stale-true after switching away from Seedance.
+      const cm = studioModel();
+      if (cm && cm.key === "seedance" && stu.director) {
+        stu.assetTab = "elements";
+        stu.libraryKind = "all";
+        stu.libraryData = null;
+        viewStudio();
+        loadLibraryTab();
+      } else {
+        stu.assetTab = "generations";
+        stu.galleryMode = "multi";
+        stu.galleryPage = 1;
+        stu.galleryFavOnly = false;
+        stu.galleryData = null;
+        stu.gallerySelected = [];
+        viewStudio();
+        loadGalleryPage();
+      }
     }
     async function loadLibraryTab() {
       const kind = stu.libraryKind;
@@ -4980,27 +5035,45 @@
       if (stu.libraryData) stu.libraryData = stu.libraryData.filter((x) => x.id !== id);
       viewStudio();
     }
-    function libraryPopupHtml() {
+    function libraryElementsHtml() {
       const items = stu.libraryData;
       const tabs = [["all", "Все"], ["character", "Персонажи"], ["location", "Локации"]];
       const emptyText = { all: "Пока пусто — при сборке карты отметьте «Сохранить в библиотеку»",
         character: "Нет сохранённых персонажей", location: "Нет сохранённых локаций" }[stu.libraryKind];
       return `
+        <div class="chips" id="libTabs" style="margin-bottom:10px">
+          ${tabs.map(([id, label]) => `<button type="button" class="chip ${stu.libraryKind === id ? "on" : ""}" data-lib-tab="${id}">${label}</button>`).join("")}
+        </div>
+        ${!items ? `<div class="gallery-empty">Загрузка…</div>`
+          : !items.length ? `<div class="gallery-empty">${emptyText}</div>`
+          : `<div class="lib-list">${items.map((e) => `
+              <button class="lib-row" type="button" data-lib-pick="${e.id}">
+                <img src="${esc(e.sheetUrl)}" alt="" loading="lazy" />
+                <span class="lib-name">${esc(e.label)}${stu.libraryKind === "all" ? ` <small>${e.kind === "character" ? "👤" : "📍"}</small>` : ""}</span>
+                <span class="lib-del" data-lib-del="${e.id}" role="button" aria-label="Удалить из библиотеки">✕</span>
+              </button>`).join("")}</div>`}`;
+    }
+    function libraryPopupHtml() {
+      // "Элементы" only makes sense while Director Mode is genuinely active —
+      // checked against the CURRENT model, not just stu.director's stored
+      // value, which can be stale-true after switching away from Seedance
+      // (same dmCapable/dmOn computation extrasBlock uses).
+      const cm = studioModel();
+      const dmOn = !!(cm && cm.key === "seedance" && stu.director);
+      const outerTabs = dmOn ? [["elements", "Элементы"], ["generations", "Мои работы"]] : null;
+      return `
         <div class="param-popup" id="libraryPopup">
           <div class="param-popup-backdrop" data-library-close></div>
-          <div class="param-popup-sheet">
-            <div class="pp-head"><b>Библиотека</b><button class="pp-x" type="button" data-library-close aria-label="Закрыть">✕</button></div>
-            <div class="chips" id="libTabs" style="margin-bottom:10px">
-              ${tabs.map(([id, label]) => `<button type="button" class="chip ${stu.libraryKind === id ? "on" : ""}" data-lib-tab="${id}">${label}</button>`).join("")}
-            </div>
-            ${!items ? `<div class="gallery-empty">Загрузка…</div>`
-              : !items.length ? `<div class="gallery-empty">${emptyText}</div>`
-              : `<div class="lib-list">${items.map((e) => `
-                  <button class="lib-row" type="button" data-lib-pick="${e.id}">
-                    <img src="${esc(e.sheetUrl)}" alt="" loading="lazy" />
-                    <span class="lib-name">${esc(e.label)}${stu.libraryKind === "all" ? ` <small>${e.kind === "character" ? "👤" : "📍"}</small>` : ""}</span>
-                    <span class="lib-del" data-lib-del="${e.id}" role="button" aria-label="Удалить из библиотеки">✕</span>
-                  </button>`).join("")}</div>`}
+          <div class="param-popup-sheet gallery-sheet">
+            ${outerTabs ? `
+              <div class="pp-head">
+                <div class="materials-seg" style="flex:1;margin-right:8px">
+                  ${outerTabs.map(([id, label]) => `<button type="button" class="${stu.assetTab === id ? "on" : ""}" data-asset-tab="${id}">${label}</button>`).join("")}
+                </div>
+                <button class="pp-x" type="button" data-library-close aria-label="Закрыть">✕</button>
+              </div>
+              ${stu.assetTab === "generations" ? galleryBodyHtml("data-library-close") : libraryElementsHtml()}`
+              : galleryBodyHtml("data-library-close")}
           </div>
         </div>`;
     }
@@ -5321,7 +5394,6 @@
         clampStudioOpts(); viewStudio();
       }));
       bind("#stuGalleryBtn", (el) => (el.onclick = () => openGalleryPopup("single")));
-      bind("#refGalleryBtn", (el) => (el.onclick = () => openGalleryPopup("multi")));
       sheetBody.querySelectorAll("[data-gallery-close]").forEach((b) => (b.onclick = closeGalleryPopup));
       bind("#galleryFavToggle", (el) => (el.onclick = () => { stu.galleryFavOnly = !stu.galleryFavOnly; stu.galleryPage = 1; stu.galleryData = null; viewStudio(); loadGalleryPage(); }));
       bind("#galleryPrev", (el) => (el.onclick = () => { stu.galleryPage = Math.max(1, stu.galleryPage - 1); stu.galleryData = null; viewStudio(); loadGalleryPage(); }));
@@ -5361,10 +5433,29 @@
         if (picks.length < stu.gallerySelected.length) toast(`Добавлено ${picks.length} из ${stu.gallerySelected.length} — больше не помещается`);
         for (const p of picks) stu.extras.push({ data: p.url, url: p.url });
         clampStudioOpts();
-        closeGalleryPopup();
+        // Multi mode only ever renders inside the unified materials modal now
+        // (the old standalone "из своих работ" entry point is gone) — close
+        // THAT modal's flag, not stu.galleryOpen (which single mode owns).
+        closeLibraryPopup();
       }));
-      bind("#libOpenBtn", (el) => (el.onclick = () => openLibraryPopup()));
+      bind("#materialsOpenBtn", (el) => (el.onclick = () => openLibraryPopup()));
       sheetBody.querySelectorAll("[data-library-close]").forEach((b) => (b.onclick = closeLibraryPopup));
+      sheetBody.querySelectorAll("[data-asset-tab]").forEach((b) => (b.onclick = () => {
+        const tab = b.dataset.assetTab;
+        if (stu.assetTab === tab) return;
+        stu.assetTab = tab;
+        if (tab === "generations") {
+          stu.galleryMode = "multi";
+          stu.galleryPage = 1;
+          stu.galleryFavOnly = false;
+          stu.galleryData = null;
+          stu.gallerySelected = [];
+          viewStudio();
+          loadGalleryPage();
+        } else {
+          viewStudio();
+        }
+      }));
       sheetBody.querySelectorAll("[data-lib-tab]").forEach((b) => (b.onclick = () => {
         if (stu.libraryKind === b.dataset.libTab) return;
         stu.libraryKind = b.dataset.libTab;
