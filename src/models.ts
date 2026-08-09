@@ -104,6 +104,15 @@ export interface GenOpts {
    * "quietly ignored" is the wrong response.
    */
   subject?: "person" | "object";
+  /**
+   * Seedance flagship only: turn its synced-audio generation off. Defaults to
+   * on (byte-identical to before this field existed) — a client-settable
+   * two-value toggle, same "meaningless anywhere else, so reject rather than
+   * silently ignore" discipline as `subject` above. Off does not change the
+   * charge: fal prices this endpoint the same either way (per-second, not
+   * per-track), so this is a creative choice, not a cost lever.
+   */
+  generateAudio?: boolean;
 }
 
 /** A quality/resolution tier the composer can offer; `mult` scales credits AND cost. */
@@ -154,6 +163,7 @@ export interface VideoParams {
   aspectRatios: string[]; // selectable ratios; "auto" keeps the source frame's ratio
   endFrame?: boolean; // accepts an optional end_image_url (morph source → end frame)
   resolutions?: ResTier[]; // optional quality ladder; resolutions[0] = default
+  audioToggle?: boolean; // accepts GenOpts.generateAudio (Seedance flagship only)
 }
 
 export interface ModelSpec {
@@ -708,7 +718,7 @@ export const MODELS = {
       prompt,
       image_url: imageUrl,
       resolution: opts?.resolution ?? "720p",
-      generate_audio: true, // the flagship's whole point — real synced sound
+      generate_audio: opts?.generateAudio ?? true, // on by default — the flagship's whole point is real synced sound
       duration: String(opts?.duration ?? 5),
       ...arParam(opts),
       ...endParam(opts),
@@ -720,6 +730,7 @@ export const MODELS = {
       aspectRatios: ["auto", "9:16", "16:9", "1:1", "4:3", "3:4"],
       endFrame: true,
       resolutions: SEEDANCE_RES,
+      audioToggle: true,
     },
   },
   // Seedance 2.0 Mini (ByteDance) — the cheap Seedance. Same input contract as
@@ -1067,6 +1078,12 @@ export function normalizeOpts(model: ModelSpec, opts?: GenOpts): GenOpts | null 
   if (opts.subject != null) {
     if (!model.reference || (opts.subject !== "person" && opts.subject !== "object")) return null;
     out.subject = opts.subject;
+  }
+  // Audio toggle — Seedance flagship only; meaningless (and rejected, not
+  // silently dropped) on every other model, same convention as `subject`.
+  if (opts.generateAudio != null) {
+    if (!model.video?.audioToggle || typeof opts.generateAudio !== "boolean") return null;
+    out.generateAudio = opts.generateAudio;
   }
   return out;
 }

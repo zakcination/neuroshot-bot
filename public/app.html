@@ -1391,6 +1391,8 @@
     .ppill small { font-size: 8.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
     .ppill b { font-size: 13px; font-weight: 700; color: var(--ink); }
     .ppill:active { border-color: rgba(124,92,255,.5); }
+    .ppill.on { border-color: rgba(124,92,255,.5); background: rgba(124,92,255,.08); }
+    .ppill.on b { color: var(--violet); }
     /* The popup itself — a small nested bottom sheet, same slide-up/backdrop
        language as the main composer sheet (.sheet/.sheet-bg), scoped to its
        own overlay so it can sit on top of the composer without touching it. */
@@ -4301,6 +4303,7 @@
         srcPreview: ctx.srcPreview || (prev ? prev.srcPreview : null),
         endPhoto: null, endGenerationId: null,
         duration: undefined, aspect: undefined, resolution: undefined, numImages: undefined,
+        generateAudio: undefined, // Seedance flagship only; undefined = server default (on)
         showAll: false, mopen: false, swap: false,
         prevPrompt: null, // pre-enhance prompt, powers the ↩ Вернуть undo
         // Seedance's Дёшево/Быстро/Качество toggle (routeSeedance, src/seedance.ts)
@@ -5159,11 +5162,16 @@
             const tierLabel = { cheap: "Дёшево", fast: "Быстро", quality: "Качество" };
             params.push({ key: "tier", label: "Уровень", value: tierLabel[stu.seedanceTier || "fast"] });
           }
+          // Audio is a straight on/off flip, not a list — no popup, tap toggles
+          // in place (mirrors a 🔊-style toggle chip, not a picker).
+          if (isVideo && m.video && m.video.audioToggle) {
+            params.push({ key: "audio", label: "Звук", value: stu.generateAudio === false ? "Выкл" : "Вкл", toggle: true });
+          }
           if (!params.length) return "";
           return `
             <div class="paramscard">
               <div class="ppills">${params.map((p) => `
-                <button class="ppill" type="button" data-popup="${p.key}"><small>${esc(p.label)}</small><b>${esc(p.value)}</b></button>`).join("")}</div>
+                <button class="ppill ${p.toggle && p.value === "Вкл" ? "on" : ""}" type="button" ${p.toggle ? `data-toggle="${p.key}"` : `data-popup="${p.key}"`}><small>${esc(p.label)}</small><b>${esc(p.value)}</b></button>`).join("")}</div>
             </div>
             ${stu.paramPopup ? paramPopupHtml(stu.paramPopup, m, caps, isVideo) : ""}`;
         })()}
@@ -5257,6 +5265,10 @@
       // drag, same reason the original inline slider avoided a full re-render
       // per tick: rebuilding the DOM mid-drag would drop pointer capture.
       sheetBody.querySelectorAll("[data-popup]").forEach((b) => (b.onclick = () => { stu.paramPopup = b.dataset.popup; viewStudio(); }));
+      sheetBody.querySelectorAll("[data-toggle]").forEach((b) => (b.onclick = () => {
+        if (b.dataset.toggle === "audio") stu.generateAudio = stu.generateAudio === false ? undefined : false;
+        viewStudio();
+      }));
       sheetBody.querySelectorAll("[data-popup-close]").forEach((b) => (b.onclick = () => { stu.paramPopup = null; viewStudio(); }));
       sheetBody.querySelectorAll("[data-popup-pick]").forEach((b) => (b.onclick = () => {
         const val = b.dataset.popupPick;
@@ -5675,6 +5687,7 @@
         // faces right." `subject` stays for the plain reference-mode path
         // (extra angles, no sheets), where it is still the only signal.
         subject: m.reference && !hasNamedSheet ? (stu.subject || "person") : undefined,
+        generate_audio: stu.generateAudio === false ? false : undefined,
       };
       const body = stu.preset && !isVideo
         ? { source: "preset", id: stu.preset.id,

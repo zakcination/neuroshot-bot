@@ -2389,6 +2389,53 @@ await step("seedance dispatch: the toggle picks the real tier, references overri
   assert.equal(falCalls.at(-1)!.endpoint, "bytedance/seedance-2.0/mini/reference-to-video");
 });
 
+await step("Seedance flagship audio toggle: on by default, off is explicit, rejected on every other model", async () => {
+  await addCredits(maker.id, 500, "admin_grant", "test");
+  const gen = (body: Record<string, unknown>) =>
+    fetch(`${base}/api/generate`, {
+      method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "model", model: "seedance", image_url: "https://fal.test/storage/u-1.jpg",
+        prompt: "поворот в кадре", seedance_tier: "quality", ...body }),
+    });
+
+  // Omitted — server default, byte-identical to before this field existed.
+  const dflt = await gen({});
+  assert.equal(dflt.status, 200);
+  await pollGen((await dflt.json() as { id: number }).id);
+  assert.equal(falCalls.at(-1)!.input.generate_audio, true);
+
+  // Explicit false — the only way to change it.
+  const off = await gen({ generate_audio: false });
+  assert.equal(off.status, 200);
+  await pollGen((await off.json() as { id: number }).id);
+  assert.equal(falCalls.at(-1)!.input.generate_audio, false);
+
+  // Explicit true is a no-op, same request shape as omitted.
+  const on = await gen({ generate_audio: true });
+  assert.equal(on.status, 200);
+  await pollGen((await on.json() as { id: number }).id);
+  assert.equal(falCalls.at(-1)!.input.generate_audio, true);
+
+  // A model that doesn't declare audioToggle (seedance_mini, the "cheap"
+  // tier) must reject the field outright (bad_opts), not silently ignore it
+  // — same discipline as `subject`.
+  const wrongModel = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "seedance", image_url: "https://fal.test/storage/u-1.jpg",
+      prompt: "x", seedance_tier: "cheap", generate_audio: false }),
+  });
+  assert.equal(wrongModel.status, 400);
+  assert.equal(((await wrongModel.json()) as { error: string }).error, "bad_opts");
+
+  // A non-boolean value is treated as omitted (default on), same convention
+  // as every sibling opt field's extraction (subject/resolution/aspect_ratio)
+  // — never coerced (the string "false" must not flip the flag off).
+  const badType = await gen({ generate_audio: "false" });
+  assert.equal(badType.status, 200);
+  await pollGen((await badType.json() as { id: number }).id);
+  assert.equal(falCalls.at(-1)!.input.generate_audio, true);
+});
+
 await step("Grok Imagine + Kling 3.0 Turbo: real endpoints, real params, correct charge", async () => {
   const { MODELS, priceFor } = await import("../src/models.js");
   await addCredits(maker.id, 100, "admin_grant", "test");

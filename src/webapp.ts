@@ -1542,6 +1542,7 @@ export async function generateResponse(
       viaSeedanceUmbrella && !model.reference
         ? undefined
         : typeof body?.subject === "string" ? body.subject : undefined,
+    generateAudio: typeof body?.generate_audio === "boolean" ? body.generate_audio : undefined,
   } as GenOpts);
   if (opts === null) return { status: 400, body: { error: "bad_opts" } };
   // Curated style reference — assigned HERE, after normalizeOpts, and only from
