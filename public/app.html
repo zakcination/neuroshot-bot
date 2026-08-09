@@ -1388,9 +1388,14 @@
       background: var(--surface-2); border: 1px solid rgba(124,92,255,.28); border-radius: var(--radius-s);
       padding: 10px 12px; margin: 16px 0 0;
     }
-    .ppills { display: flex; gap: 8px; flex-wrap: wrap; }
+    /* One line, always — same horizontal-scroll convention as .tabs/.rail/.mini
+       rather than wrapping to a second row once Seedance's "Звук" pill makes
+       it five wide (extrasBlock's own comment: "all params in one zone",
+       which a second row quietly undid). */
+    .ppills { display: flex; gap: 8px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+    .ppills::-webkit-scrollbar { display: none; }
     .ppill {
-      flex: 1; min-width: 84px; border: 1px solid var(--line); background: var(--surface); border-radius: 11px;
+      flex: none; min-width: 84px; border: 1px solid var(--line); background: var(--surface); border-radius: 11px;
       padding: 7px 10px; text-align: left; font: inherit; cursor: pointer; display: flex; flex-direction: column; gap: 1px;
     }
     .ppill small { font-size: 8.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
