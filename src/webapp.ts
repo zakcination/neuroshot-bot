@@ -462,6 +462,13 @@ function studioModelRow(m: ModelSpec, eta: Record<string, number>): Record<strin
           defaultSeconds: m.video.defaultSeconds,
           aspectRatios: m.video.aspectRatios,
           endFrame: !!m.video.endFrame,
+          // Was never serialized at all — the client's "Звук" pill (public/
+          // app.html) has been dead code since the toggle shipped, since
+          // GenOpts.generateAudio existed server-side but this flag never
+          // reached the composer to gate its own pill. Found while wiring
+          // 1080p/4K (2026-08), which needed the SAME per-tier `caps` fix on
+          // the client and exposed this as the same bug class.
+          audioToggle: !!m.video.audioToggle,
           resolutions: (m.video.resolutions ?? []).map((t) => ({
             id: t.id,
             label: t.label,

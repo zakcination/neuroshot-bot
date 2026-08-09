@@ -2052,7 +2052,7 @@ await step("catalog: model news banner + video composer params (durations priced
         defaultSeconds: number;
         aspectRatios: string[];
         endFrame: boolean;
-        resolutions: Array<{ id: string; label: string; credits: number }>;
+        resolutions: Array<{ id: string; label: string; mult: number; credits: number }>;
       } | null;
     }>;
     imageModels: Array<{
@@ -2106,12 +2106,14 @@ await step("catalog: model news banner + video composer params (durations priced
   // Seedance actually honors ratio + a resolution ladder.
   // Looked up under the umbrella "seedance" key — VIDEO_MODEL_PICKER no
   // longer lists the tiers separately, and this legacy picker labels/prices
-  // that key's row as the default Fast tier (src/webapp.ts videoModels).
+  // that key's row as the default Fast tier (src/webapp.ts videoModels), so
+  // it's still just 480p/720p here — 1080p/4K only exist on the flagship
+  // itself, checked separately below against the Studio catalog's
+  // `seedanceTiers.quality` row (the ONLY place that's actually the flagship).
   const seed = c.videoModels.find((m) => m.key === "seedance")!;
   assert.ok(seed.video!.aspectRatios.includes("9:16"), "Seedance missing vertical ratio");
-  // Seedance 2.0 resolution enum is 480p/720p (fal schema) — 1080p is NOT a real tier there.
   assert.ok(seed.video!.resolutions.some((r) => r.id === "480p"), "Seedance missing 480p tier");
-  assert.ok(!seed.video!.resolutions.some((r) => r.id === "1080p"), "Seedance 1080p is not a real fal 2.0 tier — must be removed");
+  assert.ok(!seed.video!.resolutions.some((r) => r.id === "1080p"), "legacy videoModels row is Fast-tier-shaped — 1080p shouldn't appear there");
   // Images now expose aspect ratio (fixes square-by-default) + Nano Banana quality tiers.
   const t2i = c.imageModels.find((m) => m.key === "text_to_image")!;
   assert.ok(t2i.image!.aspectRatios.includes("9:16"), "image model missing vertical ratio");
@@ -2230,12 +2232,24 @@ await step("flagship price curve: reproduces the owner's named anchors, never se
   (config as { flagshipCapFrom: string }).flagshipCapFrom = "2000-01-01T00:00:00Z"; // force active
   try {
     let sawTheCurveBind = false;
+    let sawAPremiumTierEscapeTheCurve = false;
     for (const d of flagship.video!.durations) {
-      for (const res of flagship.video!.resolutions ?? [{ id: "" }]) {
+      for (const res of flagship.video!.resolutions ?? [{ id: "", mult: 1 }]) {
         const opts = res.id ? { duration: d, resolution: res.id } : { duration: d };
         const credits = priceFor(flagship, opts);
-        assert.ok(credits <= flagshipCapCredits(d), `${d}s/${res.id}: ${credits} 🔫 exceeds the curve's own value for ${d}s`);
-        if (credits === flagshipCapCredits(d) && res.id === "720p") sawTheCurveBind = true;
+        if (res.mult <= 1) {
+          // 720p/480p: the curve is exactly what it was calibrated against —
+          // still a hard ceiling.
+          assert.ok(credits <= flagshipCapCredits(d), `${d}s/${res.id}: ${credits} 🔫 exceeds the curve's own value for ${d}s`);
+          if (credits === flagshipCapCredits(d) && res.id === "720p") sawTheCurveBind = true;
+        } else {
+          // 1080p/4K (2026-08): the curve must NOT clamp these back down to
+          // the 720p-calibrated ceiling — that would sell several times the
+          // real cost for the price of 720p. They're expected to exceed the
+          // curve's value at every duration in range.
+          assert.ok(credits > flagshipCapCredits(d), `${d}s/${res.id}: ${credits} 🔫 was clamped to the 720p curve — premium tier not exempted`);
+          sawAPremiumTierEscapeTheCurve = true;
+        }
 
         // Real cost must be covered even at the CHEAPEST pack a real customer
         // can ever pay (the one-time 25 ₸ entry pack) — this curve is stronger
@@ -2249,6 +2263,7 @@ await step("flagship price curve: reproduces the owner's named anchors, never se
       }
     }
     assert.ok(sawTheCurveBind, "no 720p duration actually hit the curve — the test grid no longer exercises it");
+    assert.ok(sawAPremiumTierEscapeTheCurve, "no 1080p/4K duration actually exercised the curve exemption");
 
     // The other 3 Seedance tiers must price IDENTICALLY whether the flagship
     // curve is active or not — toggling it must not touch them at all.
@@ -2302,7 +2317,10 @@ await step("Studio catalog collapses the 4 Seedance keys into one row with a per
     studio: {
       video: Array<{
         key: string; label: string; maxInputs: number; reference: boolean;
-        seedanceTiers?: Record<string, { key: string; credits: number }>;
+        seedanceTiers?: Record<string, {
+          key: string; credits: number;
+          video: { resolutions: Array<{ id: string; mult: number; credits: number }>; audioToggle: boolean } | null;
+        }>;
       }>;
     };
   };
@@ -2321,6 +2339,27 @@ await step("Studio catalog collapses the 4 Seedance keys into one row with a per
   assert.equal(row.seedanceTiers!.fast!.key, "seedance_fast");
   assert.equal(row.seedanceTiers!.quality!.key, "seedance");
   assert.equal(row.seedanceTiers!.ref!.key, "seedance_ref");
+
+  // 1080p/4K (2026-08): flagship-only — mini/fast/ref stop at 720p on fal's
+  // own schema (docs/seedance-tiers.md), so only `seedanceTiers.quality`
+  // (the ACTUAL flagship row, not the umbrella's own Fast-tier-shaped top
+  // level) should carry them. Sold at cost-plus-a-flat-fee, not straight COGS
+  // pass-through, so the charge should exceed the pure cost ratio (2.25× /
+  // ~5.14×) — confirms the fee actually landed, not just the option appearing.
+  const quality = row.seedanceTiers!.quality!.video!;
+  const fast = row.seedanceTiers!.fast!.video!;
+  const res1080 = quality.resolutions.find((r) => r.id === "1080p");
+  const res4k = quality.resolutions.find((r) => r.id === "4K");
+  assert.ok(res1080, "Seedance flagship (quality tier) missing 1080p");
+  assert.ok(res4k, "Seedance flagship (quality tier) missing 4K");
+  assert.ok(res1080!.mult > 2.25, "1080p mult should exceed the pure COGS ratio (2.25×) — the fee is missing");
+  assert.ok(res4k!.mult > 36 / 7, "4K mult should exceed the pure COGS ratio (~5.14×) — the fee is missing");
+  assert.ok(!fast.resolutions.some((r) => r.id === "1080p"), "Fast tier should not offer 1080p — not a real fal tier for it");
+  // audioToggle: flagship-only, and was never serialized to the client at all
+  // until this change (found while wiring the resolution fix above) — the
+  // "Звук" pill had been dead code since it shipped.
+  assert.equal(quality.audioToggle, true, "flagship should advertise audioToggle");
+  assert.equal(fast.audioToggle, false, "Fast tier has no audioToggle — must not claim one");
 });
 
 await step("seedance dispatch: the toggle picks the real tier, references override it, and the umbrella flag never leaks a rejected `subject`", async () => {

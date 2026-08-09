@@ -5100,7 +5100,15 @@
       const m = studioModel();
       if (!m) { st.tab = "shoot"; viewPick(); return; }
       const isVideo = stu.mode === "video";
-      const caps = isVideo ? m.video : m.image;
+      // For the Seedance umbrella row, `m.video` itself is always the Fast
+      // tier's shape (studioModelsOf, src/webapp.ts) — same discipline as
+      // clampStudioOpts already uses, and for the same reason: 1080p/4K
+      // (2026-08) only exist on the flagship (`quality`), so reading `caps`
+      // straight off `m` would silently hide them from the resolution pill
+      // even with "Качество" selected. `activeSeedanceRow` is a no-op for
+      // every non-Seedance model.
+      const capRow = activeSeedanceRow(m);
+      const caps = isVideo ? capRow.video : capRow.image;
       // Director Mode's «Собрать Seedance-промпт» already runs the SAME
       // /api/enhance stack the plain "✨ Улучшить промпт" button below would —
       // but with cast + scenario context that button doesn't have. Showing
@@ -5257,8 +5265,11 @@
             params.push({ key: "tier", label: "Уровень", value: tierLabel[stu.seedanceTier || "fast"] });
           }
           // Audio is a straight on/off flip, not a list — no popup, tap toggles
-          // in place (mirrors a 🔊-style toggle chip, not a picker).
-          if (isVideo && m.video && m.video.audioToggle) {
+          // in place (mirrors a 🔊-style toggle chip, not a picker). Reads
+          // capRow, not m: only the flagship tier declares audioToggle, and
+          // m.video is always the Fast tier's shape for the umbrella row —
+          // same bug class the resolution pill above just got fixed for.
+          if (isVideo && caps && caps.audioToggle) {
             params.push({ key: "audio", label: "Звук", value: stu.generateAudio === false ? "Выкл" : "Вкл", toggle: true });
           }
           if (!params.length) return "";

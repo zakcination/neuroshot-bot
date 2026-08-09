@@ -115,11 +115,23 @@ export interface GenOpts {
   generateAudio?: boolean;
 }
 
-/** A quality/resolution tier the composer can offer; `mult` scales credits AND cost. */
+/** A quality/resolution tier the composer can offer. */
 export interface ResTier {
   id: string;
   label: string; // RU-facing chip
-  mult: number; // credit multiplier over the base `credits` (tier[0].mult = 1)
+  mult: number; // credit multiplier over the base `credits` (tier[0].mult = 1) — sets the CHARGE
+  /**
+   * The true provider-cost multiplier, if it differs from `mult` — used by
+   * `costUsdFor` instead of `mult` when present. Every tier before the
+   * flagship's 1080p/4K (2026-08) priced at straight COGS pass-through, so
+   * `mult` and the real cost ratio were the same number and one field covered
+   * both. 1080p/4K sell at cost-plus-a-flat-fee instead (owner decision — see
+   * SEEDANCE_FLAGSHIP_RES), which makes `mult` (charge) diverge from the real
+   * cost ratio — without this field, `costUsdFor` would inherit the fee and
+   * overstate COGS/per-user cost-cap accounting by exactly the fee amount.
+   * Omitted ⇒ falls back to `mult`, preserving every existing tier untouched.
+   */
+  costMult?: number;
 }
 
 /** Image composer capabilities (aspect ratio + optional quality ladder). */
@@ -318,9 +330,8 @@ const NBPRO_RES: ResTier[] = [
   { id: "2K", label: "2K", mult: 1 },
   { id: "4K", label: "4K 💎", mult: 2 },
 ];
-// Seedance 2.0: the mini/fast endpoints expose 480p/720p; the flagship also lists
-// 1080p and 4K, which we do NOT sell yet — their multiplier would have to be
-// invented, and the whole family's cost basis is still unverified (task #92).
+// Seedance 2.0: the mini/fast endpoints expose only 480p/720p — 1080p and 4K
+// exist nowhere else in the family (docs/seedance-tiers.md § "the family").
 //
 // 480p is discounted to half. The family bills per 1000 tokens and tokens track
 // pixels, so 854×480 against 1280×720 is ~0.44× the work; charging 0.5× keeps a
@@ -331,6 +342,39 @@ const NBPRO_RES: ResTier[] = [
 const SEEDANCE_RES: ResTier[] = [
   { id: "720p", label: "720p", mult: 1 },
   { id: "480p", label: "480p ⚡", mult: 0.5 },
+];
+// Flagship only (docs/seedance-tiers.md § "If 1080p or 4K are ever added" —
+// they were, 2026-08, owner decision). 480p/720p keep the straight COGS-basis
+// pricing above (mult === costMult, no fee); 1080p/4K sell at cost-plus-a-flat-
+// service-fee instead, anchored at 15s (this family's max duration) and held
+// PROPORTIONAL to duration below it — i.e. one constant `mult`, same as every
+// other tier, not "cost(d) + a flat $ add" which would front-load the fee onto
+// short renders.
+//
+// Real cost ratios vs 720p are exact, not estimated: tokens scale with pixel
+// count, and 1080p/4K use the SAME per-token rate band as 720p ($0.014/1000)
+// except 4K, which fal bills at $0.008/1000 instead (src/models.ts's own
+// billing-formula note, re-verified against fal's schema 2026-07-28):
+//   1080p: (1920×1080)/(1280×720) × (0.014/0.014) = 2.25×          exact
+//   4K:    (3840×2160)/(1280×720) × (0.008/0.014) = 9 × 4/7 ≈ 5.143×
+//
+// At 15s (perSecondUsd 0.3034 × 15 = $4.551 base cost):
+//   1080p cost ≈ $10.24 → +$2 fee  → $12.24 target → mult 12.24/4.551 ≈ 2.69
+//   4K    cost ≈ $23.41 → +$4 fee  → $27.41 target → mult 27.41/4.551 ≈ 6.02
+// (owner's own numbers: "~27$" for 4K/15s, "(x+2)$" for 1080p/15s — this
+// reproduces both to within a few cents after credit rounding.)
+//
+// costMult carries the REAL ratio (2.25 / 5.143) so costUsdFor — COGS
+// accounting, the digest's margin estimate, per-user cost caps — never sees
+// the fee baked in as if it were provider cost. See flagshipCapCredits'
+// Math.min in priceFor: it now skips any tier with mult > 1, since that curve
+// was calibrated against 720p and would otherwise silently undercut these two
+// straight back down to the base price.
+const SEEDANCE_FLAGSHIP_RES: ResTier[] = [
+  { id: "720p", label: "720p", mult: 1 },
+  { id: "480p", label: "480p ⚡", mult: 0.5 },
+  { id: "1080p", label: "1080p", mult: 2.69, costMult: 2.25 },
+  { id: "4K", label: "4K 💎", mult: 6.02, costMult: 5.143 },
 ];
 
 /**
@@ -729,7 +773,7 @@ export const MODELS = {
       defaultSeconds: 5,
       aspectRatios: ["auto", "9:16", "16:9", "1:1", "4:3", "3:4"],
       endFrame: true,
-      resolutions: SEEDANCE_RES,
+      resolutions: SEEDANCE_FLAGSHIP_RES,
       audioToggle: true,
     },
   },
@@ -1005,9 +1049,21 @@ export function priceFor(model: ModelSpec, opts?: GenOpts): number {
   // defaultSeconds the same way the duration-scale step above does, so a
   // no-duration call (the catalogue's base quote) is capped consistently
   // with an explicit `{ duration: defaultSeconds }` call.
+  //
+  // Skipped for a premium resolution tier (mult > 1 — 1080p/4K): the curve
+  // was calibrated against 720p (see its own doc comment — "Real numbers,
+  // 720p") and never accounted for a tier that costs meaningfully more to
+  // render. Without this guard, Math.min would silently clamp a 1080p/4K
+  // render right back down to the SAME ceiling as 720p, undercutting real
+  // cost by several times over. 480p (mult 0.5, an existing discount tier,
+  // not a new premium one) keeps ties with the cap exactly as it always has.
   if (model.key === FLAGSHIP_CAP_KEY && flagshipCapActive()) {
-    const dur = opts?.duration ?? model.video?.defaultSeconds ?? 0;
-    credits = Math.min(credits, flagshipCapCredits(dur));
+    const tiers = model.video?.resolutions;
+    const tier = tiers && opts?.resolution ? tiers.find((x) => x.id === opts.resolution) : undefined;
+    if (!tier || tier.mult <= 1) {
+      const dur = opts?.duration ?? model.video?.defaultSeconds ?? 0;
+      credits = Math.min(credits, flagshipCapCredits(dur));
+    }
   }
   return credits;
 }
@@ -1030,7 +1086,14 @@ export function costUsdFor(model: ModelSpec, opts?: GenOpts): number {
   const tiers = model.image?.resolutions ?? model.video?.resolutions;
   if (tiers && opts?.resolution) {
     const t = tiers.find((x) => x.id === opts.resolution);
-    if (t && t.mult !== 1) usd *= t.mult;
+    // costMult, when present, is the REAL cost ratio — distinct from `mult`
+    // (the charge) whenever a tier sells at cost-plus-a-fee rather than
+    // straight COGS pass-through (see ResTier's own doc comment). Falls back
+    // to `mult` for every tier that doesn't set it, unchanged from before.
+    if (t) {
+      const m = t.costMult ?? t.mult;
+      if (m !== 1) usd *= m;
+    }
   }
   const maxCount = model.image?.maxCount;
   if (maxCount && opts?.numImages && opts.numImages > 1) {

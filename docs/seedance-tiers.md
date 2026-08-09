@@ -175,23 +175,57 @@ guessed: 854×480 against 1280×720 works out to **0.4448×** the tokens at any
 tier, so charging 0.5× keeps roughly 0.055× of extra margin at 480p on top of
 the standard band, in our favour.
 
-### If 1080p or 4K are ever added to the flagship
+### 1080p and 4K — shipped 2026-08 (owner decision)
 
-Not sold today, and this is why: at the current duration range (4–15s), the real
-cost swings far outside the rest of the catalogue.
+Added to the flagship only (`SEEDANCE_FLAGSHIP_RES`, `src/models.ts`) — mini/
+fast/ref stop at 720p on fal's own schema, so they never got these IDs.
 
-| resolution | 5 s | 15 s | multiplier vs 720p base (76🔫 / 5s) |
-|---|---|---|---|
-| 720p (sold) | $1.51 → 76🔫 | $4.54 → 227🔫 | 1× |
-| 1080p | $3.40 → 171🔫 | $10.21 → 511🔫 | 2.25× |
-| 4K | $7.78 → 389🔫 | $23.33 → 1,167🔫 | ~5.14× |
+Unlike every tier before it, these don't sell at straight COGS pass-through
+(mechanical multiplier = mechanical price). The owner's call: cost-plus-a-
+flat-service-fee instead, anchored at 15s (this family's longest duration) —
+**+$2 at 1080p, +$4 at 4K** — held PROPORTIONAL to duration below that, so a
+5s render pays 5/15 of the 15s fee rather than the full flat amount:
 
-The multiplier no longer has to be invented (2.25× and ~5.14×, from the formula
-above) — but a single 4K/15s render costing $23 of real COGS is a different
-class of exposure than anything else we sell, and needs its own duration cap
-(most consumer video tools cap 4K well below their 1080p/720p ceiling for exactly
-this reason) and its own pricing decision before it ships, not a mechanical
-multiplier applied to the existing ladder.
+| resolution | cost ratio vs 720p (exact) | cost @ 15s | + fee | target @ 15s | `mult` |
+|---|---|---|---|---|---|
+| 720p (base) | 1× | $4.55 | — | $4.55 | 1 |
+| 480p | 0.5× (discount, unrelated to this addition) | $2.28 | — | — | 0.5 |
+| 1080p | 2.25× | $10.24 | +$2 | $12.24 | 2.69 |
+| 4K | 9 × 4/7 ≈ 5.143× | $23.41 | +$4 | $27.41 | 6.02 |
+
+The cost ratios are exact, not estimated — pixel count scales tokens 1:1, and
+1080p bills at the SAME per-token rate as 720p ($0.014/1000) while 4K bills at
+a lower rate ($0.008/1000) but far more pixels, netting the ~5.14× above (see
+"The billing formula" above for the token math). `mult` is `target/cost_720p`
+at the 15s anchor; because both the cost term and the fee term are linear in
+duration, one constant `mult` reproduces "cost(d) + fee×(d/15)" at every
+duration in the range, not just 15s — confirmed against the live registry:
+
+| duration | 1080p charge (raw, no sale) | 4K charge (raw, no sale) |
+|---|---|---|
+| 5 s | 103🔫 ≈ $2.06 | 229🔫 ≈ $4.58 |
+| 15 s | 614🔫 ≈ $12.28 | 1,373🔫 ≈ $27.46 |
+
+**`costMult` keeps COGS accounting honest.** `mult` (2.69 / 6.02) drives the
+CHARGE; a separate `costMult` (2.25 / 5.143, the real ratio with no fee)
+drives `costUsdFor` — otherwise the fee would read as if it were provider
+cost, inflating COGS tracking and per-user cost caps by exactly the fee
+amount. See `ResTier`'s own doc comment in `src/models.ts`.
+
+**The flagship duration cap (`flagshipCapCredits`) had to learn to skip these
+two.** That curve was calibrated against 720p and applies as a flat
+`Math.min` regardless of resolution — left alone, it would have clamped a
+4K/15s render right back down to the SAME ~92🔫 ceiling as 720p, selling $23
+of real cost for the price of $4.55 of it. `priceFor` now skips the cap
+whenever the resolution tier's `mult > 1` (i.e. a premium tier, not the
+existing 480p discount, which still ties with the cap exactly as before).
+
+**Not addressed here, flagged for follow-up:** no separate duration cap for
+4K specifically. The owner's ask was proportional pricing across the full
+4–15s range, not a shorter ceiling — a 4K/15s render is reachable in one tap
+at ~1,373🔫 (~₸34,000–55,000 at the 25–40 ₸/🔫 pack range, pre-sale). Whether
+that needs its own UX guard (confirmation step, a lower max duration) is a
+product call, not a pricing one, and wasn't part of this change.
 
 ## The 2026-07-28 sale
 
