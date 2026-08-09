@@ -1430,6 +1430,17 @@
       border: 0; background: transparent; color: var(--violet); font: inherit; font-size: 11.5px; font-weight: 650;
       padding: 6px 2px; cursor: pointer;
     }
+    /* "@" — the Cinema Studio composer reference's inline mention button:
+       opens the SAME materials popup as "🗂 Материалы", jumped to Элементы,
+       and also drops the picked name into the scenario text. A real popup,
+       not a live-typing autocomplete — matches what the reference actually
+       does, and is far more robust in a mobile WebView than tracking cursor
+       position/IME state for an "as you type @" dropdown would be. */
+    .at-mention-btn {
+      all: unset; box-sizing: border-box; display: block; width: 100%; margin-top: 6px;
+      padding: 8px 10px; border-radius: 10px; border: 1px dashed var(--line);
+      color: var(--violet); font-size: 11.5px; font-weight: 650; text-align: center; cursor: pointer;
+    }
     .gallery-sheet { max-height: 82dvh; }
     .gfav-toggle {
       border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); border-radius: 999px;
@@ -4236,7 +4247,8 @@
         <p class="acc-hint" style="margin-top:10px">Опишите сцену целиком, своими словами — Seedance снимает один непрерывный дубль, без монтажа.</p>
         <div class="scenario-box">
           <textarea id="dmScenario" maxlength="1000" placeholder="Аня выходит на кухню на рассвете, наливает кофе и замирает у окна…">${esc(stu.dmScenario || "")}</textarea>
-        </div>`;
+        </div>
+        <button type="button" class="at-mention-btn" id="dmAtMention">@ вставить персонажа или локацию</button>`;
     }
 
     function dmAssembleHtml() {
@@ -4361,6 +4373,10 @@
         assetTab: null,
         libraryKind: null,
         libraryData: null,
+        // Set when the popup was opened via "@" (dmScenarioHtml) rather than
+        // "🗂 Материалы" — the field id to ALSO insert the picked name into,
+        // on top of the normal add-to-cast behavior. null = plain pick.
+        libraryInsertTarget: null,
       };
       // A draft carried across a reopen must never arrive still "busy" — the
       // in-flight handler that set it died with the previous render.
@@ -4978,16 +4994,22 @@
      * "Liked" into the generations tab's existing ⭐ Избранное toggle
      * rather than a third tab — same data, already one tap away.
      */
-    async function openLibraryPopup() {
+    async function openLibraryPopup(insertTarget) {
       stu.libraryOpen = true;
+      // Set only by the "@" button (dmScenarioHtml) — Element picks also
+      // insert the entity's name into this field, on top of the normal
+      // add-to-cast behavior (libraryPick below).
+      stu.libraryInsertTarget = insertTarget || null;
       // Элементы only exists while Director Mode is on (libraryPopupHtml
       // falls back to gallery-only with no outer tabs otherwise) — opening
       // straight to "elements" then would leave the gallery body permanently
       // stuck on "Загрузка…", since nothing would ever call loadGalleryPage.
       // Same dmOn check libraryPopupHtml uses — stu.director alone can be
-      // stale-true after switching away from Seedance.
+      // stale-true after switching away from Seedance. "@" only ever renders
+      // while Director Mode is genuinely on, so insertTarget short-circuits
+      // straight to "elements" without needing the check again.
       const cm = studioModel();
-      if (cm && cm.key === "seedance" && stu.director) {
+      if (insertTarget || (cm && cm.key === "seedance" && stu.director)) {
         stu.assetTab = "elements";
         stu.libraryKind = "all";
         stu.libraryData = null;
@@ -5027,6 +5049,19 @@
       });
       stu.libraryOpen = false;
       stu[kind === "character" ? "dmDraftChar" : "dmDraftLoc"] = null; // the add-card's job is done, if one was open
+      // "@" (dmScenarioHtml) — on top of the normal add-to-cast above, also
+      // drop the entity's NAME into the field that was focused when "@" was
+      // tapped, so the scenario can name them exactly like SEEDANCE_DIRECTOR_
+      // STYLE requires. A plain word, not a token — the server already
+      // treats Director context as scenario+cast, no @-syntax of its own
+      // (docs/graveyard.md § Кадр removal; enhance.ts's own "no @Image
+      // tokens" rule is about a DIFFERENT, server-injected binding).
+      const target = stu.libraryInsertTarget;
+      if (target) {
+        const cur = (stu[target] || "").trimEnd();
+        stu[target] = cur ? `${cur} ${entity.label}` : entity.label;
+        stu.libraryInsertTarget = null;
+      }
       toast(`«${entity.label}» добавлен(а) из библиотеки`);
       viewStudio();
     }
@@ -5439,6 +5474,7 @@
         closeLibraryPopup();
       }));
       bind("#materialsOpenBtn", (el) => (el.onclick = () => openLibraryPopup()));
+      bind("#dmAtMention", (el) => (el.onclick = () => openLibraryPopup("dmScenario")));
       sheetBody.querySelectorAll("[data-library-close]").forEach((b) => (b.onclick = closeLibraryPopup));
       sheetBody.querySelectorAll("[data-asset-tab]").forEach((b) => (b.onclick = () => {
         const tab = b.dataset.assetTab;
