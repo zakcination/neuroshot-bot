@@ -1648,23 +1648,7 @@
     }
     .ios-toggle input:checked ~ .knob { transform: translateX(19px); }
     .ios-toggle input:focus-visible ~ .track { outline: 2px solid var(--magenta); outline-offset: 2px; }
-    .acc { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; margin-top: 10px; }
-    .acc-head {
-      display: flex; align-items: center; justify-content: space-between; width: 100%;
-      padding: 13px 14px; cursor: pointer; gap: 10px; border: 0; background: none; color: var(--ink); font: inherit; text-align: left;
-    }
-    .acc-head .t { display: flex; align-items: center; gap: 9px; min-width: 0; }
-    .acc-head .n {
-      width: 22px; height: 22px; border-radius: 7px; background: var(--surface-2); border: 1px solid var(--line);
-      display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: var(--muted); flex: none;
-    }
-    .acc-head b { font-size: 14px; font-weight: 700; white-space: nowrap; }
-    .acc-head .state { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-left: auto; }
-    .acc-head .chev { color: var(--faint); font-size: 11px; flex: none; transition: transform .15s; }
-    .acc.open .chev { transform: rotate(180deg); }
-    .acc-body { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 10px; }
     .acc-hint { font-size: 11.5px; color: var(--muted); margin: 0; line-height: 1.45; }
-    .field-lbl { font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--faint); margin: 0; }
     @keyframes dmspin { to { transform: rotate(360deg); } }
     .char-add-card { display: flex; flex-direction: column; gap: 8px; border: 1.5px dashed var(--line); border-radius: 13px; padding: 11px; }
     .char-add-row { display: flex; align-items: flex-start; gap: 8px; }
@@ -3932,16 +3916,22 @@
       return "ok";
     }
 
-    /** Expand a screenwriter vision into a plot + cast (POST /api/screenwriter/expand). */
+    /**
+     * Expand the scene box's current text into a plot + cast
+     * (POST /api/screenwriter/expand). Reads and OVERWRITES `stu.dmScenario`
+     * — the one text box the composer has for this now — since this only
+     * runs on an explicit button tap, not silently; the result stays fully
+     * editable afterward, same as anything else typed into that box.
+     */
     async function swExpand() {
-      const vision = (stu.swVision || "").trim();
+      const vision = (stu.dmScenario || "").trim();
       if (!vision) { toast("Сначала опишите идею 🙂"); return; }
       stu.swExpanding = true; viewStudio();
       let status, data;
       try {
         ({ status, data } = await api("/api/screenwriter/expand", {
           method: "POST",
-          body: JSON.stringify({ vision, vfxNotes: (stu.swVfxNotes || "").trim() || undefined }),
+          body: JSON.stringify({ vision }),
         }));
       } catch (e) {
         stu.swExpanding = false;
@@ -3956,6 +3946,7 @@
         viewStudio(); return;
       }
       stu.swPlot = data.plot;
+      stu.dmScenario = data.plot;
       stu.swEntities = data.entities.map((e) => ({ ...e, bgBusy: false }));
       ME.dashboard.credits = data.balance; setBalance(data.balance);
       if (ME.enhance) ME.enhance.left = data.left;
@@ -4072,7 +4063,7 @@
     function dmPlanningHtml() {
       const m = studioModel();
       if (stu.mode !== "video" || !m || m.key !== "seedance" || !stu.director) return "";
-      return `${dmScreenwriterHtml()}${dmScenarioHtml()}${dmAssembleHtml()}`;
+      return `${dmSceneHtml()}${dmAssembleHtml()}`;
     }
 
     // ——— Screenwriter pipeline (docs/seedance-screenwriter-spec.md) ———
@@ -4118,41 +4109,6 @@
           ${e.kind === "location" ? `<button type="button" class="sw-chip" data-sw-bg="${esc(e.id)}" ${e.bgBusy ? "disabled" : ""}>${e.bgBusy ? "⏳ …" : `🖼 сгенерировать · ${bgPrice} ${PATRON}`}</button>` : ""}
         </div>
       </div>`;
-    }
-
-    function dmScreenwriterHtml() {
-      if (!(ME.uiFeatures || {}).screenwriterPipeline) return "";
-      const open = !!stu.dmSec.sw;
-      const busy = !!stu.swExpanding;
-      const cost = ME.enhance && ME.enhance.left > 0 ? "бесплатно" : `${(ME.enhance && ME.enhance.cost) || 1} ${PATRON}`;
-      const entities = stu.swEntities || [];
-      const linked = entities.filter((e) => { const x = swEntryFor(e); return x && x.sheetUrl; }).length;
-      const state = entities.length ? `${linked} из ${entities.length} готовы` : stu.swPlot ? "готово" : "нет";
-      return `
-        <div class="acc ${open ? "open" : ""}">
-          <button class="acc-head" type="button" data-dm-sec="sw" aria-expanded="${open}">
-            <span class="t"><span class="n">✎</span><b>Сценарист</b></span>
-            <span class="state">${esc(state)}</span><span class="chev">▼</span>
-          </button>
-          ${open ? `<div class="acc-body">
-            <p class="acc-hint">Опишите идею в двух словах — распишем сцену и подберём, кого и где снять. Дальше как обычно: фото на каждого, кадр, промпт.</p>
-            <p class="field-lbl">Идея</p>
-            <div class="scenario-box">
-              <textarea id="swVision" maxlength="1000" placeholder="Девушка находит старую гитару на чердаке и начинает играть…">${esc(stu.swVision || "")}</textarea>
-            </div>
-            <p class="field-lbl" style="margin-top:2px">Детали — необязательно</p>
-            <div class="scenario-box">
-              <textarea id="swVfxNotes" maxlength="500" placeholder="свет, погода, эффекты…">${esc(stu.swVfxNotes || "")}</textarea>
-            </div>
-            <button class="split-btn" type="button" id="swExpandBtn" ${busy || !(stu.swVision || "").trim() ? "disabled" : ""}>
-              ${busy ? "⏳ Пишу сценарий…" : `✎ Построить сценарий · ${cost}`}
-            </button>
-            ${stu.swPlot ? `
-              <p class="acc-hint"><b>Сюжет:</b> ${esc(stu.swPlot)}</p>
-              ${entities.length ? `<div class="sw-cast">${entities.map((e) => dmSwEntityRow(e)).join("")}</div>` : ""}
-            ` : ""}
-          </div>` : ""}
-        </div>`;
     }
 
     const DM_COPY = {
@@ -4237,18 +4193,35 @@
     }
 
     /**
-     * Free-text scene description feeding "Собрать Seedance-промпт" directly
-     * — no intermediate shot-picking step (removed: /api/enhance already
-     * treats Director context as scenario+cast, no `shot` field required, so
-     * dropping the split needed no server changes at all).
+     * ONE free-text box feeding "Собрать Seedance-промпт" — both the scene
+     * description AND, when the screenwriter pipeline is on, the input to
+     * it. Used to be three separate boxes (Идея / Детали / Сценарий) plus a
+     * collapsible "Сценарист" accordion around the first two — found
+     * confusing (three prompts, no clear order to fill them in). Now: type
+     * whatever you have — a one-line idea or a full scene — into this one
+     * box; «✎ Построить сценарий» reads THIS box as the vision and replaces
+     * its contents with the expanded plot, still fully editable afterward.
+     * No intermediate shot-picking step either (removed: /api/enhance
+     * already treats Director context as scenario+cast, no `shot` field
+     * required, so dropping the split needed no server changes at all).
      */
-    function dmScenarioHtml() {
+    function dmSceneHtml() {
+      const swEnabled = !!(ME.uiFeatures || {}).screenwriterPipeline;
+      const busy = !!stu.swExpanding;
+      const cost = ME.enhance && ME.enhance.left > 0 ? "бесплатно" : `${(ME.enhance && ME.enhance.cost) || 1} ${PATRON}`;
+      const entities = stu.swEntities || [];
       return `
-        <p class="acc-hint" style="margin-top:10px">Опишите сцену целиком, своими словами — Seedance снимает один непрерывный дубль, без монтажа.</p>
+        <p class="acc-hint" style="margin-top:10px">Опишите сцену целиком, своими словами — Seedance снимает один непрерывный дубль, без монтажа.${swEnabled ? " Не знаете, с чего начать — опишите идею в двух словах и нажмите «Построить сценарий» ниже: распишем сцену и подберём, кого и где снять." : ""}</p>
         <div class="scenario-box">
           <textarea id="dmScenario" maxlength="1000" placeholder="Аня выходит на кухню на рассвете, наливает кофе и замирает у окна…">${esc(stu.dmScenario || "")}</textarea>
         </div>
-        <button type="button" class="at-mention-btn" id="dmAtMention">@ вставить персонажа или локацию</button>`;
+        <button type="button" class="at-mention-btn" id="dmAtMention">@ вставить персонажа или локацию</button>
+        ${swEnabled ? `
+          <button class="split-btn" type="button" id="swExpandBtn" style="margin-top:8px" ${busy || !(stu.dmScenario || "").trim() ? "disabled" : ""}>
+            ${busy ? "⏳ Пишу сценарий…" : `✎ Построить сценарий · ${cost}`}
+          </button>
+          ${entities.length ? `<div class="sw-cast">${entities.map((e) => dmSwEntityRow(e)).join("")}</div>` : ""}
+        ` : ""}`;
     }
 
     function dmAssembleHtml() {
@@ -4346,19 +4319,19 @@
         dmChars: prev ? prev.dmChars || [] : (dmSaved && dmSaved.dmChars) || [], // [{id,label,photos:[{data,url}],text,model,sheetUrl,genId,pending,error,use}]
         dmLocs: prev ? prev.dmLocs || [] : (dmSaved && dmSaved.dmLocs) || [],
         dmSeq: prev ? prev.dmSeq || 0 : (dmSaved && dmSaved.dmSeq) || 0, // entry-id counter
-        dmSec: prev ? prev.dmSec || { chars: false, locs: false, sw: false } : (dmSaved && dmSaved.dmSec) || { chars: false, locs: false, sw: false },
+        dmSec: prev ? prev.dmSec || { chars: false, locs: false } : (dmSaved && dmSaved.dmSec) || { chars: false, locs: false },
         dmScenario: prev ? prev.dmScenario || "" : (dmSaved && dmSaved.dmScenario) || "",
         dmAssembling: false,
         dmDraftChar: prev ? prev.dmDraftChar || null : (dmSaved && dmSaved.dmDraftChar) || null,
         dmDraftLoc: prev ? prev.dmDraftLoc || null : (dmSaved && dmSaved.dmDraftLoc) || null,
         // Screenwriter pipeline (docs/seedance-screenwriter-spec.md), gated by
-        // ME.uiFeatures.screenwriterPipeline: a vision → plot + cast, feeding
-        // the Director Mode fields above unchanged. Its open/closed state
-        // lives in dmSec.sw, right alongside the other accordions. Survives
-        // keep-reopen the same way dmScenario does, and a plain re-open the
-        // same way the rest of Director Mode does (see dmSaved above).
-        swVision: prev ? prev.swVision || "" : (dmSaved && dmSaved.swVision) || "",
-        swVfxNotes: prev ? prev.swVfxNotes || "" : (dmSaved && dmSaved.swVfxNotes) || "",
+        // ME.uiFeatures.screenwriterPipeline: expanding `dmScenario` (read as
+        // a "vision") into a plot + cast, feeding the Director Mode fields
+        // above unchanged. No separate vision/VFX-notes fields any more —
+        // swExpand() reads and overwrites dmScenario directly, so there's
+        // only ever one text box to fill in. Survives keep-reopen the same
+        // way dmScenario does, and a plain re-open the same way the rest of
+        // Director Mode does (see dmSaved above).
         swExpanding: false,
         swPlot: prev ? prev.swPlot || null : (dmSaved && dmSaved.swPlot) || null,
         // [{id, kind, label, hint, dmId, bgBusy}] — dmId links to the matching
@@ -4373,7 +4346,7 @@
         assetTab: null,
         libraryKind: null,
         libraryData: null,
-        // Set when the popup was opened via "@" (dmScenarioHtml) rather than
+        // Set when the popup was opened via "@" (dmSceneHtml) rather than
         // "🗂 Материалы" — the field id to ALSO insert the picked name into,
         // on top of the normal add-to-cast behavior. null = plain pick.
         libraryInsertTarget: null,
@@ -4648,11 +4621,13 @@
       const canAddNamed = dmCapable;
       const addCell = canAddSource || canAddNamed
         ? `<button type="button" class="refslot add" id="refAddCell" aria-label="Добавить"><span>＋</span></button>` : "";
+      const swEnabled = !!(ME.uiFeatures || {}).screenwriterPipeline;
       const choiceRow = stu.refChoiceOpen ? `
         <div class="chips" id="refRoleAdd" style="margin-top:8px">
           ${canAddSource ? `<button type="button" class="chip" data-refrole="source">📷 Источник</button>` : ""}
           ${dmCapable ? `<button type="button" class="chip" data-refrole="character">👤 Персонаж</button>` : ""}
           ${dmCapable ? `<button type="button" class="chip" data-refrole="location">📍 Локация</button>` : ""}
+          ${dmCapable && swEnabled ? `<button type="button" class="chip" data-refrole="auto">🤖 Авто — по сценарию</button>` : ""}
         </div>` : "";
       // Every browsable INPUT source — past renders AND the saved-entity
       // library — behind ONE button, not the two separate links this used to
@@ -4996,7 +4971,7 @@
      */
     async function openLibraryPopup(insertTarget) {
       stu.libraryOpen = true;
-      // Set only by the "@" button (dmScenarioHtml) — Element picks also
+      // Set only by the "@" button (dmSceneHtml) — Element picks also
       // insert the entity's name into this field, on top of the normal
       // add-to-cast behavior (libraryPick below).
       stu.libraryInsertTarget = insertTarget || null;
@@ -5049,7 +5024,7 @@
       });
       stu.libraryOpen = false;
       stu[kind === "character" ? "dmDraftChar" : "dmDraftLoc"] = null; // the add-card's job is done, if one was open
-      // "@" (dmScenarioHtml) — on top of the normal add-to-cast above, also
+      // "@" (dmSceneHtml) — on top of the normal add-to-cast above, also
       // drop the entity's NAME into the field that was focused when "@" was
       // tapped, so the scenario can name them exactly like SEEDANCE_DIRECTOR_
       // STYLE requires. A plain word, not a token — the server already
@@ -5120,7 +5095,7 @@
       dmSaved = {
         director: stu.director, dmChars: stu.dmChars, dmLocs: stu.dmLocs, dmSeq: stu.dmSeq, dmSec: stu.dmSec,
         dmScenario: stu.dmScenario, dmDraftChar: stu.dmDraftChar, dmDraftLoc: stu.dmDraftLoc,
-        swVision: stu.swVision, swVfxNotes: stu.swVfxNotes, swPlot: stu.swPlot, swEntities: stu.swEntities,
+        swPlot: stu.swPlot, swEntities: stu.swEntities,
       };
       const m = studioModel();
       if (!m) { st.tab = "shoot"; viewPick(); return; }
@@ -5574,6 +5549,17 @@
         stu.refChoiceOpen = false;
         if (role === "source") { viewStudio(); const f = document.getElementById("stuExtraFile"); if (f) f.click(); return; }
         stu.director = true;
+        if (role === "auto") {
+          // No manual card to fill in — the screenwriter proposes the cast
+          // itself once the scene box below is described and expanded, so
+          // this just closes any open add-card and points at that box.
+          stu.dmSec.chars = false;
+          stu.dmSec.locs = false;
+          viewStudio();
+          const target = sheetBody.querySelector("#dmScenario");
+          if (target) { target.scrollIntoView({ block: "center" }); target.focus(); }
+          return;
+        }
         // Opening one add form closes the other — one "adding X" at a time.
         stu.dmSec.chars = role === "character";
         stu.dmSec.locs = role === "location";
@@ -5612,11 +5598,6 @@
       bind("#stuEndRedo", (el) => (el.onclick = () => { stu.endPhoto = null; stu.endGenerationId = null; viewStudio(); }));
       // ——— Director Mode event handlers ———
       bind("#dmToggle", (el) => (el.onchange = (e) => { stu.director = !!e.target.checked; viewStudio(); }));
-      sheetBody.querySelectorAll("[data-dm-sec]").forEach((btn) => (btn.onclick = () => {
-        const sec = btn.dataset.dmSec;
-        stu.dmSec[sec] = !stu.dmSec[sec];
-        viewStudio();
-      }));
       // Draft photo pickers — one handler shape for both casts. A file that
       // won't decode is reported rather than silently skipped: the user picked
       // it deliberately and would otherwise just see a short grid.
@@ -5689,8 +5670,6 @@
         viewStudio();
       }));
       // ——— Screenwriter pipeline event handlers ———
-      bind("#swVision", (el) => (el.oninput = () => { stu.swVision = el.value; }));
-      bind("#swVfxNotes", (el) => (el.oninput = () => { stu.swVfxNotes = el.value; }));
       bind("#swExpandBtn", (el) => (el.onclick = () => swExpand()));
       sheetBody.querySelectorAll("[data-sw-add]").forEach((btn) => (btn.onclick = () => {
         const e = (stu.swEntities || []).find((x) => x.id === btn.dataset.swAdd);
