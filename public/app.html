@@ -5101,6 +5101,13 @@
       if (!m) { st.tab = "shoot"; viewPick(); return; }
       const isVideo = stu.mode === "video";
       const caps = isVideo ? m.video : m.image;
+      // Director Mode's «Собрать Seedance-промпт» already runs the SAME
+      // /api/enhance stack the plain "✨ Улучшить промпт" button below would —
+      // but with cast + scenario context that button doesn't have. Showing
+      // both invited enhancing an already-assembled prompt a second time,
+      // generically, discarding that context — so the redundant button is
+      // hidden whenever this is true (see the prompt-field render below).
+      const dmSceneActive = isVideo && m.key === "seedance" && stu.director;
       const list = studioList();
       const has = stuHasSource();
       // D6-A: compatible models lead; the rest stay reachable under «показать все».
@@ -5204,16 +5211,20 @@
             <span class="ptag"><span>${esc(stu.preset.label)}</span><button type="button" id="stuPresetX" aria-label="Сменить стиль">✕</button></span>
           </div>
           ${isVideo ? `<div class="sub">Стиль применяется к фото. Опишите движение ниже.</div>` : ""}` : ""}
-        ${qLabel(isVideo ? "Движение (необязательно)" : stu.preset ? "Промпт" : "Что нарисовать?")}
+        <!-- Director Mode active → drop "(необязательно)": this is no longer
+             a side note, it is where the assembled result lands. -->
+        ${qLabel(dmSceneActive ? "Движение" : isVideo ? "Движение (необязательно)" : stu.preset ? "Промпт" : "Что нарисовать?")}
         ${!isVideo && !stu.preset && !stuHasSource() ? `<div class="sub">Фото не нужно — опишите картинку словами, ИИ нарисует её с нуля.</div>` : ""}
         <div class="promptwrap">
           <textarea class="prompt" id="stuPrompt" style="height:${stu.promptH}px" placeholder="${isVideo ? "камера медленно приближается, ветер в волосах…" : stu.preset ? "допишите детали: имя, цвет, настроение…" : "флакон духов на мокром чёрном мраморе…"}">${esc(promptVal)}</textarea>
           <div class="promptgrip" id="stuPromptGrip"><i></i></div>
         </div>
-        <div class="row" style="margin-top:6px">
+        ${dmSceneActive
+          ? (stu.prevPrompt != null ? `<div class="row" style="margin-top:6px"><button class="btn ghost" id="stuUndo">↩ Вернуть</button></div>` : "")
+          : `<div class="row" style="margin-top:6px">
           <button class="btn ghost" id="stuEnh">${enhLabel()}</button>
           ${stu.prevPrompt != null ? `<button class="btn ghost" id="stuUndo">↩ Вернуть</button>` : ""}
-        </div>
+        </div>`}
         ${storyQuizHtml(story)}
         ${(() => {
           // S12–S15: render params pinned as one card directly above the CTA —
