@@ -480,10 +480,13 @@ function studioModelRow(m: ModelSpec, eta: Record<string, number>): Record<strin
   };
 }
 
-// The 3 Seedance tiers folded behind the single "seedance" catalog row — see
-// routeSeedance (src/seedance.ts). Hidden from the plain model list, but
-// still real, priced, generable MODELS entries.
-const HIDDEN_SEEDANCE_KEYS = new Set(["seedance_mini", "seedance_fast", "seedance_ref"]);
+// The 3 Seedance 2.0 tiers folded behind the single "seedance" catalog row —
+// see routeSeedance (src/seedance.ts) — plus seedance25, which isn't folded
+// into anything: it's a registry-only entry (docs/seedance-tiers.md §
+// Seedance 2.5) with no product decision yet on whether it replaces 2.0 or
+// sits alongside it. All 4 are hidden from the plain model list, but still
+// real, priced, generable MODELS entries.
+const HIDDEN_SEEDANCE_KEYS = new Set(["seedance_mini", "seedance_fast", "seedance_ref", "seedance25"]);
 
 function studioModelsOf(mode: "image" | "video", eta: Record<string, number>): Array<Record<string, unknown>> {
   const kinds = mode === "video" ? ["image_to_video"] : ["image_edit", "text_to_image"];

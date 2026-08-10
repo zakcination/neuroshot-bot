@@ -1163,13 +1163,15 @@ await step("Studio catalog: FULL registry by mode, patron-only prices; every mod
   // (spec G5 "ALL models"). Counted against MODELS rather than written down, so
   // adding a model cannot quietly leave the Studio showing a subset.
   //
-  // The one deliberate exception: the 3 real Seedance tiers behind the toggle
+  // Deliberate exceptions: the 3 real Seedance 2.0 tiers behind the toggle
   // (seedance_mini/seedance_fast/seedance_ref) are collapsed into the single
   // "seedance" umbrella row (src/seedance.ts routeSeedance) — they stay real,
   // directly generable MODELS keys (covered by the dedicated Seedance dispatch
-  // tests above), just no longer separate catalog ROWS.
+  // tests above), just no longer separate catalog ROWS. seedance25 is a 4th:
+  // a registry-only entry (docs/seedance-tiers.md § Seedance 2.5) with no
+  // product decision yet on Studio placement — generable directly, not shown.
   const { MODELS: ALL } = await import("../src/models.js");
-  const HIDDEN_SEEDANCE_KEYS = new Set(["seedance_mini", "seedance_fast", "seedance_ref"]);
+  const HIDDEN_SEEDANCE_KEYS = new Set(["seedance_mini", "seedance_fast", "seedance_ref", "seedance25"]);
   const registry = Object.values(ALL).filter((m) => !HIDDEN_SEEDANCE_KEYS.has(m.key));
   assert.equal(s.image.length, registry.filter((m) => m.kind !== "image_to_video").length);
   assert.equal(s.video.length, registry.filter((m) => m.kind === "image_to_video").length);
