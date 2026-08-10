@@ -376,6 +376,16 @@ const SEEDANCE_FLAGSHIP_RES: ResTier[] = [
   { id: "1080p", label: "1080p", mult: 2.69, costMult: 2.25 },
   { id: "4K", label: "4K 💎", mult: 6.02, costMult: 5.143 },
 ];
+// Seedance 2.5 (a separate model generation, not a tier of 2.0 — different
+// endpoint namespace, own token rate). Only 480p/720p exist on fal's schema
+// today (no 1080p/4K yet), same shape as the pre-1080p SEEDANCE_RES.
+// 0.5 for 480p by the same "round the real ratio up in our favor" rule as
+// SEEDANCE_RES (real ratio 0.465, not 0.4448 — a different pixel grid at
+// 480p — see docs/seedance-tiers.md § Seedance 2.5).
+const SEEDANCE25_RES: ResTier[] = [
+  { id: "720p", label: "720p", mult: 1 },
+  { id: "480p", label: "480p ⚡", mult: 0.5 },
+];
 
 /**
  * Reference-mode framing. Seedance's reference endpoint binds attachments by
@@ -774,6 +784,46 @@ export const MODELS = {
       aspectRatios: ["auto", "9:16", "16:9", "1:1", "4:3", "3:4"],
       endFrame: true,
       resolutions: SEEDANCE_FLAGSHIP_RES,
+      audioToggle: true,
+    },
+  },
+  // Seedance 2.5 (ByteDance) — the next generation, NOT a tier of 2.0: its own
+  // endpoint namespace, own token rate ($0.0214/1000 vs 2.0's $0.014/1000),
+  // native up to 30s clips and up to 50 references (neither wired here — see
+  // docs/seedance-tiers.md § Seedance 2.5 for what's deliberately not built
+  // yet). perSecondUsd is derived by the EXACT SAME formula the rest of the
+  // family is verified against — tokens = (h×w×duration×24)/1024 — at 1280×720,
+  // so it carries the same "derived, not measured" caveat as seedance_mini
+  // until a real render's invoice confirms it.
+  //
+  // Registry entry only for now: not in VIDEO_MODEL_PICKER or any composer UI
+  // yet — that's a product call (replace 2.0? sit alongside it?) this change
+  // doesn't make. Reachable via /api/generate with model:"seedance25" for
+  // direct verification against a real fal invoice before it goes further.
+  seedance25: {
+    key: "seedance25",
+    kind: "image_to_video",
+    falEndpoint: "bytedance/seedance-2.5/image-to-video",
+    credits: 116,
+    approxCostUsd: 2.31,
+    label: "Seedance 2.5",
+    note: "новое поколение — со звуком",
+    input: (prompt, imageUrl, opts) => ({
+      prompt,
+      image_url: imageUrl,
+      resolution: opts?.resolution ?? "720p",
+      generate_audio: opts?.generateAudio ?? true,
+      duration: String(opts?.duration ?? 5),
+      ...arParam(opts),
+      ...endParam(opts),
+    }),
+    video: {
+      perSecondUsd: 0.4622,
+      durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      defaultSeconds: 5,
+      aspectRatios: ["auto", "9:16", "16:9", "1:1", "4:3", "3:4"],
+      endFrame: true,
+      resolutions: SEEDANCE25_RES,
       audioToggle: true,
     },
   },

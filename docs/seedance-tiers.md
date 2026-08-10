@@ -340,6 +340,58 @@ independent of whether the sale sentence is still showing. The real
 per-duration prices are visible where they always were — the composer's
 duration slider, which reads `priceFor()` directly.
 
+## Seedance 2.5 (2026-08-10, registry entry only)
+
+Not a fifth tier of the family above — a separate generation, its own fal
+namespace (`bytedance/seedance-2.5/{text-to-video,image-to-video,reference-to-video}`),
+live on fal as of this writing. Two real capability jumps over 2.0: native
+clips up to **30s** (vs 15s) and up to **50** reference inputs (vs 9 on
+`seedance_ref`). Neither is wired — `seedance25`'s `durations` array stops at
+15s and reference mode isn't built for it — because both need their own
+decisions (does the duration slider/`flagshipCapCredits`-style curve extend to
+30s? does a 50-photo picker make sense in the composer UI?) that a pricing
+pass doesn't answer. `docs/product-roadmap.md` is where those belong once
+scoped.
+
+**Pricing, derived by the identical method already verified for 2.0** (see
+"The billing formula" above) — same token formula, 2.5's own real rate:
+
+```
+tokens = (output_height × output_width × duration_seconds × 24) / 1024
+rate    = $0.0214 / 1000 tokens (confirmed on fal's own pricing/schema pages,
+          same rate at 480p and 720p — no 4K/1080p tier to bill differently)
+```
+
+At 1280×720 (720p, matching exactly how 2.0's `perSecondUsd` is anchored):
+`tokens/s = 21,600` → `21.6 × $0.0214 = $0.4622/s`. Registry's `seedance25`
+uses this figure.
+
+**Cross-check, and the one open gap.** fal's own pricing page separately
+states "~$0.4730/s at 720p" — about **2.3% above** the formula figure, a
+looser match than the 0.33% the 2.0 family's formula reproduces its
+registry numbers to. Both numbers come from the same per-token rate and the
+same resolution table (fal's own schema lists 1280×720 for 16:9/720p), so the
+gap is most likely rounding in how that page's figure was quoted rather than
+a different rate — but unlike the rest of the family, **no real seedance25
+render has been billed yet** to settle it either way. Until one is, treat
+`$0.4622/s` as the same "derived, not measured" caveat `seedance_mini` already
+carries, on the conservative side (the formula figure is the LOWER of the two
+— if the true rate is closer to fal's quoted $0.4730/s, current pricing is
+undercharging by ~2.3%, not overcharging). One real render's invoice, same as
+the standing "verify Seedance end to end" task, closes this.
+
+480p uses the same rounding-in-our-favor convention as `SEEDANCE_RES`: real
+ratio at 864×496 vs 1280×720 is 0.465× the tokens (a different pixel grid
+than 2.0's 854×480, so not exactly 0.4448×, but close), charged at `mult: 0.5`
+regardless — the same conservative round the rest of the family uses.
+
+At 5s/720p (registry default): cost = $2.311 → **116🔫** (`ceil(2.311/0.02)`).
+Not in `SEEDANCE_SALE_KEYS` or subject to the flagship ceiling — both are
+2.0-specific mechanisms tuned against 2.0's cost curve, and applying either to
+2.5's different (higher) cost basis without its own review would silently
+under-price it the same way the flagship ceiling would have under-priced
+1080p/4K if left unguarded (see above).
+
 ## Sources
 
 - [Seedance 2.0 vs Fast vs Mini: Is the Cheap One Enough? (2026)](https://pixo.video/blog/seedance-2-0-vs-fast-vs-mini)
