@@ -2052,7 +2052,7 @@ await step("catalog: model news banner + video composer params (durations priced
         defaultSeconds: number;
         aspectRatios: string[];
         endFrame: boolean;
-        resolutions: Array<{ id: string; label: string; credits: number }>;
+        resolutions: Array<{ id: string; label: string; mult: number; credits: number }>;
       } | null;
     }>;
     imageModels: Array<{
@@ -2106,12 +2106,14 @@ await step("catalog: model news banner + video composer params (durations priced
   // Seedance actually honors ratio + a resolution ladder.
   // Looked up under the umbrella "seedance" key — VIDEO_MODEL_PICKER no
   // longer lists the tiers separately, and this legacy picker labels/prices
-  // that key's row as the default Fast tier (src/webapp.ts videoModels).
+  // that key's row as the default Fast tier (src/webapp.ts videoModels), so
+  // it's still just 480p/720p here — 1080p/4K only exist on the flagship
+  // itself, checked separately below against the Studio catalog's
+  // `seedanceTiers.quality` row (the ONLY place that's actually the flagship).
   const seed = c.videoModels.find((m) => m.key === "seedance")!;
   assert.ok(seed.video!.aspectRatios.includes("9:16"), "Seedance missing vertical ratio");
-  // Seedance 2.0 resolution enum is 480p/720p (fal schema) — 1080p is NOT a real tier there.
   assert.ok(seed.video!.resolutions.some((r) => r.id === "480p"), "Seedance missing 480p tier");
-  assert.ok(!seed.video!.resolutions.some((r) => r.id === "1080p"), "Seedance 1080p is not a real fal 2.0 tier — must be removed");
+  assert.ok(!seed.video!.resolutions.some((r) => r.id === "1080p"), "legacy videoModels row is Fast-tier-shaped — 1080p shouldn't appear there");
   // Images now expose aspect ratio (fixes square-by-default) + Nano Banana quality tiers.
   const t2i = c.imageModels.find((m) => m.key === "text_to_image")!;
   assert.ok(t2i.image!.aspectRatios.includes("9:16"), "image model missing vertical ratio");
@@ -2230,12 +2232,24 @@ await step("flagship price curve: reproduces the owner's named anchors, never se
   (config as { flagshipCapFrom: string }).flagshipCapFrom = "2000-01-01T00:00:00Z"; // force active
   try {
     let sawTheCurveBind = false;
+    let sawAPremiumTierEscapeTheCurve = false;
     for (const d of flagship.video!.durations) {
-      for (const res of flagship.video!.resolutions ?? [{ id: "" }]) {
+      for (const res of flagship.video!.resolutions ?? [{ id: "", mult: 1 }]) {
         const opts = res.id ? { duration: d, resolution: res.id } : { duration: d };
         const credits = priceFor(flagship, opts);
-        assert.ok(credits <= flagshipCapCredits(d), `${d}s/${res.id}: ${credits} 🔫 exceeds the curve's own value for ${d}s`);
-        if (credits === flagshipCapCredits(d) && res.id === "720p") sawTheCurveBind = true;
+        if (res.mult <= 1) {
+          // 720p/480p: the curve is exactly what it was calibrated against —
+          // still a hard ceiling.
+          assert.ok(credits <= flagshipCapCredits(d), `${d}s/${res.id}: ${credits} 🔫 exceeds the curve's own value for ${d}s`);
+          if (credits === flagshipCapCredits(d) && res.id === "720p") sawTheCurveBind = true;
+        } else {
+          // 1080p/4K (2026-08): the curve must NOT clamp these back down to
+          // the 720p-calibrated ceiling — that would sell several times the
+          // real cost for the price of 720p. They're expected to exceed the
+          // curve's value at every duration in range.
+          assert.ok(credits > flagshipCapCredits(d), `${d}s/${res.id}: ${credits} 🔫 was clamped to the 720p curve — premium tier not exempted`);
+          sawAPremiumTierEscapeTheCurve = true;
+        }
 
         // Real cost must be covered even at the CHEAPEST pack a real customer
         // can ever pay (the one-time 25 ₸ entry pack) — this curve is stronger
@@ -2249,6 +2263,7 @@ await step("flagship price curve: reproduces the owner's named anchors, never se
       }
     }
     assert.ok(sawTheCurveBind, "no 720p duration actually hit the curve — the test grid no longer exercises it");
+    assert.ok(sawAPremiumTierEscapeTheCurve, "no 1080p/4K duration actually exercised the curve exemption");
 
     // The other 3 Seedance tiers must price IDENTICALLY whether the flagship
     // curve is active or not — toggling it must not touch them at all.
@@ -2302,7 +2317,10 @@ await step("Studio catalog collapses the 4 Seedance keys into one row with a per
     studio: {
       video: Array<{
         key: string; label: string; maxInputs: number; reference: boolean;
-        seedanceTiers?: Record<string, { key: string; credits: number }>;
+        seedanceTiers?: Record<string, {
+          key: string; credits: number;
+          video: { resolutions: Array<{ id: string; mult: number; credits: number }>; audioToggle: boolean } | null;
+        }>;
       }>;
     };
   };
@@ -2321,6 +2339,27 @@ await step("Studio catalog collapses the 4 Seedance keys into one row with a per
   assert.equal(row.seedanceTiers!.fast!.key, "seedance_fast");
   assert.equal(row.seedanceTiers!.quality!.key, "seedance");
   assert.equal(row.seedanceTiers!.ref!.key, "seedance_ref");
+
+  // 1080p/4K (2026-08): flagship-only — mini/fast/ref stop at 720p on fal's
+  // own schema (docs/seedance-tiers.md), so only `seedanceTiers.quality`
+  // (the ACTUAL flagship row, not the umbrella's own Fast-tier-shaped top
+  // level) should carry them. Sold at cost-plus-a-flat-fee, not straight COGS
+  // pass-through, so the charge should exceed the pure cost ratio (2.25× /
+  // ~5.14×) — confirms the fee actually landed, not just the option appearing.
+  const quality = row.seedanceTiers!.quality!.video!;
+  const fast = row.seedanceTiers!.fast!.video!;
+  const res1080 = quality.resolutions.find((r) => r.id === "1080p");
+  const res4k = quality.resolutions.find((r) => r.id === "4K");
+  assert.ok(res1080, "Seedance flagship (quality tier) missing 1080p");
+  assert.ok(res4k, "Seedance flagship (quality tier) missing 4K");
+  assert.ok(res1080!.mult > 2.25, "1080p mult should exceed the pure COGS ratio (2.25×) — the fee is missing");
+  assert.ok(res4k!.mult > 36 / 7, "4K mult should exceed the pure COGS ratio (~5.14×) — the fee is missing");
+  assert.ok(!fast.resolutions.some((r) => r.id === "1080p"), "Fast tier should not offer 1080p — not a real fal tier for it");
+  // audioToggle: flagship-only, and was never serialized to the client at all
+  // until this change (found while wiring the resolution fix above) — the
+  // "Звук" pill had been dead code since it shipped.
+  assert.equal(quality.audioToggle, true, "flagship should advertise audioToggle");
+  assert.equal(fast.audioToggle, false, "Fast tier has no audioToggle — must not claim one");
 });
 
 await step("seedance dispatch: the toggle picks the real tier, references override it, and the umbrella flag never leaks a rejected `subject`", async () => {
@@ -2387,6 +2426,53 @@ await step("seedance dispatch: the toggle picks the real tier, references overri
   assert.equal(refD.credits, priceFor(MODELS.seedance_ref), "2 photos must charge the reference tier, not the requested toggle");
   await pollGen(refD.id);
   assert.equal(falCalls.at(-1)!.endpoint, "bytedance/seedance-2.0/mini/reference-to-video");
+});
+
+await step("Seedance flagship audio toggle: on by default, off is explicit, rejected on every other model", async () => {
+  await addCredits(maker.id, 500, "admin_grant", "test");
+  const gen = (body: Record<string, unknown>) =>
+    fetch(`${base}/api/generate`, {
+      method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "model", model: "seedance", image_url: "https://fal.test/storage/u-1.jpg",
+        prompt: "поворот в кадре", seedance_tier: "quality", ...body }),
+    });
+
+  // Omitted — server default, byte-identical to before this field existed.
+  const dflt = await gen({});
+  assert.equal(dflt.status, 200);
+  await pollGen((await dflt.json() as { id: number }).id);
+  assert.equal(falCalls.at(-1)!.input.generate_audio, true);
+
+  // Explicit false — the only way to change it.
+  const off = await gen({ generate_audio: false });
+  assert.equal(off.status, 200);
+  await pollGen((await off.json() as { id: number }).id);
+  assert.equal(falCalls.at(-1)!.input.generate_audio, false);
+
+  // Explicit true is a no-op, same request shape as omitted.
+  const on = await gen({ generate_audio: true });
+  assert.equal(on.status, 200);
+  await pollGen((await on.json() as { id: number }).id);
+  assert.equal(falCalls.at(-1)!.input.generate_audio, true);
+
+  // A model that doesn't declare audioToggle (seedance_mini, the "cheap"
+  // tier) must reject the field outright (bad_opts), not silently ignore it
+  // — same discipline as `subject`.
+  const wrongModel = await fetch(`${base}/api/generate`, {
+    method: "POST", headers: { ...makerHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "model", model: "seedance", image_url: "https://fal.test/storage/u-1.jpg",
+      prompt: "x", seedance_tier: "cheap", generate_audio: false }),
+  });
+  assert.equal(wrongModel.status, 400);
+  assert.equal(((await wrongModel.json()) as { error: string }).error, "bad_opts");
+
+  // A non-boolean value is treated as omitted (default on), same convention
+  // as every sibling opt field's extraction (subject/resolution/aspect_ratio)
+  // — never coerced (the string "false" must not flip the flag off).
+  const badType = await gen({ generate_audio: "false" });
+  assert.equal(badType.status, 200);
+  await pollGen((await badType.json() as { id: number }).id);
+  assert.equal(falCalls.at(-1)!.input.generate_audio, true);
 });
 
 await step("Grok Imagine + Kling 3.0 Turbo: real endpoints, real params, correct charge", async () => {
@@ -2774,6 +2860,106 @@ await step("balance history: /api/ledger redacts every reason whose meta is some
   assert.equal(byReason.partner_join, "somecode");
   assert.equal(byReason.partner_welcome, "join");
   assert.equal(byReason.push_offer, "pack_x");
+});
+
+await step("Director Mode library: save/list/delete a character or location for reuse, owner-scoped", async () => {
+  const lu = { id: 915, username: "libowner" };
+  const other = { id: 916, username: "notlibowner" };
+  await getOrCreateUser(lu.id, lu.username, null, 0);
+  await getOrCreateUser(other.id, other.username, null, 0);
+  const hdr = { Authorization: `tma ${signInitData(lu)}`, "Content-Type": "application/json" };
+  const otherHdr = { Authorization: `tma ${signInitData(other)}`, "Content-Type": "application/json" };
+
+  // Save one character and one location.
+  const saveChar = await fetch(`${base}/api/library`, {
+    method: "POST", headers: hdr,
+    body: JSON.stringify({ kind: "character", label: "Аня", text: "рыжий кот", sheetUrl: "https://fal.test/storage/char.jpg", model: "nb2_edit" }),
+  });
+  assert.equal(saveChar.status, 200);
+  const savedChar = (await saveChar.json()) as { id: number; kind: string; label: string; text: string | null; sheetUrl: string; model: string | null };
+  assert.equal(savedChar.kind, "character");
+  assert.equal(savedChar.label, "Аня");
+  assert.equal(savedChar.text, "рыжий кот");
+  assert.equal(savedChar.sheetUrl, "https://fal.test/storage/char.jpg");
+  assert.equal(savedChar.model, "nb2_edit");
+
+  const saveLoc = await fetch(`${base}/api/library`, {
+    method: "POST", headers: hdr,
+    body: JSON.stringify({ kind: "location", label: "Чердак", sheetUrl: "https://fal.test/storage/loc.jpg" }),
+  });
+  assert.equal(saveLoc.status, 200);
+  const savedLoc = (await saveLoc.json()) as { id: number; text: string | null; model: string | null };
+  assert.equal(savedLoc.text, null, "optional text omitted must come back null, not an empty string");
+  assert.equal(savedLoc.model, null, "an unrecognized/omitted model must come back null, never echoed unchecked");
+
+  // Listing is kind-scoped — a character save must not appear under ?kind=location.
+  const chars = (await (await fetch(`${base}/api/library?kind=character`, { headers: hdr })).json()) as { items: Array<{ id: number; label: string }> };
+  assert.equal(chars.items.length, 1);
+  assert.equal(chars.items[0].label, "Аня");
+  const locs = (await (await fetch(`${base}/api/library?kind=location`, { headers: hdr })).json()) as { items: Array<{ id: number; label: string }> };
+  assert.equal(locs.items.length, 1);
+  assert.equal(locs.items[0].label, "Чердак");
+  assert.equal((await fetch(`${base}/api/library?kind=nope`, { headers: hdr })).status, 400);
+  assert.equal((await fetch(`${base}/api/library?kind=character`)).status, 401);
+
+  // No kind (or kind=all) — the library popup's "Все" tab — mixes both kinds,
+  // each row still carrying its own `kind` so the client can tell them apart.
+  for (const qs of ["", "?kind=all"]) {
+    const all = (await (await fetch(`${base}/api/library${qs}`, { headers: hdr })).json()) as { items: Array<{ label: string; kind: string }> };
+    assert.equal(all.items.length, 2, `both kinds must appear for '${qs}'`);
+    const byLabel = Object.fromEntries(all.items.map((x) => [x.label, x.kind]));
+    assert.equal(byLabel["Аня"], "character");
+    assert.equal(byLabel["Чердак"], "location");
+  }
+
+  // A sheetUrl off our own storage host must be rejected — same isMediaUrl
+  // discipline /api/generate's image_urls already enforces.
+  const badUrl = await fetch(`${base}/api/library`, {
+    method: "POST", headers: hdr,
+    body: JSON.stringify({ kind: "character", label: "Evil", sheetUrl: "https://evil.example.com/x.jpg" }),
+  });
+  assert.equal(badUrl.status, 400);
+  assert.equal(((await badUrl.json()) as { error: string }).error, "bad_source");
+
+  // An empty label is rejected before anything is written.
+  const noLabel = await fetch(`${base}/api/library`, {
+    method: "POST", headers: hdr,
+    body: JSON.stringify({ kind: "character", label: "   ", sheetUrl: "https://fal.test/storage/x.jpg" }),
+  });
+  assert.equal(noLabel.status, 400);
+
+  // Another account's list must never include this user's saves.
+  const otherChars = (await (await fetch(`${base}/api/library?kind=character`, { headers: otherHdr })).json()) as { items: unknown[] };
+  assert.equal(otherChars.items.length, 0);
+
+  // Delete is owner-scoped: another account can't remove this user's entry
+  // (404, not 403 — same "don't confirm existence" posture as favorites).
+  const stolenDelete = await fetch(`${base}/api/library/${savedChar.id}`, { method: "DELETE", headers: otherHdr });
+  assert.equal(stolenDelete.status, 404);
+  const stillThere = (await (await fetch(`${base}/api/library?kind=character`, { headers: hdr })).json()) as { items: unknown[] };
+  assert.equal(stillThere.items.length, 1, "a rejected delete must not have removed the row");
+
+  const realDelete = await fetch(`${base}/api/library/${savedChar.id}`, { method: "DELETE", headers: hdr });
+  assert.equal(realDelete.status, 200);
+  const afterDelete = (await (await fetch(`${base}/api/library?kind=character`, { headers: hdr })).json()) as { items: unknown[] };
+  assert.equal(afterDelete.items.length, 0);
+  assert.equal((await fetch(`${base}/api/library/${savedChar.id}`, { method: "DELETE", headers: hdr })).status, 404, "deleting an already-gone row is a 404, not a silent 200");
+});
+
+await step("Director Mode library: the per-account cap is enforced before a new save is written", async () => {
+  const cu = { id: 917, username: "libcap" };
+  await getOrCreateUser(cu.id, cu.username, null, 0);
+  const hdr = { Authorization: `tma ${signInitData(cu)}`, "Content-Type": "application/json" };
+  const { SAVED_ENTITY_LIMIT } = await import("../src/db.js");
+  const save = (i: number) =>
+    fetch(`${base}/api/library`, {
+      method: "POST", headers: hdr,
+      body: JSON.stringify({ kind: "character", label: `Персонаж ${i}`, sheetUrl: `https://fal.test/storage/c${i}.jpg` }),
+    });
+  for (let i = 0; i < SAVED_ENTITY_LIMIT; i++) assert.equal((await save(i)).status, 200);
+  const over = await save(SAVED_ENTITY_LIMIT);
+  assert.equal(over.status, 400);
+  assert.equal(((await over.json()) as { error: string }).error, "library_full");
 });
 
 await step("favorites: star/unstar is owner-scoped, ?favorite=1 filters the gallery", async () => {

@@ -16,16 +16,33 @@ no intermediate shot-candidate selection. The historical description below is
 kept for the pipeline's still-accurate steps ①③④⑤⑥; step ⑦ no longer exists —
 read "run splitStoryboard" as "the scenario/plot is used directly."
 
+**Update (2026-08, continued):** the client-side UI was consolidated from
+three text boxes down to one. Originally the "Сценарист" accordion held its
+own "Идея" + "Детали — необязательно" (vfxNotes) textareas, separate from the
+"Сценарий" box below it that actually fed the assemble step — found confusing
+in practice (no clear order to fill three boxes in). `dmScreenwriterHtml` +
+`dmScenarioHtml` were merged into one `dmSceneHtml` (`public/app.html`): the
+single `dmScenario` textarea is what the user types into either way, and
+`swExpand()` now reads it directly as the vision and overwrites it with the
+returned plot on success — still fully editable afterward. The dedicated
+vfxNotes textarea was dropped; the API (`expandVision`, `/api/screenwriter/
+expand`) still accepts an optional `vfxNotes` field, the client just no
+longer sends one — any VFX/lighting detail goes into the same free-text box.
+Also added: a fourth "🤖 Авто" chip alongside "👤 Персонаж"/"📍 Локация" in the
+reference grid's add-role row (`extrasBlock`) — picking it skips the manual
+add-card entirely and focuses the scene box, matching "no need to add by
+hand, just see what the screenwriter proposes."
+
 **Shipped as the pragmatic single-prompt version this doc itself proposed**
 (see the flagged research section below) — three things are explicitly
 **not** done yet:
 - **② purpose clarification** — not built; one generic plot-expansion system
   prompt for every vision, exactly the starting point flagged below.
-- **⑧'s assemble extension** — `vfxNotes` exists in the UI and the expand
-  API, but only feeds the plot-expansion prompt. It is not yet forwarded
-  into `/api/enhance`'s assemble step, and the per-second-ranged beat format
-  described below was not attempted — assemble is untouched, still one
-  flowing paragraph.
+- **⑧'s assemble extension** — `vfxNotes` exists in the expand API (optional,
+  no dedicated UI field any more — see the 2026-08 update above) but only
+  feeds the plot-expansion prompt. It is not forwarded into `/api/enhance`'s
+  assemble step, and the per-second-ranged beat format described below was
+  not attempted — assemble is untouched, still one flowing paragraph.
 - **No `docs/wireframes/` file** — the Non-goals section below called one
   out as expected before implementation; this shipped directly from the
   owner's go-ahead instead. Revisit if this UI needs its own wireframe pass.
@@ -135,9 +152,11 @@ built, not decided in this doc.
   empirical question — untested, should be validated with real renders
   before it's treated as the target format, not assumed because it sounds
   more precise.
-- **VFX notes** — no field for this exists anywhere in the composer today.
-  Needs a UI home (a new optional textarea in the vision/plan step, most
-  likely) and a slot in the assemble prompt; not designed here.
+- **VFX notes** — deliberately given no dedicated UI field (2026-08 update
+  above): the composer was already asking for too many separate boxes, so
+  lighting/VFX detail folds into the one scene box instead of getting its
+  own. `vfxNotes` remains an optional API param nothing sends today; still
+  needs a slot in the assemble prompt if it's ever wired up.
 - **Entity extraction's failure mode.** `expandVision` already has a
   precedent for "the LLM call fails or returns garbage" (one retry, then a
   refund) — entity extraction needs the same discipline, but the exact
